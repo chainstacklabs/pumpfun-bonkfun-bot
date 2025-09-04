@@ -30,6 +30,10 @@ dev = [
 [project.scripts]
 pump_bot = "bot_runner:main"
 
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [tool.ruff]
 exclude = [
     ".bzr",
