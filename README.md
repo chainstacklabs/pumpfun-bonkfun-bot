@@ -1,3 +1,7 @@
+**⚠️ PLEASE SWITCH TO THE MAIN BRANCH. THIS CODE IS OUTDATED. ALL FUTURE UPDATES WILL BE PUSHED TO THE MAIN BRANCH.**
+
+-----------
+
 **>>WARNNING ON SCAMS IN ISSUES COMMENT SECTION<<**
 
 The issues comment section is often targeted by scam bots willing to redirect you to an external resource and drain your funds.
