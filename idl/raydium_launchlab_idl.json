@@ -2,7 +2,7 @@
     "address": "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj",
     "metadata": {
         "name": "raydium_launchpad",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "spec": "0.1.0",
         "description": "Created with Anchor"
     },
@@ -387,6 +387,179 @@
             ]
         },
         {
+            "name": "claim_creator_fee",
+            "docs": [
+                "Claim the fee from the exclusive creator fee vault.",
+                "# Arguments",
+                "",
+                "* `ctx` - The context of accounts",
+                ""
+            ],
+            "discriminator": [
+                26,
+                97,
+                138,
+                203,
+                132,
+                171,
+                141,
+                252
+            ],
+            "accounts": [
+                {
+                    "name": "creator",
+                    "docs": [
+                        "The pool creator"
+                    ],
+                    "writable": true,
+                    "signer": true
+                },
+                {
+                    "name": "fee_vault_authority",
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "const",
+                                "value": [
+                                    99,
+                                    114,
+                                    101,
+                                    97,
+                                    116,
+                                    111,
+                                    114,
+                                    95,
+                                    102,
+                                    101,
+                                    101,
+                                    95,
+                                    118,
+                                    97,
+                                    117,
+                                    108,
+                                    116,
+                                    95,
+                                    97,
+                                    117,
+                                    116,
+                                    104,
+                                    95,
+                                    115,
+                                    101,
+                                    101,
+                                    100
+                                ]
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "creator_fee_vault",
+                    "docs": [
+                        "The creator fee vault"
+                    ],
+                    "writable": true,
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "account",
+                                "path": "creator"
+                            },
+                            {
+                                "kind": "account",
+                                "path": "quote_mint"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "recipient_token_account",
+                    "writable": true,
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "account",
+                                "path": "creator"
+                            },
+                            {
+                                "kind": "account",
+                                "path": "token_program"
+                            },
+                            {
+                                "kind": "account",
+                                "path": "quote_mint"
+                            }
+                        ],
+                        "program": {
+                            "kind": "const",
+                            "value": [
+                                140,
+                                151,
+                                37,
+                                143,
+                                78,
+                                36,
+                                137,
+                                241,
+                                187,
+                                61,
+                                16,
+                                41,
+                                20,
+                                142,
+                                13,
+                                131,
+                                11,
+                                90,
+                                19,
+                                153,
+                                218,
+                                255,
+                                16,
+                                132,
+                                4,
+                                142,
+                                123,
+                                216,
+                                219,
+                                233,
+                                248,
+                                89
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "quote_mint",
+                    "docs": [
+                        "The mint for the quote token"
+                    ]
+                },
+                {
+                    "name": "token_program",
+                    "docs": [
+                        "SPL Token program for the quote token"
+                    ],
+                    "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                },
+                {
+                    "name": "system_program",
+                    "docs": [
+                        "Required for account creation"
+                    ],
+                    "address": "11111111111111111111111111111111"
+                },
+                {
+                    "name": "associated_token_program",
+                    "docs": [
+                        "Required for associated token program"
+                    ],
+                    "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+                }
+            ],
+            "args": []
+        },
+        {
             "name": "claim_platform_fee",
             "docs": [
                 "Claim platform fee",
@@ -476,41 +649,191 @@
                                 "path": "platform_fee_wallet"
                             },
                             {
+                                "kind": "account",
+                                "path": "token_program"
+                            },
+                            {
+                                "kind": "account",
+                                "path": "quote_mint"
+                            }
+                        ],
+                        "program": {
+                            "kind": "const",
+                            "value": [
+                                140,
+                                151,
+                                37,
+                                143,
+                                78,
+                                36,
+                                137,
+                                241,
+                                187,
+                                61,
+                                16,
+                                41,
+                                20,
+                                142,
+                                13,
+                                131,
+                                11,
+                                90,
+                                19,
+                                153,
+                                218,
+                                255,
+                                16,
+                                132,
+                                4,
+                                142,
+                                123,
+                                216,
+                                219,
+                                233,
+                                248,
+                                89
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "quote_mint",
+                    "docs": [
+                        "The mint of quote token vault"
+                    ]
+                },
+                {
+                    "name": "token_program",
+                    "docs": [
+                        "SPL program for input token transfers"
+                    ],
+                    "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                },
+                {
+                    "name": "system_program",
+                    "docs": [
+                        "Required for account creation"
+                    ],
+                    "address": "11111111111111111111111111111111"
+                },
+                {
+                    "name": "associated_token_program",
+                    "docs": [
+                        "Required for associated token program"
+                    ],
+                    "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+                }
+            ],
+            "args": []
+        },
+        {
+            "name": "claim_platform_fee_from_vault",
+            "docs": [
+                "Claim the fee from the exclusive platform fee vault.",
+                "# Arguments",
+                "",
+                "* `ctx` - The context of accounts",
+                ""
+            ],
+            "discriminator": [
+                117,
+                241,
+                198,
+                168,
+                248,
+                218,
+                80,
+                29
+            ],
+            "accounts": [
+                {
+                    "name": "platform_fee_wallet",
+                    "docs": [
+                        "Only the wallet stored in platform_config can collect platform fees"
+                    ],
+                    "writable": true,
+                    "signer": true
+                },
+                {
+                    "name": "fee_vault_authority",
+                    "pda": {
+                        "seeds": [
+                            {
                                 "kind": "const",
                                 "value": [
-                                    6,
-                                    221,
-                                    246,
-                                    225,
-                                    215,
-                                    101,
-                                    161,
-                                    147,
-                                    217,
-                                    203,
-                                    225,
-                                    70,
-                                    206,
-                                    235,
-                                    121,
-                                    172,
-                                    28,
-                                    180,
-                                    133,
-                                    237,
+                                    112,
+                                    108,
+                                    97,
+                                    116,
+                                    102,
+                                    111,
+                                    114,
+                                    109,
                                     95,
-                                    91,
-                                    55,
-                                    145,
-                                    58,
-                                    140,
-                                    245,
-                                    133,
-                                    126,
-                                    255,
-                                    0,
-                                    169
+                                    102,
+                                    101,
+                                    101,
+                                    95,
+                                    118,
+                                    97,
+                                    117,
+                                    108,
+                                    116,
+                                    95,
+                                    97,
+                                    117,
+                                    116,
+                                    104,
+                                    95,
+                                    115,
+                                    101,
+                                    101,
+                                    100
                                 ]
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "platform_config",
+                    "docs": [
+                        "The platform config account"
+                    ]
+                },
+                {
+                    "name": "platform_fee_vault",
+                    "docs": [
+                        "The platform fee vault"
+                    ],
+                    "writable": true,
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "account",
+                                "path": "platform_config"
+                            },
+                            {
+                                "kind": "account",
+                                "path": "quote_mint"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "recipient_token_account",
+                    "docs": [
+                        "The address that receives the collected quote token fees"
+                    ],
+                    "writable": true,
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "account",
+                                "path": "platform_fee_wallet"
+                            },
+                            {
+                                "kind": "account",
+                                "path": "token_program"
                             },
                             {
                                 "kind": "account",
@@ -697,7 +1020,59 @@
                 {
                     "name": "user_base_token",
                     "writable": true,
-                    "signer": true
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "account",
+                                "path": "beneficiary"
+                            },
+                            {
+                                "kind": "account",
+                                "path": "base_token_program"
+                            },
+                            {
+                                "kind": "account",
+                                "path": "base_token_mint"
+                            }
+                        ],
+                        "program": {
+                            "kind": "const",
+                            "value": [
+                                140,
+                                151,
+                                37,
+                                143,
+                                78,
+                                36,
+                                137,
+                                241,
+                                187,
+                                61,
+                                16,
+                                41,
+                                20,
+                                142,
+                                13,
+                                131,
+                                11,
+                                90,
+                                19,
+                                153,
+                                218,
+                                255,
+                                16,
+                                132,
+                                4,
+                                142,
+                                123,
+                                216,
+                                219,
+                                233,
+                                248,
+                                89
+                            ]
+                        }
+                    }
                 },
                 {
                     "name": "base_token_mint",
@@ -1135,11 +1510,17 @@
                     }
                 },
                 {
+                    "name": "cpswap_config"
+                },
+                {
                     "name": "system_program",
                     "docs": [
                         "Required for account creation"
                     ],
                     "address": "11111111111111111111111111111111"
+                },
+                {
+                    "name": "transfer_fee_extension_authority"
                 }
             ],
             "args": [
@@ -1185,6 +1566,11 @@
                 },
                 {
                     "name": "beneficiary",
+                    "docs": [
+                        "The beneficiary is used to receive the allocated linear release of tokens.",
+                        "Once this account is set, it cannot be modified, so please ensure the validity of this account,",
+                        "otherwise, the unlocked tokens will not be claimable."
+                    ],
                     "writable": true
                 },
                 {
@@ -1537,6 +1923,603 @@
                     "type": {
                         "defined": {
                             "name": "VestingParams"
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "initialize_v2",
+            "docs": [
+                "Initializes a new trading pool",
+                "# Arguments",
+                "",
+                "* `ctx` - The context of accounts containing pool and token information",
+                ""
+            ],
+            "discriminator": [
+                67,
+                153,
+                175,
+                39,
+                218,
+                16,
+                38,
+                32
+            ],
+            "accounts": [
+                {
+                    "name": "payer",
+                    "docs": [
+                        "The account paying for the initialization costs",
+                        "This can be any account with sufficient SOL to cover the transaction"
+                    ],
+                    "writable": true,
+                    "signer": true
+                },
+                {
+                    "name": "creator"
+                },
+                {
+                    "name": "global_config",
+                    "docs": [
+                        "Global configuration account containing protocol-wide settings",
+                        "Includes settings like quote token mint and fee parameters"
+                    ]
+                },
+                {
+                    "name": "platform_config",
+                    "docs": [
+                        "Platform configuration account containing platform info",
+                        "Includes settings like the fee_rate, name, web, img of the platform"
+                    ]
+                },
+                {
+                    "name": "authority",
+                    "docs": [
+                        "PDA that acts as the authority for pool vault and mint operations",
+                        "Generated using AUTH_SEED"
+                    ],
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "const",
+                                "value": [
+                                    118,
+                                    97,
+                                    117,
+                                    108,
+                                    116,
+                                    95,
+                                    97,
+                                    117,
+                                    116,
+                                    104,
+                                    95,
+                                    115,
+                                    101,
+                                    101,
+                                    100
+                                ]
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "pool_state",
+                    "docs": [
+                        "Account that stores the pool's state and parameters",
+                        "PDA generated using POOL_SEED and both token mints"
+                    ],
+                    "writable": true,
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "const",
+                                "value": [
+                                    112,
+                                    111,
+                                    111,
+                                    108
+                                ]
+                            },
+                            {
+                                "kind": "account",
+                                "path": "base_mint"
+                            },
+                            {
+                                "kind": "account",
+                                "path": "quote_mint"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "base_mint",
+                    "docs": [
+                        "The mint for the base token (token being sold)",
+                        "Created in this instruction with specified decimals"
+                    ],
+                    "writable": true,
+                    "signer": true
+                },
+                {
+                    "name": "quote_mint",
+                    "docs": [
+                        "The mint for the quote token (token used to buy)",
+                        "Must match the quote_mint specified in global config"
+                    ]
+                },
+                {
+                    "name": "base_vault",
+                    "docs": [
+                        "Token account that holds the pool's base tokens",
+                        "PDA generated using POOL_VAULT_SEED"
+                    ],
+                    "writable": true,
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "const",
+                                "value": [
+                                    112,
+                                    111,
+                                    111,
+                                    108,
+                                    95,
+                                    118,
+                                    97,
+                                    117,
+                                    108,
+                                    116
+                                ]
+                            },
+                            {
+                                "kind": "account",
+                                "path": "pool_state"
+                            },
+                            {
+                                "kind": "account",
+                                "path": "base_mint"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "quote_vault",
+                    "docs": [
+                        "Token account that holds the pool's quote tokens",
+                        "PDA generated using POOL_VAULT_SEED"
+                    ],
+                    "writable": true,
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "const",
+                                "value": [
+                                    112,
+                                    111,
+                                    111,
+                                    108,
+                                    95,
+                                    118,
+                                    97,
+                                    117,
+                                    108,
+                                    116
+                                ]
+                            },
+                            {
+                                "kind": "account",
+                                "path": "pool_state"
+                            },
+                            {
+                                "kind": "account",
+                                "path": "quote_mint"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "metadata_account",
+                    "docs": [
+                        "Account to store the base token's metadata",
+                        "Created using Metaplex metadata program"
+                    ],
+                    "writable": true
+                },
+                {
+                    "name": "base_token_program",
+                    "docs": [
+                        "SPL Token program for the base token",
+                        "Must be the standard Token program"
+                    ],
+                    "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                },
+                {
+                    "name": "quote_token_program",
+                    "docs": [
+                        "SPL Token program for the quote token"
+                    ],
+                    "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                },
+                {
+                    "name": "metadata_program",
+                    "docs": [
+                        "Metaplex Token Metadata program",
+                        "Used to create metadata for the base token"
+                    ],
+                    "address": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+                },
+                {
+                    "name": "system_program",
+                    "docs": [
+                        "Required for account creation"
+                    ],
+                    "address": "11111111111111111111111111111111"
+                },
+                {
+                    "name": "rent_program",
+                    "docs": [
+                        "Required for rent exempt calculations"
+                    ],
+                    "address": "SysvarRent111111111111111111111111111111111"
+                },
+                {
+                    "name": "event_authority",
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "const",
+                                "value": [
+                                    95,
+                                    95,
+                                    101,
+                                    118,
+                                    101,
+                                    110,
+                                    116,
+                                    95,
+                                    97,
+                                    117,
+                                    116,
+                                    104,
+                                    111,
+                                    114,
+                                    105,
+                                    116,
+                                    121
+                                ]
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "program"
+                }
+            ],
+            "args": [
+                {
+                    "name": "base_mint_param",
+                    "type": {
+                        "defined": {
+                            "name": "MintParams"
+                        }
+                    }
+                },
+                {
+                    "name": "curve_param",
+                    "type": {
+                        "defined": {
+                            "name": "CurveParams"
+                        }
+                    }
+                },
+                {
+                    "name": "vesting_param",
+                    "type": {
+                        "defined": {
+                            "name": "VestingParams"
+                        }
+                    }
+                },
+                {
+                    "name": "amm_fee_on",
+                    "type": {
+                        "defined": {
+                            "name": "AmmCreatorFeeOn"
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "initialize_with_token_2022",
+            "docs": [
+                "Initializes a new trading pool with base token belongs to spl-token-2022,",
+                "pool created by this instruction must be migrated to cpswap after fundraising ends, i.e., curve_param.migrate_type = 1",
+                "# Arguments",
+                "",
+                "* `ctx` - The context of accounts containing pool and token information",
+                ""
+            ],
+            "discriminator": [
+                37,
+                190,
+                126,
+                222,
+                44,
+                154,
+                171,
+                17
+            ],
+            "accounts": [
+                {
+                    "name": "payer",
+                    "docs": [
+                        "The account paying for the initialization costs",
+                        "This can be any account with sufficient SOL to cover the transaction"
+                    ],
+                    "writable": true,
+                    "signer": true
+                },
+                {
+                    "name": "creator"
+                },
+                {
+                    "name": "global_config",
+                    "docs": [
+                        "Global configuration account containing protocol-wide settings",
+                        "Includes settings like quote token mint and fee parameters"
+                    ]
+                },
+                {
+                    "name": "platform_config",
+                    "docs": [
+                        "Platform configuration account containing platform info",
+                        "Includes settings like the fee_rate, name, web, img of the platform"
+                    ]
+                },
+                {
+                    "name": "authority",
+                    "docs": [
+                        "PDA that acts as the authority for pool vault and mint operations",
+                        "Generated using AUTH_SEED"
+                    ],
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "const",
+                                "value": [
+                                    118,
+                                    97,
+                                    117,
+                                    108,
+                                    116,
+                                    95,
+                                    97,
+                                    117,
+                                    116,
+                                    104,
+                                    95,
+                                    115,
+                                    101,
+                                    101,
+                                    100
+                                ]
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "pool_state",
+                    "docs": [
+                        "Account that stores the pool's state and parameters",
+                        "PDA generated using POOL_SEED and both token mints"
+                    ],
+                    "writable": true,
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "const",
+                                "value": [
+                                    112,
+                                    111,
+                                    111,
+                                    108
+                                ]
+                            },
+                            {
+                                "kind": "account",
+                                "path": "base_mint"
+                            },
+                            {
+                                "kind": "account",
+                                "path": "quote_mint"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "base_mint",
+                    "docs": [
+                        "The mint for the base token (token being sold)",
+                        "Created in this instruction with specified decimals"
+                    ],
+                    "writable": true,
+                    "signer": true
+                },
+                {
+                    "name": "quote_mint",
+                    "docs": [
+                        "The mint for the quote token (token used to buy)",
+                        "Must match the quote_mint specified in global config"
+                    ]
+                },
+                {
+                    "name": "base_vault",
+                    "docs": [
+                        "Token account that holds the pool's base tokens",
+                        "PDA generated using POOL_VAULT_SEED"
+                    ],
+                    "writable": true,
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "const",
+                                "value": [
+                                    112,
+                                    111,
+                                    111,
+                                    108,
+                                    95,
+                                    118,
+                                    97,
+                                    117,
+                                    108,
+                                    116
+                                ]
+                            },
+                            {
+                                "kind": "account",
+                                "path": "pool_state"
+                            },
+                            {
+                                "kind": "account",
+                                "path": "base_mint"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "quote_vault",
+                    "docs": [
+                        "Token account that holds the pool's quote tokens",
+                        "PDA generated using POOL_VAULT_SEED"
+                    ],
+                    "writable": true,
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "const",
+                                "value": [
+                                    112,
+                                    111,
+                                    111,
+                                    108,
+                                    95,
+                                    118,
+                                    97,
+                                    117,
+                                    108,
+                                    116
+                                ]
+                            },
+                            {
+                                "kind": "account",
+                                "path": "pool_state"
+                            },
+                            {
+                                "kind": "account",
+                                "path": "quote_mint"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "base_token_program",
+                    "docs": [
+                        "SPL Token program for the base token"
+                    ],
+                    "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+                },
+                {
+                    "name": "quote_token_program",
+                    "docs": [
+                        "SPL Token program for the quote token"
+                    ],
+                    "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                },
+                {
+                    "name": "system_program",
+                    "docs": [
+                        "Required for account creation"
+                    ],
+                    "address": "11111111111111111111111111111111"
+                },
+                {
+                    "name": "event_authority",
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "const",
+                                "value": [
+                                    95,
+                                    95,
+                                    101,
+                                    118,
+                                    101,
+                                    110,
+                                    116,
+                                    95,
+                                    97,
+                                    117,
+                                    116,
+                                    104,
+                                    111,
+                                    114,
+                                    105,
+                                    116,
+                                    121
+                                ]
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "program"
+                }
+            ],
+            "args": [
+                {
+                    "name": "base_mint_param",
+                    "type": {
+                        "defined": {
+                            "name": "MintParams"
+                        }
+                    }
+                },
+                {
+                    "name": "curve_param",
+                    "type": {
+                        "defined": {
+                            "name": "CurveParams"
+                        }
+                    }
+                },
+                {
+                    "name": "vesting_param",
+                    "type": {
+                        "defined": {
+                            "name": "VestingParams"
+                        }
+                    }
+                },
+                {
+                    "name": "amm_fee_on",
+                    "type": {
+                        "defined": {
+                            "name": "AmmCreatorFeeOn"
+                        }
+                    }
+                },
+                {
+                    "name": "transfer_fee_extension_param",
+                    "type": {
+                        "option": {
+                            "defined": {
+                                "name": "TransferFeeExtensionParams"
+                            }
                         }
                     }
                 }
@@ -2168,7 +3151,8 @@
                     "name": "base_mint",
                     "docs": [
                         "The mint for the base token (token being sold)"
-                    ]
+                    ],
+                    "writable": true
                 },
                 {
                     "name": "quote_mint",
@@ -2526,8 +3510,7 @@
                     "docs": [
                         "SPL Token program for the base token",
                         "Must be the standard Token program"
-                    ],
-                    "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                    ]
                 },
                 {
                     "name": "quote_token_program",
@@ -2566,6 +3549,77 @@
                 }
             ],
             "args": []
+        },
+        {
+            "name": "remove_platform_curve_param",
+            "docs": [
+                "Remove platform launch param",
+                "# Arguments",
+                "",
+                "* `ctx` - The context of accounts",
+                "* `index` - The index of the curve param to remove",
+                ""
+            ],
+            "discriminator": [
+                27,
+                30,
+                62,
+                169,
+                93,
+                224,
+                24,
+                145
+            ],
+            "accounts": [
+                {
+                    "name": "platform_admin",
+                    "docs": [
+                        "The account paying for the initialization costs"
+                    ],
+                    "signer": true
+                },
+                {
+                    "name": "platform_config",
+                    "docs": [
+                        "Platform config account to be changed"
+                    ],
+                    "writable": true,
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "const",
+                                "value": [
+                                    112,
+                                    108,
+                                    97,
+                                    116,
+                                    102,
+                                    111,
+                                    114,
+                                    109,
+                                    95,
+                                    99,
+                                    111,
+                                    110,
+                                    102,
+                                    105,
+                                    103
+                                ]
+                            },
+                            {
+                                "kind": "account",
+                                "path": "platform_admin"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "args": [
+                {
+                    "name": "index",
+                    "type": "u8"
+                }
+            ]
         },
         {
             "name": "sell_exact_in",
@@ -3072,6 +4126,100 @@
                     }
                 }
             ]
+        },
+        {
+            "name": "update_platform_curve_param",
+            "docs": [
+                "Update platform launch param",
+                "# Arguments",
+                "",
+                "* `ctx` - The context of accounts",
+                "* `bonding_curve_param` - Parameter to update",
+                ""
+            ],
+            "discriminator": [
+                138,
+                144,
+                138,
+                250,
+                220,
+                128,
+                4,
+                57
+            ],
+            "accounts": [
+                {
+                    "name": "platform_admin",
+                    "docs": [
+                        "The account paying for the initialization costs"
+                    ],
+                    "writable": true,
+                    "signer": true
+                },
+                {
+                    "name": "platform_config",
+                    "docs": [
+                        "Platform config account to be changed"
+                    ],
+                    "writable": true,
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "const",
+                                "value": [
+                                    112,
+                                    108,
+                                    97,
+                                    116,
+                                    102,
+                                    111,
+                                    114,
+                                    109,
+                                    95,
+                                    99,
+                                    111,
+                                    110,
+                                    102,
+                                    105,
+                                    103
+                                ]
+                            },
+                            {
+                                "kind": "account",
+                                "path": "platform_admin"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "global_config",
+                    "docs": [
+                        "Global configuration account containing protocol-wide settings",
+                        "Includes settings like quote token mint and fee parameters"
+                    ]
+                },
+                {
+                    "name": "system_program",
+                    "docs": [
+                        "System program for lamport transfers"
+                    ],
+                    "address": "11111111111111111111111111111111"
+                }
+            ],
+            "args": [
+                {
+                    "name": "index",
+                    "type": "u8"
+                },
+                {
+                    "name": "bonding_curve_param",
+                    "type": {
+                        "defined": {
+                            "name": "BondingCurveParam"
+                        }
+                    }
+                }
+            ]
         }
     ],
     "accounts": [
@@ -3262,9 +4410,123 @@
             "code": 6015,
             "name": "PoolNotMigrated",
             "msg": "Pool not migrated"
+        },
+        {
+            "code": 6016,
+            "name": "InvalidCpSwapConfig",
+            "msg": "The input cp swap config account is invalid"
+        },
+        {
+            "code": 6017,
+            "name": "NoSupportExtension",
+            "msg": "No support extension"
+        },
+        {
+            "code": 6018,
+            "name": "NotEnoughRemainingAccounts",
+            "msg": "Not enough remaining accounts"
+        },
+        {
+            "code": 6019,
+            "name": "TransferFeeCalculateNotMatch",
+            "msg": "TransferFee calculate not match"
+        },
+        {
+            "code": 6020,
+            "name": "CurveParamIsNotExist",
+            "msg": "Curve param is not exist"
         }
     ],
     "types": [
+        {
+            "name": "AmmCreatorFeeOn",
+            "docs": [
+                "migrate to cpmm, creator fee on quote token or both token"
+            ],
+            "type": {
+                "kind": "enum",
+                "variants": [
+                    {
+                        "name": "QuoteToken"
+                    },
+                    {
+                        "name": "BothToken"
+                    }
+                ]
+            }
+        },
+        {
+            "name": "BondingCurveParam",
+            "type": {
+                "kind": "struct",
+                "fields": [
+                    {
+                        "name": "migrate_type",
+                        "docs": [
+                            "Migrate to AMM or CpSwap, 0: amm， 1: cpswap，",
+                            "Neither 0 nor 1: invalid"
+                        ],
+                        "type": "u8"
+                    },
+                    {
+                        "name": "migrate_cpmm_fee_on",
+                        "docs": [
+                            "The migrate fee on, 0 means fee on the quote token, 1 means fee on both token",
+                            "Neither 0 nor 1: invalid"
+                        ],
+                        "type": "u8"
+                    },
+                    {
+                        "name": "supply",
+                        "docs": [
+                            "The supply of the token,",
+                            "0: invalid"
+                        ],
+                        "type": "u64"
+                    },
+                    {
+                        "name": "total_base_sell",
+                        "docs": [
+                            "The total base sell of the token",
+                            "0: invalid"
+                        ],
+                        "type": "u64"
+                    },
+                    {
+                        "name": "total_quote_fund_raising",
+                        "docs": [
+                            "The total quote fund raising of the token",
+                            "0: invalid"
+                        ],
+                        "type": "u64"
+                    },
+                    {
+                        "name": "total_locked_amount",
+                        "docs": [
+                            "total amount of tokens to be unlocked",
+                            "u64::MAX: invalid"
+                        ],
+                        "type": "u64"
+                    },
+                    {
+                        "name": "cliff_period",
+                        "docs": [
+                            "Waiting time in seconds before unlocking after fundraising ends",
+                            "u64::MAX: invalid"
+                        ],
+                        "type": "u64"
+                    },
+                    {
+                        "name": "unlock_period",
+                        "docs": [
+                            "Unlocking period in seconds",
+                            "u64::MAX: invalid"
+                        ],
+                        "type": "u64"
+                    }
+                ]
+            }
+        },
         {
             "name": "ClaimVestedEvent",
             "docs": [
@@ -3711,6 +4973,29 @@
                         }
                     },
                     {
+                        "name": "cpswap_config",
+                        "docs": [
+                            "The platform specifies the trade fee rate after migration to cp swap"
+                        ],
+                        "type": "pubkey"
+                    },
+                    {
+                        "name": "creator_fee_rate",
+                        "docs": [
+                            "Creator fee rate"
+                        ],
+                        "type": "u64"
+                    },
+                    {
+                        "name": "transfer_fee_extension_auth",
+                        "docs": [
+                            "If the base token belongs to token2022, then you can choose to support the transferfeeConfig extension, which includes permissions such as `transfer_fee_config_authority`` and `withdraw_withheld_authority`.",
+                            "When initializing mint, `withdraw_withheld_authority` and `transfer_fee_config_authority` both belongs to the contract.",
+                            "Once the token is migrated to AMM, the authorities will be reset to this value"
+                        ],
+                        "type": "pubkey"
+                    },
+                    {
                         "name": "padding",
                         "docs": [
                             "padding for future updates"
@@ -3718,9 +5003,70 @@
                         "type": {
                             "array": [
                                 "u8",
-                                256
+                                180
                             ]
                         }
+                    },
+                    {
+                        "name": "curve_params",
+                        "docs": [
+                            "The parameters for launching the pool"
+                        ],
+                        "type": {
+                            "vec": {
+                                "defined": {
+                                    "name": "PlatformCurveParam"
+                                }
+                            }
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "name": "PlatformConfigInfo",
+            "type": {
+                "kind": "struct",
+                "fields": [
+                    {
+                        "name": "fee_wallet",
+                        "type": "pubkey"
+                    },
+                    {
+                        "name": "nft_wallet",
+                        "type": "pubkey"
+                    },
+                    {
+                        "name": "migrate_nft_info",
+                        "type": {
+                            "defined": {
+                                "name": "MigrateNftInfo"
+                            }
+                        }
+                    },
+                    {
+                        "name": "fee_rate",
+                        "type": "u64"
+                    },
+                    {
+                        "name": "name",
+                        "type": "string"
+                    },
+                    {
+                        "name": "web",
+                        "type": "string"
+                    },
+                    {
+                        "name": "img",
+                        "type": "string"
+                    },
+                    {
+                        "name": "transfer_fee_extension_auth",
+                        "type": "pubkey"
+                    },
+                    {
+                        "name": "creator_fee_rate",
+                        "type": "u64"
                     }
                 ]
             }
@@ -3775,6 +5121,71 @@
                         "fields": [
                             "string"
                         ]
+                    },
+                    {
+                        "name": "CpSwapConfig"
+                    },
+                    {
+                        "name": "AllInfo",
+                        "fields": [
+                            {
+                                "defined": {
+                                    "name": "PlatformConfigInfo"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "name": "PlatformCurveParam",
+            "type": {
+                "kind": "struct",
+                "fields": [
+                    {
+                        "name": "epoch",
+                        "docs": [
+                            "The epoch for update interval, 0 means not update"
+                        ],
+                        "type": "u64"
+                    },
+                    {
+                        "name": "index",
+                        "docs": [
+                            "The curve params index"
+                        ],
+                        "type": "u8"
+                    },
+                    {
+                        "name": "global_config",
+                        "docs": [
+                            "The global config address"
+                        ],
+                        "type": "pubkey"
+                    },
+                    {
+                        "name": "bonding_curve_param",
+                        "docs": [
+                            "bonding curve param"
+                        ],
+                        "type": {
+                            "defined": {
+                                "name": "BondingCurveParam"
+                            }
+                        }
+                    },
+                    {
+                        "name": "padding",
+                        "docs": [
+                            "padding for future updates"
+                        ],
+                        "type": {
+                            "array": [
+                                "u64",
+                                50
+                            ]
+                        }
                     }
                 ]
             }
@@ -3788,7 +5199,8 @@
                 "* `fee_rate` - Fee rate of the platform",
                 "* `name` - Name of the platform",
                 "* `web` - Website of the platform",
-                "* `img` - Image link of the platform"
+                "* `img` - Image link of the platform",
+                "/// * `creator_fee_rate` - The fee rate charged by the creator for each transaction."
             ],
             "type": {
                 "kind": "struct",
@@ -3816,6 +5228,10 @@
                     {
                         "name": "img",
                         "type": "string"
+                    },
+                    {
+                        "name": "creator_fee_rate",
+                        "type": "u64"
                     }
                 ]
             }
@@ -3861,6 +5277,14 @@
                         "type": {
                             "defined": {
                                 "name": "VestingParams"
+                            }
+                        }
+                    },
+                    {
+                        "name": "amm_fee_on",
+                        "type": {
+                            "defined": {
+                                "name": "AmmCreatorFeeOn"
                             }
                         }
                     }
@@ -3917,7 +5341,7 @@
                     {
                         "name": "migrate_type",
                         "docs": [
-                            "Migrate to AMM or CpSwap"
+                            "Migrate to AMM or CpSwap, 0: amm， 1: cpswap"
                         ],
                         "type": "u8"
                     },
@@ -4060,14 +5484,39 @@
                         "type": "pubkey"
                     },
                     {
+                        "name": "token_program_flag",
+                        "docs": [
+                            "token program bits",
+                            "bit0: base token program flag",
+                            "0: spl_token_program",
+                            "1: token_program_2022",
+                            "",
+                            "bit1: quote token program flag",
+                            "0: spl_token_program",
+                            "1: token_program_2022"
+                        ],
+                        "type": "u8"
+                    },
+                    {
+                        "name": "amm_creator_fee_on",
+                        "docs": [
+                            "migrate to cpmm, creator fee on quote token or both token"
+                        ],
+                        "type": {
+                            "defined": {
+                                "name": "AmmCreatorFeeOn"
+                            }
+                        }
+                    },
+                    {
                         "name": "padding",
                         "docs": [
                             "padding for future updates"
                         ],
                         "type": {
                             "array": [
-                                "u64",
-                                8
+                                "u8",
+                                62
                             ]
                         }
                     }
@@ -4172,6 +5621,10 @@
                         "type": "u64"
                     },
                     {
+                        "name": "creator_fee",
+                        "type": "u64"
+                    },
+                    {
                         "name": "share_fee",
                         "type": "u64"
                     },
@@ -4190,6 +5643,32 @@
                                 "name": "PoolStatus"
                             }
                         }
+                    },
+                    {
+                        "name": "exact_in",
+                        "type": "bool"
+                    }
+                ]
+            }
+        },
+        {
+            "name": "TransferFeeExtensionParams",
+            "type": {
+                "kind": "struct",
+                "fields": [
+                    {
+                        "name": "transfer_fee_basis_points",
+                        "docs": [
+                            "denominator is 10000, currently, this value cannot exceed 5%, which is 500."
+                        ],
+                        "type": "u16"
+                    },
+                    {
+                        "name": "maximum_fee",
+                        "docs": [
+                            "Maximum fee on each transfers, the value must exceed supply * transfer_fee_basis_points / 10000"
+                        ],
+                        "type": "u64"
                     }
                 ]
             }
