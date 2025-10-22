@@ -40,7 +40,7 @@ IDL_PARSER = load_idl_parser("idl/raydium_launchlab_idl.json", verbose=True)
 load_dotenv()
 
 TOKEN_MINT_ADDRESS = Pubkey.from_string(
-    "MYcq5mUyoAtCfyDWYAWvioou3cgnYjnCvFd7U6fspot"
+    "YOUR_TOKEN_MINT_ADDRESS_HERE"
 )  # Replace with actual token mint address
 
 # Configuration constants
