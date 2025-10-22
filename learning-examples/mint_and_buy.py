@@ -205,6 +205,7 @@ def create_buy_instruction(
     creator_vault: Pubkey,
     token_amount: int,
     max_sol_cost: int,
+    track_volume: bool = True,
 ) -> Instruction:
     """Create the buy instruction."""
     accounts = [
@@ -242,10 +243,15 @@ def create_buy_instruction(
         ),
     ]
 
+    # Encode OptionBool for track_volume
+    # OptionBool: [0] = None, [1, 0] = Some(false), [1, 1] = Some(true)
+    track_volume_bytes = bytes([1, 1 if track_volume else 0])
+
     data = (
         BUY_DISCRIMINATOR
         + struct.pack("<Q", token_amount)
         + struct.pack("<Q", max_sol_cost)
+        + track_volume_bytes
     )
 
     return Instruction(PUMP_PROGRAM, data, accounts)
@@ -336,6 +342,7 @@ async def main():
             creator_vault=creator_vault,
             token_amount=expected_tokens,
             max_sol_cost=max_sol_cost,
+            track_volume=True,
         ),
     ]
 
