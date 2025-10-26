@@ -33,14 +33,23 @@ class LetsBonkEventParser(EventParser):
         self.address_provider = LetsBonkAddressProvider()
         self._idl_parser = idl_parser
 
-        # Get discriminators from injected IDL parser
+        # Get all initialize instruction discriminators from injected IDL parser
+        # LetsBonk has multiple initialize variants: initialize, initialize_v2, initialize_with_token_2022
         discriminators = self._idl_parser.get_instruction_discriminators()
-        self._initialize_discriminator_bytes = discriminators["initialize"]
-        self._initialize_discriminator = struct.unpack(
-            "<Q", self._initialize_discriminator_bytes
-        )[0]
+        self._initialize_discriminator_bytes_list = [
+            discriminators["initialize"],
+            discriminators["initialize_v2"],
+            discriminators["initialize_with_token_2022"],
+        ]
+        self._initialize_discriminators = {
+            struct.unpack("<Q", disc_bytes)[0]
+            for disc_bytes in self._initialize_discriminator_bytes_list
+        }
 
-        logger.info("LetsBonk event parser initialized with injected IDL parser")
+        logger.info(
+            f"LetsBonk event parser initialized with {len(self._initialize_discriminators)} "
+            f"initialize instruction variants"
+        )
 
     @property
     def platform(self) -> Platform:
@@ -76,7 +85,11 @@ class LetsBonkEventParser(EventParser):
         Returns:
             TokenInfo if token creation found, None otherwise
         """
-        if not instruction_data.startswith(self._initialize_discriminator_bytes):
+        # Check if instruction starts with any of the initialize discriminators
+        if not any(
+            instruction_data.startswith(disc_bytes)
+            for disc_bytes in self._initialize_discriminator_bytes_list
+        ):
             return None
 
         try:
@@ -93,7 +106,12 @@ class LetsBonkEventParser(EventParser):
             decoded = self._idl_parser.decode_instruction(
                 instruction_data, account_keys, accounts
             )
-            if not decoded or decoded["instruction_name"] != "initialize":
+            # Accept any of the initialize instruction variants
+            if not decoded or decoded["instruction_name"] not in {
+                "initialize",
+                "initialize_v2",
+                "initialize_with_token_2022",
+            }:
                 return None
 
             args = decoded.get("args", {})
@@ -219,9 +237,9 @@ class LetsBonkEventParser(EventParser):
         """Get instruction discriminators for token creation.
 
         Returns:
-            List of discriminator bytes to match
+            List of discriminator bytes to match (all initialize variants)
         """
-        return [self._initialize_discriminator_bytes]
+        return self._initialize_discriminator_bytes_list
 
     def parse_token_creation_from_block(self, block_data: dict) -> TokenInfo | None:
         """Parse token creation from block data (for block listener).
@@ -259,11 +277,11 @@ class LetsBonkEventParser(EventParser):
 
                             ix_data = bytes(ix.data)
 
-                            # Check for initialize discriminator
+                            # Check for any initialize discriminator variant
                             if len(ix_data) >= 8:
                                 discriminator = struct.unpack("<Q", ix_data[:8])[0]
 
-                                if discriminator == self._initialize_discriminator:
+                                if discriminator in self._initialize_discriminators:
                                     # Token creation should have substantial data and many accounts
                                     if len(ix_data) <= 8 or len(ix.accounts) < 10:
                                         continue
@@ -318,7 +336,7 @@ class LetsBonkEventParser(EventParser):
                             if len(ix_data) >= 8:
                                 discriminator = struct.unpack("<Q", ix_data[:8])[0]
 
-                                if discriminator == self._initialize_discriminator:
+                                if discriminator in self._initialize_discriminators:
                                     if len(ix_data) <= 8 or len(ix["accounts"]) < 10:
                                         continue
 
