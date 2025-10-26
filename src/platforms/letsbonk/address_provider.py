@@ -23,9 +23,20 @@ class LetsBonkAddresses:
     PROGRAM: Final[Pubkey] = Pubkey.from_string(
         "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj"
     )
+    # NOTE: GLOBAL_CONFIG is NOT constant across all pools!
+    # Each pool can be initialized with different global_config values. Different global_configs
+    # may define different program-wide settings, versions, or operational parameters.
+    # The correct global_config for each pool is extracted during pool initialization
+    # and stored in TokenInfo.global_config. This value below is a default, used as a fallback.
     GLOBAL_CONFIG: Final[Pubkey] = Pubkey.from_string(
         "6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX"
     )
+    # NOTE: PLATFORM_CONFIG is NOT constant across all pools!
+    # Each pool is initialized with a specific platform_config that defines its fee structure,
+    # launch restrictions, and other settings. Different pools may use different platform_configs
+    # (e.g., standard launches vs partner launches). The correct platform_config for each pool
+    # is extracted during pool initialization and stored in TokenInfo.platform_config.
+    # This value below is the default/most common platform_config, used as a fallback.
     PLATFORM_CONFIG: Final[Pubkey] = Pubkey.from_string(
         "5thqcDwKp5QQ8US4XRMoseGeGbmLKMmoKZmS6zHrQAsA"
     )
@@ -285,11 +296,25 @@ class LetsBonkAddressProvider(AddressProvider):
         """
         additional_accounts = self.get_additional_accounts(token_info)
 
+        # Use global_config from TokenInfo if available, otherwise use default
+        global_config = (
+            token_info.global_config
+            if token_info.global_config
+            else LetsBonkAddresses.GLOBAL_CONFIG
+        )
+
+        # Use platform_config from TokenInfo if available, otherwise use default
+        platform_config = (
+            token_info.platform_config
+            if token_info.platform_config
+            else LetsBonkAddresses.PLATFORM_CONFIG
+        )
+
         accounts = {
             "payer": user,
             "authority": additional_accounts["authority"],
-            "global_config": LetsBonkAddresses.GLOBAL_CONFIG,
-            "platform_config": LetsBonkAddresses.PLATFORM_CONFIG,
+            "global_config": global_config,
+            "platform_config": platform_config,
             "pool_state": additional_accounts["pool_state"],
             "user_base_token": self.derive_user_token_account(user, token_info.mint),
             "base_vault": additional_accounts["base_vault"],
@@ -301,7 +326,7 @@ class LetsBonkAddressProvider(AddressProvider):
             "event_authority": additional_accounts["event_authority"],
             "program": LetsBonkAddresses.PROGRAM,
             "system_program": SystemAddresses.SYSTEM_PROGRAM,
-            "platform_fee_vault": self.derive_platform_fee_vault(),
+            "platform_fee_vault": self.derive_platform_fee_vault(platform_config),
         }
 
         # Add creator fee vault if creator is known
@@ -326,11 +351,25 @@ class LetsBonkAddressProvider(AddressProvider):
         """
         additional_accounts = self.get_additional_accounts(token_info)
 
+        # Use global_config from TokenInfo if available, otherwise use default
+        global_config = (
+            token_info.global_config
+            if token_info.global_config
+            else LetsBonkAddresses.GLOBAL_CONFIG
+        )
+
+        # Use platform_config from TokenInfo if available, otherwise use default
+        platform_config = (
+            token_info.platform_config
+            if token_info.platform_config
+            else LetsBonkAddresses.PLATFORM_CONFIG
+        )
+
         accounts = {
             "payer": user,
             "authority": additional_accounts["authority"],
-            "global_config": LetsBonkAddresses.GLOBAL_CONFIG,
-            "platform_config": LetsBonkAddresses.PLATFORM_CONFIG,
+            "global_config": global_config,
+            "platform_config": platform_config,
             "pool_state": additional_accounts["pool_state"],
             "user_base_token": self.derive_user_token_account(user, token_info.mint),
             "base_vault": additional_accounts["base_vault"],
@@ -342,7 +381,7 @@ class LetsBonkAddressProvider(AddressProvider):
             "event_authority": additional_accounts["event_authority"],
             "program": LetsBonkAddresses.PROGRAM,
             "system_program": SystemAddresses.SYSTEM_PROGRAM,
-            "platform_fee_vault": self.derive_platform_fee_vault(),
+            "platform_fee_vault": self.derive_platform_fee_vault(platform_config),
         }
 
         # Add creator fee vault if creator is known

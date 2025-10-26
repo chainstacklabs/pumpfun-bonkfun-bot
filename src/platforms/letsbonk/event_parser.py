@@ -136,15 +136,18 @@ class LetsBonkEventParser(EventParser):
             # ... other accounts
 
             creator = get_account_key(0)  # First signer account (creator)
+            global_config = get_account_key(2)  # global_config account
+            platform_config = get_account_key(3)  # platform_config account
             pool_state = get_account_key(5)  # pool_state account
             base_mint = get_account_key(6)  # base_mint account
             base_vault = get_account_key(8)  # base_vault account
             quote_vault = get_account_key(9)  # quote_vault account
 
-            if not all([creator, pool_state, base_mint, base_vault, quote_vault]):
+            if not all([creator, global_config, platform_config, pool_state, base_mint, base_vault, quote_vault]):
                 logger.debug(
-                    f"Missing required accounts: creator={creator}, pool_state={pool_state}, "
-                    f"base_mint={base_mint}, base_vault={base_vault}, quote_vault={quote_vault}"
+                    f"Missing required accounts: creator={creator}, global_config={global_config}, "
+                    f"platform_config={platform_config}, pool_state={pool_state}, base_mint={base_mint}, "
+                    f"base_vault={base_vault}, quote_vault={quote_vault}"
                 )
                 return None
 
@@ -157,6 +160,8 @@ class LetsBonkEventParser(EventParser):
                 pool_state=pool_state,
                 base_vault=base_vault,
                 quote_vault=quote_vault,
+                global_config=global_config,
+                platform_config=platform_config,
                 user=creator,
                 creator=creator,
                 creation_timestamp=monotonic(),

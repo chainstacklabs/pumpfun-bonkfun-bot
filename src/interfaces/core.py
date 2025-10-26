@@ -38,6 +38,8 @@ class TokenInfo:
     pool_state: Pubkey | None = None  # LetsBonk specific
     base_vault: Pubkey | None = None  # LetsBonk specific
     quote_vault: Pubkey | None = None  # LetsBonk specific
+    global_config: Pubkey | None = None  # LetsBonk specific
+    platform_config: Pubkey | None = None  # LetsBonk specific
 
     # Common fields
     user: Pubkey | None = None
