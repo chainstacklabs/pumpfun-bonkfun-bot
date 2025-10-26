@@ -112,9 +112,8 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
         instructions.append(initialize_wsol_ix)
 
         # 4. Build buy_exact_in instruction with correct account ordering
-        # Based on the IDL and manual examples, the account order should be:
         buy_accounts = [
-            AccountMeta(pubkey=user, is_signer=True, is_writable=True),  # payer
+            AccountMeta(pubkey=user, is_signer=True, is_writable=False),  # payer
             AccountMeta(
                 pubkey=accounts_info["authority"], is_signer=False, is_writable=False
             ),  # authority
@@ -166,6 +165,31 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
                 pubkey=accounts_info["program"], is_signer=False, is_writable=False
             ),  # program
         ]
+
+        # Add remaining accounts (required by the program for fee collection)
+        # These are not explicitly listed in IDL but required by the program
+        buy_accounts.append(
+            AccountMeta(
+                pubkey=accounts_info["system_program"],
+                is_signer=False,
+                is_writable=False,
+            )
+        )  # #16: System Program
+        buy_accounts.append(
+            AccountMeta(
+                pubkey=accounts_info["platform_fee_vault"],
+                is_signer=False,
+                is_writable=True,
+            )
+        )  # #17: Platform fee vault
+        if "creator_fee_vault" in accounts_info:
+            buy_accounts.append(
+                AccountMeta(
+                    pubkey=accounts_info["creator_fee_vault"],
+                    is_signer=False,
+                    is_writable=True,
+                )
+            )  # #18: Creator fee vault
 
         # Build instruction data: discriminator + amount_in + minimum_amount_out + share_fee_rate
         SHARE_FEE_RATE = 0  # No sharing fee
@@ -244,7 +268,7 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
 
         # 3. Build sell_exact_in instruction with correct account ordering
         sell_accounts = [
-            AccountMeta(pubkey=user, is_signer=True, is_writable=True),  # payer
+            AccountMeta(pubkey=user, is_signer=True, is_writable=False),  # payer
             AccountMeta(
                 pubkey=accounts_info["authority"], is_signer=False, is_writable=False
             ),  # authority
@@ -296,6 +320,31 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
                 pubkey=accounts_info["program"], is_signer=False, is_writable=False
             ),  # program
         ]
+
+        # Add remaining accounts (required by the program for fee collection)
+        # These are not explicitly listed in IDL but required by the program
+        sell_accounts.append(
+            AccountMeta(
+                pubkey=accounts_info["system_program"],
+                is_signer=False,
+                is_writable=False,
+            )
+        )  # #16: System Program
+        sell_accounts.append(
+            AccountMeta(
+                pubkey=accounts_info["platform_fee_vault"],
+                is_signer=False,
+                is_writable=True,
+            )
+        )  # #17: Platform fee vault
+        if "creator_fee_vault" in accounts_info:
+            sell_accounts.append(
+                AccountMeta(
+                    pubkey=accounts_info["creator_fee_vault"],
+                    is_signer=False,
+                    is_writable=True,
+                )
+            )  # #18: Creator fee vault
 
         # Build instruction data: discriminator + amount_in + minimum_amount_out + share_fee_rate
         SHARE_FEE_RATE = 0  # No sharing fee
@@ -473,7 +522,7 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
         if config_override is not None:
             return config_override
         # Buy operations: ATA creation + WSOL creation/init/close + buy instruction
-        return 100_000
+        return 150_000
 
     def get_sell_compute_unit_limit(self, config_override: int | None = None) -> int:
         """Get the recommended compute unit limit for LetsBonk sell operations.
@@ -487,4 +536,4 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
         if config_override is not None:
             return config_override
         # Sell operations: WSOL creation/init/close + sell instruction
-        return 60_000
+        return 150_000

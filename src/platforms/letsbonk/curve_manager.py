@@ -186,6 +186,9 @@ class LetsBonkCurveManager(CurveManager):
             "real_quote": decoded_pool_state.get("real_quote", 0),
             "status": decoded_pool_state.get("status", 0),
             "supply": decoded_pool_state.get("supply", 0),
+            "creator": decoded_pool_state.get("creator"),  # Creator pubkey (as base58 string)
+            "base_vault": decoded_pool_state.get("base_vault"),  # Base vault pubkey
+            "quote_vault": decoded_pool_state.get("quote_vault"),  # Quote vault pubkey
         }
 
         # Calculate additional metrics

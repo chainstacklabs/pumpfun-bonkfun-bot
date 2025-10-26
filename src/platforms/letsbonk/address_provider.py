@@ -27,7 +27,7 @@ class LetsBonkAddresses:
         "6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX"
     )
     PLATFORM_CONFIG: Final[Pubkey] = Pubkey.from_string(
-        "FfYek5vEz23cMkWsdJwG2oa6EphsvXSHrGpdALN4g6W1"
+        "5thqcDwKp5QQ8US4XRMoseGeGbmLKMmoKZmS6zHrQAsA"
     )
 
 
@@ -212,6 +212,53 @@ class LetsBonkAddressProvider(AddressProvider):
         )
         return event_authority_pda
 
+    def derive_creator_fee_vault(
+        self, creator: Pubkey, quote_mint: Pubkey | None = None
+    ) -> Pubkey:
+        """Derive the creator fee vault PDA.
+
+        This vault accumulates creator fees from trades.
+
+        Args:
+            creator: The pool creator's pubkey
+            quote_mint: The quote token mint (defaults to WSOL)
+
+        Returns:
+            Creator fee vault address
+        """
+        if quote_mint is None:
+            quote_mint = SystemAddresses.SOL_MINT
+
+        creator_fee_vault, _ = Pubkey.find_program_address(
+            [bytes(creator), bytes(quote_mint)], LetsBonkAddresses.PROGRAM
+        )
+        return creator_fee_vault
+
+    def derive_platform_fee_vault(
+        self, platform_config: Pubkey | None = None, quote_mint: Pubkey | None = None
+    ) -> Pubkey:
+        """Derive the platform fee vault PDA.
+
+        This vault accumulates platform fees from trades.
+
+        Args:
+            platform_config: The platform config account (defaults to LetsBonk config)
+            quote_mint: The quote token mint (defaults to WSOL)
+
+        Returns:
+            Platform fee vault address
+        """
+        if platform_config is None:
+            platform_config = LetsBonkAddresses.PLATFORM_CONFIG
+
+        if quote_mint is None:
+            quote_mint = SystemAddresses.SOL_MINT
+
+        platform_fee_vault, _ = Pubkey.find_program_address(
+            [bytes(platform_config), bytes(quote_mint)], LetsBonkAddresses.PROGRAM
+        )
+        return platform_fee_vault
+
     def create_wsol_account_with_seed(self, payer: Pubkey, seed: str) -> Pubkey:
         """Create a WSOL account address using createAccountWithSeed pattern.
 
@@ -238,7 +285,7 @@ class LetsBonkAddressProvider(AddressProvider):
         """
         additional_accounts = self.get_additional_accounts(token_info)
 
-        return {
+        accounts = {
             "payer": user,
             "authority": additional_accounts["authority"],
             "global_config": LetsBonkAddresses.GLOBAL_CONFIG,
@@ -253,7 +300,17 @@ class LetsBonkAddressProvider(AddressProvider):
             "quote_token_program": SystemAddresses.TOKEN_PROGRAM,
             "event_authority": additional_accounts["event_authority"],
             "program": LetsBonkAddresses.PROGRAM,
+            "system_program": SystemAddresses.SYSTEM_PROGRAM,
+            "platform_fee_vault": self.derive_platform_fee_vault(),
         }
+
+        # Add creator fee vault if creator is known
+        if token_info.creator:
+            accounts["creator_fee_vault"] = self.derive_creator_fee_vault(
+                token_info.creator
+            )
+
+        return accounts
 
     def get_sell_instruction_accounts(
         self, token_info: TokenInfo, user: Pubkey
@@ -269,7 +326,7 @@ class LetsBonkAddressProvider(AddressProvider):
         """
         additional_accounts = self.get_additional_accounts(token_info)
 
-        return {
+        accounts = {
             "payer": user,
             "authority": additional_accounts["authority"],
             "global_config": LetsBonkAddresses.GLOBAL_CONFIG,
@@ -284,7 +341,17 @@ class LetsBonkAddressProvider(AddressProvider):
             "quote_token_program": SystemAddresses.TOKEN_PROGRAM,
             "event_authority": additional_accounts["event_authority"],
             "program": LetsBonkAddresses.PROGRAM,
+            "system_program": SystemAddresses.SYSTEM_PROGRAM,
+            "platform_fee_vault": self.derive_platform_fee_vault(),
         }
+
+        # Add creator fee vault if creator is known
+        if token_info.creator:
+            accounts["creator_fee_vault"] = self.derive_creator_fee_vault(
+                token_info.creator
+            )
+
+        return accounts
 
     def get_wsol_account_creation_accounts(
         self, user: Pubkey, wsol_account: Pubkey
