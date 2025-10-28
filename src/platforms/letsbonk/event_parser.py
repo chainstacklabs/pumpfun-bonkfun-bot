@@ -143,7 +143,17 @@ class LetsBonkEventParser(EventParser):
             base_vault = get_account_key(8)  # base_vault account
             quote_vault = get_account_key(9)  # quote_vault account
 
-            if not all([creator, global_config, platform_config, pool_state, base_mint, base_vault, quote_vault]):
+            if not all(
+                [
+                    creator,
+                    global_config,
+                    platform_config,
+                    pool_state,
+                    base_mint,
+                    base_vault,
+                    quote_vault,
+                ]
+            ):
                 logger.debug(
                     f"Missing required accounts: creator={creator}, global_config={global_config}, "
                     f"platform_config={platform_config}, pool_state={pool_state}, base_mint={base_mint}, "

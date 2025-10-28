@@ -12,7 +12,9 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 LAMPORTS_PER_SOL: Final[int] = 1_000_000_000
 TOKEN_DECIMALS: Final[int] = 6
-CURVE_ADDRESS: Final[str] = "YOUR_BONDING_CURVE_ADDRESS_HERE"  # Replace with actual bonding curve address
+CURVE_ADDRESS: Final[str] = (
+    "YOUR_BONDING_CURVE_ADDRESS_HERE"  # Replace with actual bonding curve address
+)
 
 # Here and later all the discriminators are precalculated. See learning-examples/calculate_discriminator.py
 EXPECTED_DISCRIMINATOR: Final[bytes] = struct.pack("<Q", 6966180631402821399)

@@ -111,7 +111,9 @@ class PlatformAwareBuyer(Trader):
                 compute_unit_limit=instruction_builder.get_buy_compute_unit_limit(
                     self._get_cu_override("buy", token_info.platform)
                 ),
-                account_data_size_limit=self._get_cu_override("account_data_size", token_info.platform),
+                account_data_size_limit=self._get_cu_override(
+                    "account_data_size", token_info.platform
+                ),
             )
 
             success = await self.client.confirm_transaction(tx_signature)
@@ -155,17 +157,17 @@ class PlatformAwareBuyer(Trader):
 
     def _get_cu_override(self, operation: str, platform: Platform) -> int | None:
         """Get compute unit override from configuration.
-        
+
         Args:
             operation: "buy" or "sell"
             platform: Trading platform (unused - each config is platform-specific)
-            
+
         Returns:
             CU override value if configured, None otherwise
         """
         if not self.compute_units:
             return None
-            
+
         # Just check for operation override (buy/sell)
         return self.compute_units.get(operation)
 
@@ -235,7 +237,9 @@ class PlatformAwareSeller(Trader):
                 (expected_sol_output * (1 - self.slippage)) * LAMPORTS_PER_SOL
             )
 
-            logger.info(f"Selling {token_balance_decimal} tokens on {token_info.platform.value}")
+            logger.info(
+                f"Selling {token_balance_decimal} tokens on {token_info.platform.value}"
+            )
             logger.info(f"Expected SOL output: {expected_sol_output:.8f} SOL")
             logger.info(
                 f"Minimum SOL output (with {self.slippage * 100:.1f}% slippage): {min_sol_output / LAMPORTS_PER_SOL:.8f} SOL"
@@ -267,7 +271,9 @@ class PlatformAwareSeller(Trader):
                 compute_unit_limit=instruction_builder.get_sell_compute_unit_limit(
                     self._get_cu_override("sell", token_info.platform)
                 ),
-                account_data_size_limit=self._get_cu_override("account_data_size", token_info.platform),
+                account_data_size_limit=self._get_cu_override(
+                    "account_data_size", token_info.platform
+                ),
             )
 
             success = await self.client.confirm_transaction(tx_signature)
@@ -311,16 +317,16 @@ class PlatformAwareSeller(Trader):
 
     def _get_cu_override(self, operation: str, platform: Platform) -> int | None:
         """Get compute unit override from configuration.
-        
+
         Args:
             operation: "buy" or "sell"
             platform: Trading platform (unused - each config is platform-specific)
-            
+
         Returns:
             CU override value if configured, None otherwise
         """
         if not self.compute_units:
             return None
-            
+
         # Just check for operation override (buy/sell)
         return self.compute_units.get(operation)

@@ -16,7 +16,9 @@ load_dotenv()
 
 # Constants
 RPC_URL: Final[str] = os.getenv("SOLANA_NODE_RPC_ENDPOINT")
-TOKEN_MINT: Final[str] = "YOUR_TOKEN_MINT_ADDRESS_HERE"  # Replace with actual token mint address
+TOKEN_MINT: Final[str] = (
+    "YOUR_TOKEN_MINT_ADDRESS_HERE"  # Replace with actual token mint address
+)
 PUMP_PROGRAM_ID: Final[Pubkey] = Pubkey.from_string(
     "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 )

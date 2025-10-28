@@ -4,6 +4,7 @@ Solana client abstraction for blockchain operations.
 
 import asyncio
 import json
+import struct
 from typing import Any
 
 import aiohttp
@@ -44,8 +45,6 @@ def set_loaded_accounts_data_size_limit(bytes_limit: int) -> Instruction:
     Reference:
         https://www.anza.xyz/blog/cu-optimization-with-setloadedaccountsdatasizelimit
     """
-    import struct
-
     COMPUTE_BUDGET_PROGRAM = Pubkey.from_string(
         "ComputeBudget111111111111111111111111111111"
     )
