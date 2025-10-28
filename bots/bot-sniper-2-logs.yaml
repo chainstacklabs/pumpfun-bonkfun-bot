@@ -57,6 +57,13 @@ compute_units:
   # buy: 100_000    # Buy operations (ATA creation + trading)
   # sell: 60_000    # Sell operations (just trading)
 
+  # Account data size optimization (reduces CU cost and improves tx priority)
+  # Reduces CU cost from 16k to ~128 CU by limiting loaded account data.
+  # Default is 64MB (16k CU). Setting to 512KB significantly reduces overhead.
+  # Note: Savings don't show in "consumed CU" but improve tx priority/cost.
+  # Reference: https://www.anza.xyz/blog/cu-optimization-with-setloadedaccountsdatasizelimit
+  account_data_size: 512_000 # 512KB limit
+
 # Filters for token selection
 filters:
   match_string: null # Only process tokens with this string in name/symbol

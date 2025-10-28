@@ -111,6 +111,7 @@ class PlatformAwareBuyer(Trader):
                 compute_unit_limit=instruction_builder.get_buy_compute_unit_limit(
                     self._get_cu_override("buy", token_info.platform)
                 ),
+                account_data_size_limit=self._get_cu_override("account_data_size", token_info.platform),
             )
 
             success = await self.client.confirm_transaction(tx_signature)
@@ -266,6 +267,7 @@ class PlatformAwareSeller(Trader):
                 compute_unit_limit=instruction_builder.get_sell_compute_unit_limit(
                     self._get_cu_override("sell", token_info.platform)
                 ),
+                account_data_size_limit=self._get_cu_override("account_data_size", token_info.platform),
             )
 
             success = await self.client.confirm_transaction(tx_signature)
