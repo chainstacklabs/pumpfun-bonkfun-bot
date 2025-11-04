@@ -318,7 +318,7 @@ async def buy_pump_swap(
 
     # Define all accounts needed for the buy instruction
     accounts = [
-        AccountMeta(pubkey=pump_fun_amm_market, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=pump_fun_amm_market, is_signer=False, is_writable=True),
         AccountMeta(pubkey=payer.pubkey(), is_signer=True, is_writable=True),
         AccountMeta(pubkey=PUMP_SWAP_GLOBAL_CONFIG, is_signer=False, is_writable=False),
         AccountMeta(pubkey=base_mint, is_signer=False, is_writable=False),
@@ -365,6 +365,7 @@ async def buy_pump_swap(
         BUY_DISCRIMINATOR
         + struct.pack("<Q", base_amount_out)
         + struct.pack("<Q", max_sol_input)
+        + struct.pack("<B", 1)  # track_volume: 1 = true (enable volume tracking)
     )
 
     compute_limit_ix = set_compute_unit_limit(COMPUTE_UNIT_BUDGET)

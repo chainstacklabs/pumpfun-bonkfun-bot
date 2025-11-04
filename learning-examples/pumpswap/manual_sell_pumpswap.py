@@ -308,7 +308,7 @@ async def sell_pump_swap(
 
     # Define all accounts needed for the sell instruction
     accounts = [
-        AccountMeta(pubkey=pump_fun_amm_market, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=pump_fun_amm_market, is_signer=False, is_writable=True),
         AccountMeta(pubkey=payer.pubkey(), is_signer=True, is_writable=True),
         AccountMeta(pubkey=PUMP_SWAP_GLOBAL_CONFIG, is_signer=False, is_writable=False),
         AccountMeta(pubkey=base_mint, is_signer=False, is_writable=False),

@@ -302,7 +302,8 @@
       ],
       "accounts": [
         {
-          "name": "pool"
+          "name": "pool",
+          "writable": true
         },
         {
           "name": "user",
@@ -730,7 +731,8 @@
       ],
       "accounts": [
         {
-          "name": "pool"
+          "name": "pool",
+          "writable": true
         },
         {
           "name": "user",
@@ -2465,7 +2467,8 @@
       ],
       "accounts": [
         {
-          "name": "pool"
+          "name": "pool",
+          "writable": true
         },
         {
           "name": "user",
