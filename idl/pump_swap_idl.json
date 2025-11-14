@@ -2085,6 +2085,10 @@
         {
           "name": "coin_creator",
           "type": "pubkey"
+        },
+        {
+          "name": "is_mayhem_mode",
+          "type": "bool"
         }
       ]
     },
@@ -3007,6 +3011,74 @@
       "args": []
     },
     {
+      "name": "set_reserved_fee_recipient",
+      "discriminator": [
+        207,
+        189,
+        178,
+        71,
+        167,
+        122,
+        68,
+        180
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "global_config"
+          ]
+        },
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "reserved_fee_recipient",
+          "type": "pubkey"
+        },
+        {
+          "name": "whitelist_pda",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "sync_user_volume_accumulator",
       "discriminator": [
         86,
@@ -3133,6 +3205,70 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "toggle_mayhem_mode",
+      "discriminator": [
+        1,
+        9,
+        111,
+        208,
+        100,
+        31,
+        255,
+        163
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "global_config"
+          ]
+        },
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "enabled",
+          "type": "bool"
+        }
+      ]
     },
     {
       "name": "update_admin",
@@ -3902,6 +4038,18 @@
       "code": 6040,
       "name": "BuySlippageBelowMinBaseAmountOut",
       "msg": "buy: slippage - would buy less tokens than expected min_base_amount_out"
+    },
+    {
+      "code": 6041,
+      "name": "MayhemModeDisabled"
+    },
+    {
+      "code": 6042,
+      "name": "OnlyPumpPoolsMayhemMode"
+    },
+    {
+      "code": 6043,
+      "name": "MayhemModeInDesiredState"
     }
   ],
   "types": [
@@ -4357,6 +4505,10 @@
           {
             "name": "coin_creator",
             "type": "pubkey"
+          },
+          {
+            "name": "is_mayhem_mode",
+            "type": "bool"
           }
         ]
       }
@@ -4625,6 +4777,18 @@
               "The admin authority for setting coin creators"
             ],
             "type": "pubkey"
+          },
+          {
+            "name": "whitelist_pda",
+            "type": "pubkey"
+          },
+          {
+            "name": "reserved_fee_recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "mayhem_mode_enabled",
+            "type": "bool"
           }
         ]
       }
@@ -4747,6 +4911,10 @@
           {
             "name": "coin_creator",
             "type": "pubkey"
+          },
+          {
+            "name": "is_mayhem_mode",
+            "type": "bool"
           }
         ]
       }
