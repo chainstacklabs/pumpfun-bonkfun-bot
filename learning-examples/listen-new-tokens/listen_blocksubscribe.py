@@ -23,12 +23,58 @@ WSS_ENDPOINT = os.environ.get("SOLANA_NODE_WSS_ENDPOINT")
 PUMP_PROGRAM_ID = Pubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")
 
 
+def get_account_keys(transaction, instruction, loaded_addresses=None):
+    """
+    Safely extract account keys for an instruction from a versioned transaction.
+    Handles both static account keys and loaded addresses from lookup tables.
+
+    Args:
+        transaction: VersionedTransaction object
+        instruction: Instruction object
+        loaded_addresses: Dict with 'writable' and 'readonly' loaded addresses from tx meta
+
+    Returns:
+        List of account keys as strings, or None if unable to resolve
+    """
+    account_keys = []
+    static_keys = transaction.message.account_keys
+
+    # Combine all available account keys: static + loaded
+    all_keys = list(static_keys)
+
+    if loaded_addresses:
+        # Add loaded writable addresses
+        if "writable" in loaded_addresses:
+            for addr in loaded_addresses["writable"]:
+                all_keys.append(Pubkey.from_string(addr))
+
+        # Add loaded readonly addresses
+        if "readonly" in loaded_addresses:
+            for addr in loaded_addresses["readonly"]:
+                all_keys.append(Pubkey.from_string(addr))
+
+    # Now resolve account indices
+    for index in instruction.accounts:
+        try:
+            if index < len(all_keys):
+                account_keys.append(str(all_keys[index]))
+            else:
+                print(f"Warning: Account index {index} out of range (max: {len(all_keys)-1})")
+                return None
+        except (IndexError, Exception) as e:
+            print(f"Error resolving account at index {index}: {e}")
+            return None
+
+    return account_keys
+
+
 def load_idl(file_path):
     with open(file_path) as f:
         return json.load(f)
 
 
 def decode_create_instruction(ix_data, ix_def, accounts):
+    """Decode legacy Create instruction (Metaplex tokens)."""
     args = {}
     offset = 8  # Skip 8-byte discriminator
 
@@ -51,6 +97,43 @@ def decode_create_instruction(ix_data, ix_def, accounts):
     args["bondingCurve"] = str(accounts[2])
     args["associatedBondingCurve"] = str(accounts[3])
     args["user"] = str(accounts[7])
+    args["token_standard"] = "legacy"
+    args["is_mayhem_mode"] = False
+
+    return args
+
+
+def decode_create_v2_instruction(ix_data, ix_def, accounts):
+    """Decode CreateV2 instruction (Token2022 tokens)."""
+    args = {}
+    offset = 8  # Skip 8-byte discriminator
+
+    for arg in ix_def["args"]:
+        if arg["type"] == "string":
+            length = struct.unpack_from("<I", ix_data, offset)[0]
+            offset += 4
+            value = ix_data[offset : offset + length].decode("utf-8")
+            offset += length
+        elif arg["type"] == "pubkey":
+            value = base58.b58encode(ix_data[offset : offset + 32]).decode("utf-8")
+            offset += 32
+        else:
+            raise ValueError(f"Unsupported type: {arg['type']}")
+
+        args[arg["name"]] = value
+
+    # Parse is_mayhem_mode (OptionBool at the end)
+    is_mayhem_mode = False
+    if offset < len(ix_data):
+        is_mayhem_mode = bool(ix_data[offset])
+
+    # Add accounts
+    args["mint"] = str(accounts[0])
+    args["bondingCurve"] = str(accounts[2])
+    args["associatedBondingCurve"] = str(accounts[3])
+    args["user"] = str(accounts[5])
+    args["token_standard"] = "token2022"
+    args["is_mayhem_mode"] = is_mayhem_mode
 
     return args
 
@@ -59,6 +142,7 @@ def decode_create_instruction(ix_data, ix_def, accounts):
 async def listen_and_decode_create():
     idl = load_idl("idl/pump_fun_idl.json")
     create_discriminator = 8576854823835016728
+    create_v2_discriminator = struct.unpack("<Q", bytes([214, 144, 76, 236, 95, 139, 49, 180]))[0]
 
     async with websockets.connect(WSS_ENDPOINT) as websocket:
         subscription_message = json.dumps(
@@ -101,6 +185,11 @@ async def listen_and_decode_create():
                                             tx_data_decoded
                                         )
 
+                                        # Extract loaded addresses from transaction metadata
+                                        loaded_addresses = None
+                                        if "meta" in tx and tx["meta"] and "loadedAddresses" in tx["meta"]:
+                                            loaded_addresses = tx["meta"]["loadedAddresses"]
+
                                         for ix in transaction.message.instructions:
                                             if str(
                                                 transaction.message.account_keys[
@@ -112,29 +201,62 @@ async def listen_and_decode_create():
                                                     "<Q", ix_data[:8]
                                                 )[0]
 
-                                                if (
-                                                    discriminator
-                                                    == create_discriminator
-                                                ):
+                                                if discriminator == create_discriminator:
                                                     create_ix = next(
                                                         instr
                                                         for instr in idl["instructions"]
                                                         if instr["name"] == "create"
                                                     )
-                                                    account_keys = [
-                                                        str(
-                                                            transaction.message.account_keys[
-                                                                index
-                                                            ]
+                                                    account_keys = get_account_keys(
+                                                        transaction, ix, loaded_addresses
+                                                    )
+                                                    if account_keys is None:
+                                                        print("Skipping transaction due to unresolved accounts")
+                                                        continue
+
+                                                    # Note if using lookup tables
+                                                    if loaded_addresses:
+                                                        writable_count = len(loaded_addresses.get("writable", []))
+                                                        readonly_count = len(loaded_addresses.get("readonly", []))
+                                                        if writable_count > 0 or readonly_count > 0:
+                                                            print(f"[ALT] {writable_count}W/{readonly_count}R")
+
+                                                    decoded_args = decode_create_instruction(
+                                                        ix_data,
+                                                        create_ix,
+                                                        account_keys,
+                                                    )
+                                                    print(
+                                                        json.dumps(
+                                                            decoded_args, indent=2
                                                         )
-                                                        for index in ix.accounts
-                                                    ]
-                                                    decoded_args = (
-                                                        decode_create_instruction(
-                                                            ix_data,
-                                                            create_ix,
-                                                            account_keys,
-                                                        )
+                                                    )
+                                                    print("--------------------")
+                                                elif discriminator == create_v2_discriminator:
+                                                    create_v2_ix = next(
+                                                        (instr for instr in idl["instructions"]
+                                                         if instr["name"] == "createV2"),
+                                                        next(instr for instr in idl["instructions"]
+                                                             if instr["name"] == "create")
+                                                    )
+                                                    account_keys = get_account_keys(
+                                                        transaction, ix, loaded_addresses
+                                                    )
+                                                    if account_keys is None:
+                                                        print("Skipping transaction due to unresolved accounts")
+                                                        continue
+
+                                                    # Note if using lookup tables
+                                                    if loaded_addresses:
+                                                        writable_count = len(loaded_addresses.get("writable", []))
+                                                        readonly_count = len(loaded_addresses.get("readonly", []))
+                                                        if writable_count > 0 or readonly_count > 0:
+                                                            print(f"[ALT] {writable_count}W/{readonly_count}R")
+
+                                                    decoded_args = decode_create_v2_instruction(
+                                                        ix_data,
+                                                        create_v2_ix,
+                                                        account_keys,
                                                     )
                                                     print(
                                                         json.dumps(
