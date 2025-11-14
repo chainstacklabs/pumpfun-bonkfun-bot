@@ -17,7 +17,7 @@ load_dotenv()
 # Constants
 RPC_URL: Final[str] = os.getenv("SOLANA_NODE_RPC_ENDPOINT")
 TOKEN_MINT: Final[str] = (
-    "YOUR_TOKEN_MINT_ADDRESS_HERE"  # Replace with actual token mint address
+    "5ZHx2GGGj87xpidVJpBqadMUutqBirhL2TqUR9T9taKc"  # Replace with actual token mint address
 )
 PUMP_PROGRAM_ID: Final[Pubkey] = Pubkey.from_string(
     "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
@@ -30,7 +30,7 @@ EXPECTED_DISCRIMINATOR: Final[bytes] = struct.pack(
 POLL_INTERVAL: Final[int] = 10  # Seconds between each status check
 
 
-def get_associated_bonding_curve_address(mint: Pubkey, program_id: Pubkey) -> Pubkey:
+def get_bonding_curve_address(mint: Pubkey, program_id: Pubkey) -> Pubkey:
     """
     Derive the bonding curve PDA address from a mint address.
 
@@ -81,8 +81,9 @@ def parse_curve_state(data: bytes) -> dict:
     if data[:8] != EXPECTED_DISCRIMINATOR:
         raise ValueError("Invalid discriminator for bonding curve")
 
+    # Parse common fields (present in all versions)
     fields = struct.unpack_from("<QQQQQ?", data, 8)
-    return {
+    result = {
         "virtual_token_reserves": fields[0] / 10**TOKEN_DECIMALS,
         "virtual_sol_reserves": fields[1] / LAMPORTS_PER_SOL,
         "real_token_reserves": fields[2] / 10**TOKEN_DECIMALS,
@@ -90,6 +91,20 @@ def parse_curve_state(data: bytes) -> dict:
         "token_total_supply": fields[4] / 10**TOKEN_DECIMALS,
         "complete": fields[5],
     }
+
+    # Parse creator field if present
+    data_length = len(data) - 8
+    if data_length >= 73:  # Has creator field
+        creator_bytes = data[49:81]  # 8 (discriminator) + 41 (base fields) = 49
+        result["creator"] = Pubkey.from_bytes(creator_bytes)
+
+    # Parse is_mayhem_mode if present
+    if data_length >= 74:  # Has mayhem mode field
+        result["is_mayhem_mode"] = bool(data[81])
+    else:
+        result["is_mayhem_mode"] = False
+
+    return result
 
 
 def print_curve_status(state: dict) -> None:
@@ -130,9 +145,7 @@ async def track_curve() -> None:
         return
 
     mint_pubkey: Pubkey = Pubkey.from_string(TOKEN_MINT)
-    curve_pubkey: Pubkey = get_associated_bonding_curve_address(
-        mint_pubkey, PUMP_PROGRAM_ID
-    )
+    curve_pubkey: Pubkey = get_bonding_curve_address(mint_pubkey, PUMP_PROGRAM_ID)
 
     print("Tracking bonding curve for:", mint_pubkey)
     print("Curve address:", curve_pubkey, "\n")

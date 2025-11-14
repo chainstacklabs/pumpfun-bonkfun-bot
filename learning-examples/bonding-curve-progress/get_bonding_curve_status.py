@@ -1,9 +1,6 @@
 """
 Module for checking the status of a token's bonding curve on the Solana network using
 the Pump.fun program. It allows querying the bonding curve state and completion status.
-
-Note: creator fee upgrade introduced updates in bonding curve structure.
-https://github.com/pump-fun/pump-public-docs/blob/main/docs/PUMP_CREATOR_FEE_README.md
 """
 
 import argparse
@@ -42,20 +39,11 @@ class BondingCurveState:
         real_sol_reserves: Real SOL reserves in the curve
         token_total_supply: Total token supply in the curve
         complete: Whether the curve has completed and liquidity migrated
+        is_mayhem_mode: Whether the curve is in mayhem mode
     """
 
-    _STRUCT_1 = Struct(
-        "virtual_token_reserves" / Int64ul,
-        "virtual_sol_reserves" / Int64ul,
-        "real_token_reserves" / Int64ul,
-        "real_sol_reserves" / Int64ul,
-        "token_total_supply" / Int64ul,
-        "complete" / Flag,
-    )
-
-    # Struct after creator fee update has been introduced
-    # https://github.com/pump-fun/pump-public-docs/blob/main/docs/PUMP_CREATOR_FEE_README.md
-    _STRUCT_2 = Struct(
+    # V2: Struct with creator field (81 bytes total: 8 discriminator + 73 data)
+    _STRUCT_V2 = Struct(
         "virtual_token_reserves" / Int64ul,
         "virtual_sol_reserves" / Int64ul,
         "real_token_reserves" / Int64ul,
@@ -65,26 +53,43 @@ class BondingCurveState:
         "creator" / Bytes(32),  # Added new creator field - 32 bytes for Pubkey
     )
 
+    # V3: Struct with creator + mayhem mode (82 bytes total: 8 discriminator + 74 data)
+    _STRUCT_V3 = Struct(
+        "virtual_token_reserves" / Int64ul,
+        "virtual_sol_reserves" / Int64ul,
+        "real_token_reserves" / Int64ul,
+        "real_sol_reserves" / Int64ul,
+        "token_total_supply" / Int64ul,
+        "complete" / Flag,
+        "creator" / Bytes(32),
+        "is_mayhem_mode" / Flag,  # Added mayhem mode flag - 1 byte
+    )
+
     def __init__(self, data: bytes) -> None:
         """Parse bonding curve data."""
         if data[:8] != EXPECTED_DISCRIMINATOR:
             raise ValueError("Invalid curve state discriminator")
 
-        if len(data) < 150:
-            parsed = self._STRUCT_1.parse(data[8:])
-            self.__dict__.update(parsed)
+        total_length = len(data)
 
-        else:
-            parsed = self._STRUCT_2.parse(data[8:])
+        if total_length == 81:  # V2: Creator only
+            parsed = self._STRUCT_V2.parse(data[8:])
             self.__dict__.update(parsed)
             # Convert raw bytes to Pubkey for creator field
-            if hasattr(self, "creator") and isinstance(self.creator, bytes):
-                self.creator = Pubkey.from_bytes(self.creator)
+            self.creator = Pubkey.from_bytes(self.creator)
+            self.is_mayhem_mode = False
+
+        elif total_length >= 82:  # V3: Creator + mayhem mode
+            parsed = self._STRUCT_V3.parse(data[8:])
+            self.__dict__.update(parsed)
+            # Convert raw bytes to Pubkey for creator field
+            self.creator = Pubkey.from_bytes(self.creator)
+
+        else:
+            raise ValueError(f"Unexpected bonding curve size: {total_length} bytes")
 
 
-def get_associated_bonding_curve_address(
-    mint: Pubkey, program_id: Pubkey
-) -> tuple[Pubkey, int]:
+def get_bonding_curve_address(mint: Pubkey, program_id: Pubkey) -> tuple[Pubkey, int]:
     """
     Derives the associated bonding curve address for a given mint.
 
@@ -134,17 +139,14 @@ async def check_token_status(mint_address: str) -> None:
     """
     try:
         mint = Pubkey.from_string(mint_address)
-
-        # Get the associated bonding curve address
-        bonding_curve_address, bump = get_associated_bonding_curve_address(
-            mint, PUMP_PROGRAM_ID
-        )
+        bonding_curve_address, bump = get_bonding_curve_address(mint, PUMP_PROGRAM_ID)
 
         print("\nToken status:")
         print("-" * 50)
         print(f"Token mint:              {mint}")
-        print(f"Associated bonding curve: {bonding_curve_address}")
-        print(f"Bump seed:               {bump}")
+        print(f"Bonding curve:           {bonding_curve_address}")
+        if bump is not None:
+            print(f"Bump seed:               {bump}")
         print("-" * 50)
 
         # Check completion status
@@ -156,9 +158,25 @@ async def check_token_status(mint_address: str) -> None:
 
                 print("\nBonding curve status:")
                 print("-" * 50)
+                print(f"Creator:             {curve_state.creator}")
                 print(
-                    f"Completion status: {'Completed' if curve_state.complete else 'Not completed'}"
+                    f"Mayhem Mode:         {'✅ Enabled' if curve_state.is_mayhem_mode else '❌ Disabled'}"
                 )
+                print(
+                    f"Completed:           {'✅ Migrated' if curve_state.complete else '❌ Bonding curve'}"
+                )
+
+                print("\nBonding curve reserves:")
+                print(f"Virtual Token:       {curve_state.virtual_token_reserves:,}")
+                print(
+                    f"Virtual SOL:         {curve_state.virtual_sol_reserves:,} lamports"
+                )
+                print(f"Real Token:          {curve_state.real_token_reserves:,}")
+                print(
+                    f"Real SOL:            {curve_state.real_sol_reserves:,} lamports"
+                )
+                print(f"Total Supply:        {curve_state.token_total_supply:,}")
+
                 if curve_state.complete:
                     print(
                         "\nNote: This bonding curve has completed and liquidity has been migrated to PumpSwap."
