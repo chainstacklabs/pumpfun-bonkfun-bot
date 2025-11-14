@@ -27,6 +27,7 @@ AUTH_TYPE = "x-token"
 
 PUMP_PROGRAM_ID = Pubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")
 PUMP_CREATE_PREFIX = struct.pack("<Q", 8576854823835016728)
+PUMP_CREATE_V2_PREFIX = bytes([214, 144, 76, 236, 95, 139, 49, 180])
 
 
 async def create_geyser_connection():
@@ -57,7 +58,7 @@ def create_subscription_request():
 
 
 def decode_create_instruction(ix_data: bytes, keys, accounts) -> dict:
-    """Decode a create instruction from transaction data."""
+    """Decode a legacy create instruction (Metaplex) from transaction data."""
     # Skip past the 8-byte discriminator prefix
     offset = 8
 
@@ -103,6 +104,63 @@ def decode_create_instruction(ix_data: bytes, keys, accounts) -> dict:
         "system_program": get_account_key(5),
         "rent": get_account_key(6),
         "user": get_account_key(7),
+        "token_standard": "legacy",
+        "is_mayhem_mode": False,
+    }
+
+    return token_info
+
+
+def decode_create_v2_instruction(ix_data: bytes, keys, accounts) -> dict:
+    """Decode a CreateV2 instruction (Token2022) from transaction data."""
+    # Skip past the 8-byte discriminator prefix
+    offset = 8
+
+    # Extract account keys in base58 format
+    def get_account_key(index):
+        if index >= len(accounts):
+            return "N/A"
+        account_index = accounts[index]
+        return base58.b58encode(keys[account_index]).decode()
+
+    # Read string fields (prefixed with length)
+    def read_string():
+        nonlocal offset
+        # Get string length (4-byte uint)
+        length = struct.unpack_from("<I", ix_data, offset)[0]
+        offset += 4
+        # Extract and decode the string
+        value = ix_data[offset : offset + length].decode()
+        offset += length
+        return value
+
+    def read_pubkey():
+        nonlocal offset
+        value = base58.b58encode(ix_data[offset : offset + 32]).decode("utf-8")
+        offset += 32
+        return value
+
+    name = read_string()
+    symbol = read_string()
+    uri = read_string()
+    creator = read_pubkey()
+
+    # Parse is_mayhem_mode (OptionBool at the end)
+    is_mayhem_mode = False
+    if offset < len(ix_data):
+        is_mayhem_mode = bool(ix_data[offset])
+
+    token_info = {
+        "name": name,
+        "symbol": symbol,
+        "uri": uri,
+        "creator": creator,
+        "mint": get_account_key(0),
+        "bonding_curve": get_account_key(2),
+        "associated_bonding_curve": get_account_key(3),
+        "user": get_account_key(5),
+        "token_standard": "token2022",
+        "is_mayhem_mode": is_mayhem_mode,
     }
 
     return token_info
@@ -110,13 +168,13 @@ def decode_create_instruction(ix_data: bytes, keys, accounts) -> dict:
 
 def print_token_info(info, signature):
     """Print formatted token information."""
-    print("\n🎯 New Pump.fun token detected!")
+    print("🎯 New Pump.fun token detected!")
     print(f"Name: {info['name']} | Symbol: {info['symbol']}")
     print(f"Mint: {info['mint']}")
     print(f"Bonding curve: {info['bonding_curve']}")
     print(f"Associated bonding curve: {info['associated_bonding_curve']}")
     print(f"Creator: {info['creator']}")
-    print(f"Signature: {signature}")
+    print(f"Signature: {signature}]\n")
 
 
 async def monitor_pump():
@@ -137,10 +195,23 @@ async def monitor_pump():
 
         # Check each instruction in the transaction
         for ix in msg.instructions:
-            if not ix.data.startswith(PUMP_CREATE_PREFIX):
+            # Check for both Create and CreateV2 instructions
+            is_create = ix.data.startswith(PUMP_CREATE_PREFIX)
+            is_create_v2 = ix.data.startswith(PUMP_CREATE_V2_PREFIX)
+
+            if not (is_create or is_create_v2):
                 continue
 
-            info = decode_create_instruction(ix.data, msg.account_keys, ix.accounts)
+            # Decode based on instruction type
+            if is_create_v2:
+                print("📝 Detected: CreateV2 instruction (Token2022)")
+                info = decode_create_v2_instruction(
+                    ix.data, msg.account_keys, ix.accounts
+                )
+            else:
+                print("📝 Detected: Create instruction (Legacy/Metaplex)")
+                info = decode_create_instruction(ix.data, msg.account_keys, ix.accounts)
+
             signature = base58.b58encode(
                 bytes(update.transaction.transaction.signature)
             ).decode()

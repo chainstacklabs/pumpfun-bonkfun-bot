@@ -202,6 +202,7 @@ async def listen_and_decode_create():
                                                 )[0]
 
                                                 if discriminator == create_discriminator:
+                                                    print("📝 Detected: Create instruction (Legacy/Metaplex)")
                                                     create_ix = next(
                                                         instr
                                                         for instr in idl["instructions"]
@@ -233,6 +234,7 @@ async def listen_and_decode_create():
                                                     )
                                                     print("--------------------")
                                                 elif discriminator == create_v2_discriminator:
+                                                    print("📝 Detected: CreateV2 instruction (Token2022)")
                                                     create_v2_ix = next(
                                                         (instr for instr in idl["instructions"]
                                                          if instr["name"] == "createV2"),
