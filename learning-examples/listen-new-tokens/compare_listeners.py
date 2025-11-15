@@ -1,13 +1,36 @@
 """
-This script compares four methods of detecting new Pump.fun tokens:
-1. Block subscription listener - listens for blocks containing Pump.fun program
-2. Geyser gRPC listener - uses Geyser gRPC API to get transactions containing Pump.fun program
-3. Logs subscription listener - listens for logs containing Pump.fun program
-4. PumpPortal WebSocket listener - connects to PumpPortal WebSocket and listens for token events
+Performance Comparison Tool for Pump.fun Token Detection Methods
 
-The script tracks which method detects new tokens first and provides detailed performance statistics.
+This script compares four methods of detecting new Pump.fun tokens in real-time:
 
-Note: multiple endpoints available. Scroll down to change providers which you want to test.
+1. Block Subscription (blockSubscribe)
+   - Method: WebSocket subscription to blocks mentioning Pump.fun program
+   - Speed: Slowest (processes entire blocks)
+   - Reference: https://solana.com/docs/rpc/websocket/blocksubscribe
+
+2. Logs Subscription (logsSubscribe)
+   - Method: WebSocket subscription to program logs
+   - Speed: Fast (event data includes all fields)
+   - Reference: https://solana.com/docs/rpc/websocket/logssubscribe
+
+3. Geyser gRPC
+   - Method: Yellowstone Dragon's Mouth gRPC streaming
+   - Speed: Fastest (optimized streaming protocol)
+   - Reference: https://docs.triton.one/rpc-pool/grpc-subscriptions
+
+4. PumpPortal WebSocket
+   - Method: Third-party aggregated WebSocket feed
+   - Speed: Fast (pre-processed data)
+   - Note: Requires trust in third-party provider
+
+The script tracks which method detects each token first and provides detailed
+performance statistics including:
+- First detection counts per method
+- Average latency between methods
+- Message counts per provider
+- Token detection coverage
+
+Configuration: Set provider endpoints in .env or modify the providers dict at the bottom.
 """
 
 import asyncio
@@ -26,15 +49,31 @@ from solders.transaction import VersionedTransaction
 
 load_dotenv(override=True)
 
-# Constants
+# ============ CONSTANTS ============
+
+# Pump.fun program ID
 PUMP_PROGRAM_ID = Pubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")
+
+# Instruction discriminators (8-byte identifiers for instruction types)
+# Calculated using the first 8 bytes of sha256("global:create") for legacy Create
+# and sha256("global:createV2") for Token2022 CreateV2
+# See: learning-examples/calculate_discriminator.py
 PUMP_CREATE_PREFIX = struct.pack("<Q", 8576854823835016728)
 PUMP_CREATE_V2_PREFIX = bytes([214, 144, 76, 236, 95, 139, 49, 180])
-CREATE_EVENT_DISCRIMINATOR = bytes([27, 114, 169, 77, 222, 235, 99, 118])
-PUMPPORTAL_WS_URL = "wss://pumpportal.fun/api/data"
-TEST_DURATION = 30  # seconds
 
-GEYSER_AUTH_TYPE = "x-token"  # or "basic"
+# Event discriminator for CreateEvent (8-byte identifier)
+# This is emitted by both Create and CreateV2 instructions
+# Calculated using the first 8 bytes of sha256("event:CreateEvent")
+CREATE_EVENT_DISCRIMINATOR = bytes([27, 114, 169, 77, 222, 235, 99, 118])
+
+# PumpPortal WebSocket endpoint (third-party service)
+PUMPPORTAL_WS_URL = "wss://pumpportal.fun/api/data"
+
+# Test duration in seconds
+TEST_DURATION = 30
+
+# Geyser authentication type: "x-token" or "basic"
+GEYSER_AUTH_TYPE = "x-token"
 
 
 class DetectionTracker:

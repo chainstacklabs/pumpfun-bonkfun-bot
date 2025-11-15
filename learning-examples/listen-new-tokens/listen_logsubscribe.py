@@ -2,7 +2,17 @@
 Listens for new Pump.fun token creations via Solana WebSocket.
 Monitors logs for 'Create' instructions, decodes and prints token details (name, symbol, mint, etc.).
 
-It is usually faster than blockSubscribe, but slower than Geyser.
+Performance: Usually faster than blockSubscribe, but slower than Geyser.
+
+This script uses logsSubscribe which receives program logs containing event data.
+Event logs include all token fields directly, making parsing simpler and faster than
+decoding full transactions.
+
+WebSocket API Reference:
+https://solana.com/docs/rpc/websocket/logssubscribe
+
+Program Logs and Events:
+https://solana.com/docs/programs/debugging#logging
 """
 
 import asyncio
@@ -21,16 +31,71 @@ load_dotenv()
 WSS_ENDPOINT = os.environ.get("SOLANA_NODE_WSS_ENDPOINT")
 PUMP_PROGRAM_ID = Pubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")
 
-# Event discriminators from IDL
+# Event discriminator for CreateEvent (8-byte identifier)
+# This is emitted by both Create and CreateV2 instructions
+# Calculated using the first 8 bytes of sha256("event:CreateEvent")
 CREATE_EVENT_DISCRIMINATOR = bytes([27, 114, 169, 77, 222, 235, 99, 118])
 
 
+def print_token_info(token_data, signature=None):
+    """
+    Print token information in a consistent, user-friendly format.
+
+    Args:
+        token_data: Dictionary containing token fields
+        signature: Optional transaction signature
+    """
+    print("\n" + "=" * 80)
+    print("🎯 NEW TOKEN DETECTED")
+    print("=" * 80)
+    print(f"Name:             {token_data.get('name', 'N/A')}")
+    print(f"Symbol:           {token_data.get('symbol', 'N/A')}")
+    print(f"Mint:             {token_data.get('mint', 'N/A')}")
+
+    if "bondingCurve" in token_data:
+        print(f"Bonding Curve:    {token_data['bondingCurve']}")
+    if "user" in token_data:
+        print(f"User:             {token_data['user']}")
+    if "creator" in token_data:
+        print(f"Creator:          {token_data['creator']}")
+
+    print(f"Token Standard:   {token_data.get('token_standard', 'N/A')}")
+    print(f"Mayhem Mode:      {token_data.get('is_mayhem_mode', False)}")
+
+    if "uri" in token_data:
+        print(f"URI:              {token_data['uri']}")
+    if signature:
+        print(f"Signature:        {signature}")
+
+    print("=" * 80 + "\n")
+
+
+
 def parse_create_instruction(data):
-    """Parse legacy Create instruction (Metaplex tokens)."""
+    """
+    Parse CreateEvent data from legacy Create instruction (Metaplex tokens).
+
+    Event logs contain all fields directly embedded in the event data, unlike
+    instruction data which requires account lookup. Event format:
+    - 8 bytes: event discriminator
+    - Variable: name (4-byte length + UTF-8 string)
+    - Variable: symbol (4-byte length + UTF-8 string)
+    - Variable: uri (4-byte length + UTF-8 string)
+    - 32 bytes: mint pubkey
+    - 32 bytes: bondingCurve pubkey
+    - 32 bytes: user pubkey
+    - 32 bytes: creator pubkey
+
+    Args:
+        data: Raw event data bytes from program logs
+
+    Returns:
+        Dictionary containing decoded token information, or None if parsing fails
+    """
     if len(data) < 8:
-        print(f"⚠️  Data too short for Create instruction: {len(data)} bytes")
+        print(f"⚠️  Data too short for Create event: {len(data)} bytes")
         return None
-    offset = 8
+    offset = 8  # Skip event discriminator
     parsed_data = {}
 
     # Parse fields based on CreateEvent structure
@@ -47,6 +112,7 @@ def parse_create_instruction(data):
     try:
         for field_name, field_type in fields:
             if field_type == "string":
+                # String format: 4-byte length prefix + UTF-8 encoded string
                 if offset + 4 > len(data):
                     raise ValueError(f"Not enough data for {field_name} length at offset {offset}")
                 length = struct.unpack("<I", data[offset : offset + 4])[0]
@@ -56,6 +122,7 @@ def parse_create_instruction(data):
                 value = data[offset : offset + length].decode("utf-8")
                 offset += length
             elif field_type == "publicKey":
+                # Pubkey is 32 bytes, encoded as base58
                 if offset + 32 > len(data):
                     raise ValueError(f"Not enough data for {field_name} at offset {offset}")
                 value = base58.b58encode(data[offset : offset + 32]).decode("utf-8")
@@ -74,11 +141,25 @@ def parse_create_instruction(data):
 
 
 def parse_create_v2_instruction(data):
-    """Parse CreateV2 instruction (Token2022 tokens)."""
+    """
+    Parse CreateEvent data from CreateV2 instruction (Token2022 tokens).
+
+    CreateV2 uses Token-2022 standard with additional features. The event format
+    is identical to Create, with an additional optional is_mayhem_mode flag at the end.
+
+    Token-2022 Reference:
+    https://spl.solana.com/token-2022
+
+    Args:
+        data: Raw event data bytes from program logs
+
+    Returns:
+        Dictionary containing decoded token information, or None if parsing fails
+    """
     if len(data) < 8:
-        print(f"⚠️  Data too short for CreateV2 instruction: {len(data)} bytes")
+        print(f"⚠️  Data too short for CreateV2 event: {len(data)} bytes")
         return None
-    offset = 8
+    offset = 8  # Skip event discriminator
     parsed_data = {}
 
     # Parse fields based on CreateV2Event structure
@@ -95,6 +176,7 @@ def parse_create_v2_instruction(data):
     try:
         for field_name, field_type in fields:
             if field_type == "string":
+                # String format: 4-byte length prefix + UTF-8 encoded string
                 if offset + 4 > len(data):
                     raise ValueError(f"Not enough data for {field_name} length at offset {offset}")
                 length = struct.unpack("<I", data[offset : offset + 4])[0]
@@ -104,6 +186,7 @@ def parse_create_v2_instruction(data):
                 value = data[offset : offset + length].decode("utf-8")
                 offset += length
             elif field_type == "publicKey":
+                # Pubkey is 32 bytes, encoded as base58
                 if offset + 32 > len(data):
                     raise ValueError(f"Not enough data for {field_name} at offset {offset}")
                 value = base58.b58encode(data[offset : offset + 32]).decode("utf-8")
@@ -112,6 +195,7 @@ def parse_create_v2_instruction(data):
             parsed_data[field_name] = value
 
         # Parse is_mayhem_mode (OptionBool at the end)
+        # Format: 1 byte (0 = false/None, 1 = true)
         if offset < len(data):
             is_mayhem_mode = bool(data[offset])
             parsed_data["is_mayhem_mode"] = is_mayhem_mode
@@ -194,21 +278,19 @@ async def listen_for_new_tokens():
                                             # Both create and create_v2 emit the same CreateEvent
                                             # The difference is in the optional is_mayhem_mode field
                                             if is_create_v2:
-                                                print("📝 Instruction: CreateV2 (Token2022)")
                                                 parsed_data = parse_create_v2_instruction(
                                                     decoded_data
                                                 )
                                             else:
-                                                print("📝 Instruction: Create (Legacy/Metaplex)")
                                                 parsed_data = parse_create_instruction(
                                                     decoded_data
                                                 )
 
                                             if parsed_data and "name" in parsed_data:
-                                                for key, value in parsed_data.items():
-                                                    print(f"{key}: {value}")
-                                                print(
-                                                    "##########################################################################################"
+                                                # Print token information in consistent format
+                                                print_token_info(
+                                                    parsed_data,
+                                                    signature=log_data.get("signature")
                                                 )
                                             else:
                                                 print(f"⚠️  Parsing failed for CreateEvent")

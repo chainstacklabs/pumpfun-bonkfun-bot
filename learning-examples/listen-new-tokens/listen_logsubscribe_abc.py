@@ -1,9 +1,19 @@
 """
 Listens for new Pump.fun token creations via Solana WebSocket.
 Monitors logs for 'Create' instructions, decodes and prints token details (name, symbol, mint, etc.).
-Additionally, calculates an associated bonding curve address for each token.
+Additionally, calculates the associated bonding curve address for each token using PDA derivation.
 
-It is usually faster than blockSubscribe, but slower than Geyser.
+Performance: Usually faster than blockSubscribe, but slower than Geyser.
+
+This script demonstrates Program Derived Address (PDA) calculation for the associated
+bonding curve, which is the token account owned by the bonding curve that holds
+the minted tokens.
+
+WebSocket API Reference:
+https://solana.com/docs/rpc/websocket/logssubscribe
+
+Program Derived Addresses:
+https://solana.com/docs/core/pda
 """
 
 import asyncio
@@ -26,14 +36,67 @@ ASSOCIATED_TOKEN_PROGRAM_ID = Pubkey.from_string(
     "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
 )
 
-# Event discriminators from IDL
+# Event discriminator for CreateEvent (8-byte identifier)
+# This is emitted by both Create and CreateV2 instructions
+# Calculated using the first 8 bytes of sha256("event:CreateEvent")
 CREATE_EVENT_DISCRIMINATOR = bytes([27, 114, 169, 77, 222, 235, 99, 118])
+
+
+def print_token_info(token_data, signature=None, associated_bonding_curve=None):
+    """
+    Print token information in a consistent, user-friendly format.
+
+    Args:
+        token_data: Dictionary containing token fields
+        signature: Optional transaction signature
+        associated_bonding_curve: Optional associated bonding curve address
+    """
+    print("\n" + "=" * 80)
+    print("🎯 NEW TOKEN DETECTED")
+    print("=" * 80)
+    print(f"Name:             {token_data.get('name', 'N/A')}")
+    print(f"Symbol:           {token_data.get('symbol', 'N/A')}")
+    print(f"Mint:             {token_data.get('mint', 'N/A')}")
+
+    if "bondingCurve" in token_data:
+        print(f"Bonding Curve:    {token_data['bondingCurve']}")
+    if associated_bonding_curve:
+        print(f"Associated BC:    {associated_bonding_curve}")
+    if "user" in token_data:
+        print(f"User:             {token_data['user']}")
+    if "creator" in token_data:
+        print(f"Creator:          {token_data['creator']}")
+
+    print(f"Token Standard:   {token_data.get('token_standard', 'N/A')}")
+    print(f"Mayhem Mode:      {token_data.get('is_mayhem_mode', False)}")
+
+    if "uri" in token_data:
+        print(f"URI:              {token_data['uri']}")
+    if signature:
+        print(f"Signature:        {signature}")
+
+    print("=" * 80 + "\n")
 
 
 def find_associated_bonding_curve(mint: Pubkey, bonding_curve: Pubkey) -> Pubkey:
     """
-    Find the associated bonding curve for a given mint and bonding curve.
-    This uses the standard ATA derivation.
+    Calculate the associated token account (ATA) address for the bonding curve.
+
+    The associated bonding curve is a Program Derived Address (PDA) that holds
+    the token supply controlled by the bonding curve. It's derived using the
+    standard Associated Token Account (ATA) derivation.
+
+    ATA Derivation: find_program_address(
+        [bonding_curve_pubkey, token_program_id, mint_pubkey],
+        associated_token_program_id
+    )
+
+    Args:
+        mint: The token mint pubkey
+        bonding_curve: The bonding curve pubkey
+
+    Returns:
+        The derived associated bonding curve address
     """
     derived_address, _ = Pubkey.find_program_address(
         [
@@ -226,25 +289,23 @@ async def listen_for_new_tokens():
                                                 )
 
                                             if parsed_data and "name" in parsed_data:
-                                                for key, value in parsed_data.items():
-                                                    print(f"{key}: {value}")
-
-                                                # Calculate associated bonding curve
+                                                # Calculate associated bonding curve using PDA derivation
                                                 mint = Pubkey.from_string(
                                                     parsed_data["mint"]
                                                 )
                                                 bonding_curve = Pubkey.from_string(
                                                     parsed_data["bondingCurve"]
                                                 )
-                                                associated_curve = (
-                                                    find_associated_bonding_curve(
-                                                        mint, bonding_curve
-                                                    )
+                                                associated_curve = find_associated_bonding_curve(
+                                                    mint, bonding_curve
                                                 )
-                                                print(
-                                                    f"Associated Bonding Curve: {associated_curve}"
+
+                                                # Print token information in consistent format
+                                                print_token_info(
+                                                    parsed_data,
+                                                    signature=log_data.get("signature"),
+                                                    associated_bonding_curve=str(associated_curve)
                                                 )
-                                                print("\n")
                                             else:
                                                 print(f"⚠️  Parsing failed for CreateEvent")
                                         except Exception as e:
