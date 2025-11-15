@@ -21,9 +21,14 @@ load_dotenv()
 WSS_ENDPOINT = os.environ.get("SOLANA_NODE_WSS_ENDPOINT")
 PUMP_PROGRAM_ID = Pubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")
 
+# Event discriminators from IDL
+CREATE_EVENT_DISCRIMINATOR = bytes([27, 114, 169, 77, 222, 235, 99, 118])
+
 
 def parse_create_instruction(data):
+    """Parse legacy Create instruction (Metaplex tokens)."""
     if len(data) < 8:
+        print(f"⚠️  Data too short for Create instruction: {len(data)} bytes")
         return None
     offset = 8
     parsed_data = {}
@@ -42,18 +47,83 @@ def parse_create_instruction(data):
     try:
         for field_name, field_type in fields:
             if field_type == "string":
+                if offset + 4 > len(data):
+                    raise ValueError(f"Not enough data for {field_name} length at offset {offset}")
                 length = struct.unpack("<I", data[offset : offset + 4])[0]
                 offset += 4
+                if offset + length > len(data):
+                    raise ValueError(f"Not enough data for {field_name} value (length={length}) at offset {offset}")
                 value = data[offset : offset + length].decode("utf-8")
                 offset += length
             elif field_type == "publicKey":
+                if offset + 32 > len(data):
+                    raise ValueError(f"Not enough data for {field_name} at offset {offset}")
                 value = base58.b58encode(data[offset : offset + 32]).decode("utf-8")
                 offset += 32
 
             parsed_data[field_name] = value
 
+        parsed_data["token_standard"] = "legacy"
+        parsed_data["is_mayhem_mode"] = False
         return parsed_data
-    except:
+    except Exception as e:
+        print(f"❌ Parse Create error: {e}")
+        print(f"   Data length: {len(data)} bytes, offset: {offset}")
+        print(f"   Data hex: {data.hex()[:200]}...")
+        return None
+
+
+def parse_create_v2_instruction(data):
+    """Parse CreateV2 instruction (Token2022 tokens)."""
+    if len(data) < 8:
+        print(f"⚠️  Data too short for CreateV2 instruction: {len(data)} bytes")
+        return None
+    offset = 8
+    parsed_data = {}
+
+    # Parse fields based on CreateV2Event structure
+    fields = [
+        ("name", "string"),
+        ("symbol", "string"),
+        ("uri", "string"),
+        ("mint", "publicKey"),
+        ("bondingCurve", "publicKey"),
+        ("user", "publicKey"),
+        ("creator", "publicKey"),
+    ]
+
+    try:
+        for field_name, field_type in fields:
+            if field_type == "string":
+                if offset + 4 > len(data):
+                    raise ValueError(f"Not enough data for {field_name} length at offset {offset}")
+                length = struct.unpack("<I", data[offset : offset + 4])[0]
+                offset += 4
+                if offset + length > len(data):
+                    raise ValueError(f"Not enough data for {field_name} value (length={length}) at offset {offset}")
+                value = data[offset : offset + length].decode("utf-8")
+                offset += length
+            elif field_type == "publicKey":
+                if offset + 32 > len(data):
+                    raise ValueError(f"Not enough data for {field_name} at offset {offset}")
+                value = base58.b58encode(data[offset : offset + 32]).decode("utf-8")
+                offset += 32
+
+            parsed_data[field_name] = value
+
+        # Parse is_mayhem_mode (OptionBool at the end)
+        if offset < len(data):
+            is_mayhem_mode = bool(data[offset])
+            parsed_data["is_mayhem_mode"] = is_mayhem_mode
+        else:
+            parsed_data["is_mayhem_mode"] = False
+
+        parsed_data["token_standard"] = "token2022"
+        return parsed_data
+    except Exception as e:
+        print(f"❌ Parse CreateV2 error: {e}")
+        print(f"   Data length: {len(data)} bytes, offset: {offset}")
+        print(f"   Data hex: {data.hex()[:200]}...")
         return None
 
 
@@ -90,10 +160,17 @@ async def listen_for_new_tokens():
                             log_data = data["params"]["result"]["value"]
                             logs = log_data.get("logs", [])
 
-                            if any(
+                            # Detect both Create and CreateV2 instructions
+                            is_create = any(
                                 "Program log: Instruction: Create" in log
                                 for log in logs
-                            ):
+                            )
+                            is_create_v2 = any(
+                                "Program log: Instruction: CreateV2" in log
+                                for log in logs
+                            )
+
+                            if is_create or is_create_v2:
                                 for log in logs:
                                     if "Program data:" in log:
                                         try:
@@ -101,22 +178,42 @@ async def listen_for_new_tokens():
                                             decoded_data = base64.b64decode(
                                                 encoded_data
                                             )
-                                            parsed_data = parse_create_instruction(
-                                                decoded_data
-                                            )
-                                            if parsed_data and "name" in parsed_data:
-                                                print(
-                                                    "Signature:",
-                                                    log_data.get("signature"),
+
+                                            # Check if this is a CreateEvent by validating discriminator
+                                            if len(decoded_data) < 8:
+                                                continue
+
+                                            event_discriminator = decoded_data[:8]
+                                            if event_discriminator != CREATE_EVENT_DISCRIMINATOR:
+                                                # Skip non-CreateEvent logs (e.g., TradeEvent, ExtendAccountEvent)
+                                                continue
+
+                                            print(f"\n🔍 Found CreateEvent, length: {len(decoded_data)} bytes")
+                                            print(f"   Signature: {log_data.get('signature')}")
+
+                                            # Both create and create_v2 emit the same CreateEvent
+                                            # The difference is in the optional is_mayhem_mode field
+                                            if is_create_v2:
+                                                print("📝 Instruction: CreateV2 (Token2022)")
+                                                parsed_data = parse_create_v2_instruction(
+                                                    decoded_data
                                                 )
+                                            else:
+                                                print("📝 Instruction: Create (Legacy/Metaplex)")
+                                                parsed_data = parse_create_instruction(
+                                                    decoded_data
+                                                )
+
+                                            if parsed_data and "name" in parsed_data:
                                                 for key, value in parsed_data.items():
                                                     print(f"{key}: {value}")
                                                 print(
                                                     "##########################################################################################"
                                                 )
+                                            else:
+                                                print(f"⚠️  Parsing failed for CreateEvent")
                                         except Exception as e:
-                                            print(f"Failed to decode: {log}")
-                                            print(f"Error: {e!s}")
+                                            print(f"❌ Error processing log: {e!s}")
 
                     except Exception as e:
                         print(f"An error occurred while processing message: {e}")

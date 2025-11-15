@@ -29,6 +29,8 @@ load_dotenv(override=True)
 # Constants
 PUMP_PROGRAM_ID = Pubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")
 PUMP_CREATE_PREFIX = struct.pack("<Q", 8576854823835016728)
+PUMP_CREATE_V2_PREFIX = bytes([214, 144, 76, 236, 95, 139, 49, 180])
+CREATE_EVENT_DISCRIMINATOR = bytes([27, 114, 169, 77, 222, 235, 99, 118])
 PUMPPORTAL_WS_URL = "wss://pumpportal.fun/api/data"
 TEST_DURATION = 30  # seconds
 
@@ -217,44 +219,198 @@ async def fetch_existing_token_mints():
     return set()
 
 
-def parse_create_instruction(data):
-    """
-    Parse binary create instruction data into a structured format
-    """
-    if len(data) < 8:
+def decode_create_instruction(ix_data, account_keys):
+    """Decode legacy Create instruction (Metaplex tokens) from instruction data."""
+    if len(ix_data) < 8:
         return None
 
     offset = 8  # Skip discriminator
     parsed_data = {}
 
     try:
-        # Parse name (string)
-        length = struct.unpack("<I", data[offset : offset + 4])[0]
-        offset += 4
-        parsed_data["name"] = data[offset : offset + length].decode("utf-8")
-        offset += length
+        # Read string fields from instruction data
+        def read_string():
+            nonlocal offset
+            length = struct.unpack("<I", ix_data[offset : offset + 4])[0]
+            offset += 4
+            value = ix_data[offset : offset + length].decode("utf-8")
+            offset += length
+            return value
 
-        # Parse symbol (string)
-        length = struct.unpack("<I", data[offset : offset + 4])[0]
-        offset += 4
-        parsed_data["symbol"] = data[offset : offset + length].decode("utf-8")
-        offset += length
+        def read_pubkey():
+            nonlocal offset
+            value = base58.b58encode(ix_data[offset : offset + 32]).decode("utf-8")
+            offset += 32
+            return value
 
-        # Parse uri (string)
-        length = struct.unpack("<I", data[offset : offset + 4])[0]
-        offset += 4
-        parsed_data["uri"] = data[offset : offset + length].decode("utf-8")
-        offset += length
+        # Parse instruction arguments
+        parsed_data["name"] = read_string()
+        parsed_data["symbol"] = read_string()
+        parsed_data["uri"] = read_string()
+        parsed_data["creator"] = read_pubkey()
 
-        # Parse mint (pubkey)
-        parsed_data["mint"] = base58.b58encode(data[offset : offset + 32]).decode(
-            "utf-8"
-        )
-        offset += 32
+        # Extract accounts from account_keys array
+        if len(account_keys) >= 8:
+            parsed_data["mint"] = account_keys[0]
+            parsed_data["bondingCurve"] = account_keys[2]
+            parsed_data["user"] = account_keys[7]
+        elif len(account_keys) > 0:
+            parsed_data["mint"] = account_keys[0]
 
+        parsed_data["token_standard"] = "legacy"
+        parsed_data["is_mayhem_mode"] = False
         return parsed_data
     except Exception as e:
-        print(f"[ERROR] Failed to parse create instruction: {e}")
+        print(f"[ERROR] Failed to decode create instruction: {e}")
+        return None
+
+
+def decode_create_v2_instruction(ix_data, account_keys):
+    """Decode CreateV2 instruction (Token2022 tokens) from instruction data."""
+    if len(ix_data) < 8:
+        return None
+
+    offset = 8  # Skip discriminator
+    parsed_data = {}
+
+    try:
+        # Read string fields from instruction data
+        def read_string():
+            nonlocal offset
+            length = struct.unpack("<I", ix_data[offset : offset + 4])[0]
+            offset += 4
+            value = ix_data[offset : offset + length].decode("utf-8")
+            offset += length
+            return value
+
+        def read_pubkey():
+            nonlocal offset
+            value = base58.b58encode(ix_data[offset : offset + 32]).decode("utf-8")
+            offset += 32
+            return value
+
+        # Parse instruction arguments
+        parsed_data["name"] = read_string()
+        parsed_data["symbol"] = read_string()
+        parsed_data["uri"] = read_string()
+        parsed_data["creator"] = read_pubkey()
+
+        # Parse is_mayhem_mode (OptionBool at the end)
+        if offset < len(ix_data):
+            parsed_data["is_mayhem_mode"] = bool(ix_data[offset])
+        else:
+            parsed_data["is_mayhem_mode"] = False
+
+        # Extract accounts from account_keys array
+        if len(account_keys) >= 6:
+            parsed_data["mint"] = account_keys[0]
+            parsed_data["bondingCurve"] = account_keys[2]
+            parsed_data["user"] = account_keys[5]
+        elif len(account_keys) > 0:
+            parsed_data["mint"] = account_keys[0]
+
+        parsed_data["token_standard"] = "token2022"
+        return parsed_data
+    except Exception as e:
+        print(f"[ERROR] Failed to decode create v2 instruction: {e}")
+        return None
+
+
+def parse_create_event(data):
+    """Parse legacy Create event from logs (event data includes all fields)."""
+    if len(data) < 8:
+        return None
+
+    offset = 8  # Skip discriminator
+    parsed_data = {}
+
+    # Parse fields based on CreateEvent structure
+    fields = [
+        ("name", "string"),
+        ("symbol", "string"),
+        ("uri", "string"),
+        ("mint", "publicKey"),
+        ("bondingCurve", "publicKey"),
+        ("user", "publicKey"),
+        ("creator", "publicKey"),
+    ]
+
+    try:
+        for field_name, field_type in fields:
+            if field_type == "string":
+                if offset + 4 > len(data):
+                    raise ValueError(f"Not enough data for {field_name} length at offset {offset}")
+                length = struct.unpack("<I", data[offset : offset + 4])[0]
+                offset += 4
+                if offset + length > len(data):
+                    raise ValueError(f"Not enough data for {field_name} value (length={length}) at offset {offset}")
+                value = data[offset : offset + length].decode("utf-8")
+                offset += length
+            elif field_type == "publicKey":
+                if offset + 32 > len(data):
+                    raise ValueError(f"Not enough data for {field_name} at offset {offset}")
+                value = base58.b58encode(data[offset : offset + 32]).decode("utf-8")
+                offset += 32
+
+            parsed_data[field_name] = value
+
+        parsed_data["token_standard"] = "legacy"
+        parsed_data["is_mayhem_mode"] = False
+        return parsed_data
+    except Exception as e:
+        print(f"[ERROR] Failed to parse create event: {e}")
+        return None
+
+
+def parse_create_v2_event(data):
+    """Parse CreateV2 event from logs (event data includes all fields)."""
+    if len(data) < 8:
+        return None
+
+    offset = 8  # Skip discriminator
+    parsed_data = {}
+
+    # Parse fields based on CreateV2Event structure
+    fields = [
+        ("name", "string"),
+        ("symbol", "string"),
+        ("uri", "string"),
+        ("mint", "publicKey"),
+        ("bondingCurve", "publicKey"),
+        ("user", "publicKey"),
+        ("creator", "publicKey"),
+    ]
+
+    try:
+        for field_name, field_type in fields:
+            if field_type == "string":
+                if offset + 4 > len(data):
+                    raise ValueError(f"Not enough data for {field_name} length at offset {offset}")
+                length = struct.unpack("<I", data[offset : offset + 4])[0]
+                offset += 4
+                if offset + length > len(data):
+                    raise ValueError(f"Not enough data for {field_name} value (length={length}) at offset {offset}")
+                value = data[offset : offset + length].decode("utf-8")
+                offset += length
+            elif field_type == "publicKey":
+                if offset + 32 > len(data):
+                    raise ValueError(f"Not enough data for {field_name} at offset {offset}")
+                value = base58.b58encode(data[offset : offset + 32]).decode("utf-8")
+                offset += 32
+
+            parsed_data[field_name] = value
+
+        # Parse is_mayhem_mode (OptionBool at the end)
+        if offset < len(data):
+            is_mayhem_mode = bool(data[offset])
+            parsed_data["is_mayhem_mode"] = is_mayhem_mode
+        else:
+            parsed_data["is_mayhem_mode"] = False
+
+        parsed_data["token_standard"] = "token2022"
+        return parsed_data
+    except Exception as e:
+        print(f"[ERROR] Failed to parse create v2 event: {e}")
         return None
 
 
@@ -267,6 +423,51 @@ def is_transaction_successful(logs):
 
 
 # ============ WEBSOCKET LISTENERS ============
+
+
+def get_account_keys(transaction, instruction, loaded_addresses=None):
+    """
+    Safely extract account keys for an instruction from a versioned transaction.
+    Handles both static account keys and loaded addresses from lookup tables.
+
+    Args:
+        transaction: VersionedTransaction object
+        instruction: Instruction object
+        loaded_addresses: Dict with 'writable' and 'readonly' loaded addresses from tx meta
+
+    Returns:
+        List of account keys as strings, or None if unable to resolve
+    """
+    account_keys = []
+    static_keys = transaction.message.account_keys
+
+    # Combine all available account keys: static + loaded
+    all_keys = list(static_keys)
+
+    if loaded_addresses:
+        # Add loaded writable addresses
+        if "writable" in loaded_addresses:
+            for addr in loaded_addresses["writable"]:
+                all_keys.append(Pubkey.from_string(addr))
+
+        # Add loaded readonly addresses
+        if "readonly" in loaded_addresses:
+            for addr in loaded_addresses["readonly"]:
+                all_keys.append(Pubkey.from_string(addr))
+
+    # Now resolve account indices
+    for index in instruction.accounts:
+        try:
+            if index < len(all_keys):
+                account_keys.append(str(all_keys[index]))
+            else:
+                print(f"Warning: Account index {index} out of range (max: {len(all_keys)-1})")
+                return None
+        except (IndexError, Exception) as e:
+            print(f"Error resolving account at index {index}: {e}")
+            return None
+
+    return account_keys
 
 
 async def listen_block_subscription(wss_url, provider_name, tracker, known_tokens=None):
@@ -330,6 +531,12 @@ async def listen_block_subscription(wss_url, provider_name, tracker, known_token
 
                             try:
                                 transaction = VersionedTransaction.from_bytes(tx_data)
+
+                                # Extract loaded addresses from transaction metadata
+                                loaded_addresses = None
+                                if "meta" in tx and tx["meta"] and "loadedAddresses" in tx["meta"]:
+                                    loaded_addresses = tx["meta"]["loadedAddresses"]
+
                                 for ix in transaction.message.instructions:
                                     if (
                                         transaction.message.account_keys[
@@ -339,39 +546,53 @@ async def listen_block_subscription(wss_url, provider_name, tracker, known_token
                                     ):
                                         data_bytes = bytes(ix.data)
 
-                                        if not data_bytes.startswith(
-                                            PUMP_CREATE_PREFIX
-                                        ):
+                                        # Check for both Create and CreateV2 instructions
+                                        is_create = data_bytes.startswith(PUMP_CREATE_PREFIX)
+                                        is_create_v2 = data_bytes.startswith(PUMP_CREATE_V2_PREFIX)
+
+                                        if not (is_create or is_create_v2):
                                             continue
 
-                                        parsed = parse_create_instruction(data_bytes)
-                                        if not parsed:
+                                        # Get account keys with ALT support
+                                        account_keys = get_account_keys(
+                                            transaction, ix, loaded_addresses
+                                        )
+                                        if account_keys is None:
+                                            print("Skipping transaction due to unresolved accounts")
                                             continue
 
-                                        if len(ix.accounts) > 0:
-                                            try:
-                                                mint = str(
-                                                    transaction.message.account_keys[
-                                                        ix.accounts[0]
-                                                    ]
-                                                )  # First account is usually the mint
+                                        # Decode based on instruction type
+                                        if is_create_v2:
+                                            print(f"[{provider_name}_block] Detected: CreateV2 instruction (Token2022)")
+                                            decoded = decode_create_v2_instruction(data_bytes, account_keys)
+                                        else:
+                                            print(f"[{provider_name}_block] Detected: Create instruction (Legacy/Metaplex)")
+                                            decoded = decode_create_instruction(data_bytes, account_keys)
 
-                                                if mint in known_tokens:
-                                                    continue
+                                        if not decoded:
+                                            continue
 
-                                                ts = time.time()
-                                                tracker.add_token(
-                                                    mint,
-                                                    parsed["name"],
-                                                    parsed["symbol"],
-                                                    f"{provider_name}_block",
-                                                    ts,
-                                                )
-                                                known_tokens.add(mint)
-                                            except Exception as e:
-                                                print(
-                                                    f"[ERROR] Failed to process block instruction: {e}"
-                                                )
+                                        mint = decoded.get("mint")
+                                        if not mint:
+                                            continue
+
+                                        if mint in known_tokens:
+                                            continue
+
+                                        try:
+                                            ts = time.time()
+                                            tracker.add_token(
+                                                mint,
+                                                decoded["name"],
+                                                decoded["symbol"],
+                                                f"{provider_name}_block",
+                                                ts,
+                                            )
+                                            known_tokens.add(mint)
+                                        except Exception as e:
+                                            print(
+                                                f"[ERROR] Failed to process block instruction: {e}"
+                                            )
                             except Exception as e:
                                 print(f"[ERROR] Failed to process transaction: {e}")
 
@@ -424,9 +645,17 @@ async def listen_logs_subscription(wss_url, provider_name, tracker, known_tokens
                         log_data = data["params"]["result"]["value"]
                         logs = log_data.get("logs", [])
 
-                        if not any(
-                            "Program log: Instruction: Create" in log for log in logs
-                        ):
+                        # Detect both Create and CreateV2 instructions
+                        is_create = any(
+                            "Program log: Instruction: Create" in log
+                            for log in logs
+                        )
+                        is_create_v2 = any(
+                            "Program log: Instruction: CreateV2" in log
+                            for log in logs
+                        )
+
+                        if not (is_create or is_create_v2):
                             continue
 
                         for log in logs:
@@ -435,7 +664,23 @@ async def listen_logs_subscription(wss_url, provider_name, tracker, known_tokens
                                     encoded_data = log.split(": ")[1]
                                     data_bytes = base64.b64decode(encoded_data)
 
-                                    parsed = parse_create_instruction(data_bytes)
+                                    # Check if this is a CreateEvent by validating discriminator
+                                    if len(data_bytes) < 8:
+                                        continue
+
+                                    event_discriminator = data_bytes[:8]
+                                    if event_discriminator != CREATE_EVENT_DISCRIMINATOR:
+                                        # Skip non-CreateEvent logs (e.g., TradeEvent, ExtendAccountEvent)
+                                        continue
+
+                                    # Parse based on instruction type
+                                    if is_create_v2:
+                                        print(f"[{provider_name}_logs] Detected: CreateV2 instruction (Token2022)")
+                                        parsed = parse_create_v2_event(data_bytes)
+                                    else:
+                                        print(f"[{provider_name}_logs] Detected: Create instruction (Legacy/Metaplex)")
+                                        parsed = parse_create_event(data_bytes)
+
                                     if not parsed:
                                         continue
 
@@ -492,11 +737,11 @@ async def listen_geyser_grpc(
 
             if GEYSER_AUTH_TYPE == "x-token":
                 auth = grpc.metadata_call_credentials(
-                    lambda context, callback: callback((("x-token", api_token),), None)
+                    lambda _context, callback: callback((("x-token", api_token),), None)
                 )
             else:
                 auth = grpc.metadata_call_credentials(
-                    lambda context, callback: callback(
+                    lambda _context, callback: callback(
                         (("authorization", f"Basic {api_token}"),), None
                     )
                 )
@@ -529,28 +774,44 @@ async def listen_geyser_grpc(
                     continue
 
                 for ix in msg.instructions:
-                    if not ix.data.startswith(PUMP_CREATE_PREFIX):
+                    # Check for both Create and CreateV2 instructions
+                    is_create = ix.data.startswith(PUMP_CREATE_PREFIX)
+                    is_create_v2 = ix.data.startswith(PUMP_CREATE_V2_PREFIX)
+
+                    if not (is_create or is_create_v2):
                         continue
 
-                    parsed = parse_create_instruction(ix.data)
-                    if not parsed:
+                    # Convert account keys to string format
+                    account_keys = []
+                    for account_idx in ix.accounts:
+                        if account_idx < len(msg.account_keys):
+                            account_keys.append(
+                                base58.b58encode(bytes(msg.account_keys[account_idx])).decode()
+                            )
+
+                    if len(account_keys) == 0:
                         continue
 
-                    if len(ix.accounts) == 0 or ix.accounts[0] >= len(msg.account_keys):
-                        continue
-
-                    mint = base58.b58encode(
-                        bytes(msg.account_keys[ix.accounts[0]])
-                    ).decode()
-
+                    mint = account_keys[0]
                     if mint in known_tokens:
+                        continue
+
+                    # Decode based on instruction type
+                    if is_create_v2:
+                        print(f"[{provider_name}_geyser] Detected: CreateV2 instruction (Token2022)")
+                        decoded = decode_create_v2_instruction(ix.data, account_keys)
+                    else:
+                        print(f"[{provider_name}_geyser] Detected: Create instruction (Legacy/Metaplex)")
+                        decoded = decode_create_instruction(ix.data, account_keys)
+
+                    if not decoded:
                         continue
 
                     ts = time.time()
                     tracker.add_token(
                         mint,
-                        parsed["name"],
-                        parsed["symbol"],
+                        decoded["name"],
+                        decoded["symbol"],
                         f"{provider_name}_geyser",
                         ts,
                     )
