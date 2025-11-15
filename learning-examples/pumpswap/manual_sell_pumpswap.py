@@ -1,10 +1,14 @@
 """
-This module provides functionality to:
-- Find market addresses by token mint.
-- Fetch and parse market data from PUMP AMM pools.
-- Calculate token prices in AMM pools.
-- Create associated token accounts (ATAs) idempotently.
-- Sell tokens on the PUMP AMM with slippage protection.
+This standalone script demonstrates how to sell tokens on the PUMP AMM (pAMM) protocol.
+It covers the complete flow from finding markets to executing sells with mayhem mode support.
+
+Key concepts demonstrated:
+- Finding AMM pool addresses by token mint
+- Parsing binary account data structures
+- Dynamic fee recipient calculation (mayhem mode vs standard)
+- Program Derived Address (PDA) derivation
+- Transaction construction with compute budgets
+- Slippage protection mechanisms
 """
 
 import asyncio
@@ -26,29 +30,32 @@ from spl.token.instructions import get_associated_token_address
 
 load_dotenv()
 
-# Configuration constants
+# ============================================================================
+# Configuration
+# ============================================================================
+
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
-TOKEN_MINT = Pubkey.from_string("...")
+TOKEN_MINT = Pubkey.from_string(
+    "Lhgmypk4MkeEeZUFRnxXFHhw6h5HbSHAteSx5D4pump"
+)  # Replace with your token mint address
 PRIVATE_KEY = base58.b58decode(os.environ.get("SOLANA_PRIVATE_KEY"))
 PAYER = Keypair.from_bytes(PRIVATE_KEY)
-SLIPPAGE = 0.25  # Slippage tolerance (25%) - the maximum price movement you'll accept
+SLIPPAGE = 0.25  # 25% - maximum acceptable price movement during trade
 
-TOKEN_DECIMALS = 6
-SELL_DISCRIMINATOR = bytes.fromhex(
-    "33e685a4017f83ad"
-)  # Program instruction identifier for the sell function
+# Token configuration
+TOKEN_DECIMALS = 6  # Standard for most pump.fun tokens
 
-# Solana system addresses and program IDs
+# Program instruction discriminators (first 8 bytes identify the instruction)
+SELL_DISCRIMINATOR = bytes.fromhex("33e685a4017f83ad")
+
+# ============================================================================
+# Solana Program IDs and System Accounts
+# ============================================================================
+
 SOL = Pubkey.from_string("So11111111111111111111111111111111111111112")
 PUMP_AMM_PROGRAM_ID = Pubkey.from_string("pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA")
 PUMP_SWAP_GLOBAL_CONFIG = Pubkey.from_string(
     "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw"
-)
-PUMP_PROTOCOL_FEE_RECIPIENT = Pubkey.from_string(
-    "7VtfL8fvgNfhz17qKRMjzQEXgbdpnHHHQRh54R9jP2RJ"
-)
-PUMP_PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT = Pubkey.from_string(
-    "7GFUN3bWzJMKMRZ34JLsvcqdssDbXnp589SiE33KVwcC"
 )
 SYSTEM_TOKEN_PROGRAM = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
 SYSTEM_PROGRAM = Pubkey.from_string("11111111111111111111111111111111")
@@ -59,59 +66,85 @@ PUMP_SWAP_EVENT_AUTHORITY = Pubkey.from_string(
     "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR"
 )
 PUMP_FEE_PROGRAM = Pubkey.from_string("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ")
+
+# ============================================================================
+# Constants for Account Structure Parsing
+# ============================================================================
+
+# Pool account structure offsets
+POOL_DISCRIMINATOR_SIZE = 8
+POOL_BASE_MINT_OFFSET = 43  # Where base_mint field starts in pool account data
+POOL_MAYHEM_MODE_OFFSET = 243  # Where is_mayhem_mode flag is stored
+POOL_MAYHEM_MODE_MIN_SIZE = 244  # Minimum size for pool data with mayhem flag
+
+# GlobalConfig structure offsets
+GLOBALCONFIG_DISCRIMINATOR_SIZE = 8
+GLOBALCONFIG_ADMIN_SIZE = 32
+GLOBALCONFIG_DEFAULT_FEE_RECIPIENT_SIZE = 32
+GLOBALCONFIG_RESERVED_FEE_OFFSET = (
+    GLOBALCONFIG_DISCRIMINATOR_SIZE
+    + GLOBALCONFIG_ADMIN_SIZE
+    + GLOBALCONFIG_DEFAULT_FEE_RECIPIENT_SIZE
+)
+
+# Fee recipients
+STANDARD_PUMPSWAP_FEE_RECIPIENT = Pubkey.from_string("...")
+
+# Solana constants
 LAMPORTS_PER_SOL = 1_000_000_000
-COMPUTE_UNIT_PRICE = 10_000  # Price in micro-lamports per compute unit
-COMPUTE_UNIT_BUDGET = 100_000  # Maximum compute units to use
+COMPUTE_UNIT_PRICE = 10_000  # Micro-lamports per compute unit
+COMPUTE_UNIT_BUDGET = 150_000  # Max compute units for transaction
+
+
+# ============================================================================
+# Market Discovery
+# ============================================================================
 
 
 async def get_market_address_by_base_mint(
     client: AsyncClient, base_mint_address: Pubkey, amm_program_id: Pubkey
 ) -> Pubkey:
-    """Find the market address for a given token mint.
+    """Find the AMM pool address for a specific token.
 
-    Searches for the AMM pool that contains the specified token as its base token.
+    Uses getProgramAccounts RPC method with a memcmp filter to find the pool
+    that matches the given token mint address.
 
     Args:
-        client: Solana RPC client instance
-        base_mint_address: Address of the token mint you want to find the market for
-        amm_program_id: Address of the AMM program
+        client: Solana RPC client
+        base_mint_address: Token mint to find the pool for
+        amm_program_id: PUMP AMM program address
 
     Returns:
-        The Pubkey of the market (AMM pool) for the token
+        Address of the AMM pool (market) for the token
     """
-    base_mint_bytes = bytes(base_mint_address)
-    offset = (
-        43  # Offset where the base_mint field is stored in the account data structure
-    )
-    filters = [MemcmpOpts(offset=offset, bytes=base_mint_bytes)]
-
+    filters = [MemcmpOpts(offset=POOL_BASE_MINT_OFFSET, bytes=bytes(base_mint_address))]
     response = await client.get_program_accounts(
         amm_program_id, encoding="base64", filters=filters
     )
-
-    market_address = [account.pubkey for account in response.value][0]
-    return market_address
+    return response.value[0].pubkey
 
 
 async def get_market_data(client: AsyncClient, market_address: Pubkey) -> dict:
-    """Fetch and parse market data from the blockchain.
+    """Parse binary pool account data into a structured dictionary.
 
-    Retrieves and deserializes the data stored in the market account.
+    The pool account stores data in a specific binary format. This function
+    deserializes that data based on the known structure.
 
     Args:
-        client: Solana RPC client instance
-        market_address: Address of the market (AMM pool) to fetch data for
+        client: Solana RPC client
+        market_address: Address of the pool account
 
     Returns:
-        Dictionary containing the parsed market data
+        Dictionary with parsed pool data fields
     """
     response = await client.get_account_info(market_address, encoding="base64")
     data = response.value.data
     parsed_data: dict = {}
 
-    # Start after the 8-byte discriminator
-    offset = 8
-    # Define the structure of the market account data
+    offset = POOL_DISCRIMINATOR_SIZE
+
+    # Field definitions: (name, type)
+    # Types: u8=1 byte, u16=2 bytes, u64/i64=8 bytes, pubkey=32 bytes
     fields = [
         ("pool_bump", "u8"),
         ("index", "u16"),
@@ -131,39 +164,39 @@ async def get_market_data(client: AsyncClient, market_address: Pubkey) -> dict:
             parsed_data[field_name] = base58.b58encode(value).decode("utf-8")
             offset += 32
         elif field_type in {"u64", "i64"}:
-            value = (
-                struct.unpack("<Q", data[offset : offset + 8])[0]
-                if field_type == "u64"
-                else struct.unpack("<q", data[offset : offset + 8])[0]
-            )
-            parsed_data[field_name] = value
+            format_char = "<Q" if field_type == "u64" else "<q"
+            parsed_data[field_name] = struct.unpack(
+                format_char, data[offset : offset + 8]
+            )[0]
             offset += 8
         elif field_type == "u16":
-            value = struct.unpack("<H", data[offset : offset + 2])[0]
-            parsed_data[field_name] = value
+            parsed_data[field_name] = struct.unpack("<H", data[offset : offset + 2])[0]
             offset += 2
         elif field_type == "u8":
-            value = data[offset]
-            parsed_data[field_name] = value
+            parsed_data[field_name] = data[offset]
             offset += 1
 
     return parsed_data
 
 
-def find_coin_creator_vault(coin_creator: Pubkey) -> Pubkey:
-    """Derive the Program Derived Address (PDA) for a coin creator's vault.
+# ============================================================================
+# Program Derived Address (PDA) Derivation
+# ============================================================================
+# PDAs are deterministic addresses derived from seeds and a program ID.
+# They allow programs to own accounts without needing a private key.
 
-    Calculates the deterministic PDA that serves as the vault authority
-    for a specific coin creator in the PUMP AMM protocol.
+
+def find_coin_creator_vault(coin_creator: Pubkey) -> Pubkey:
+    """Derive the PDA for the coin creator's fee vault.
+
+    The creator vault collects fees on behalf of the token creator.
+    This is a deterministic address that can be recalculated by anyone.
 
     Args:
-        coin_creator: Pubkey of the coin creator account
+        coin_creator: Public key of the token creator
 
     Returns:
-        Pubkey of the derived coin creator vault authority
-
-    Note:
-        This vault is used to collect creator fees from token transactions
+        PDA of the creator's vault authority
     """
     derived_address, _ = Pubkey.find_program_address(
         [b"creator_vault", bytes(coin_creator)],
@@ -173,10 +206,9 @@ def find_coin_creator_vault(coin_creator: Pubkey) -> Pubkey:
 
 
 def find_fee_config() -> Pubkey:
-    """Derive the Program Derived Address (PDA) for the fee config.
+    """Derive the PDA for the fee configuration account.
 
-    Returns:
-        Pubkey of the derived fee config account
+    This account stores fee-related configuration for the AMM.
     """
     derived_address, _ = Pubkey.find_program_address(
         [b"fee_config", bytes(PUMP_AMM_PROGRAM_ID)],
@@ -185,48 +217,128 @@ def find_fee_config() -> Pubkey:
     return derived_address
 
 
+# ============================================================================
+# Mayhem Mode Fee Handling
+# ============================================================================
+# Mayhem mode is a special fee structure where fees go to a different recipient.
+# The fee recipient changes dynamically based on the pool's mayhem_mode flag.
+
+
+async def get_reserved_fee_recipient_pumpswap(client: AsyncClient) -> Pubkey:
+    """Fetch the mayhem mode fee recipient from GlobalConfig.
+
+    When mayhem mode is active, fees are redirected to a special recipient
+    stored in the GlobalConfig account.
+
+    Args:
+        client: Solana RPC client
+
+    Returns:
+        Public key of the mayhem mode fee recipient
+    """
+    response = await client.get_account_info(PUMP_SWAP_GLOBAL_CONFIG, encoding="base64")
+    if not response.value or not response.value.data:
+        msg = "Cannot fetch GlobalConfig account"
+        raise ValueError(msg)
+
+    data = response.value.data
+    recipient_bytes = data[
+        GLOBALCONFIG_RESERVED_FEE_OFFSET : GLOBALCONFIG_RESERVED_FEE_OFFSET + 32
+    ]
+    return Pubkey.from_bytes(recipient_bytes)
+
+
+async def get_pumpswap_fee_recipients(
+    client: AsyncClient, pool: Pubkey
+) -> tuple[Pubkey, Pubkey]:
+    """Determine the correct fee recipient based on pool's mayhem mode status.
+
+    This function checks if mayhem mode is enabled for the pool and returns
+    the appropriate fee recipient and their WSOL token account.
+
+    Args:
+        client: Solana RPC client
+        pool: Address of the AMM pool
+
+    Returns:
+        Tuple of (fee_recipient_pubkey, fee_recipient_token_account)
+    """
+    response = await client.get_account_info(pool, encoding="base64")
+    if not response.value or not response.value.data:
+        msg = "Cannot fetch pool account"
+        raise ValueError(msg)
+
+    pool_data = response.value.data
+
+    # Check if mayhem mode flag exists and is enabled
+    is_mayhem_mode = len(pool_data) >= POOL_MAYHEM_MODE_MIN_SIZE and bool(
+        pool_data[POOL_MAYHEM_MODE_OFFSET]
+    )
+
+    # Select appropriate fee recipient
+    if is_mayhem_mode:
+        fee_recipient = await get_reserved_fee_recipient_pumpswap(client)
+    else:
+        fee_recipient = STANDARD_PUMPSWAP_FEE_RECIPIENT
+
+    # Get the fee recipient's WSOL token account
+    fee_recipient_token_account = get_associated_token_address(
+        fee_recipient, SOL, SYSTEM_TOKEN_PROGRAM
+    )
+
+    return (fee_recipient, fee_recipient_token_account)
+
+
+# ============================================================================
+# Price Calculation
+# ============================================================================
+
+
 async def calculate_token_pool_price(
     client: AsyncClient,
     pool_base_token_account: Pubkey,
     pool_quote_token_account: Pubkey,
 ) -> float:
-    """Calculate the price of tokens in the pool.
+    """Calculate current token price from AMM pool balances.
 
-    Fetches the balance of tokens in the pool and calculates the price ratio.
+    AMM price is determined by the ratio of tokens in the pool:
+    price = quote_balance / base_balance
 
     Args:
-        client: Solana RPC client instance
-        pool_base_token_account: Address of the pool's base token account (your token)
-        pool_quote_token_account: Address of the pool's quote token account (SOL)
+        client: Solana RPC client
+        pool_base_token_account: Pool's token account (the token being priced)
+        pool_quote_token_account: Pool's SOL account (the quote currency)
 
     Returns:
-        The price of the base token in terms of the quote token (usually SOL)
+        Price in SOL per token
     """
     base_balance_resp = await client.get_token_account_balance(pool_base_token_account)
     quote_balance_resp = await client.get_token_account_balance(
         pool_quote_token_account
     )
 
-    # Extract the UI amounts (human-readable with decimals)
     base_amount = float(base_balance_resp.value.ui_amount)
     quote_amount = float(quote_balance_resp.value.ui_amount)
 
-    token_price = quote_amount / base_amount
+    return quote_amount / base_amount
 
-    return token_price
+
+# ============================================================================
+# Associated Token Account (ATA) Creation
+# ============================================================================
 
 
 def create_ata_idempotent_ix(payer_pubkey: Pubkey) -> Instruction:
-    """Create an instruction to create an Associated Token Account (ATA) if it doesn't exist.
+    """Create instruction to initialize a WSOL ATA if it doesn't exist.
 
-    This creates an instruction that will create an Associated Token Account for SOL
-    if it doesn't already exist.
+    Idempotent means this instruction won't fail if the ATA already exists.
+    See: https://github.com/solana-program/associated-token-account/blob/main/program/src/instruction.rs
 
     Args:
-        payer_pubkey: The public key of the account that will pay for the creation
+        payer_pubkey: Account that will pay for ATA creation
 
     Returns:
-        An instruction to create the ATA
+        Instruction to create the ATA
     """
     associated_token_address = get_associated_token_address(payer_pubkey, SOL)
 
@@ -239,18 +351,20 @@ def create_ata_idempotent_ix(payer_pubkey: Pubkey) -> Instruction:
         AccountMeta(pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False),
     ]
 
-    # The data for creating an ATA idempotently is just a single byte with value 1
-    # Check the details here:
-    # https://github.com/solana-program/associated-token-account/blob/main/program/src/instruction.rs
-    data = bytes([1])
+    # Instruction data: single byte with value 1 = CreateIdempotent
     return Instruction(
-        SYSTEM_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM, data, instruction_accounts
+        SYSTEM_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM, bytes([1]), instruction_accounts
     )
+
+
+# ============================================================================
+# Token Selling
+# ============================================================================
 
 
 async def sell_pump_swap(
     client: AsyncClient,
-    pump_fun_amm_market: Pubkey,
+    market: Pubkey,
     payer: Keypair,
     base_mint: Pubkey,
     user_base_token_account: Pubkey,
@@ -261,54 +375,61 @@ async def sell_pump_swap(
     coin_creator_vault_ata: Pubkey,
     slippage: float = 0.25,
 ) -> str | None:
-    """Sell tokens on the PUMP AMM.
+    """Execute a token sell on the PUMP AMM with slippage protection.
 
-    This function sells all tokens in the user's token account with the specified slippage tolerance.
+    This function:
+    1. Fetches current token balance and pool price
+    2. Calculates minimum SOL output with slippage tolerance
+    3. Constructs and sends the sell transaction
 
     Args:
-        client: Solana RPC client instance
-        pump_fun_amm_market: Address of the AMM market
-        payer: Keypair of the transaction signer and token seller
-        base_mint: Address of the token mint being sold
-        user_base_token_account: Address of the user's token account for the token being sold
-        user_quote_token_account: Address of the user's SOL token account
-        pool_base_token_account: Address of the pool's token account for the token being sold
-        pool_quote_token_account: Address of the pool's SOL token account
-        coin_creator_vault_authority: Address of the coin creator's vault authority
-        coin_creator_vault_ata: Address of the coin creator's associated token account for fees
-        slippage: Maximum acceptable price slippage, as a decimal (0.25 = 25%)
+        client: Solana RPC client
+        market: AMM pool address
+        payer: Wallet keypair for signing
+        base_mint: Token mint address
+        user_base_token_account: User's token account
+        user_quote_token_account: User's WSOL account
+        pool_base_token_account: Pool's token account
+        pool_quote_token_account: Pool's WSOL account
+        coin_creator_vault_authority: Creator vault PDA
+        coin_creator_vault_ata: Creator's WSOL account
+        slippage: Maximum acceptable slippage (0.25 = 25%)
 
     Returns:
         Transaction signature if successful, None otherwise
     """
-    # Get token balance
     token_balance = int(
         (await client.get_token_account_balance(user_base_token_account)).value.amount
     )
     token_balance_decimal = token_balance / 10**TOKEN_DECIMALS
+
     print(f"Token balance: {token_balance_decimal}")
+
     if token_balance == 0:
         print("No tokens to sell.")
         return None
 
-    # Calculate token price
     token_price_sol = await calculate_token_pool_price(
         client, pool_base_token_account, pool_quote_token_account
     )
     print(f"Price per Token: {token_price_sol:.20f} SOL")
 
-    # Calculate minimum SOL output with slippage protection
-    amount = token_balance
-    min_sol_output = float(token_balance_decimal) * float(token_price_sol)
-    slippage_factor = 1 - slippage
-    min_sol_output = int((min_sol_output * slippage_factor) * LAMPORTS_PER_SOL)
+    # Calculate minimum SOL we're willing to receive (slippage protection)
+    expected_sol_output = token_balance_decimal * token_price_sol
+    min_sol_output = int((expected_sol_output * (1 - slippage)) * LAMPORTS_PER_SOL)
 
     print(f"Selling {token_balance_decimal} tokens")
     print(f"Minimum SOL output: {min_sol_output / LAMPORTS_PER_SOL:.10f} SOL")
 
-    # Define all accounts needed for the sell instruction
+    # Get fee recipient based on mayhem mode
+    fee_recipient, fee_recipient_token_account = await get_pumpswap_fee_recipients(
+        client, market
+    )
+
+    # Build account list for sell instruction
+    # Order matters! Must match the program's expected account layout
     accounts = [
-        AccountMeta(pubkey=pump_fun_amm_market, is_signer=False, is_writable=True),
+        AccountMeta(pubkey=market, is_signer=False, is_writable=True),
         AccountMeta(pubkey=payer.pubkey(), is_signer=True, is_writable=True),
         AccountMeta(pubkey=PUMP_SWAP_GLOBAL_CONFIG, is_signer=False, is_writable=False),
         AccountMeta(pubkey=base_mint, is_signer=False, is_writable=False),
@@ -317,13 +438,9 @@ async def sell_pump_swap(
         AccountMeta(pubkey=user_quote_token_account, is_signer=False, is_writable=True),
         AccountMeta(pubkey=pool_base_token_account, is_signer=False, is_writable=True),
         AccountMeta(pubkey=pool_quote_token_account, is_signer=False, is_writable=True),
+        AccountMeta(pubkey=fee_recipient, is_signer=False, is_writable=False),
         AccountMeta(
-            pubkey=PUMP_PROTOCOL_FEE_RECIPIENT, is_signer=False, is_writable=False
-        ),
-        AccountMeta(
-            pubkey=PUMP_PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT,
-            is_signer=False,
-            is_writable=True,
+            pubkey=fee_recipient_token_account, is_signer=False, is_writable=True
         ),
         AccountMeta(pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False),
         AccountMeta(pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False),
@@ -341,62 +458,69 @@ async def sell_pump_swap(
         AccountMeta(
             pubkey=coin_creator_vault_authority, is_signer=False, is_writable=False
         ),
-        # Index 19: fee_config (readonly)
         AccountMeta(pubkey=find_fee_config(), is_signer=False, is_writable=False),
-        # Index 20: fee_program (readonly)
         AccountMeta(pubkey=PUMP_FEE_PROGRAM, is_signer=False, is_writable=False),
     ]
 
+    # Instruction data format: discriminator (8 bytes) + amount (8 bytes) + min_out (8 bytes)
+    # All integers are little-endian (<)
     data = (
         SELL_DISCRIMINATOR
-        + struct.pack("<Q", amount)
-        + struct.pack("<Q", min_sol_output)
+        + struct.pack("<Q", token_balance)  # Amount to sell
+        + struct.pack("<Q", min_sol_output)  # Minimum SOL to receive
     )
 
+    # Set compute budget to avoid transaction failures
     compute_limit_ix = set_compute_unit_limit(COMPUTE_UNIT_BUDGET)
     compute_price_ix = set_compute_unit_price(COMPUTE_UNIT_PRICE)
 
-    create_ata_ix = create_ata_idempotent_ix(
-        payer_pubkey=payer.pubkey(),
-    )
+    # Ensure WSOL ATA exists (needed to receive SOL from sell)
+    create_ata_ix = create_ata_idempotent_ix(payer.pubkey())
 
     sell_ix = Instruction(PUMP_AMM_PROGRAM_ID, data, accounts)
 
+    # Build and sign transaction
     blockhash_resp = await client.get_latest_blockhash()
-    recent_blockhash = blockhash_resp.value.blockhash
-
     msg = Message.new_with_blockhash(
         [compute_limit_ix, compute_price_ix, create_ata_ix, sell_ix],
         payer.pubkey(),
-        recent_blockhash,
+        blockhash_resp.value.blockhash,
     )
-
-    tx_sell = VersionedTransaction(message=msg, keypairs=[payer])
+    tx = VersionedTransaction(message=msg, keypairs=[payer])
 
     try:
+        # Skip preflight to send transaction faster (useful in competitive scenarios)
         tx_sig = await client.send_transaction(
-            tx_sell,
-            opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed),
+            tx, opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
         )
-
         tx_hash = tx_sig.value
         print(f"Transaction sent: https://explorer.solana.com/tx/{tx_hash}")
-        await client.confirm_transaction(tx_hash, commitment="confirmed")
 
+        await client.confirm_transaction(tx_hash, commitment="confirmed")
         print("Transaction confirmed")
         return tx_hash
     except Exception as e:
-        print(f"Error sending transaction: {e!s}")
+        print(f"Error: {e!s}")
         return None
 
 
-async def main():
-    """Main function to execute the token selling process."""
+# ============================================================================
+# Main Execution
+# ============================================================================
+
+
+async def main() -> None:
+    """Execute the complete sell flow."""
     async with AsyncClient(RPC_ENDPOINT) as client:
+        # Step 1: Find the pool address for our token
         market_address = await get_market_address_by_base_mint(
             client, TOKEN_MINT, PUMP_AMM_PROGRAM_ID
         )
+
+        # Step 2: Parse pool data to get necessary accounts
         market_data = await get_market_data(client, market_address)
+
+        # Step 3: Derive PDAs needed for the transaction
         coin_creator_vault_authority = find_coin_creator_vault(
             Pubkey.from_string(market_data["coin_creator"])
         )
@@ -404,6 +528,7 @@ async def main():
             coin_creator_vault_authority, SOL
         )
 
+        # Step 4: Execute the sell
         await sell_pump_swap(
             client,
             market_address,
