@@ -35,9 +35,7 @@ load_dotenv()
 # ============================================================================
 
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
-TOKEN_MINT = Pubkey.from_string(
-    "Lhgmypk4MkeEeZUFRnxXFHhw6h5HbSHAteSx5D4pump"
-)  # Replace with your token mint address
+TOKEN_MINT = Pubkey.from_string("...")  # Replace with your token mint address
 PRIVATE_KEY = base58.b58decode(os.environ.get("SOLANA_PRIVATE_KEY"))
 PAYER = Keypair.from_bytes(PRIVATE_KEY)
 SLIPPAGE = 0.25  # 25% - maximum acceptable price movement during trade
@@ -88,7 +86,9 @@ GLOBALCONFIG_RESERVED_FEE_OFFSET = (
 )
 
 # Fee recipients
-STANDARD_PUMPSWAP_FEE_RECIPIENT = Pubkey.from_string("...")
+STANDARD_PUMPSWAP_FEE_RECIPIENT = Pubkey.from_string(
+    "7VtfL8fvgNfhz17qKRMjzQEXgbdpnHHHQRh54R9jP2RJ"
+)
 
 # Solana constants
 LAMPORTS_PER_SOL = 1_000_000_000
