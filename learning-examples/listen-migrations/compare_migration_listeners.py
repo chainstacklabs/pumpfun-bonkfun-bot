@@ -1,11 +1,19 @@
 """
 This script compares two methods of detecting migrations:
-1. Migration program listener (listens Migration program) - detects markets via successful migration transactions
-2. Direct market account listener (listens Pump Fun AMM program aka PumpSwap) - detects markets via program account subscription
 
-The script tracks which method detects new markets first and provides detailed performance statistics.
+1. Migration Program Listener - Listens to migration wrapper program (39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg)
+   which emits detailed migration events via logsSubscribe
 
-Note: multiple endpoints available. Scroll down to change providers which you want to test.
+2. Direct Pool Account Listener - Listens to pump_amm program (pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA)
+   for new Pool account creations via programSubscribe
+
+Note: The migration wrapper program emits a different event structure than
+CompletePumpAmmMigrationEvent in pump_fun_idl.json.
+
+The script tracks which method detects new migrations first and provides detailed performance
+statistics including message counts, detection timing, provider latency comparison.
+
+Configure multiple RPC endpoints in .env file to test provider performance.
 """
 
 import asyncio
@@ -33,7 +41,7 @@ QUOTE_MINT_SOL = base58.b58encode(
 ).decode()
 
 MARKET_DISCRIMINATOR = base58.b58encode(b"\xf1\x9am\x04\x11\xb1m\xbc").decode()
-MARKET_ACCOUNT_LENGTH = 8 + 1 + 2 + 32 * 6 + 8  # total size of known market structure
+MARKET_ACCOUNT_LENGTH = 8 + 1 + 2 + 32 * 6 + 8 + 32 + 1  # Pool account with is_mayhem_mode = 244 bytes
 
 
 class DetectionTracker:
@@ -306,9 +314,9 @@ async def fetch_existing_market_pubkeys():
 
 def parse_market_account_data(data):
     """
-    Parse binary market account data into a structured format
+    Parse binary Pool account data according to pump_swap_idl.json structure
 
-    This function matches the parser from the market listener script
+    Total 11 fields including is_mayhem_mode field added with mayhem update
     """
     parsed_data = {}
     offset = 8  # Skip discriminator
@@ -323,6 +331,8 @@ def parse_market_account_data(data):
         ("pool_base_token_account", "pubkey"),
         ("pool_quote_token_account", "pubkey"),
         ("lp_supply", "u64"),
+        ("coin_creator", "pubkey"),
+        ("is_mayhem_mode", "bool"),
     ]
 
     try:
@@ -347,6 +357,10 @@ def parse_market_account_data(data):
                 value = data[offset]
                 parsed_data[field_name] = value
                 offset += 1
+            elif field_type == "bool":
+                value = bool(data[offset])
+                parsed_data[field_name] = value
+                offset += 1
     except Exception as e:
         print(f"[ERROR] Failed to parse market data: {e}")
 
@@ -355,9 +369,11 @@ def parse_market_account_data(data):
 
 def parse_migrate_instruction(data):
     """
-    Parse binary migration instruction data into a structured format
+    Parse migration event from the migration wrapper program
 
-    This function matches the parser from the migration listener script
+    Note: This parses the event emitted by the migration wrapper program
+    (39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg), which has a different
+    structure than CompletePumpAmmMigrationEvent in pump_fun_idl.json.
     """
     if len(data) < 8:
         print(f"[ERROR] Data length too short: {len(data)} bytes")

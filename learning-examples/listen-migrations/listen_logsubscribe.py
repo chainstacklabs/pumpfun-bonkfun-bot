@@ -1,8 +1,11 @@
 """
-Listens for 'Migrate' instructions from a Solana migration program via WebSocket.
+Listens for 'Migrate' instructions from Solana migration program via WebSocket.
 Parses and logs transaction details (e.g., mint, liquidity, token accounts) for successful migrations.
 
-Note: skips transactions with truncated logs (no Program data in the logs -> no parsed data).
+Note: This uses a migration wrapper program (39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg)
+that emits a different event structure than the CompletePumpAmmMigrationEvent in pump_fun_idl.json.
+
+Skips transactions with truncated logs (no Program data in the logs -> no parsed data).
 To cover those cases, please use an additional RPC call (get transaction data) or additional listener not based on logs.
 """
 
@@ -26,6 +29,12 @@ MIGRATION_PROGRAM_ID = Pubkey.from_string(
 
 
 def parse_migrate_instruction(data):
+    """Parse migration event from the migration wrapper program.
+
+    Note: This parses the event emitted by the migration wrapper program
+    (39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg), which has a different
+    structure than CompletePumpAmmMigrationEvent in pump_fun_idl.json.
+    """
     if len(data) < 8:
         print(f"[ERROR] Data length too short: {len(data)} bytes")
         return None
