@@ -43,7 +43,9 @@ load_dotenv()
 # ============================================================================
 
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
-TOKEN_MINT = Pubkey.from_string("...")  # Replace with your token mint address
+TOKEN_MINT = Pubkey.from_string(
+    "7ZmWfj1KCsixqnRvpdtHpNb9c6YmDMM6QADSYhiUpump"
+)  # Replace with your token mint address
 PRIVATE_KEY = base58.b58decode(os.environ.get("SOLANA_PRIVATE_KEY"))
 PAYER = Keypair.from_bytes(PRIVATE_KEY)
 SLIPPAGE = 0.3  # 30% - maximum acceptable price movement during trade
@@ -64,6 +66,7 @@ PUMP_SWAP_GLOBAL_CONFIG = Pubkey.from_string(
     "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw"
 )
 SYSTEM_TOKEN_PROGRAM = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+TOKEN_2022_PROGRAM = Pubkey.from_string("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
 SYSTEM_PROGRAM = Pubkey.from_string("11111111111111111111111111111111")
 SYSTEM_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM = Pubkey.from_string(
     "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
@@ -375,6 +378,25 @@ async def calculate_token_pool_price(
 # ============================================================================
 
 
+async def get_token_program_id(client: AsyncClient, mint_address: Pubkey) -> Pubkey:
+    """Determines if a mint uses TokenProgram or Token2022Program."""
+    mint_info = await client.get_account_info(mint_address)
+
+    if not mint_info.value:
+        raise ValueError(f"Could not fetch mint info for {mint_address}")
+
+    owner = mint_info.value.owner
+
+    if owner == SYSTEM_TOKEN_PROGRAM:
+        return SYSTEM_TOKEN_PROGRAM
+    elif owner == TOKEN_2022_PROGRAM:
+        return TOKEN_2022_PROGRAM
+    else:
+        raise ValueError(
+            f"Mint account {mint_address} is owned by an unknown program: {owner}"
+        )
+
+
 async def buy_pump_swap(
     client: AsyncClient,
     market: Pubkey,
@@ -418,6 +440,7 @@ async def buy_pump_swap(
     Returns:
         Transaction signature if successful, None otherwise
     """
+    token_program_id = await get_token_program_id(client, base_mint)
     token_price_sol = await calculate_token_pool_price(
         client, pool_base_token_account, pool_quote_token_account
     )
@@ -455,7 +478,9 @@ async def buy_pump_swap(
         AccountMeta(
             pubkey=fee_recipient_token_account, is_signer=False, is_writable=True
         ),
-        AccountMeta(pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False),
+        AccountMeta(
+            pubkey=token_program_id, is_signer=False, is_writable=False
+        ),  # Use dynamic token_program_id
         AccountMeta(pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False),
         AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
         AccountMeta(
@@ -494,8 +519,12 @@ async def buy_pump_swap(
     compute_price_ix = set_compute_unit_price(COMPUTE_UNIT_PRICE)
 
     # Create WSOL account if it doesn't exist
+    # Note: WSOL always uses the standard Token program, never Token2022
     create_wsol_ata_ix = create_idempotent_associated_token_account(
-        payer.pubkey(), payer.pubkey(), SOL, SYSTEM_TOKEN_PROGRAM
+        payer.pubkey(),
+        payer.pubkey(),
+        SOL,
+        SYSTEM_TOKEN_PROGRAM,  # WSOL always uses standard Token program
     )
 
     # Calculate amount to wrap (includes buffer for fees)
@@ -513,12 +542,17 @@ async def buy_pump_swap(
         )
     )
     sync_native_ix = sync_native(
-        SyncNativeParams(SYSTEM_TOKEN_PROGRAM, user_quote_token_account)
+        SyncNativeParams(
+            SYSTEM_TOKEN_PROGRAM, user_quote_token_account
+        )  # WSOL always uses standard Token program
     )
 
     # Create token account for receiving purchased tokens
     create_token_ata_ix = create_idempotent_associated_token_account(
-        payer.pubkey(), payer.pubkey(), base_mint, SYSTEM_TOKEN_PROGRAM
+        payer.pubkey(),
+        payer.pubkey(),
+        base_mint,
+        token_program_id,  # Use dynamic token_program_id
     )
 
     buy_ix = Instruction(PUMP_AMM_PROGRAM_ID, data, accounts)
@@ -584,12 +618,15 @@ async def main() -> None:
         # Step 2: Parse pool data to get necessary accounts
         market_data = await get_market_data(client, market_address)
 
+        # Determine token program ID for the base mint
+        token_program_id = await get_token_program_id(client, TOKEN_MINT)
+
         # Step 3: Derive PDAs needed for the transaction
         coin_creator_vault_authority = find_coin_creator_vault(
             Pubkey.from_string(market_data["coin_creator"])
         )
         coin_creator_vault_ata = get_associated_token_address(
-            coin_creator_vault_authority, SOL
+            coin_creator_vault_authority, SOL, SYSTEM_TOKEN_PROGRAM
         )
 
         # Step 4: Execute the buy
@@ -598,8 +635,8 @@ async def main() -> None:
             market_address,
             PAYER,
             TOKEN_MINT,
-            get_associated_token_address(PAYER.pubkey(), TOKEN_MINT),
-            get_associated_token_address(PAYER.pubkey(), SOL),
+            get_associated_token_address(PAYER.pubkey(), TOKEN_MINT, token_program_id),
+            get_associated_token_address(PAYER.pubkey(), SOL, SYSTEM_TOKEN_PROGRAM),
             Pubkey.from_string(market_data["pool_base_token_account"]),
             Pubkey.from_string(market_data["pool_quote_token_account"]),
             coin_creator_vault_authority,
