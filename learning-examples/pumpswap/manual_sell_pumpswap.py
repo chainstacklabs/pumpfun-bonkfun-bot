@@ -56,6 +56,7 @@ PUMP_SWAP_GLOBAL_CONFIG = Pubkey.from_string(
     "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw"
 )
 SYSTEM_TOKEN_PROGRAM = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+TOKEN_2022_PROGRAM = Pubkey.from_string("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
 SYSTEM_PROGRAM = Pubkey.from_string("11111111111111111111111111111111")
 SYSTEM_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM = Pubkey.from_string(
     "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
@@ -324,6 +325,30 @@ async def calculate_token_pool_price(
 
 
 # ============================================================================
+# Token Program Determination
+# ============================================================================
+
+
+async def get_token_program_id(client: AsyncClient, mint_address: Pubkey) -> Pubkey:
+    """Determines if a mint uses TokenProgram or Token2022Program."""
+    mint_info = await client.get_account_info(mint_address)
+
+    if not mint_info.value:
+        raise ValueError(f"Could not fetch mint info for {mint_address}")
+
+    owner = mint_info.value.owner
+
+    if owner == SYSTEM_TOKEN_PROGRAM:
+        return SYSTEM_TOKEN_PROGRAM
+    elif owner == TOKEN_2022_PROGRAM:
+        return TOKEN_2022_PROGRAM
+    else:
+        raise ValueError(
+            f"Mint account {mint_address} is owned by an unknown program: {owner}"
+        )
+
+
+# ============================================================================
 # Associated Token Account (ATA) Creation
 # ============================================================================
 
@@ -367,6 +392,7 @@ async def sell_pump_swap(
     market: Pubkey,
     payer: Keypair,
     base_mint: Pubkey,
+    token_program_id: Pubkey,
     user_base_token_account: Pubkey,
     user_quote_token_account: Pubkey,
     pool_base_token_account: Pubkey,
@@ -442,7 +468,9 @@ async def sell_pump_swap(
         AccountMeta(
             pubkey=fee_recipient_token_account, is_signer=False, is_writable=True
         ),
-        AccountMeta(pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False),
+        AccountMeta(
+            pubkey=token_program_id, is_signer=False, is_writable=False
+        ),  # Use dynamic token_program_id
         AccountMeta(pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False),
         AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
         AccountMeta(
@@ -520,12 +548,15 @@ async def main() -> None:
         # Step 2: Parse pool data to get necessary accounts
         market_data = await get_market_data(client, market_address)
 
+        # Determine token program ID for the base mint
+        token_program_id = await get_token_program_id(client, TOKEN_MINT)
+
         # Step 3: Derive PDAs needed for the transaction
         coin_creator_vault_authority = find_coin_creator_vault(
             Pubkey.from_string(market_data["coin_creator"])
         )
         coin_creator_vault_ata = get_associated_token_address(
-            coin_creator_vault_authority, SOL
+            coin_creator_vault_authority, SOL, SYSTEM_TOKEN_PROGRAM
         )
 
         # Step 4: Execute the sell
@@ -534,8 +565,9 @@ async def main() -> None:
             market_address,
             PAYER,
             TOKEN_MINT,
-            get_associated_token_address(PAYER.pubkey(), TOKEN_MINT),
-            get_associated_token_address(PAYER.pubkey(), SOL),
+            token_program_id,
+            get_associated_token_address(PAYER.pubkey(), TOKEN_MINT, token_program_id),
+            get_associated_token_address(PAYER.pubkey(), SOL, SYSTEM_TOKEN_PROGRAM),
             Pubkey.from_string(market_data["pool_base_token_account"]),
             Pubkey.from_string(market_data["pool_quote_token_account"]),
             coin_creator_vault_authority,

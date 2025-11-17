@@ -18,7 +18,7 @@ from spl.token.instructions import get_associated_token_address
 # Here and later all the discriminators are precalculated. See learning-examples/calculate_discriminator.py
 EXPECTED_DISCRIMINATOR = struct.pack("<Q", 6966180631402821399)
 TOKEN_DECIMALS = 6
-TOKEN_MINT = Pubkey.from_string("...")
+TOKEN_MINT = Pubkey.from_string("...")  # Replace with actual token mint address
 
 # Global constants
 PUMP_PROGRAM = Pubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")
@@ -30,6 +30,7 @@ PUMP_FEE = Pubkey.from_string("CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM")
 PUMP_FEE_PROGRAM = Pubkey.from_string("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ")
 SYSTEM_PROGRAM = Pubkey.from_string("11111111111111111111111111111111")
 SYSTEM_TOKEN_PROGRAM = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+TOKEN_2022_PROGRAM = Pubkey.from_string("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
 SYSTEM_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM = Pubkey.from_string(
     "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
 )
@@ -116,11 +117,13 @@ def get_bonding_curve_address(mint: Pubkey) -> tuple[Pubkey, int]:
     return Pubkey.find_program_address([b"bonding-curve", bytes(mint)], PUMP_PROGRAM)
 
 
-def find_associated_bonding_curve(mint: Pubkey, bonding_curve: Pubkey) -> Pubkey:
+def find_associated_bonding_curve(
+    mint: Pubkey, bonding_curve: Pubkey, token_program_id: Pubkey
+) -> Pubkey:
     derived_address, _ = Pubkey.find_program_address(
         [
             bytes(bonding_curve),
-            bytes(SYSTEM_TOKEN_PROGRAM),
+            bytes(token_program_id),
             bytes(mint),
         ],
         SYSTEM_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM,
@@ -207,11 +210,31 @@ async def get_token_balance(conn: AsyncClient, associated_token_account: Pubkey)
     return 0
 
 
+async def get_token_program_id(client: AsyncClient, mint_address: Pubkey) -> Pubkey:
+    """Determines if a mint uses TokenProgram or Token2022Program."""
+    mint_info = await client.get_account_info(mint_address)
+
+    if not mint_info.value:
+        raise ValueError(f"Could not fetch mint info for {mint_address}")
+
+    owner = mint_info.value.owner
+
+    if owner == SYSTEM_TOKEN_PROGRAM:
+        return SYSTEM_TOKEN_PROGRAM
+    elif owner == TOKEN_2022_PROGRAM:
+        return TOKEN_2022_PROGRAM
+    else:
+        raise ValueError(
+            f"Mint account {mint_address} is owned by an unknown program: {owner}"
+        )
+
+
 async def sell_token(
     mint: Pubkey,
     bonding_curve: Pubkey,
     associated_bonding_curve: Pubkey,
     creator_vault: Pubkey,
+    token_program_id: Pubkey,
     slippage: float = 0.25,
     max_retries=5,
 ):
@@ -219,7 +242,9 @@ async def sell_token(
     payer = Keypair.from_bytes(private_key)
 
     async with AsyncClient(RPC_ENDPOINT) as client:
-        associated_token_account = get_associated_token_address(payer.pubkey(), mint)
+        associated_token_account = get_associated_token_address(
+            payer.pubkey(), mint, token_program_id
+        )
 
         # Get token balance
         token_balance = await get_token_balance(client, associated_token_account)
@@ -269,8 +294,8 @@ async def sell_token(
                 is_writable=True,
             ),
             AccountMeta(
-                pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False
-            ),
+                pubkey=token_program_id, is_signer=False, is_writable=False
+            ),  # Use dynamic token_program_id
             AccountMeta(
                 pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False
             ),
@@ -333,8 +358,13 @@ async def sell_token(
 
 async def main():
     # Replace these with the actual values for the token you want to sell
+    async with AsyncClient(RPC_ENDPOINT) as client:
+        token_program_id = await get_token_program_id(client, TOKEN_MINT)
+
     bonding_curve, _ = get_bonding_curve_address(TOKEN_MINT)
-    associated_bonding_curve = find_associated_bonding_curve(TOKEN_MINT, bonding_curve)
+    associated_bonding_curve = find_associated_bonding_curve(
+        TOKEN_MINT, bonding_curve, token_program_id
+    )
 
     async with AsyncClient(RPC_ENDPOINT) as client:
         curve_state = await get_pump_curve_state(client, bonding_curve)
@@ -346,7 +376,12 @@ async def main():
     print(f"Bonding curve address: {bonding_curve}")
     print(f"Selling tokens with {slippage * 100:.1f}% slippage tolerance...")
     await sell_token(
-        TOKEN_MINT, bonding_curve, associated_bonding_curve, creator_vault, slippage
+        TOKEN_MINT,
+        bonding_curve,
+        associated_bonding_curve,
+        creator_vault,
+        token_program_id,
+        slippage,
     )
 
 

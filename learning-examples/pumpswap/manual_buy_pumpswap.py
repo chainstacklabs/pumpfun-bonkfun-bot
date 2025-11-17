@@ -43,9 +43,7 @@ load_dotenv()
 # ============================================================================
 
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
-TOKEN_MINT = Pubkey.from_string(
-    "7ZmWfj1KCsixqnRvpdtHpNb9c6YmDMM6QADSYhiUpump"
-)  # Replace with your token mint address
+TOKEN_MINT = Pubkey.from_string("...")  # Replace with your token mint address
 PRIVATE_KEY = base58.b58decode(os.environ.get("SOLANA_PRIVATE_KEY"))
 PAYER = Keypair.from_bytes(PRIVATE_KEY)
 SLIPPAGE = 0.3  # 30% - maximum acceptable price movement during trade
