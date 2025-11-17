@@ -31,6 +31,12 @@ class PumpFunAddresses:
     FEE: Final[Pubkey] = Pubkey.from_string(
         "CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM"
     )
+    # Mayhem mode fee recipient (hardcoded to avoid RPC calls)
+    # To check if this address is up-to-date, fetch Global account data at offset 483
+    # from the pump.fun Global account: 4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf
+    MAYHEM_FEE: Final[Pubkey] = Pubkey.from_string(
+        "GesfTA3X2arioaHp8bbKdjG9vJtskViWACZoYvxp4twS"
+    )
     LIQUIDITY_MIGRATOR: Final[Pubkey] = Pubkey.from_string(
         "39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg"
     )
@@ -139,17 +145,22 @@ class PumpFunAddressProvider(AddressProvider):
         )
         return bonding_curve
 
-    def derive_user_token_account(self, user: Pubkey, mint: Pubkey) -> Pubkey:
+    def derive_user_token_account(
+        self, user: Pubkey, mint: Pubkey, token_program_id: Pubkey | None = None
+    ) -> Pubkey:
         """Derive user's associated token account address.
 
         Args:
             user: User's wallet address
             mint: Token mint address
+            token_program_id: Token program (TOKEN or TOKEN_2022). Defaults to TOKEN_PROGRAM
 
         Returns:
             User's associated token account address
         """
-        return get_associated_token_address(user, mint)
+        if token_program_id is None:
+            token_program_id = SystemAddresses.TOKEN_PROGRAM
+        return get_associated_token_address(user, mint, token_program_id)
 
     def get_additional_accounts(self, token_info: TokenInfo) -> dict[str, Pubkey]:
         """Get pump.fun-specific additional accounts needed for trading.
@@ -177,7 +188,7 @@ class PumpFunAddressProvider(AddressProvider):
         # Derive associated bonding curve if not provided
         if not token_info.associated_bonding_curve and token_info.bonding_curve:
             accounts["associated_bonding_curve"] = self.derive_associated_bonding_curve(
-                token_info.mint, token_info.bonding_curve
+                token_info.mint, token_info.bonding_curve, token_info.token_program_id
             )
 
         # Derive creator vault if not provided but creator is available
@@ -187,21 +198,25 @@ class PumpFunAddressProvider(AddressProvider):
         return accounts
 
     def derive_associated_bonding_curve(
-        self, mint: Pubkey, bonding_curve: Pubkey
+        self, mint: Pubkey, bonding_curve: Pubkey, token_program_id: Pubkey | None = None
     ) -> Pubkey:
         """Derive the associated bonding curve (ATA of bonding curve for the token).
 
         Args:
             mint: Token mint address
             bonding_curve: Bonding curve address
+            token_program_id: Token program (TOKEN or TOKEN_2022). Defaults to TOKEN_PROGRAM
 
         Returns:
             Associated bonding curve address
         """
+        if token_program_id is None:
+            token_program_id = SystemAddresses.TOKEN_PROGRAM
+
         derived_address, _ = Pubkey.find_program_address(
             [
                 bytes(bonding_curve),
-                bytes(SystemAddresses.TOKEN_PROGRAM),
+                bytes(token_program_id),
                 bytes(mint),
             ],
             SystemAddresses.ASSOCIATED_TOKEN_PROGRAM,
@@ -249,6 +264,19 @@ class PumpFunAddressProvider(AddressProvider):
         """
         return PumpFunAddresses.find_fee_config()
 
+    def get_fee_recipient(self, token_info: TokenInfo) -> Pubkey:
+        """Get the correct fee recipient based on mayhem mode.
+
+        Args:
+            token_info: Token information with is_mayhem_mode flag
+
+        Returns:
+            Fee recipient address (mayhem or standard)
+        """
+        if token_info.is_mayhem_mode:
+            return PumpFunAddresses.MAYHEM_FEE
+        return PumpFunAddresses.FEE
+
     def get_buy_instruction_accounts(
         self, token_info: TokenInfo, user: Pubkey
     ) -> dict[str, Pubkey]:
@@ -263,9 +291,19 @@ class PumpFunAddressProvider(AddressProvider):
         """
         additional_accounts = self.get_additional_accounts(token_info)
 
+        # Determine token program to use
+        token_program_id = (
+            token_info.token_program_id
+            if token_info.token_program_id
+            else SystemAddresses.TOKEN_PROGRAM
+        )
+
+        # Determine fee recipient based on mayhem mode
+        fee_recipient = self.get_fee_recipient(token_info)
+
         return {
             "global": PumpFunAddresses.GLOBAL,
-            "fee": PumpFunAddresses.FEE,
+            "fee": fee_recipient,
             "mint": token_info.mint,
             "bonding_curve": additional_accounts.get(
                 "bonding_curve", token_info.bonding_curve
@@ -273,10 +311,12 @@ class PumpFunAddressProvider(AddressProvider):
             "associated_bonding_curve": additional_accounts.get(
                 "associated_bonding_curve", token_info.associated_bonding_curve
             ),
-            "user_token_account": self.derive_user_token_account(user, token_info.mint),
+            "user_token_account": self.derive_user_token_account(
+                user, token_info.mint, token_program_id
+            ),
             "user": user,
             "system_program": SystemAddresses.SYSTEM_PROGRAM,
-            "token_program": SystemAddresses.TOKEN_PROGRAM,
+            "token_program": token_program_id,
             "creator_vault": additional_accounts.get(
                 "creator_vault", token_info.creator_vault
             ),
@@ -302,9 +342,19 @@ class PumpFunAddressProvider(AddressProvider):
         """
         additional_accounts = self.get_additional_accounts(token_info)
 
+        # Determine token program to use
+        token_program_id = (
+            token_info.token_program_id
+            if token_info.token_program_id
+            else SystemAddresses.TOKEN_PROGRAM
+        )
+
+        # Determine fee recipient based on mayhem mode
+        fee_recipient = self.get_fee_recipient(token_info)
+
         return {
             "global": PumpFunAddresses.GLOBAL,
-            "fee": PumpFunAddresses.FEE,
+            "fee": fee_recipient,
             "mint": token_info.mint,
             "bonding_curve": additional_accounts.get(
                 "bonding_curve", token_info.bonding_curve
@@ -312,13 +362,15 @@ class PumpFunAddressProvider(AddressProvider):
             "associated_bonding_curve": additional_accounts.get(
                 "associated_bonding_curve", token_info.associated_bonding_curve
             ),
-            "user_token_account": self.derive_user_token_account(user, token_info.mint),
+            "user_token_account": self.derive_user_token_account(
+                user, token_info.mint, token_program_id
+            ),
             "user": user,
             "system_program": SystemAddresses.SYSTEM_PROGRAM,
             "creator_vault": additional_accounts.get(
                 "creator_vault", token_info.creator_vault
             ),
-            "token_program": SystemAddresses.TOKEN_PROGRAM,
+            "token_program": token_program_id,
             "event_authority": PumpFunAddresses.EVENT_AUTHORITY,
             "program": PumpFunAddresses.PROGRAM,
             "fee_config": self.derive_fee_config(),

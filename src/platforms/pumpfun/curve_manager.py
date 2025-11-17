@@ -190,6 +190,7 @@ class PumpFunCurveManager(CurveManager):
             "token_total_supply": decoded_curve_state.get("token_total_supply", 0),
             "complete": decoded_curve_state.get("complete", False),
             "creator": decoded_curve_state.get("creator", ""),
+            "is_mayhem_mode": decoded_curve_state.get("is_mayhem_mode", False),
         }
 
         # Calculate additional metrics

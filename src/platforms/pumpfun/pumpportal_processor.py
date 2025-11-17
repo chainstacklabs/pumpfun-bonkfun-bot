@@ -5,6 +5,7 @@ File: src/platforms/pumpfun/pumpportal_processor.py
 
 from solders.pubkey import Pubkey
 
+from core.pubkeys import SystemAddresses
 from interfaces.core import Platform, TokenInfo
 from platforms.pumpfun.address_provider import PumpFunAddressProvider
 from utils.logger import get_logger
@@ -81,9 +82,14 @@ class PumpFunPumpPortalProcessor:
             creator = user
 
             # Derive additional addresses using platform provider
+            # PumpPortal doesn't distinguish between Token and Token2022,
+            # so we default to TOKEN_PROGRAM (Token2022 tokens detected via
+            # log/instruction/geyser listeners will have correct token_program_id)
+            token_program_id = SystemAddresses.TOKEN_PROGRAM
+
             associated_bonding_curve = (
                 self.address_provider.derive_associated_bonding_curve(
-                    mint, bonding_curve
+                    mint, bonding_curve, token_program_id
                 )
             )
             creator_vault = self.address_provider.derive_creator_vault(creator)
@@ -99,6 +105,7 @@ class PumpFunPumpPortalProcessor:
                 user=user,
                 creator=creator,
                 creator_vault=creator_vault,
+                token_program_id=token_program_id,
             )
 
         except Exception:

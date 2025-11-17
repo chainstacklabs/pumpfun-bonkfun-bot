@@ -47,6 +47,16 @@ class PumpFunEventParser(EventParser):
             "<Q", self._create_instruction_discriminator_bytes
         )[0]
 
+        # Support for token2022 (create_v2 instruction)
+        self._create_v2_instruction_discriminator_bytes = instruction_discriminators.get(
+            "create_v2"
+        )
+        self._create_v2_instruction_discriminator = (
+            struct.unpack("<Q", self._create_v2_instruction_discriminator_bytes)[0]
+            if self._create_v2_instruction_discriminator_bytes
+            else None
+        )
+
         logger.info(
             "Pump.Fun event parser initialized with IDL-based event and instruction parsing"
         )
@@ -56,6 +66,10 @@ class PumpFunEventParser(EventParser):
         logger.info(
             f"create instruction discriminator: {self._create_instruction_discriminator_bytes.hex()}"
         )
+        if self._create_v2_instruction_discriminator_bytes:
+            logger.info(
+                f"create_v2 instruction discriminator: {self._create_v2_instruction_discriminator_bytes.hex()}"
+            )
 
     @property
     def platform(self) -> Platform:
@@ -74,8 +88,12 @@ class PumpFunEventParser(EventParser):
         Returns:
             TokenInfo if token creation found, None otherwise
         """
-        # Check if this is a token creation transaction
-        if not any("Program log: Instruction: Create" in log for log in logs):
+        # Check if this is a token creation transaction (create or create_v2 for token2022)
+        if not any(
+            "Program log: Instruction: Create" in log
+            or "Program log: Instruction: Create_v2" in log
+            for log in logs
+        ):
             return None
 
         # Skip swaps as the first condition may pass them
@@ -224,9 +242,10 @@ class PumpFunEventParser(EventParser):
                         logger.info(f"❌ Failed to convert pubkey fields: {e}")
                         continue
 
-                    # Derive additional addresses
+                    # Derive additional addresses (default to TOKEN_PROGRAM for log-parsed events)
+                    token_program_id = SystemAddresses.TOKEN_PROGRAM
                     associated_bonding_curve = self._derive_associated_bonding_curve(
-                        mint, bonding_curve
+                        mint, bonding_curve, token_program_id
                     )
                     creator_vault = self._derive_creator_vault(creator)
 
@@ -245,6 +264,7 @@ class PumpFunEventParser(EventParser):
                         user=user,
                         creator=creator,
                         creator_vault=creator_vault,
+                        token_program_id=token_program_id,
                         creation_timestamp=monotonic(),
                     )
 
@@ -274,9 +294,16 @@ class PumpFunEventParser(EventParser):
         Returns:
             TokenInfo if token creation found, None otherwise
         """
-        if not instruction_data.startswith(
-            self._create_instruction_discriminator_bytes
+        # Determine which create instruction (standard or v2 for token2022)
+        is_create_v2 = False
+        if instruction_data.startswith(self._create_instruction_discriminator_bytes):
+            is_create_v2 = False
+        elif (
+            self._create_v2_instruction_discriminator_bytes
+            and instruction_data.startswith(self._create_v2_instruction_discriminator_bytes)
         ):
+            is_create_v2 = True
+        else:
             return None
 
         try:
@@ -293,7 +320,8 @@ class PumpFunEventParser(EventParser):
             decoded = self._idl_parser.decode_instruction(
                 instruction_data, account_keys, accounts
             )
-            if not decoded or decoded["instruction_name"] != "create":
+            expected_instruction_name = "create_v2" if is_create_v2 else "create"
+            if not decoded or decoded["instruction_name"] != expected_instruction_name:
                 return None
 
             args = decoded.get("args", {})
@@ -315,6 +343,13 @@ class PumpFunEventParser(EventParser):
             )
             creator_vault = self._derive_creator_vault(creator)
 
+            # Determine token program based on instruction type
+            token_program_id = (
+                SystemAddresses.TOKEN_2022_PROGRAM
+                if is_create_v2
+                else SystemAddresses.TOKEN_PROGRAM
+            )
+
             return TokenInfo(
                 name=args.get("name", ""),
                 symbol=args.get("symbol", ""),
@@ -326,6 +361,7 @@ class PumpFunEventParser(EventParser):
                 user=user,
                 creator=creator,
                 creator_vault=creator_vault,
+                token_program_id=token_program_id,
                 creation_timestamp=monotonic(),
             )
 
@@ -435,14 +471,19 @@ class PumpFunEventParser(EventParser):
 
                             ix_data = bytes(ix.data)
 
-                            # Check for create discriminator
+                            # Check for create or create_v2 discriminator
                             if len(ix_data) >= 8:
                                 discriminator = struct.unpack("<Q", ix_data[:8])[0]
 
-                                if (
-                                    discriminator
-                                    == self._create_instruction_discriminator
-                                ):
+                                is_create = (
+                                    discriminator == self._create_instruction_discriminator
+                                )
+                                is_create_v2 = (
+                                    self._create_v2_instruction_discriminator
+                                    and discriminator == self._create_v2_instruction_discriminator
+                                )
+
+                                if is_create or is_create_v2:
                                     # Token creation should have substantial data and many accounts
                                     if len(ix_data) <= 8 or len(ix.accounts) < 10:
                                         continue
@@ -497,10 +538,15 @@ class PumpFunEventParser(EventParser):
                             if len(ix_data) >= 8:
                                 discriminator = struct.unpack("<Q", ix_data[:8])[0]
 
-                                if (
-                                    discriminator
-                                    == self._create_instruction_discriminator
-                                ):
+                                is_create = (
+                                    discriminator == self._create_instruction_discriminator
+                                )
+                                is_create_v2 = (
+                                    self._create_v2_instruction_discriminator
+                                    and discriminator == self._create_v2_instruction_discriminator
+                                )
+
+                                if is_create or is_create_v2:
                                     if len(ix_data) <= 8 or len(ix["accounts"]) < 10:
                                         continue
 
@@ -544,26 +590,69 @@ class PumpFunEventParser(EventParser):
         return derived_address
 
     def _derive_associated_bonding_curve(
-        self, mint: Pubkey, bonding_curve: Pubkey
+        self, mint: Pubkey, bonding_curve: Pubkey, token_program_id: Pubkey | None = None
     ) -> Pubkey:
         """Derive the associated bonding curve (ATA of bonding curve for the token).
 
         Args:
             mint: Token mint address
             bonding_curve: Bonding curve address
+            token_program_id: Token program (TOKEN or TOKEN_2022). Defaults to TOKEN_PROGRAM
 
         Returns:
             Associated bonding curve address
         """
+        if token_program_id is None:
+            token_program_id = SystemAddresses.TOKEN_PROGRAM
+
         derived_address, _ = Pubkey.find_program_address(
             [
                 bytes(bonding_curve),
-                bytes(SystemAddresses.TOKEN_PROGRAM),
+                bytes(token_program_id),
                 bytes(mint),
             ],
             SystemAddresses.ASSOCIATED_TOKEN_PROGRAM,
         )
         return derived_address
+
+    def _parse_bonding_curve_state(self, data: bytes) -> dict[str, Any] | None:
+        """Parse bonding curve state from raw account data using IDL parser.
+
+        Args:
+            data: Raw bonding curve account data
+
+        Returns:
+            Dictionary with parsed bonding curve state or None if parsing fails
+        """
+        try:
+            decoded = self._idl_parser.decode_account_data(
+                data, "BondingCurve", skip_discriminator=True
+            )
+            if not decoded:
+                return None
+            return decoded
+        except Exception as e:
+            logger.debug(f"Failed to parse bonding curve state: {e}")
+            return None
+
+    def _get_is_mayhem_mode_from_curve(self, bonding_curve_address: Pubkey) -> bool:
+        """Determine if a token is in mayhem mode based on bonding curve state.
+
+        Note: This would require an RPC call to fetch the bonding curve account.
+        For now, we return False as a default since the event parser doesn't have
+        access to an RPC client. The mayhem mode flag will be set by traders
+        when they fetch bonding curve state for other operations.
+
+        Args:
+            bonding_curve_address: Address of the bonding curve
+
+        Returns:
+            True if mayhem mode, False otherwise (or if parsing fails)
+        """
+        # Since event parser doesn't have RPC client access, we cannot fetch
+        # and parse bonding curve state here. Mayhem mode will be set later
+        # when traders fetch the bonding curve state.
+        return False
 
     @property
     def verbose(self) -> bool:
