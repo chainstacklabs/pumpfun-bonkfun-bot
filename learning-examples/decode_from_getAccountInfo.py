@@ -11,18 +11,7 @@ EXPECTED_DISCRIMINATOR = struct.pack("<Q", 6966180631402821399)
 
 
 class BondingCurveState:
-    _STRUCT_1 = Struct(
-        "virtual_token_reserves" / Int64ul,
-        "virtual_sol_reserves" / Int64ul,
-        "real_token_reserves" / Int64ul,
-        "real_sol_reserves" / Int64ul,
-        "token_total_supply" / Int64ul,
-        "complete" / Flag,
-    )
-
-    # Struct after creator fee update has been introduced
-    # https://github.com/pump-fun/pump-public-docs/blob/main/docs/PUMP_CREATOR_FEE_README.md
-    _STRUCT_2 = Struct(
+    _STRUCT = Struct(
         "virtual_token_reserves" / Int64ul,
         "virtual_sol_reserves" / Int64ul,
         "real_token_reserves" / Int64ul,
@@ -30,23 +19,43 @@ class BondingCurveState:
         "token_total_supply" / Int64ul,
         "complete" / Flag,
         "creator" / Bytes(32),  # Added new creator field - 32 bytes for Pubkey
+        "is_mayhem_mode" / Flag,  # Added mayhem mode flag - 1 byte
     )
 
     def __init__(self, data: bytes) -> None:
-        """Parse bonding curve data."""
+        """Parse bonding curve data - supports all versions."""
         if data[:8] != EXPECTED_DISCRIMINATOR:
             raise ValueError("Invalid curve state discriminator")
 
-        if len(data) < 150:
-            parsed = self._STRUCT_1.parse(data[8:])
-            self.__dict__.update(parsed)
+        # Required fields (always present)
+        offset = 8
+        self.virtual_token_reserves = int.from_bytes(
+            data[offset : offset + 8], "little"
+        )
+        offset += 8
+        self.virtual_sol_reserves = int.from_bytes(data[offset : offset + 8], "little")
+        offset += 8
+        self.real_token_reserves = int.from_bytes(data[offset : offset + 8], "little")
+        offset += 8
+        self.real_sol_reserves = int.from_bytes(data[offset : offset + 8], "little")
+        offset += 8
+        self.token_total_supply = int.from_bytes(data[offset : offset + 8], "little")
+        offset += 8
+        self.complete = bool(data[offset])
+        offset += 1
+
+        # Optional fields (may not be present in older versions)
+        if len(data) >= offset + 32:
+            self.creator = Pubkey.from_bytes(data[offset : offset + 32])
+            offset += 32
+
+            if len(data) > offset:
+                self.is_mayhem_mode = bool(data[offset])
+            else:
+                self.is_mayhem_mode = None
 
         else:
-            parsed = self._STRUCT_2.parse(data[8:])
-            self.__dict__.update(parsed)
-            # Convert raw bytes to Pubkey for creator field
-            if hasattr(self, "creator") and isinstance(self.creator, bytes):
-                self.creator = Pubkey.from_bytes(self.creator)
+            self.creator = None
 
 
 def calculate_bonding_curve_price(curve_state: BondingCurveState) -> float:
