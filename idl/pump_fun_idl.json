@@ -627,7 +627,6 @@
         },
         {
           "name": "global_volume_accumulator",
-          "writable": true,
           "pda": {
             "seeds": [
               {
@@ -1009,7 +1008,6 @@
         },
         {
           "name": "global_volume_accumulator",
-          "writable": true,
           "pda": {
             "seeds": [
               {
@@ -3916,16 +3914,16 @@
       ]
     },
     {
-      "name": "set_reserved_fee_recipient",
+      "name": "set_reserved_fee_recipients",
       "discriminator": [
-        207,
-        189,
-        178,
-        71,
-        167,
-        122,
-        68,
-        180
+        111,
+        172,
+        162,
+        232,
+        114,
+        89,
+        213,
+        142
       ],
       "accounts": [
         {
@@ -3949,7 +3947,6 @@
         },
         {
           "name": "authority",
-          "writable": true,
           "signer": true,
           "relations": [
             "global"
@@ -3989,10 +3986,6 @@
         }
       ],
       "args": [
-        {
-          "name": "reserved_fee_recipient",
-          "type": "pubkey"
-        },
         {
           "name": "whitelist_pda",
           "type": "pubkey"
@@ -4574,6 +4567,19 @@
         101,
         130,
         216
+      ]
+    },
+    {
+      "name": "ReservedFeeRecipientsEvent",
+      "discriminator": [
+        43,
+        188,
+        250,
+        18,
+        221,
+        75,
+        187,
+        95
       ]
     },
     {
@@ -5413,6 +5419,15 @@
           {
             "name": "mayhem_mode_enabled",
             "type": "bool"
+          },
+          {
+            "name": "reserved_fee_recipients",
+            "type": {
+              "array": [
+                "pubkey",
+                7
+              ]
+            }
           }
         ]
       }
@@ -5485,6 +5500,31 @@
         "kind": "struct",
         "fields": [
           "bool"
+        ]
+      }
+    },
+    {
+      "name": "ReservedFeeRecipientsEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "reserved_fee_recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "reserved_fee_recipients",
+            "type": {
+              "array": [
+                "pubkey",
+                7
+              ]
+            }
+          }
         ]
       }
     },

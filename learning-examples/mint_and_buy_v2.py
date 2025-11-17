@@ -288,7 +288,7 @@ def create_buy_instruction(
         AccountMeta(pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
         AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
         AccountMeta(
-            pubkey=_find_global_volume_accumulator(), is_signer=False, is_writable=True
+            pubkey=_find_global_volume_accumulator(), is_signer=False, is_writable=False
         ),
         AccountMeta(
             pubkey=_find_user_volume_accumulator(user),

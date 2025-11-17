@@ -543,7 +543,6 @@
         },
         {
           "name": "global_volume_accumulator",
-          "writable": true,
           "pda": {
             "seeds": [
               {
@@ -972,7 +971,6 @@
         },
         {
           "name": "global_volume_accumulator",
-          "writable": true,
           "pda": {
             "seeds": [
               {
@@ -3011,28 +3009,50 @@
       "args": []
     },
     {
-      "name": "set_reserved_fee_recipient",
+      "name": "set_reserved_fee_recipients",
       "discriminator": [
-        207,
-        189,
-        178,
-        71,
-        167,
-        122,
-        68,
-        180
+        111,
+        172,
+        162,
+        232,
+        114,
+        89,
+        213,
+        142
       ],
       "accounts": [
+        {
+          "name": "global_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
         {
           "name": "admin",
           "signer": true,
           "relations": [
             "global_config"
           ]
-        },
-        {
-          "name": "global_config",
-          "writable": true
         },
         {
           "name": "event_authority",
@@ -3068,10 +3088,6 @@
         }
       ],
       "args": [
-        {
-          "name": "reserved_fee_recipient",
-          "type": "pubkey"
-        },
         {
           "name": "whitelist_pda",
           "type": "pubkey"
@@ -3781,6 +3797,19 @@
       ]
     },
     {
+      "name": "ReservedFeeRecipientsEvent",
+      "discriminator": [
+        43,
+        188,
+        250,
+        18,
+        221,
+        75,
+        187,
+        95
+      ]
+    },
+    {
       "name": "SellEvent",
       "discriminator": [
         62,
@@ -4050,6 +4079,10 @@
     {
       "code": 6043,
       "name": "MayhemModeInDesiredState"
+    },
+    {
+      "code": 6044,
+      "name": "NotEnoughRemainingAccounts"
     }
   ],
   "types": [
@@ -4153,6 +4186,10 @@
           {
             "name": "creator",
             "type": "pubkey"
+          },
+          {
+            "name": "is_mayhem_mode",
+            "type": "bool"
           }
         ]
       }
@@ -4789,6 +4826,15 @@
           {
             "name": "mayhem_mode_enabled",
             "type": "bool"
+          },
+          {
+            "name": "reserved_fee_recipients",
+            "type": {
+              "array": [
+                "pubkey",
+                7
+              ]
+            }
           }
         ]
       }
@@ -4915,6 +4961,31 @@
           {
             "name": "is_mayhem_mode",
             "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReservedFeeRecipientsEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "reserved_fee_recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "reserved_fee_recipients",
+            "type": {
+              "array": [
+                "pubkey",
+                7
+              ]
+            }
           }
         ]
       }

@@ -472,7 +472,7 @@ async def buy_pump_swap(
             pubkey=coin_creator_vault_authority, is_signer=False, is_writable=False
         ),
         AccountMeta(
-            pubkey=global_volume_accumulator, is_signer=False, is_writable=True
+            pubkey=global_volume_accumulator, is_signer=False, is_writable=False
         ),
         AccountMeta(pubkey=user_volume_accumulator, is_signer=False, is_writable=True),
         AccountMeta(pubkey=find_fee_config(), is_signer=False, is_writable=False),

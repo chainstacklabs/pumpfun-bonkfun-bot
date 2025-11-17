@@ -390,7 +390,7 @@ async def buy_token(
             AccountMeta(
                 pubkey=_find_global_volume_accumulator(),
                 is_signer=False,
-                is_writable=True,
+                is_writable=False,
             ),
             AccountMeta(
                 pubkey=_find_user_volume_accumulator(payer.pubkey()),
