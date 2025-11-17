@@ -1,20 +1,15 @@
 import asyncio
 import os
 import struct
-import sys
 from typing import Final
 
-from construct import Flag, Int64ul, Struct
+from construct import Bytes, Flag, Int64ul, Struct
 from solana.rpc.async_api import AsyncClient
 from solders.pubkey import Pubkey
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
 LAMPORTS_PER_SOL: Final[int] = 1_000_000_000
 TOKEN_DECIMALS: Final[int] = 6
-CURVE_ADDRESS: Final[str] = (
-    "YOUR_BONDING_CURVE_ADDRESS_HERE"  # Replace with actual bonding curve address
-)
+CURVE_ADDRESS: Final[str] = "..."  # Replace with actual bonding curve address
 
 # Here and later all the discriminators are precalculated. See learning-examples/calculate_discriminator.py
 EXPECTED_DISCRIMINATOR: Final[bytes] = struct.pack("<Q", 6966180631402821399)
@@ -23,7 +18,9 @@ RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 
 
 class BondingCurveState:
-    _STRUCT = Struct(
+    """Parse bonding curve account data - supports all versions."""
+
+    _STRUCT_V1 = Struct(
         "virtual_token_reserves" / Int64ul,
         "virtual_sol_reserves" / Int64ul,
         "real_token_reserves" / Int64ul,
@@ -32,9 +29,47 @@ class BondingCurveState:
         "complete" / Flag,
     )
 
+    _STRUCT_V2 = Struct(
+        "virtual_token_reserves" / Int64ul,
+        "virtual_sol_reserves" / Int64ul,
+        "real_token_reserves" / Int64ul,
+        "real_sol_reserves" / Int64ul,
+        "token_total_supply" / Int64ul,
+        "complete" / Flag,
+        "creator" / Bytes(32),
+    )
+
+    _STRUCT_V3 = Struct(
+        "virtual_token_reserves" / Int64ul,
+        "virtual_sol_reserves" / Int64ul,
+        "real_token_reserves" / Int64ul,
+        "real_sol_reserves" / Int64ul,
+        "token_total_supply" / Int64ul,
+        "complete" / Flag,
+        "creator" / Bytes(32),
+        "is_mayhem_mode" / Flag,
+    )
+
     def __init__(self, data: bytes) -> None:
-        parsed = self._STRUCT.parse(data[8:])
-        self.__dict__.update(parsed)
+        """Parse bonding curve data - auto-detects version."""
+        data_length = len(data) - 8
+
+        if data_length < 73:  # V1: without creator and mayhem mode
+            parsed = self._STRUCT_V1.parse(data[8:])
+            self.__dict__.update(parsed)
+            self.creator = None
+            self.is_mayhem_mode = False
+        elif data_length == 73:  # V2: with creator, without mayhem mode
+            parsed = self._STRUCT_V2.parse(data[8:])
+            self.__dict__.update(parsed)
+            if isinstance(self.creator, bytes):
+                self.creator = Pubkey.from_bytes(self.creator)
+            self.is_mayhem_mode = False
+        else:  # V3: with creator and mayhem mode
+            parsed = self._STRUCT_V3.parse(data[8:])
+            self.__dict__.update(parsed)
+            if isinstance(self.creator, bytes):
+                self.creator = Pubkey.from_bytes(self.creator)
 
 
 async def get_bonding_curve_state(
