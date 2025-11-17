@@ -55,6 +55,7 @@ PUMP_FEE = Pubkey.from_string("CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM")
 PUMP_FEE_PROGRAM = Pubkey.from_string("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ")
 SYSTEM_PROGRAM = Pubkey.from_string("11111111111111111111111111111111")
 SYSTEM_TOKEN_PROGRAM = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+TOKEN_2022_PROGRAM = Pubkey.from_string("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
 SYSTEM_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM = Pubkey.from_string(
     "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
 )
@@ -248,6 +249,7 @@ async def buy_token(
     bonding_curve: Pubkey,
     associated_bonding_curve: Pubkey,
     creator_vault: Pubkey,
+    token_program: Pubkey,
     amount: float,
     slippage: float = 0.25,
     max_retries=5,
@@ -256,7 +258,9 @@ async def buy_token(
     payer = Keypair.from_bytes(private_key)
 
     async with AsyncClient(RPC_ENDPOINT) as client:
-        associated_token_account = get_associated_token_address(payer.pubkey(), mint)
+        associated_token_account = get_associated_token_address(
+            payer.pubkey(), mint, token_program_id=token_program
+        )
         amount_lamports = int(amount * LAMPORTS_PER_SOL)
 
         # Fetch bonding curve state to calculate price and determine fee recipient
@@ -288,7 +292,7 @@ async def buy_token(
             AccountMeta(pubkey=payer.pubkey(), is_signer=True, is_writable=True),
             AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
             AccountMeta(
-                pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False
+                pubkey=token_program, is_signer=False, is_writable=False
             ),
             AccountMeta(pubkey=creator_vault, is_signer=False, is_writable=True),
             AccountMeta(
@@ -328,7 +332,7 @@ async def buy_token(
         )
         buy_ix = Instruction(PUMP_PROGRAM, data, accounts)
         idempotent_ata_ix = create_idempotent_associated_token_account(
-            payer.pubkey(), payer.pubkey(), mint
+            payer.pubkey(), payer.pubkey(), mint, token_program_id=token_program
         )
 
         # CU OPTIMIZATION: Limit account data to 512KB (down from 64MB default)
@@ -411,6 +415,7 @@ async def listen_for_create_transaction():
     idl_path = os.path.join(os.path.dirname(__file__), "..", "idl", "pump_fun_idl.json")
     idl = load_idl(idl_path)
     create_discriminator = calculate_discriminator("global:create")
+    create_v2_discriminator = calculate_discriminator("global:create_v2")
 
     async with websockets.connect(RPC_WEBSOCKET) as websocket:
         subscription_message = json.dumps(
@@ -463,11 +468,22 @@ async def listen_for_create_transaction():
                                                 "<Q", ix_data[:8]
                                             )[0]
 
+                                            # Check which create instruction was used
+                                            instruction_name = None
+                                            token_program = None
+
                                             if discriminator == create_discriminator:
+                                                instruction_name = "create"
+                                                token_program = SYSTEM_TOKEN_PROGRAM
+                                            elif discriminator == create_v2_discriminator:
+                                                instruction_name = "create_v2"
+                                                token_program = TOKEN_2022_PROGRAM
+
+                                            if instruction_name:
                                                 create_ix = next(
                                                     instr
                                                     for instr in idl["instructions"]
-                                                    if instr["name"] == "create"
+                                                    if instr["name"] == instruction_name
                                                 )
                                                 account_keys = [
                                                     str(
@@ -482,6 +498,9 @@ async def listen_for_create_transaction():
                                                         ix_data, create_ix, account_keys
                                                     )
                                                 )
+                                                # Add token program info to decoded args
+                                                decoded_args["token_program"] = str(token_program)
+                                                decoded_args["is_token_2022"] = (token_program == TOKEN_2022_PROGRAM)
                                                 return decoded_args
 
 
@@ -498,6 +517,7 @@ async def main():
     bonding_curve = Pubkey.from_string(token_data["bondingCurve"])
     associated_bonding_curve = Pubkey.from_string(token_data["associatedBondingCurve"])
     creator_vault = _find_creator_vault(Pubkey.from_string(token_data["creator"]))
+    token_program = Pubkey.from_string(token_data["token_program"])
 
     # Fetch the token price
     async with AsyncClient(RPC_ENDPOINT) as client:
@@ -509,13 +529,14 @@ async def main():
     slippage = 0.3  # 30% slippage tolerance
 
     print(f"Bonding curve address: {bonding_curve}")
+    print(f"Token Program: {token_program} ({'Token2022' if token_data['is_token_2022'] else 'Standard Token'})")
     print(f"Token price: {token_price_sol:.10f} SOL")
     print(
         f"Buying {amount:.6f} SOL worth of the new token with {slippage * 100:.1f}% slippage tolerance..."
     )
     print("CU Optimization: Enabled (512KB account data limit)")
     await buy_token(
-        mint, bonding_curve, associated_bonding_curve, creator_vault, amount, slippage
+        mint, bonding_curve, associated_bonding_curve, creator_vault, token_program, amount, slippage
     )
 
 

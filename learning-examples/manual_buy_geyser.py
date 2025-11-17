@@ -58,6 +58,7 @@ GEYSER_API_TOKEN = os.environ.get("GEYSER_API_TOKEN")
 AUTH_TYPE = os.environ.get("GEYSER_AUTH_TYPE", "x-token")  # Default to x-token
 
 PUMP_CREATE_DISCRIMINATOR = struct.pack("<Q", 8576854823835016728)
+PUMP_CREATE_V2_DISCRIMINATOR = bytes([214, 144, 76, 236, 95, 139, 49, 180])
 
 
 class BondingCurveState:
@@ -311,13 +312,23 @@ async def listen_for_create_transaction_geyser():
 
         # Check each instruction in the transaction
         for ix in msg.instructions:
-            if not ix.data.startswith(PUMP_CREATE_DISCRIMINATOR):
+            # Check which create instruction was used
+            token_program = None
+            if ix.data.startswith(PUMP_CREATE_DISCRIMINATOR):
+                token_program = SYSTEM_TOKEN_PROGRAM
+            elif ix.data.startswith(PUMP_CREATE_V2_DISCRIMINATOR):
+                token_program = SYSTEM_TOKEN_2022_PROGRAM
+            else:
                 continue
 
             # Found a create instruction
             token_data = decode_create_instruction_geyser(
                 ix.data, msg.account_keys, ix.accounts
             )
+
+            # Add token program info to decoded args
+            token_data["token_program"] = str(token_program)
+            token_data["is_token_2022"] = (token_program == SYSTEM_TOKEN_2022_PROGRAM)
 
             signature = base58.b58encode(
                 bytes(update.transaction.transaction.signature)
@@ -332,6 +343,7 @@ async def buy_token(
     bonding_curve: Pubkey,
     associated_bonding_curve: Pubkey,
     creator_vault: Pubkey,
+    token_program: Pubkey,
     amount: float,
     slippage: float = 0.25,
     max_retries=5,
@@ -341,7 +353,7 @@ async def buy_token(
 
     async with AsyncClient(RPC_ENDPOINT) as client:
         associated_token_account = get_associated_token_address(
-            payer.pubkey(), mint, SYSTEM_TOKEN_PROGRAM
+            payer.pubkey(), mint, token_program
         )
         amount_lamports = int(amount * LAMPORTS_PER_SOL)
 
@@ -380,7 +392,7 @@ async def buy_token(
             AccountMeta(pubkey=payer.pubkey(), is_signer=True, is_writable=True),
             AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
             AccountMeta(
-                pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False
+                pubkey=token_program, is_signer=False, is_writable=False
             ),
             AccountMeta(pubkey=creator_vault, is_signer=False, is_writable=True),
             AccountMeta(
@@ -420,7 +432,7 @@ async def buy_token(
         )
         buy_ix = Instruction(PUMP_PROGRAM, data, accounts)
         idempotent_ata_ix = create_idempotent_associated_token_account(
-            payer.pubkey(), payer.pubkey(), mint, SYSTEM_TOKEN_PROGRAM
+            payer.pubkey(), payer.pubkey(), mint, token_program
         )
         msg = Message(
             [set_compute_unit_price(1_000), idempotent_ata_ix, buy_ix], payer.pubkey()
@@ -484,6 +496,7 @@ async def main():
     bonding_curve = Pubkey.from_string(token_data["bondingCurve"])
     associated_bonding_curve = Pubkey.from_string(token_data["associatedBondingCurve"])
     creator_vault = _find_creator_vault(Pubkey.from_string(token_data["creator"]))
+    token_program = Pubkey.from_string(token_data["token_program"])
 
     # Fetch the token price
     # async with AsyncClient(RPC_ENDPOINT) as client:
@@ -495,12 +508,13 @@ async def main():
     slippage = 0.3  # 30% slippage tolerance
 
     print(f"Bonding curve address: {bonding_curve}")
+    print(f"Token Program: {token_program} ({'Token2022' if token_data['is_token_2022'] else 'Standard Token'})")
     # print(f"Token price: {token_price_sol:.10f} SOL")
     print(
         f"Buying {amount:.6f} SOL worth of the new token with {slippage * 100:.1f}% slippage tolerance..."
     )
     await buy_token(
-        mint, bonding_curve, associated_bonding_curve, creator_vault, amount, slippage
+        mint, bonding_curve, associated_bonding_curve, creator_vault, token_program, amount, slippage
     )
 
 
