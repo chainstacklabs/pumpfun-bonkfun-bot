@@ -121,13 +121,27 @@ def parse_trade_event(logs):
 
 
 def decode_trade_event(data):
-    """Decode TradeEvent structure from raw bytes."""
-    if len(data) < 32 + 8 + 8 + 1 + 32:  # minimum size check
+    """Decode TradeEvent structure from raw bytes with progressive parsing.
+
+    Supports both pre-mayhem and post-mayhem IDL versions by parsing fields
+    progressively based on available bytes. This ensures backward compatibility
+    with older transaction logs.
+
+    Core fields (always present): mint, sol_amount, token_amount, is_buy, user,
+    timestamp, virtual_sol_reserves, virtual_token_reserves
+
+    Extended fields (added later): real_sol_reserves, real_token_reserves,
+    fee_recipient, fee_basis_points, fee, creator, creator_fee_basis_points,
+    creator_fee, track_volume, total_unclaimed_tokens, total_claimed_tokens,
+    current_sol_volume, last_update_timestamp, ix_name
+    """
+    # Minimum size for core fields: 32+8+8+1+32+8+8+8 = 105 bytes
+    if len(data) < 105:
         return None
 
     offset = 0
 
-    # Parse fields according to TradeEvent structure
+    # Parse core fields (always present in all versions)
     mint = data[offset : offset + 32]
     offset += 32
 
@@ -152,6 +166,73 @@ def decode_trade_event(data):
     virtual_token_reserves = struct.unpack("<Q", data[offset : offset + 8])[0]
     offset += 8
 
+    # Parse extended fields if bytes remaining (added in later versions)
+    # Real reserves (8+8 = 16 bytes)
+    if len(data) >= offset + 16:
+        real_sol_reserves = struct.unpack("<Q", data[offset : offset + 8])[0]
+        offset += 8
+        real_token_reserves = struct.unpack("<Q", data[offset : offset + 8])[0]
+        offset += 8
+    else:
+        real_sol_reserves = 0
+        real_token_reserves = 0
+
+    # Fee recipient and fee details (32+8+8 = 48 bytes)
+    if len(data) >= offset + 48:
+        fee_recipient = data[offset : offset + 32]
+        offset += 32
+        fee_basis_points = struct.unpack("<Q", data[offset : offset + 8])[0]
+        offset += 8
+        fee = struct.unpack("<Q", data[offset : offset + 8])[0]
+        offset += 8
+    else:
+        fee_recipient = b'\x00' * 32
+        fee_basis_points = 0
+        fee = 0
+
+    # Creator and creator fee details (32+8+8 = 48 bytes)
+    if len(data) >= offset + 48:
+        creator = data[offset : offset + 32]
+        offset += 32
+        creator_fee_basis_points = struct.unpack("<Q", data[offset : offset + 8])[0]
+        offset += 8
+        creator_fee = struct.unpack("<Q", data[offset : offset + 8])[0]
+        offset += 8
+    else:
+        creator = b'\x00' * 32
+        creator_fee_basis_points = 0
+        creator_fee = 0
+
+    # Volume tracking fields (1+8+8+8+8 = 33 bytes)
+    if len(data) >= offset + 33:
+        track_volume = bool(data[offset])
+        offset += 1
+        total_unclaimed_tokens = struct.unpack("<Q", data[offset : offset + 8])[0]
+        offset += 8
+        total_claimed_tokens = struct.unpack("<Q", data[offset : offset + 8])[0]
+        offset += 8
+        current_sol_volume = struct.unpack("<Q", data[offset : offset + 8])[0]
+        offset += 8
+        last_update_timestamp = struct.unpack("<q", data[offset : offset + 8])[0]
+        offset += 8
+    else:
+        track_volume = False
+        total_unclaimed_tokens = 0
+        total_claimed_tokens = 0
+        current_sol_volume = 0
+        last_update_timestamp = 0
+
+    # Parse string field (ix_name): 4 bytes for length + string data
+    if len(data) >= offset + 4:
+        string_length = struct.unpack("<I", data[offset : offset + 4])[0]
+        offset += 4
+        if len(data) >= offset + string_length:
+            ix_name = data[offset : offset + string_length].decode("utf-8")
+        else:
+            ix_name = ""
+    else:
+        ix_name = ""
+
     return {
         "mint": base58.b58encode(mint).decode(),
         "sol_amount": sol_amount,
@@ -161,6 +242,20 @@ def decode_trade_event(data):
         "timestamp": timestamp,
         "virtual_sol_reserves": virtual_sol_reserves,
         "virtual_token_reserves": virtual_token_reserves,
+        "real_sol_reserves": real_sol_reserves,
+        "real_token_reserves": real_token_reserves,
+        "fee_recipient": base58.b58encode(fee_recipient).decode() if fee_recipient != b'\x00' * 32 else None,
+        "fee_basis_points": fee_basis_points,
+        "fee": fee,
+        "creator": base58.b58encode(creator).decode() if creator != b'\x00' * 32 else None,
+        "creator_fee_basis_points": creator_fee_basis_points,
+        "creator_fee": creator_fee,
+        "track_volume": track_volume,
+        "total_unclaimed_tokens": total_unclaimed_tokens,
+        "total_claimed_tokens": total_claimed_tokens,
+        "current_sol_volume": current_sol_volume,
+        "last_update_timestamp": last_update_timestamp,
+        "ix_name": ix_name,
         "price_per_token": (sol_amount * 1_000_000) / token_amount
         if token_amount > 0
         else 0,
@@ -178,7 +273,10 @@ def display_transaction_info(signature, logs):
     # Parse trade event data
     trade_data = parse_trade_event(logs)
     if trade_data:
-        print(f"  Type: {'BUY' if trade_data['is_buy'] else 'SELL'}")
+        # Core transaction info (always present)
+        ix_name = trade_data.get('ix_name', '')
+        trade_type = 'BUY' if trade_data['is_buy'] else 'SELL'
+        print(f"  Type: {trade_type}{f' ({ix_name})' if ix_name else ''}")
         print(f"  Token: {trade_data['mint']}")
         print(f"  SOL Amount: {trade_data['sol_amount'] / 1_000_000_000:.6f} SOL")
         print(f"  Token Amount: {trade_data['token_amount']:,}")
@@ -186,6 +284,25 @@ def display_transaction_info(signature, logs):
             f"  Price per Token: {trade_data['price_per_token'] / 1_000_000_000:.9f} SOL"
         )
         print(f"  Trader: {trade_data['user']}")
+
+        # Fee info (may not be present in older transactions)
+        if trade_data['fee'] > 0 or trade_data['fee_basis_points'] > 0:
+            print(f"  Fee: {trade_data['fee'] / 1_000_000_000:.6f} SOL ({trade_data['fee_basis_points']} bps)")
+
+        if trade_data['creator_fee'] > 0 or trade_data['creator_fee_basis_points'] > 0:
+            print(f"  Creator Fee: {trade_data['creator_fee'] / 1_000_000_000:.6f} SOL ({trade_data['creator_fee_basis_points']} bps)")
+
+        if trade_data['creator']:
+            print(f"  Creator: {trade_data['creator']}")
+
+        if trade_data['fee_recipient']:
+            print(f"  Fee Recipient: {trade_data['fee_recipient']}")
+
+        # Reserve info
+        print(f"  Virtual Reserves: {trade_data['virtual_sol_reserves'] / 1_000_000_000:.6f} SOL / {trade_data['virtual_token_reserves']:,} tokens")
+
+        if trade_data['real_sol_reserves'] > 0 or trade_data['real_token_reserves'] > 0:
+            print(f"  Real Reserves: {trade_data['real_sol_reserves'] / 1_000_000_000:.6f} SOL / {trade_data['real_token_reserves']:,} tokens")
 
     # Extract and display program info
     display_program_info(logs)
