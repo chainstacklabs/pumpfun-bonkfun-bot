@@ -20,6 +20,7 @@ async def handle_cleanup_after_failure(
     client,
     wallet,
     mint,
+    token_program_id,
     priority_fee_manager,
     cleanup_mode,
     cleanup_with_prior_fee,
@@ -30,13 +31,14 @@ async def handle_cleanup_after_failure(
         manager = AccountCleanupManager(
             client, wallet, priority_fee_manager, cleanup_with_prior_fee, force_burn
         )
-        await manager.cleanup_ata(mint)
+        await manager.cleanup_ata(mint, token_program_id)
 
 
 async def handle_cleanup_after_sell(
     client,
     wallet,
     mint,
+    token_program_id,
     priority_fee_manager,
     cleanup_mode,
     cleanup_with_prior_fee,
@@ -47,13 +49,14 @@ async def handle_cleanup_after_sell(
         manager = AccountCleanupManager(
             client, wallet, priority_fee_manager, cleanup_with_prior_fee, force_burn
         )
-        await manager.cleanup_ata(mint)
+        await manager.cleanup_ata(mint, token_program_id)
 
 
 async def handle_cleanup_post_session(
     client,
     wallet,
     mints,
+    token_program_ids,
     priority_fee_manager,
     cleanup_mode,
     cleanup_with_prior_fee,
@@ -64,5 +67,5 @@ async def handle_cleanup_post_session(
         manager = AccountCleanupManager(
             client, wallet, priority_fee_manager, cleanup_with_prior_fee, force_burn
         )
-        for mint in mints:
-            await manager.cleanup_ata(mint)
+        for mint, token_program_id in zip(mints, token_program_ids):
+            await manager.cleanup_ata(mint, token_program_id)

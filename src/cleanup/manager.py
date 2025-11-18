@@ -34,12 +34,19 @@ class AccountCleanupManager:
         self.use_priority_fee = use_priority_fee
         self.close_with_force_burn = force_burn
 
-    async def cleanup_ata(self, mint: Pubkey) -> None:
+    async def cleanup_ata(self, mint: Pubkey, token_program_id: Pubkey | None = None) -> None:
         """
         Attempt to burn any remaining tokens and close the ATA.
         Skips if account doesn't exist or is already empty/closed.
+
+        Args:
+            mint: Token mint address
+            token_program_id: Token program (TOKEN or TOKEN_2022). Defaults to TOKEN_2022_PROGRAM
         """
-        ata = self.wallet.get_associated_token_address(mint)
+        if token_program_id is None:
+            token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
+
+        ata = self.wallet.get_associated_token_address(mint, token_program_id)
         solana_client = await self.client.get_client()
 
         priority_fee = (
@@ -70,7 +77,7 @@ class AccountCleanupManager:
                         mint=mint,
                         owner=self.wallet.pubkey,
                         amount=balance,
-                        program_id=SystemAddresses.TOKEN_PROGRAM,
+                        program_id=token_program_id,
                     )
                 )
                 instructions.append(burn_ix)
@@ -89,7 +96,7 @@ class AccountCleanupManager:
                     account=ata,
                     dest=self.wallet.pubkey,
                     owner=self.wallet.pubkey,
-                    program_id=SystemAddresses.TOKEN_PROGRAM,
+                    program_id=token_program_id,
                 )
             )
             instructions.append(close_ix)

@@ -193,6 +193,7 @@ class UniversalTrader:
 
         # State tracking
         self.traded_mints: set[Pubkey] = set()
+        self.traded_token_programs: dict[str, Pubkey] = {}  # Maps mint (as string) to token_program_id
         self.token_queue: asyncio.Queue = asyncio.Queue()
         self.processing: bool = False
         self.processed_tokens: set[str] = set()
@@ -325,10 +326,17 @@ class UniversalTrader:
         if self.traded_mints:
             try:
                 logger.info(f"Cleaning up {len(self.traded_mints)} traded token(s)...")
+                # Build parallel lists of mints and token_program_ids
+                mints_list = list(self.traded_mints)
+                token_program_ids = [
+                    self.traded_token_programs.get(str(mint))
+                    for mint in mints_list
+                ]
                 await handle_cleanup_post_session(
                     self.solana_client,
                     self.wallet,
-                    list(self.traded_mints),
+                    mints_list,
+                    token_program_ids,
                     self.priority_fee_manager,
                     self.cleanup_mode,
                     self.cleanup_with_priority_fee,
@@ -447,6 +455,10 @@ class UniversalTrader:
             buy_result.tx_signature,
         )
         self.traded_mints.add(token_info.mint)
+        # Track token program for cleanup
+        mint_str = str(token_info.mint)
+        if token_info.token_program_id:
+            self.traded_token_programs[mint_str] = token_info.token_program_id
 
         # Choose exit strategy
         if not self.marry_mode:
@@ -469,6 +481,7 @@ class UniversalTrader:
             self.solana_client,
             self.wallet,
             token_info.mint,
+            token_info.token_program_id,
             self.priority_fee_manager,
             self.cleanup_mode,
             self.cleanup_with_priority_fee,
@@ -521,6 +534,7 @@ class UniversalTrader:
                 self.solana_client,
                 self.wallet,
                 token_info.mint,
+                token_info.token_program_id,
                 self.priority_fee_manager,
                 self.cleanup_mode,
                 self.cleanup_with_priority_fee,
@@ -590,6 +604,7 @@ class UniversalTrader:
                             self.solana_client,
                             self.wallet,
                             token_info.mint,
+                            token_info.token_program_id,
                             self.priority_fee_manager,
                             self.cleanup_mode,
                             self.cleanup_with_priority_fee,
