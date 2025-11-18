@@ -67,19 +67,13 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         # Get all required accounts (includes mayhem-mode-aware fee recipient)
         accounts_info = address_provider.get_buy_instruction_accounts(token_info, user)
 
-        # Determine token program to use (default to TOKEN_2022_PROGRAM per pump.fun's migration to create_v2)
-        token_program_id = (
-            token_info.token_program_id
-            if token_info.token_program_id
-            else SystemAddresses.TOKEN_2022_PROGRAM
-        )
-
         # 1. Create idempotent ATA instruction (won't fail if ATA already exists)
+        # Use token_program from accounts_info to ensure AddressProvider controls program selection
         ata_instruction = create_idempotent_associated_token_account(
             user,  # payer
             user,  # owner
             token_info.mint,  # mint
-            token_program_id,  # token program (dynamic for token2022 support)
+            accounts_info["token_program"],  # token program from AddressProvider
         )
         instructions.append(ata_instruction)
 

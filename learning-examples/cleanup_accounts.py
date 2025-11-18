@@ -19,6 +19,10 @@ PRIVATE_KEY = os.getenv("SOLANA_PRIVATE_KEY")
 # Update this address to MINT address of a token you want to close
 MINT_ADDRESS = Pubkey.from_string("9WHpYbqG6LJvfCYfMjvGbyo1wHXgroCrixPb33s2pump")
 
+# Token program for the mint - use TOKEN_PROGRAM for legacy SPL tokens, TOKEN_2022_PROGRAM for Token-2022
+# This must match the actual token's program to derive the correct ATA address
+TOKEN_PROGRAM = SystemAddresses.TOKEN_PROGRAM
+
 
 async def close_account_if_exists(
     client: SolanaClient, wallet: Wallet, account: Pubkey, mint: Pubkey
@@ -41,7 +45,7 @@ async def close_account_if_exists(
                     mint=mint,
                     owner=wallet.pubkey,
                     amount=balance,
-                    program_id=SystemAddresses.TOKEN_PROGRAM,
+                    program_id=TOKEN_PROGRAM,
                 )
             )
             await client.build_and_send_transaction([burn_ix], wallet.keypair)
@@ -54,7 +58,7 @@ async def close_account_if_exists(
                 account=account,
                 dest=wallet.pubkey,
                 owner=wallet.pubkey,
-                program_id=SystemAddresses.TOKEN_PROGRAM,
+                program_id=TOKEN_PROGRAM,
             )
             ix = close_account(close_params)
 
@@ -78,7 +82,7 @@ async def main():
         wallet = Wallet(PRIVATE_KEY)
 
         # Get user's ATA for the token
-        ata = wallet.get_associated_token_address(MINT_ADDRESS)
+        ata = wallet.get_associated_token_address(MINT_ADDRESS, TOKEN_PROGRAM)
         await close_account_if_exists(client, wallet, ata, MINT_ADDRESS)
 
     except Exception as e:

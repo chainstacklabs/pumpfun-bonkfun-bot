@@ -68,12 +68,18 @@ class PlatformAwareBuyer(Trader):
                 # Regular behavior with RPC call
                 # Fetch pool state to get price and mayhem mode status
                 pool_state = await curve_manager.get_pool_state(pool_address)
-                token_price_sol = pool_state.get("price_per_token", 0)
+                token_price_sol = pool_state.get("price_per_token")
+
+                # Validate price_per_token is present and positive
+                if token_price_sol is None or token_price_sol <= 0:
+                    raise ValueError(
+                        f"Invalid price_per_token: {token_price_sol} for pool {pool_address} "
+                        f"(mint: {token_info.mint}) - cannot execute buy with zero/invalid price"
+                    )
+
                 # Set is_mayhem_mode from bonding curve state
                 token_info.is_mayhem_mode = pool_state.get("is_mayhem_mode", False)
-                token_amount = (
-                    self.amount / token_price_sol if token_price_sol > 0 else 0
-                )
+                token_amount = self.amount / token_price_sol
 
             # Calculate minimum token amount with slippage
             minimum_token_amount = token_amount * (1 - self.slippage)
@@ -231,7 +237,15 @@ class PlatformAwareSeller(Trader):
             pool_address = self._get_pool_address(token_info, address_provider)
             # Fetch pool state to get price and mayhem mode status
             pool_state = await curve_manager.get_pool_state(pool_address)
-            token_price_sol = pool_state.get("price_per_token", 0)
+            token_price_sol = pool_state.get("price_per_token")
+
+            # Validate price_per_token is present and positive
+            if token_price_sol is None or token_price_sol <= 0:
+                raise ValueError(
+                    f"Invalid price_per_token: {token_price_sol} for pool {pool_address} "
+                    f"(mint: {token_info.mint}) - cannot execute sell with zero/invalid price"
+                )
+
             # Set is_mayhem_mode from bonding curve state
             token_info.is_mayhem_mode = pool_state.get("is_mayhem_mode", False)
 

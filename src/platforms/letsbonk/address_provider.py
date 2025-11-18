@@ -157,7 +157,8 @@ class LetsBonkAddressProvider(AddressProvider):
         Returns:
             User's associated token account address
         """
-        return get_associated_token_address(user, mint)
+        # Explicitly pass TOKEN_PROGRAM since LetsBonk uses standard SPL tokens
+        return get_associated_token_address(user, mint, SystemAddresses.TOKEN_PROGRAM)
 
     def get_additional_accounts(self, token_info: TokenInfo) -> dict[str, Pubkey]:
         """Get LetsBonk-specific additional accounts needed for trading.

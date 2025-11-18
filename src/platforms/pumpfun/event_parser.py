@@ -110,9 +110,10 @@ class PumpFunEventParser(EventParser):
 
             # First, collect all Program data entries and note when Create instruction happens
             for i, log in enumerate(logs):
-                if "Program log: Instruction: Create" in log:
+                if "Program log: Instruction: Create" in log or "Program log: Instruction: Create_v2" in log:
                     create_instruction_found = True
-                    logger.info(f"📝 Found Create instruction at log index {i}")
+                    instruction_type = "Create_v2" if "Create_v2" in log else "Create"
+                    logger.info(f"📝 Found {instruction_type} instruction at log index {i}")
                 elif "Program data:" in log:
                     # Extract base64 encoded event data
                     encoded_data = log.split("Program data: ")[1].strip()
@@ -122,7 +123,7 @@ class PumpFunEventParser(EventParser):
                     )
 
             if not create_instruction_found:
-                logger.info("❌ No Create instruction found in logs")
+                logger.info("❌ No Create or Create_v2 instruction found in logs")
                 return None
 
             if not program_data_entries:

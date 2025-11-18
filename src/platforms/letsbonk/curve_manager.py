@@ -194,14 +194,21 @@ class LetsBonkCurveManager(CurveManager):
         }
 
         # Calculate additional metrics
-        if pool_data["virtual_base"] > 0:
-            pool_data["price_per_token"] = (
-                (pool_data["virtual_quote"] / pool_data["virtual_base"])
-                * (10**TOKEN_DECIMALS)
-                / LAMPORTS_PER_SOL
+        # Validate reserves are positive before calculating price
+        if pool_data["virtual_base"] <= 0:
+            raise ValueError(
+                f"Invalid virtual_base: {pool_data['virtual_base']} - cannot calculate price"
             )
-        else:
-            pool_data["price_per_token"] = 0
+        if pool_data["virtual_quote"] <= 0:
+            raise ValueError(
+                f"Invalid virtual_quote: {pool_data['virtual_quote']} - cannot calculate price"
+            )
+
+        pool_data["price_per_token"] = (
+            (pool_data["virtual_quote"] / pool_data["virtual_base"])
+            * (10**TOKEN_DECIMALS)
+            / LAMPORTS_PER_SOL
+        )
 
         logger.debug(
             f"Decoded pool state: virtual_base={pool_data['virtual_base']}, "
