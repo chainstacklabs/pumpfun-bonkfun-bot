@@ -75,12 +75,19 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
         # Get all required accounts
         accounts_info = address_provider.get_buy_instruction_accounts(token_info, user)
 
+        # Determine token program to use
+        token_program_id = (
+            token_info.token_program_id
+            if token_info.token_program_id
+            else SystemAddresses.TOKEN_2022_PROGRAM
+        )
+
         # 1. Create idempotent ATA for base token
         ata_instruction = create_idempotent_associated_token_account(
             user,  # payer
             user,  # owner
             token_info.mint,  # mint
-            SystemAddresses.TOKEN_PROGRAM,  # token program
+            token_program_id,  # token program (dynamic for token2022 support)
         )
         instructions.append(ata_instruction)
 
@@ -151,10 +158,10 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
                 pubkey=SystemAddresses.SOL_MINT, is_signer=False, is_writable=False
             ),  # quote_token_mint
             AccountMeta(
-                pubkey=SystemAddresses.TOKEN_PROGRAM, is_signer=False, is_writable=False
+                pubkey=accounts_info["base_token_program"], is_signer=False, is_writable=False
             ),  # base_token_program
             AccountMeta(
-                pubkey=SystemAddresses.TOKEN_PROGRAM, is_signer=False, is_writable=False
+                pubkey=accounts_info["quote_token_program"], is_signer=False, is_writable=False
             ),  # quote_token_program
             AccountMeta(
                 pubkey=accounts_info["event_authority"],
@@ -306,10 +313,10 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
                 pubkey=SystemAddresses.SOL_MINT, is_signer=False, is_writable=False
             ),  # quote_token_mint
             AccountMeta(
-                pubkey=SystemAddresses.TOKEN_PROGRAM, is_signer=False, is_writable=False
+                pubkey=accounts_info["base_token_program"], is_signer=False, is_writable=False
             ),  # base_token_program
             AccountMeta(
-                pubkey=SystemAddresses.TOKEN_PROGRAM, is_signer=False, is_writable=False
+                pubkey=accounts_info["quote_token_program"], is_signer=False, is_writable=False
             ),  # quote_token_program
             AccountMeta(
                 pubkey=accounts_info["event_authority"],

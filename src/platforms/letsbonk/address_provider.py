@@ -147,18 +147,22 @@ class LetsBonkAddressProvider(AddressProvider):
         )
         return quote_vault
 
-    def derive_user_token_account(self, user: Pubkey, mint: Pubkey) -> Pubkey:
+    def derive_user_token_account(
+        self, user: Pubkey, mint: Pubkey, token_program_id: Pubkey | None = None
+    ) -> Pubkey:
         """Derive user's associated token account address.
 
         Args:
             user: User's wallet address
             mint: Token mint address
+            token_program_id: Token program (TOKEN or TOKEN_2022). Defaults to TOKEN_2022_PROGRAM
 
         Returns:
             User's associated token account address
         """
-        # Explicitly pass TOKEN_PROGRAM since LetsBonk uses standard SPL tokens
-        return get_associated_token_address(user, mint, SystemAddresses.TOKEN_PROGRAM)
+        if token_program_id is None:
+            token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
+        return get_associated_token_address(user, mint, token_program_id)
 
     def get_additional_accounts(self, token_info: TokenInfo) -> dict[str, Pubkey]:
         """Get LetsBonk-specific additional accounts needed for trading.
@@ -297,6 +301,13 @@ class LetsBonkAddressProvider(AddressProvider):
         """
         additional_accounts = self.get_additional_accounts(token_info)
 
+        # Determine token program to use
+        token_program_id = (
+            token_info.token_program_id
+            if token_info.token_program_id
+            else SystemAddresses.TOKEN_2022_PROGRAM
+        )
+
         # Use global_config from TokenInfo if available, otherwise use default
         global_config = (
             token_info.global_config
@@ -317,12 +328,12 @@ class LetsBonkAddressProvider(AddressProvider):
             "global_config": global_config,
             "platform_config": platform_config,
             "pool_state": additional_accounts["pool_state"],
-            "user_base_token": self.derive_user_token_account(user, token_info.mint),
+            "user_base_token": self.derive_user_token_account(user, token_info.mint, token_program_id),
             "base_vault": additional_accounts["base_vault"],
             "quote_vault": additional_accounts["quote_vault"],
             "base_token_mint": token_info.mint,
             "quote_token_mint": SystemAddresses.SOL_MINT,
-            "base_token_program": SystemAddresses.TOKEN_PROGRAM,
+            "base_token_program": token_program_id,
             "quote_token_program": SystemAddresses.TOKEN_PROGRAM,
             "event_authority": additional_accounts["event_authority"],
             "program": LetsBonkAddresses.PROGRAM,
@@ -352,6 +363,13 @@ class LetsBonkAddressProvider(AddressProvider):
         """
         additional_accounts = self.get_additional_accounts(token_info)
 
+        # Determine token program to use
+        token_program_id = (
+            token_info.token_program_id
+            if token_info.token_program_id
+            else SystemAddresses.TOKEN_2022_PROGRAM
+        )
+
         # Use global_config from TokenInfo if available, otherwise use default
         global_config = (
             token_info.global_config
@@ -372,12 +390,12 @@ class LetsBonkAddressProvider(AddressProvider):
             "global_config": global_config,
             "platform_config": platform_config,
             "pool_state": additional_accounts["pool_state"],
-            "user_base_token": self.derive_user_token_account(user, token_info.mint),
+            "user_base_token": self.derive_user_token_account(user, token_info.mint, token_program_id),
             "base_vault": additional_accounts["base_vault"],
             "quote_vault": additional_accounts["quote_vault"],
             "base_token_mint": token_info.mint,
             "quote_token_mint": SystemAddresses.SOL_MINT,
-            "base_token_program": SystemAddresses.TOKEN_PROGRAM,
+            "base_token_program": token_program_id,
             "quote_token_program": SystemAddresses.TOKEN_PROGRAM,
             "event_authority": additional_accounts["event_authority"],
             "program": LetsBonkAddresses.PROGRAM,

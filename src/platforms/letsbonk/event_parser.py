@@ -13,6 +13,7 @@ from typing import Any
 from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
 
+from core.pubkeys import SystemAddresses
 from interfaces.core import EventParser, Platform, TokenInfo
 from platforms.letsbonk.address_provider import LetsBonkAddressProvider
 from utils.idl_parser import IDLParser
@@ -114,6 +115,15 @@ class LetsBonkEventParser(EventParser):
             }:
                 return None
 
+            # Determine token program based on instruction variant
+            instruction_name = decoded["instruction_name"]
+            is_token_2022 = instruction_name == "initialize_with_token_2022"
+            token_program_id = (
+                SystemAddresses.TOKEN_2022_PROGRAM
+                if is_token_2022
+                else SystemAddresses.TOKEN_PROGRAM
+            )
+
             args = decoded.get("args", {})
 
             # Extract MintParams from the decoded arguments
@@ -174,6 +184,7 @@ class LetsBonkEventParser(EventParser):
                 platform_config=platform_config,
                 user=creator,
                 creator=creator,
+                token_program_id=token_program_id,
                 creation_timestamp=monotonic(),
             )
 
