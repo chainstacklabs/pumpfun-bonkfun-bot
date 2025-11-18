@@ -67,11 +67,11 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         # Get all required accounts (includes mayhem-mode-aware fee recipient)
         accounts_info = address_provider.get_buy_instruction_accounts(token_info, user)
 
-        # Determine token program to use
+        # Determine token program to use (default to TOKEN_2022_PROGRAM per pump.fun's migration to create_v2)
         token_program_id = (
             token_info.token_program_id
             if token_info.token_program_id
-            else SystemAddresses.TOKEN_PROGRAM
+            else SystemAddresses.TOKEN_2022_PROGRAM
         )
 
         # 1. Create idempotent ATA instruction (won't fail if ATA already exists)

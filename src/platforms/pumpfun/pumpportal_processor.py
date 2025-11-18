@@ -82,10 +82,11 @@ class PumpFunPumpPortalProcessor:
             creator = user
 
             # Derive additional addresses using platform provider
-            # PumpPortal doesn't distinguish between Token and Token2022,
-            # so we default to TOKEN_PROGRAM (Token2022 tokens detected via
-            # log/instruction/geyser listeners will have correct token_program_id)
-            token_program_id = SystemAddresses.TOKEN_PROGRAM
+            # PumpPortal doesn't distinguish between Token and Token2022.
+            # Default to TOKEN_2022_PROGRAM as per pump.fun's migration to create_v2.
+            # Technical limitation: Cannot distinguish from pre-parsed data, but risk is low
+            # since pump.fun now defaults to Token2022 for all new tokens.
+            token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
 
             associated_bonding_curve = (
                 self.address_provider.derive_associated_bonding_curve(

@@ -242,8 +242,11 @@ class PumpFunEventParser(EventParser):
                         logger.info(f"❌ Failed to convert pubkey fields: {e}")
                         continue
 
-                    # Derive additional addresses (default to TOKEN_PROGRAM for log-parsed events)
-                    token_program_id = SystemAddresses.TOKEN_PROGRAM
+                    # Derive additional addresses (default to TOKEN_2022_PROGRAM as per pump.fun's migration to create_v2)
+                    # Note: As of recent pump.fun updates, all tokens are created via create_v2 instruction
+                    # This is a technical limitation of logs listener - cannot distinguish create vs create_v2
+                    # Risk is low since pump.fun now defaults to Token2022 for all new tokens
+                    token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
                     associated_bonding_curve = self._derive_associated_bonding_curve(
                         mint, bonding_curve, token_program_id
                     )

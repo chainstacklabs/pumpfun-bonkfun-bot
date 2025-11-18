@@ -153,13 +153,13 @@ class PumpFunAddressProvider(AddressProvider):
         Args:
             user: User's wallet address
             mint: Token mint address
-            token_program_id: Token program (TOKEN or TOKEN_2022). Defaults to TOKEN_PROGRAM
+            token_program_id: Token program (TOKEN or TOKEN_2022). Defaults to TOKEN_2022_PROGRAM
 
         Returns:
             User's associated token account address
         """
         if token_program_id is None:
-            token_program_id = SystemAddresses.TOKEN_PROGRAM
+            token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
         return get_associated_token_address(user, mint, token_program_id)
 
     def get_additional_accounts(self, token_info: TokenInfo) -> dict[str, Pubkey]:
@@ -205,13 +205,13 @@ class PumpFunAddressProvider(AddressProvider):
         Args:
             mint: Token mint address
             bonding_curve: Bonding curve address
-            token_program_id: Token program (TOKEN or TOKEN_2022). Defaults to TOKEN_PROGRAM
+            token_program_id: Token program (TOKEN or TOKEN_2022). Defaults to TOKEN_2022_PROGRAM
 
         Returns:
             Associated bonding curve address
         """
         if token_program_id is None:
-            token_program_id = SystemAddresses.TOKEN_PROGRAM
+            token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
 
         derived_address, _ = Pubkey.find_program_address(
             [

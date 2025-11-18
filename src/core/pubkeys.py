@@ -23,6 +23,9 @@ SYSTEM_PROGRAM: Final[Pubkey] = Pubkey.from_string("1111111111111111111111111111
 TOKEN_PROGRAM: Final[Pubkey] = Pubkey.from_string(
     "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 )
+TOKEN_2022_PROGRAM: Final[Pubkey] = Pubkey.from_string(
+    "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+)
 ASSOCIATED_TOKEN_PROGRAM: Final[Pubkey] = Pubkey.from_string(
     "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
 )
@@ -42,6 +45,7 @@ class SystemAddresses:
     # Reference the module-level constants
     SYSTEM_PROGRAM = SYSTEM_PROGRAM
     TOKEN_PROGRAM = TOKEN_PROGRAM
+    TOKEN_2022_PROGRAM = TOKEN_2022_PROGRAM
     ASSOCIATED_TOKEN_PROGRAM = ASSOCIATED_TOKEN_PROGRAM
     RENT = RENT
     SOL_MINT = SOL_MINT
@@ -56,6 +60,7 @@ class SystemAddresses:
         return {
             "system_program": cls.SYSTEM_PROGRAM,
             "token_program": cls.TOKEN_PROGRAM,
+            "token_2022_program": cls.TOKEN_2022_PROGRAM,
             "associated_token_program": cls.ASSOCIATED_TOKEN_PROGRAM,
             "rent": cls.RENT,
             "sol_mint": cls.SOL_MINT,
