@@ -193,7 +193,9 @@ class UniversalTrader:
 
         # State tracking
         self.traded_mints: set[Pubkey] = set()
-        self.traded_token_programs: dict[str, Pubkey] = {}  # Maps mint (as string) to token_program_id
+        self.traded_token_programs: dict[
+            str, Pubkey
+        ] = {}  # Maps mint (as string) to token_program_id
         self.token_queue: asyncio.Queue = asyncio.Queue()
         self.processing: bool = False
         self.processed_tokens: set[str] = set()
@@ -329,8 +331,7 @@ class UniversalTrader:
                 # Build parallel lists of mints and token_program_ids
                 mints_list = list(self.traded_mints)
                 token_program_ids = [
-                    self.traded_token_programs.get(str(mint))
-                    for mint in mints_list
+                    self.traded_token_programs.get(str(mint)) for mint in mints_list
                 ]
                 await handle_cleanup_post_session(
                     self.solana_client,
@@ -465,7 +466,7 @@ class UniversalTrader:
             if self.exit_strategy == "tp_sl":
                 await self._handle_tp_sl_exit(token_info, buy_result)
             elif self.exit_strategy == "time_based":
-                await self._handle_time_based_exit(token_info)
+                await self._handle_time_based_exit(token_info, buy_result)
             elif self.exit_strategy == "manual":
                 logger.info("Manual exit strategy - position will remain open")
         else:
@@ -512,13 +513,23 @@ class UniversalTrader:
         # Monitor position until exit condition is met
         await self._monitor_position_until_exit(token_info, position)
 
-    async def _handle_time_based_exit(self, token_info: TokenInfo) -> None:
-        """Handle legacy time-based exit strategy."""
+    async def _handle_time_based_exit(
+        self, token_info: TokenInfo, buy_result: TradeResult
+    ) -> None:
+        """Handle legacy time-based exit strategy.
+
+        Args:
+            token_info: Token information
+            buy_result: Result from the buy operation (contains token amount)
+        """
         logger.info(f"Waiting for {self.wait_time_after_buy} seconds before selling...")
         await asyncio.sleep(self.wait_time_after_buy)
 
         logger.info(f"Selling {token_info.symbol}...")
-        sell_result: TradeResult = await self.seller.execute(token_info)
+        # Pass token amount and price from buy result to avoid RPC delays
+        sell_result: TradeResult = await self.seller.execute(
+            token_info, token_amount=buy_result.amount, token_price=buy_result.price
+        )
 
         if sell_result.success:
             logger.info(f"Successfully sold {token_info.symbol}")
@@ -575,8 +586,12 @@ class UniversalTrader:
                         f"Position PnL: {pnl['price_change_pct']:.2f}% ({pnl['unrealized_pnl_sol']:.6f} SOL)"
                     )
 
-                    # Execute sell
-                    sell_result = await self.seller.execute(token_info)
+                    # Execute sell with position quantity and entry price to avoid RPC delays
+                    sell_result = await self.seller.execute(
+                        token_info,
+                        token_amount=position.quantity,
+                        token_price=position.entry_price,
+                    )
 
                     if sell_result.success:
                         # Close position with actual exit price

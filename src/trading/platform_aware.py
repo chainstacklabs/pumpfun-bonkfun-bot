@@ -202,8 +202,35 @@ class PlatformAwareSeller(Trader):
         self.max_retries = max_retries
         self.compute_units = compute_units or {}
 
-    async def execute(self, token_info: TokenInfo) -> TradeResult:
-        """Execute sell operation using platform-specific implementations."""
+    async def execute(
+        self, token_info: TokenInfo, token_amount: float, token_price: float
+    ) -> TradeResult:
+        """Execute sell operation using platform-specific implementations.
+
+        Args:
+            token_info: Token information for the sell operation
+            token_amount: Token amount to sell (from buy result). Required to avoid
+                         RPC balance query delays.
+            token_price: Token price in SOL (from buy result). Required to avoid
+                        RPC pool state query delays.
+
+        Returns:
+            TradeResult with operation outcome
+
+        Raises:
+            ValueError: If required parameters are not provided
+        """
+        if token_amount is None:
+            raise ValueError(
+                "token_amount is required for sell operation. "
+                "Pass the amount from buy result to avoid RPC delays."
+            )
+        if token_price is None or token_price <= 0:
+            raise ValueError(
+                "token_price is required for sell operation. "
+                "Pass the price from buy result to avoid RPC delays."
+            )
+
         try:
             # Get platform-specific implementations
             implementations = get_platform_implementations(
@@ -211,19 +238,14 @@ class PlatformAwareSeller(Trader):
             )
             address_provider = implementations.address_provider
             instruction_builder = implementations.instruction_builder
-            curve_manager = implementations.curve_manager
 
-            # Get user's token account and balance
-            user_token_account = address_provider.derive_user_token_account(
-                self.wallet.pubkey, token_info.mint
-            )
+            # Use pre-known amount and price (no RPC delay)
+            token_balance_decimal = token_amount
+            token_balance = int(token_amount * 10**TOKEN_DECIMALS)
+            token_price_sol = token_price
 
-            token_balance = await self.client.get_token_account_balance(
-                user_token_account
-            )
-            token_balance_decimal = token_balance / 10**TOKEN_DECIMALS
-
-            logger.info(f"Token balance: {token_balance_decimal}")
+            logger.info(f"Token balance: {token_balance_decimal:.6f}")
+            logger.info(f"Price per Token (from buy): {token_price_sol:.8f} SOL")
 
             if token_balance == 0:
                 logger.info("No tokens to sell.")
@@ -232,24 +254,6 @@ class PlatformAwareSeller(Trader):
                     platform=token_info.platform,
                     error_message="No tokens to sell",
                 )
-
-            # Get pool address and current price using platform-agnostic method
-            pool_address = self._get_pool_address(token_info, address_provider)
-            # Fetch pool state to get price and mayhem mode status
-            pool_state = await curve_manager.get_pool_state(pool_address)
-            token_price_sol = pool_state.get("price_per_token")
-
-            # Validate price_per_token is present and positive
-            if token_price_sol is None or token_price_sol <= 0:
-                raise ValueError(
-                    f"Invalid price_per_token: {token_price_sol} for pool {pool_address} "
-                    f"(mint: {token_info.mint}) - cannot execute sell with zero/invalid price"
-                )
-
-            # Set is_mayhem_mode from bonding curve state
-            token_info.is_mayhem_mode = pool_state.get("is_mayhem_mode", False)
-
-            logger.info(f"Price per Token: {token_price_sol:.8f} SOL")
 
             # Calculate expected SOL output
             expected_sol_output = token_balance_decimal * token_price_sol

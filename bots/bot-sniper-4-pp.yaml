@@ -29,7 +29,7 @@ trade:
   exit_strategy: "time_based" # Options: "time_based", "tp_sl", "manual"
   take_profit_percentage: 0.1 # Take profit at 10% gain (0.1 = 10%)
   stop_loss_percentage: 0.1 # Stop loss at 10% loss (0.1 = 10%)
-  max_hold_time: 600 # Maximum hold time in seconds (600 = 10 minutes)
+  max_hold_time: 15 # Maximum hold time in seconds for TP/SL strategy, for time_based - see wait_after_buy
   price_check_interval: 2 # Check price every 2 seconds
 
   # EXTREME FAST mode configuration
