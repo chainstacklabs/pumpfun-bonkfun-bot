@@ -130,6 +130,25 @@ class PlatformAwareBuyer(Trader):
 
             if success:
                 logger.info(f"Buy transaction confirmed: {tx_signature}")
+
+                # Fetch actual token amount from transaction to handle slippage
+                actual_token_balance = await self.client.get_transaction_token_balance(
+                    str(tx_signature), self.wallet.pubkey, token_info.mint
+                )
+
+                if actual_token_balance is not None:
+                    actual_amount = actual_token_balance / 10**TOKEN_DECIMALS
+                    logger.info(
+                        f"Actual tokens received: {actual_amount:.6f} "
+                        f"(expected: {token_amount:.6f})"
+                    )
+                    token_amount = actual_amount
+                else:
+                    logger.warning(
+                        "Could not fetch actual token balance from tx, "
+                        f"using estimated: {token_amount:.6f}"
+                    )
+
                 return TradeResult(
                     success=True,
                     platform=token_info.platform,

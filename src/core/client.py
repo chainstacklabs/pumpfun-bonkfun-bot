@@ -271,6 +271,53 @@ class SolanaClient:
             logger.exception(f"Failed to confirm transaction {signature}")
             return False
 
+    async def get_transaction_token_balance(
+        self, signature: str, user_pubkey: Pubkey, mint: Pubkey
+    ) -> int | None:
+        """Get the user's token balance after a transaction from postTokenBalances.
+
+        Args:
+            signature: Transaction signature
+            user_pubkey: User's wallet public key
+            mint: Token mint address
+
+        Returns:
+            Token balance (raw amount) after transaction, or None if not found
+        """
+        body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTransaction",
+            "params": [
+                signature,
+                {"encoding": "jsonParsed", "commitment": "confirmed"},
+            ],
+        }
+
+        response = await self.post_rpc(body)
+        if not response or "result" not in response:
+            logger.warning(f"Failed to get transaction {signature}")
+            return None
+
+        result = response["result"]
+        if not result or "meta" not in result:
+            return None
+
+        meta = result["meta"]
+        post_token_balances = meta.get("postTokenBalances", [])
+
+        user_str = str(user_pubkey)
+        mint_str = str(mint)
+
+        for balance in post_token_balances:
+            if balance.get("owner") == user_str and balance.get("mint") == mint_str:
+                ui_amount = balance.get("uiTokenAmount", {})
+                amount_str = ui_amount.get("amount")
+                if amount_str:
+                    return int(amount_str)
+
+        return None
+
     async def post_rpc(self, body: dict[str, Any]) -> dict[str, Any] | None:
         """
         Send a raw RPC request to the Solana node.
