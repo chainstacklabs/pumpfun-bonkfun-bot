@@ -24,7 +24,7 @@ geyser:
 # Control trade execution: amount of SOL per trade and acceptable price deviation
 trade:
   buy_amount: 0.0001 # Amount of SOL to spend when buying (in SOL)
-  buy_slippage: 0.2 # Maximum acceptable price deviation (0.2 = 20%)
+  buy_slippage: 0.3 # Maximum acceptable price deviation (0.3 = 30%)
   sell_slippage: 0.3
 
   # Exit strategy configuration
@@ -61,8 +61,9 @@ compute_units:
   # Reduces CU cost from 16k to ~128 CU by limiting loaded account data.
   # Default is 64MB (16k CU). Setting to 512KB significantly reduces overhead.
   # Note: Savings don't show in "consumed CU" but improve tx priority/cost.
+  # Note (Nov 23, 2025): with data size set to 512KB, transactions fail - increasing to 12.5MB resolves the issue.
   # Reference: https://www.anza.xyz/blog/cu-optimization-with-setloadedaccountsdatasizelimit
-  account_data_size: 512_000 # 512KB limit
+  account_data_size: 12_500_000
 
 # Filters for token selection
 filters:
