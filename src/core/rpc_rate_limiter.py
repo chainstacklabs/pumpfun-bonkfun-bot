@@ -16,13 +16,15 @@ class TokenBucketRateLimiter:
     empty, callers wait until a token becomes available.
 
     Args:
-        max_rps: Maximum requests per second (bucket refill rate).
+        max_rps: Maximum requests per second (bucket refill rate). Must be positive.
         burst_size: Maximum burst size (bucket capacity). Defaults to max_rps.
     """
 
     def __init__(self, max_rps: float, burst_size: int | None = None) -> None:
+        if max_rps <= 0:
+            raise ValueError(f"max_rps must be positive, got {max_rps}")
         self._max_rps = max_rps
-        self._burst_size = burst_size if burst_size is not None else int(max_rps)
+        self._burst_size = burst_size if burst_size is not None else max(1, int(max_rps))
         self._tokens = float(self._burst_size)
         self._last_refill = time.monotonic()
         self._lock = asyncio.Lock()

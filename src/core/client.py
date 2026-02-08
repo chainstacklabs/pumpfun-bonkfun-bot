@@ -3,7 +3,6 @@ Solana client abstraction for blockchain operations.
 """
 
 import asyncio
-import json
 import random
 import struct
 from typing import Any
@@ -76,6 +75,7 @@ class SolanaClient:
         )
         self._rate_limiter = TokenBucketRateLimiter(max_rps=max_rps)
         self._session: aiohttp.ClientSession | None = None
+        self._session_lock = asyncio.Lock()
 
     async def start_blockhash_updater(self, interval: float = 5.0):
         """Start background task to update recent blockhash."""
@@ -112,11 +112,12 @@ class SolanaClient:
         Returns:
             Shared aiohttp.ClientSession instance.
         """
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=10),
-            )
-        return self._session
+        async with self._session_lock:
+            if self._session is None or self._session.closed:
+                self._session = aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=10),
+                )
+            return self._session
 
     async def close(self):
         """Close the client connection and stop the blockhash updater."""
@@ -470,9 +471,11 @@ class SolanaClient:
                 ) as response:
                     if response.status == HTTP_TOO_MANY_REQUESTS:
                         retry_after = response.headers.get("Retry-After")
-                        if retry_after:
-                            wait_time = float(retry_after)
-                        else:
+                        try:
+                            wait_time = float(retry_after) if retry_after else None
+                        except (ValueError, TypeError):
+                            wait_time = None
+                        if wait_time is None:
                             wait_time = min(2 ** (attempt + 1), 30)
                         jitter = wait_time * random.uniform(0, 0.25)  # noqa: S311
                         total_wait = wait_time + jitter
@@ -486,6 +489,10 @@ class SolanaClient:
 
                     response.raise_for_status()
                     return await response.json()
+
+            except aiohttp.ContentTypeError:
+                logger.exception(f"Failed to decode RPC response for {method}")
+                return None
 
             except aiohttp.ClientError:
                 if attempt == max_retries - 1:
@@ -502,9 +509,5 @@ class SolanaClient:
                     f"retrying in {wait_time + jitter:.1f}s"
                 )
                 await asyncio.sleep(wait_time + jitter)
-
-            except json.JSONDecodeError:
-                logger.exception(f"Failed to decode RPC response for {method}")
-                return None
 
         return None

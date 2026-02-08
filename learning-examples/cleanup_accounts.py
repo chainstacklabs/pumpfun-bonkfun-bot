@@ -37,6 +37,8 @@ async def close_account_if_exists(
 
         # WARNING: This will permanently burn all tokens in the account before closing it
         # Closing account is impossible if balance is positive
+        # Burn + close are combined into a single transaction to avoid race conditions
+        instructions = []
         balance = await client.get_token_account_balance(account)
         if balance > 0:
             logger.info(f"Burning {balance} tokens from account {account}...")
@@ -49,8 +51,7 @@ async def close_account_if_exists(
                     program_id=TOKEN_PROGRAM,
                 )
             )
-            await client.build_and_send_transaction([burn_ix], wallet.keypair)
-            logger.info(f"Burned tokens from {account}")
+            instructions.append(burn_ix)
 
         # Account exists, attempt to close it
         logger.info(f"Closing account: {account}")
@@ -60,15 +61,15 @@ async def close_account_if_exists(
             owner=wallet.pubkey,
             program_id=TOKEN_PROGRAM,
         )
-        ix = close_account(close_params)
+        instructions.append(close_account(close_params))
 
         tx_sig = await client.build_and_send_transaction(
-            [ix],
+            instructions,
             wallet.keypair,
             skip_preflight=True,
         )
         await client.confirm_transaction(tx_sig)
-        logger.info(f"Closed successfully: {account}")
+        logger.info(f"Burned and closed successfully: {account}")
 
     except Exception as e:
         logger.error(f"Error while processing account {account}: {e}")
