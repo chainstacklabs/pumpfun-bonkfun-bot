@@ -137,6 +137,8 @@ async def start_bot(config_path: str):
             yolo_mode=cfg["filters"].get("yolo_mode", False),
             # Compute unit configuration
             compute_units=cfg.get("compute_units", {}),
+            # Node provider configuration
+            max_rps=cfg.get("node", {}).get("max_rps", 25),
         )
 
         await trader.start()

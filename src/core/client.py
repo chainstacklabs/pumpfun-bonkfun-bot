@@ -4,6 +4,7 @@ Solana client abstraction for blockchain operations.
 
 import asyncio
 import json
+import random
 import struct
 from typing import Any
 
@@ -19,9 +20,12 @@ from solders.message import Message
 from solders.pubkey import Pubkey
 from solders.transaction import Transaction
 
+from core.rpc_rate_limiter import TokenBucketRateLimiter
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+HTTP_TOO_MANY_REQUESTS = 429
 
 
 def set_loaded_accounts_data_size_limit(bytes_limit: int) -> Instruction:
@@ -56,11 +60,12 @@ def set_loaded_accounts_data_size_limit(bytes_limit: int) -> Instruction:
 class SolanaClient:
     """Abstraction for Solana RPC client operations."""
 
-    def __init__(self, rpc_endpoint: str):
+    def __init__(self, rpc_endpoint: str, max_rps: float = 25.0):
         """Initialize Solana client with RPC endpoint.
 
         Args:
             rpc_endpoint: URL of the Solana RPC endpoint
+            max_rps: Maximum RPC requests per second (rate limiter)
         """
         self.rpc_endpoint = rpc_endpoint
         self._client = None
@@ -69,6 +74,8 @@ class SolanaClient:
         self._blockhash_updater_task = asyncio.create_task(
             self.start_blockhash_updater()
         )
+        self._rate_limiter = TokenBucketRateLimiter(max_rps=max_rps)
+        self._session: aiohttp.ClientSession | None = None
 
     async def start_blockhash_updater(self, interval: float = 5.0):
         """Start background task to update recent blockhash."""
@@ -99,6 +106,18 @@ class SolanaClient:
             self._client = AsyncClient(self.rpc_endpoint)
         return self._client
 
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create the shared aiohttp session.
+
+        Returns:
+            Shared aiohttp.ClientSession instance.
+        """
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=10),
+            )
+        return self._session
+
     async def close(self):
         """Close the client connection and stop the blockhash updater."""
         if self._blockhash_updater_task:
@@ -111,6 +130,10 @@ class SolanaClient:
         if self._client:
             await self._client.close()
             self._client = None
+
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     async def get_health(self) -> str | None:
         body = {
@@ -135,6 +158,7 @@ class SolanaClient:
         Raises:
             ValueError: If account doesn't exist or has no data
         """
+        await self._rate_limiter.acquire()
         client = await self.get_client()
         response = await client.get_account_info(
             pubkey, encoding="base64"
@@ -152,6 +176,7 @@ class SolanaClient:
         Returns:
             Token balance as integer
         """
+        await self._rate_limiter.acquire()
         client = await self.get_client()
         response = await client.get_token_account_balance(token_account)
         if response.value:
@@ -164,6 +189,7 @@ class SolanaClient:
         Returns:
             Recent blockhash as string
         """
+        await self._rate_limiter.acquire()
         client = await self.get_client()
         response = await client.get_latest_blockhash(commitment="processed")
         return response.value.blockhash
@@ -230,6 +256,7 @@ class SolanaClient:
 
         for attempt in range(max_retries):
             try:
+                await self._rate_limiter.acquire()
                 tx_opts = TxOpts(
                     skip_preflight=skip_preflight, preflight_commitment=Processed
                 )
@@ -261,6 +288,7 @@ class SolanaClient:
         Returns:
             Whether transaction was confirmed
         """
+        await self._rate_limiter.acquire()
         client = await self.get_client()
         try:
             await client.confirm_transaction(
@@ -417,28 +445,66 @@ class SolanaClient:
 
         return result
 
-    async def post_rpc(self, body: dict[str, Any]) -> dict[str, Any] | None:
-        """
-        Send a raw RPC request to the Solana node.
+    async def post_rpc(
+        self, body: dict[str, Any], max_retries: int = 3
+    ) -> dict[str, Any] | None:
+        """Send a raw RPC request with rate limiting, retry, and 429 handling.
 
         Args:
             body: JSON-RPC request body.
+            max_retries: Maximum number of retry attempts.
 
         Returns:
-            Optional[Dict[str, Any]]: Parsed JSON response, or None if the request fails.
+            Parsed JSON response, or None if all attempts fail.
         """
-        try:
-            async with aiohttp.ClientSession() as session:
+        method = body.get("method", "unknown")
+        session = await self._get_session()
+
+        for attempt in range(max_retries):
+            try:
+                await self._rate_limiter.acquire()
+
                 async with session.post(
                     self.rpc_endpoint,
                     json=body,
-                    timeout=aiohttp.ClientTimeout(10),  # 10-second timeout
                 ) as response:
+                    if response.status == HTTP_TOO_MANY_REQUESTS:
+                        retry_after = response.headers.get("Retry-After")
+                        if retry_after:
+                            wait_time = float(retry_after)
+                        else:
+                            wait_time = min(2 ** (attempt + 1), 30)
+                        jitter = wait_time * random.uniform(0, 0.25)  # noqa: S311
+                        total_wait = wait_time + jitter
+                        logger.warning(
+                            f"RPC rate limited (429) on {method}, "
+                            f"attempt {attempt + 1}/{max_retries}, "
+                            f"waiting {total_wait:.1f}s"
+                        )
+                        await asyncio.sleep(total_wait)
+                        continue
+
                     response.raise_for_status()
                     return await response.json()
-        except aiohttp.ClientError:
-            logger.exception("RPC request failed")
-            return None
-        except json.JSONDecodeError:
-            logger.exception("Failed to decode RPC response")
-            return None
+
+            except aiohttp.ClientError:
+                if attempt == max_retries - 1:
+                    logger.exception(
+                        f"RPC request {method} failed after {max_retries} attempts"
+                    )
+                    return None
+
+                wait_time = min(2**attempt, 16)
+                jitter = wait_time * random.uniform(0, 0.25)  # noqa: S311
+                logger.warning(
+                    f"RPC request {method} failed "
+                    f"(attempt {attempt + 1}/{max_retries}), "
+                    f"retrying in {wait_time + jitter:.1f}s"
+                )
+                await asyncio.sleep(wait_time + jitter)
+
+            except json.JSONDecodeError:
+                logger.exception(f"Failed to decode RPC response for {method}")
+                return None
+
+        return None
