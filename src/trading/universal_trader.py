@@ -5,11 +5,11 @@ Cleaned up to remove all platform-specific hardcoding.
 
 import asyncio
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 from time import monotonic
 
-import uvloop
 from solders.pubkey import Pubkey
 
 from cleanup.modes import (
@@ -28,7 +28,20 @@ from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
 from trading.position import Position
 from utils.logger import get_logger
 
-asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+# Try to use uvloop on Unix or winloop on Windows for better performance
+# Fall back to standard asyncio if not available
+try:
+    if sys.platform == "win32":
+        import winloop
+
+        asyncio.set_event_loop_policy(winloop.EventLoopPolicy())
+    else:
+        import uvloop
+
+        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+except ImportError:
+    # Standard asyncio is fine, just slightly slower
+    pass
 
 logger = get_logger(__name__)
 

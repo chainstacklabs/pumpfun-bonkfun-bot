@@ -1,12 +1,27 @@
 import asyncio
 import logging
 import multiprocessing
+import sys
 from datetime import datetime
 from pathlib import Path
 
-import uvloop
+# Try to use uvloop on Unix or winloop on Windows for better performance
+# Fall back to standard asyncio if not available
+try:
+    if sys.platform == "win32":
+        import winloop
 
-asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+        asyncio.set_event_loop_policy(winloop.EventLoopPolicy())
+        logging.info("Using winloop event loop policy for improved performance")
+    else:
+        import uvloop
+
+        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+        logging.info("Using uvloop event loop policy for improved performance")
+except ImportError:
+    logging.info(
+        "Using standard asyncio event loop (install uvloop/winloop for better performance)"
+    )
 
 from config_loader import (
     get_platform_from_config,
