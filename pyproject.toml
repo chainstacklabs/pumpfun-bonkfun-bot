@@ -19,7 +19,8 @@ dependencies = [
     "grpcio-tools>=1.71.0",
     "protobuf>=5.29.4",
     "pyyaml>=6.0.2",
-    "uvloop>=0.21.0",
+    "uvloop>=0.21.0; sys_platform != 'win32'",
+    "winloop>=0.1.0; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
