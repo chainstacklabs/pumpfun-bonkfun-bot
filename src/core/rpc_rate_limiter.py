@@ -1,6 +1,7 @@
 """Token bucket rate limiter for Solana RPC requests."""
 
 import asyncio
+import math
 import time
 
 from utils.logger import get_logger
@@ -24,7 +25,7 @@ class TokenBucketRateLimiter:
         if max_rps <= 0:
             raise ValueError(f"max_rps must be positive, got {max_rps}")
         self._max_rps = max_rps
-        self._burst_size = burst_size if burst_size is not None else max(1, int(max_rps))
+        self._burst_size = burst_size if burst_size is not None else max(1, math.ceil(max_rps))
         self._tokens = float(self._burst_size)
         self._last_refill = time.monotonic()
         self._lock = asyncio.Lock()
