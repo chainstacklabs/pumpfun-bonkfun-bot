@@ -195,7 +195,7 @@ Also here's a doc on this: [Solana: Listening to pump.fun token mint using only 
 
 As of April 30, 2025, all changes from **refactored/main-v2** are merged into the **main** version.
 
-| Stage | Feature | Comments | Implementation status
+| Stage | Feature | Comments | Implementation status |
 |-------|---------|----------|---------------------|
 | **Stage 1: General updates & QoL** | Lib updates | Updating to the latest libraries | ✅ |
 | | Error handling | Improving error handling | ✅ |

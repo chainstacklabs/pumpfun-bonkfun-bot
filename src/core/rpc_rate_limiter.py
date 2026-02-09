@@ -23,9 +23,15 @@ class TokenBucketRateLimiter:
 
     def __init__(self, max_rps: float, burst_size: int | None = None) -> None:
         if max_rps <= 0:
-            raise ValueError(f"max_rps must be positive, got {max_rps}")
+            msg = f"max_rps must be positive, got {max_rps}"
+            raise ValueError(msg)
         self._max_rps = max_rps
-        self._burst_size = burst_size if burst_size is not None else max(1, math.ceil(max_rps))
+        self._burst_size = (
+            burst_size if burst_size is not None else max(1, math.ceil(max_rps))
+        )
+        if self._burst_size <= 0:
+            msg = f"burst_size must be positive, got {burst_size}"
+            raise ValueError(msg)
         self._tokens = float(self._burst_size)
         self._last_refill = time.monotonic()
         self._lock = asyncio.Lock()
