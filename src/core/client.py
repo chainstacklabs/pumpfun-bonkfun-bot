@@ -354,6 +354,15 @@ class SolanaClient:
             return None, None
 
         meta = result.get("meta", {})
+
+        # Check for transaction execution errors (e.g., MaxLoadedAccountsDataSizeExceeded)
+        tx_err = meta.get("err")
+        if tx_err:
+            logger.error(
+                f"Transaction {signature[:16]}... failed with error: {tx_err}"
+            )
+            return None, None
+
         mint_str = str(mint)
 
         # Get tokens received from pre/post token balance diff

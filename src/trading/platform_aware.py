@@ -156,7 +156,8 @@ class PlatformAwareBuyer(Trader):
                 else:
                     raise ValueError(
                         f"Failed to parse transaction details: tokens={tokens_raw}, "
-                        f"sol_spent={sol_spent}"
+                        f"sol_spent={sol_spent} (tx: {tx_signature}). "
+                        f"The transaction may have failed on-chain — check explorer."
                     )
 
                 return TradeResult(
