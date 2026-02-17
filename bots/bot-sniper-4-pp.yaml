@@ -61,7 +61,7 @@ compute_units:
   # Note: Savings don't show in "consumed CU" but improve tx priority/cost.
   # Note (Nov 23, 2025): with data size set to 512KB, transactions fail - increasing to 12.5MB resolves the issue.
   # Reference: https://www.anza.xyz/blog/cu-optimization-with-setloadedaccountsdatasizelimit
-  account_data_size: 12_500_000
+  # account_data_size: 12_500_000  # Disabled: causes MaxLoadedAccountsDataSizeExceeded with Token-2022
 
 # Filters for token selection
 filters:
