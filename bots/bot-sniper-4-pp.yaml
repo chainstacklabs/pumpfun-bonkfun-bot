@@ -90,6 +90,6 @@ cleanup:
   force_close_with_burn: false # Force burning remaining tokens before closing account
   with_priority_fee: false # Use priority fees for cleanup transactions
 
-# Node provider configuration (not implemented)
+# Node provider configuration
 node:
   max_rps: 25 # Maximum requests per second

@@ -29,13 +29,16 @@ async def close_account_if_exists(
 ):
     """Safely close a token account if it exists and reclaim rent."""
     try:
-        solana_client = await client.get_client()
-        info = await solana_client.get_account_info(
-            account, encoding="base64"
-        )  # base64 encoding for account data by deafult
+        try:
+            await client.get_account_info(account)
+        except ValueError:
+            logger.info(f"Account does not exist or already closed: {account}")
+            return
 
         # WARNING: This will permanently burn all tokens in the account before closing it
         # Closing account is impossible if balance is positive
+        # Burn + close are combined into a single transaction to avoid race conditions
+        instructions = []
         balance = await client.get_token_account_balance(account)
         if balance > 0:
             logger.info(f"Burning {balance} tokens from account {account}...")
@@ -48,29 +51,26 @@ async def close_account_if_exists(
                     program_id=TOKEN_PROGRAM,
                 )
             )
-            await client.build_and_send_transaction([burn_ix], wallet.keypair)
-            logger.info(f"Burned tokens from {account}")
+            instructions.append(burn_ix)
 
-        # If account exists, attempt to close it
-        if info.value:
-            logger.info(f"Closing account: {account}")
-            close_params = CloseAccountParams(
-                account=account,
-                dest=wallet.pubkey,
-                owner=wallet.pubkey,
-                program_id=TOKEN_PROGRAM,
-            )
-            ix = close_account(close_params)
+        # Account exists, attempt to close it
+        logger.info(f"Closing account: {account}")
+        close_params = CloseAccountParams(
+            account=account,
+            dest=wallet.pubkey,
+            owner=wallet.pubkey,
+            program_id=TOKEN_PROGRAM,
+        )
+        instructions.append(close_account(close_params))
 
-            tx_sig = await client.build_and_send_transaction(
-                [ix],
-                wallet.keypair,
-                skip_preflight=True,
-            )
-            await client.confirm_transaction(tx_sig)
-            logger.info(f"Closed successfully: {account}")
-        else:
-            logger.info(f"Account does not exist or already closed: {account}")
+        tx_sig = await client.build_and_send_transaction(
+            instructions,
+            wallet.keypair,
+            skip_preflight=True,
+        )
+        await client.confirm_transaction(tx_sig)
+        action = "Burned and closed" if balance > 0 else "Closed"
+        logger.info(f"{action} successfully: {account}")
 
     except Exception as e:
         logger.error(f"Error while processing account {account}: {e}")

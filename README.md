@@ -105,6 +105,17 @@ So please make sure you consult the docs of the node provider you are going to u
 
 For Chainstack, all of the details and limits you need to be aware of are consolidated here: [Throughput guidelines](https://docs.chainstack.com/docs/limits) <— we are _always_ keeping this piece up to date so you can rely on it.
 
+### Built-in RPC Rate Limiting
+
+The bot now includes built-in RPC rate limiting to prevent hitting provider limits:
+
+- **Token bucket algorithm**: Smoothly controls request rate while allowing short bursts
+- **Configurable max RPS**: Set `max_rps` parameter in `SolanaClient` (defaults to 25 RPS)
+- **Automatic retry logic**: Handles 429 (Too Many Requests) errors with exponential backoff
+- **Shared session management**: Reuses connections for improved performance
+
+This helps ensure reliable operation within your node provider's rate limits without manual throttling.
+
 ## Changelog
 
 Quick note on a couple on a few new scripts in `/learning-examples`:
@@ -184,11 +195,11 @@ Also here's a doc on this: [Solana: Listening to pump.fun token mint using only 
 
 As of April 30, 2025, all changes from **refactored/main-v2** are merged into the **main** version.
 
-| Stage | Feature | Comments | Implementation status
+| Stage | Feature | Comments | Implementation status |
 |-------|---------|----------|---------------------|
 | **Stage 1: General updates & QoL** | Lib updates | Updating to the latest libraries | ✅ |
-| | Error handling | Improving error handling | ✅ | 
-| | Configurable RPS | Ability to set RPS in the config to match your provider's and plan RPS (preferably [Chainstack](https://console.chainstack.com/) 🤩) | Not started |
+| | Error handling | Improving error handling | ✅ |
+| | Configurable RPS | Ability to set RPS in the config to match your provider's and plan RPS (preferably [Chainstack](https://console.chainstack.com/) 🤩) | ✅ |
 | | Dynamic priority fees | Ability to set dynamic priority fees | ✅ |
 | | Review & optimize `json`, `jsonParsed`, `base64` | Improve speed and traffic for calls, not just `getBlock`. [Helpful overview](https://docs.chainstack.com/docs/solana-optimize-your-getblock-performance#json-jsonparsed-base58-base64).| ✅ | 
 | **Stage 2: Bonding curve and migration management** | `logsSubscribe` integration | Integrate `logsSubscribe` instead of `blockSubscribe` for sniping minted tokens into the main bot | ✅ |

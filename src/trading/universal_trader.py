@@ -98,10 +98,12 @@ class UniversalTrader:
         yolo_mode: bool = False,
         # Compute unit configuration
         compute_units: dict | None = None,
+        # Node provider configuration
+        max_rps: float = 25.0,
     ):
         """Initialize the universal trader."""
         # Core components
-        self.solana_client = SolanaClient(rpc_endpoint)
+        self.solana_client = SolanaClient(rpc_endpoint, max_rps=max_rps)
         self.wallet = Wallet(private_key)
         self.priority_fee_manager = PriorityFeeManager(
             client=self.solana_client,
