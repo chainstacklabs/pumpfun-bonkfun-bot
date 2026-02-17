@@ -305,13 +305,19 @@ class SolanaClient:
 
         # Verify the transaction actually succeeded (no program errors)
         result = await self._get_transaction_result(str(signature))
-        if result:
-            tx_err = result.get("meta", {}).get("err")
-            if tx_err:
-                logger.error(
-                    f"Transaction {str(signature)[:16]}... confirmed but failed: {tx_err}"
-                )
-                return False
+        if not result:
+            logger.warning(
+                f"Could not fetch transaction {str(signature)[:16]}... "
+                f"to verify execution — treating as unconfirmed"
+            )
+            return False
+
+        tx_err = result.get("meta", {}).get("err")
+        if tx_err:
+            logger.error(
+                f"Transaction {str(signature)[:16]}... confirmed but failed: {tx_err}"
+            )
+            return False
 
         return True
 
