@@ -280,14 +280,18 @@ class SolanaClient:
     async def confirm_transaction(
         self, signature: str, commitment: str = "confirmed"
     ) -> bool:
-        """Wait for transaction confirmation.
+        """Wait for transaction confirmation and verify execution success.
+
+        Confirms the transaction landed on-chain, then checks meta.err to
+        ensure the inner program instructions actually succeeded. A transaction
+        can be "confirmed" (included in a block) but still fail execution.
 
         Args:
             signature: Transaction signature
             commitment: Confirmation commitment level
 
         Returns:
-            Whether transaction was confirmed
+            Whether transaction was confirmed AND executed successfully
         """
         await self._rate_limiter.acquire()
         client = await self.get_client()
@@ -295,10 +299,21 @@ class SolanaClient:
             await client.confirm_transaction(
                 signature, commitment=commitment, sleep_seconds=1
             )
-            return True
         except Exception:
             logger.exception(f"Failed to confirm transaction {signature}")
             return False
+
+        # Verify the transaction actually succeeded (no program errors)
+        result = await self._get_transaction_result(str(signature))
+        if result:
+            tx_err = result.get("meta", {}).get("err")
+            if tx_err:
+                logger.error(
+                    f"Transaction {str(signature)[:16]}... confirmed but failed: {tx_err}"
+                )
+                return False
+
+        return True
 
     async def get_transaction_token_balance(
         self, signature: str, user_pubkey: Pubkey, mint: Pubkey
