@@ -69,7 +69,8 @@ async def close_account_if_exists(
             skip_preflight=True,
         )
         await client.confirm_transaction(tx_sig)
-        logger.info(f"Burned and closed successfully: {account}")
+        action = "Burned and closed" if balance > 0 else "Closed"
+        logger.info(f"{action} successfully: {account}")
 
     except Exception as e:
         logger.error(f"Error while processing account {account}: {e}")

@@ -447,41 +447,51 @@ class SolanaClient:
         return result
 
     async def post_rpc(
-        self, body: dict[str, Any], max_retries: int = 3
+        self, body: dict[str, Any], max_retries: int = 3, max_429_retries: int = 10
     ) -> dict[str, Any] | None:
         """Send a raw RPC request with rate limiting, retry, and 429 handling.
 
         Args:
             body: JSON-RPC request body.
-            max_retries: Maximum number of retry attempts.
+            max_retries: Maximum number of retry attempts for errors.
+            max_429_retries: Maximum number of retry attempts for 429 rate limits.
 
         Returns:
             Parsed JSON response, or None if all attempts fail.
         """
         method = body.get("method", "unknown")
-        session = await self._get_session()
+        error_attempts = 0
+        rate_limit_attempts = 0
 
-        for attempt in range(max_retries):
+        while error_attempts < max_retries:
             try:
                 await self._rate_limiter.acquire()
+                session = await self._get_session()
 
                 async with session.post(
                     self.rpc_endpoint,
                     json=body,
                 ) as response:
                     if response.status == HTTP_TOO_MANY_REQUESTS:
+                        rate_limit_attempts += 1
+                        if rate_limit_attempts >= max_429_retries:
+                            logger.error(
+                                f"RPC rate limited (429) on {method}, "
+                                f"exhausted {max_429_retries} rate-limit retries"
+                            )
+                            return None
                         retry_after = response.headers.get("Retry-After")
                         try:
                             wait_time = float(retry_after) if retry_after else None
                         except (ValueError, TypeError):
                             wait_time = None
                         if wait_time is None:
-                            wait_time = min(2 ** (attempt + 1), 30)
+                            wait_time = min(2**rate_limit_attempts, 30)
                         jitter = wait_time * random.uniform(0, 0.25)  # noqa: S311
                         total_wait = wait_time + jitter
                         logger.warning(
                             f"RPC rate limited (429) on {method}, "
-                            f"attempt {attempt + 1}/{max_retries}, "
+                            f"429 retry {rate_limit_attempts}/{max_429_retries}, "
                             f"waiting {total_wait:.1f}s"
                         )
                         await asyncio.sleep(total_wait)
@@ -495,17 +505,18 @@ class SolanaClient:
                 return None
 
             except aiohttp.ClientError:
-                if attempt == max_retries - 1:
+                error_attempts += 1
+                if error_attempts >= max_retries:
                     logger.exception(
                         f"RPC request {method} failed after {max_retries} attempts"
                     )
                     return None
 
-                wait_time = min(2**attempt, 16)
+                wait_time = min(2 ** (error_attempts - 1), 16)
                 jitter = wait_time * random.uniform(0, 0.25)  # noqa: S311
                 logger.warning(
                     f"RPC request {method} failed "
-                    f"(attempt {attempt + 1}/{max_retries}), "
+                    f"(attempt {error_attempts}/{max_retries}), "
                     f"retrying in {wait_time + jitter:.1f}s"
                 )
                 await asyncio.sleep(wait_time + jitter)
