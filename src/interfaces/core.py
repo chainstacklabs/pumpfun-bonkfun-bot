@@ -47,6 +47,7 @@ class TokenInfo:
     creator_vault: Pubkey | None = None
     token_program_id: Pubkey | None = None  # Token or Token2022 program
     is_mayhem_mode: bool = False  # pump.fun mayhem mode flag
+    is_cashback_coin: bool = False  # pump.fun cashback coin flag
 
     # Metadata
     creation_timestamp: float | None = None

@@ -11,7 +11,7 @@ from solders.instruction import AccountMeta, Instruction
 from solders.pubkey import Pubkey
 from spl.token.instructions import create_idempotent_associated_token_account
 
-from core.pubkeys import TOKEN_DECIMALS, SystemAddresses
+from core.pubkeys import TOKEN_DECIMALS
 from interfaces.core import AddressProvider, InstructionBuilder, Platform, TokenInfo
 from utils.idl_parser import IDLParser
 from utils.logger import get_logger
@@ -143,6 +143,12 @@ class PumpFunInstructionBuilder(InstructionBuilder):
                 is_signer=False,
                 is_writable=False,
             ),
+            # Remaining account: bonding_curve_v2 (readonly, required for all coins)
+            AccountMeta(
+                pubkey=accounts_info["bonding_curve_v2"],
+                is_signer=False,
+                is_writable=False,
+            ),
         ]
 
         # Build instruction data: discriminator + token_amount + max_sol_cost + track_volume
@@ -247,6 +253,25 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             ),
         ]
 
+        # Remaining accounts (after fee_program) for cashback + bonding_curve_v2
+        if token_info.is_cashback_coin:
+            # Cashback sell: user_volume_accumulator (mutable) + bonding_curve_v2 (readonly)
+            sell_accounts.append(
+                AccountMeta(
+                    pubkey=accounts_info["user_volume_accumulator"],
+                    is_signer=False,
+                    is_writable=True,
+                )
+            )
+        # bonding_curve_v2 is required for ALL coins (cashback and non-cashback)
+        sell_accounts.append(
+            AccountMeta(
+                pubkey=accounts_info["bonding_curve_v2"],
+                is_signer=False,
+                is_writable=False,
+            )
+        )
+
         # Build instruction data: discriminator + token_amount + min_sol_output + track_volume
         # Encode OptionBool for track_volume: [1, 1] = Some(true)
         track_volume_bytes = bytes([1, 1])
@@ -293,6 +318,7 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             accounts_info["program"],
             accounts_info["fee_config"],
             accounts_info["fee_program"],
+            accounts_info["bonding_curve_v2"],
         ]
 
     def get_required_accounts_for_sell(
@@ -320,6 +346,7 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             accounts_info["program"],
             accounts_info["fee_config"],
             accounts_info["fee_program"],
+            accounts_info["bonding_curve_v2"],
         ]
 
     def calculate_token_amount_raw(self, token_amount_decimal: float) -> int:

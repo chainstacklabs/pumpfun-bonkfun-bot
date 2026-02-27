@@ -191,6 +191,7 @@ class PumpFunCurveManager(CurveManager):
             "complete": decoded_curve_state.get("complete", False),
             "creator": decoded_curve_state.get("creator", ""),
             "is_mayhem_mode": decoded_curve_state.get("is_mayhem_mode", False),
+            "is_cashback_coin": decoded_curve_state.get("is_cashback_coin", False),
         }
 
         # Calculate additional metrics
@@ -205,10 +206,7 @@ class PumpFunCurveManager(CurveManager):
             )
 
         curve_data["price_per_token"] = (
-            (
-                curve_data["virtual_sol_reserves"]
-                / curve_data["virtual_token_reserves"]
-            )
+            (curve_data["virtual_sol_reserves"] / curve_data["virtual_token_reserves"])
             * (10**TOKEN_DECIMALS)
             / LAMPORTS_PER_SOL
         )

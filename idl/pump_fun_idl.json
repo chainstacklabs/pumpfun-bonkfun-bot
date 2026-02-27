@@ -792,15 +792,30 @@
     {
       "name": "buy_exact_sol_in",
       "docs": [
-        "Given a budget of spendable SOL, buy at least min_tokens_out",
-        "Account creation and fees will be deducted from the spendable SOL",
+        "Given a budget of spendable SOL, buy at least min_tokens_out tokens.",
+        "Fees are deducted from spendable_sol_in.",
         "",
-        "f(sol) = tokens, where tokens >= min_tokens_out and sol > rent + fees",
+        "# Quote formulas",
+        "Where:",
+        "- total_fee_bps = protocol_fee_bps + creator_fee_bps (creator_fee_bps is 0 if no creator)",
+        "- floor(a/b) = a / b (integer division)",
+        "- ceil(a/b) = (a + b - 1) / b",
         "",
-        "max_slippage = min_tokens_out = 1",
+        "SOL → tokens quote",
+        "To calculate tokens_out for a given spendable_sol_in:",
+        "1. net_sol = floor(spendable_sol_in * 10_000 / (10_000 + total_fee_bps))",
+        "2. fees = ceil(net_sol * protocol_fee_bps / 10_000) + ceil(net_sol * creator_fee_bps / 10_000) (creator_fee_bps is 0 if no creator)",
+        "3. if net_sol + fees > spendable_sol_in: net_sol = net_sol - (net_sol + fees - spendable_sol_in)",
+        "4. tokens_out = floor((net_sol - 1) * virtual_token_reserves / (virtual_sol_reserves + net_sol - 1))",
         "",
-        "Make sure the sol budget is enough to cover creation of the following accounts (unless already created):",
-        "- creator_vault: rent.minimum_balance(SystemAccount::LEN)",
+        "Reverse quote (tokens → SOL)",
+        "To calculate spendable_sol_in for a desired number of tokens:",
+        "1. net_sol = ceil(tokens * virtual_sol_reserves / (virtual_token_reserves - tokens)) + 1",
+        "2. spendable_sol_in = ceil(net_sol * (10_000 + total_fee_bps) / 10_000)",
+        "",
+        "Rent",
+        "Separately make sure the instruction's payer has enough SOL to cover rent for:",
+        "- creator_vault: rent.minimum_balance(0)",
         "- user_volume_accumulator: rent.minimum_balance(UserVolumeAccumulator::LEN)"
       ],
       "discriminator": [
@@ -1169,6 +1184,103 @@
           }
         }
       ]
+    },
+    {
+      "name": "claim_cashback",
+      "discriminator": [
+        37,
+        58,
+        35,
+        126,
+        190,
+        53,
+        228,
+        197
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true
+        },
+        {
+          "name": "user_volume_accumulator",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  118,
+                  111,
+                  108,
+                  117,
+                  109,
+                  101,
+                  95,
+                  97,
+                  99,
+                  99,
+                  117,
+                  109,
+                  117,
+                  108,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "address": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+        }
+      ],
+      "args": []
     },
     {
       "name": "claim_token_incentives",
@@ -2308,60 +2420,7 @@
         },
         {
           "name": "mayhem_token_vault",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "sol_vault"
-              },
-              {
-                "kind": "account",
-                "path": "token_program"
-              },
-              {
-                "kind": "account",
-                "path": "mint"
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
-              ]
-            }
-          }
+          "writable": true
         },
         {
           "name": "event_authority",
@@ -2416,8 +2475,212 @@
         {
           "name": "is_mayhem_mode",
           "type": "bool"
+        },
+        {
+          "name": "is_cashback_enabled",
+          "type": {
+            "defined": {
+              "name": "OptionBool"
+            }
+          }
         }
       ]
+    },
+    {
+      "name": "distribute_creator_fees",
+      "docs": [
+        "Distributes creator fees to shareholders based on their share percentages",
+        "The creator vault needs to have at least the minimum distributable amount to distribute fees",
+        "This can be checked with the get_minimum_distributable_fee instruction"
+      ],
+      "discriminator": [
+        165,
+        114,
+        103,
+        0,
+        121,
+        206,
+        247,
+        81
+      ],
+      "accounts": [
+        {
+          "name": "mint",
+          "relations": [
+            "sharing_config"
+          ]
+        },
+        {
+          "name": "bonding_curve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  111,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  45,
+                  99,
+                  117,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "sharing_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  104,
+                  97,
+                  114,
+                  105,
+                  110,
+                  103,
+                  45,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                12,
+                53,
+                255,
+                169,
+                5,
+                90,
+                142,
+                86,
+                141,
+                168,
+                247,
+                188,
+                7,
+                86,
+                21,
+                39,
+                76,
+                241,
+                201,
+                44,
+                164,
+                31,
+                64,
+                0,
+                156,
+                81,
+                106,
+                164,
+                20,
+                194,
+                124,
+                112
+              ]
+            }
+          }
+        },
+        {
+          "name": "creator_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  97,
+                  116,
+                  111,
+                  114,
+                  45,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bonding_curve.creator",
+                "account": "BondingCurve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "address": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+        }
+      ],
+      "args": [],
+      "returns": {
+        "defined": {
+          "name": "DistributeCreatorFeesEvent"
+        }
+      }
     },
     {
       "name": "extend_account",
@@ -2481,6 +2744,163 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "get_minimum_distributable_fee",
+      "docs": [
+        "Permissionless instruction to check the minimum required fees for distribution",
+        "Returns the minimum required balance from the creator_vault and whether distribution can proceed"
+      ],
+      "discriminator": [
+        117,
+        225,
+        127,
+        202,
+        134,
+        95,
+        68,
+        35
+      ],
+      "accounts": [
+        {
+          "name": "mint",
+          "relations": [
+            "sharing_config"
+          ]
+        },
+        {
+          "name": "bonding_curve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  111,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  45,
+                  99,
+                  117,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "sharing_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  104,
+                  97,
+                  114,
+                  105,
+                  110,
+                  103,
+                  45,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                12,
+                53,
+                255,
+                169,
+                5,
+                90,
+                142,
+                86,
+                141,
+                168,
+                247,
+                188,
+                7,
+                86,
+                21,
+                39,
+                76,
+                241,
+                201,
+                44,
+                164,
+                31,
+                64,
+                0,
+                156,
+                81,
+                106,
+                164,
+                20,
+                194,
+                124,
+                112
+              ]
+            }
+          }
+        },
+        {
+          "name": "creator_vault",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  97,
+                  116,
+                  111,
+                  114,
+                  45,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bonding_curve.creator",
+                "account": "BondingCurve"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [],
+      "returns": {
+        "defined": {
+          "name": "MinimumDistributableFeeEvent"
+        }
+      }
     },
     {
       "name": "init_user_volume_accumulator",
@@ -3110,9 +3530,163 @@
       "args": []
     },
     {
+      "name": "migrate_bonding_curve_creator",
+      "discriminator": [
+        87,
+        124,
+        52,
+        191,
+        52,
+        38,
+        214,
+        232
+      ],
+      "accounts": [
+        {
+          "name": "mint",
+          "relations": [
+            "sharing_config"
+          ]
+        },
+        {
+          "name": "bonding_curve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  111,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  45,
+                  99,
+                  117,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "sharing_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  104,
+                  97,
+                  114,
+                  105,
+                  110,
+                  103,
+                  45,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                12,
+                53,
+                255,
+                169,
+                5,
+                90,
+                142,
+                86,
+                141,
+                168,
+                247,
+                188,
+                7,
+                86,
+                21,
+                39,
+                76,
+                241,
+                201,
+                44,
+                164,
+                31,
+                64,
+                0,
+                156,
+                81,
+                106,
+                164,
+                20,
+                194,
+                124,
+                112
+              ]
+            }
+          }
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "sell",
       "docs": [
-        "Sells tokens into a bonding curve."
+        "Sells tokens into a bonding curve.",
+        "For cashback coins, optionally pass user_volume_accumulator as remaining_accounts[0].",
+        "If provided and valid, creator_fee goes to user_volume_accumulator.",
+        "Otherwise, falls back to transferring creator_fee to creator_vault."
       ],
       "discriminator": [
         51,
@@ -3607,6 +4181,226 @@
           "type": "pubkey"
         }
       ]
+    },
+    {
+      "name": "set_mayhem_virtual_params",
+      "discriminator": [
+        61,
+        169,
+        188,
+        191,
+        153,
+        149,
+        42,
+        97
+      ],
+      "accounts": [
+        {
+          "name": "sol_vault_authority",
+          "writable": true,
+          "signer": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  111,
+                  108,
+                  45,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                5,
+                42,
+                229,
+                215,
+                167,
+                218,
+                167,
+                36,
+                166,
+                234,
+                176,
+                167,
+                41,
+                84,
+                145,
+                133,
+                90,
+                212,
+                160,
+                103,
+                22,
+                96,
+                103,
+                76,
+                78,
+                3,
+                69,
+                89,
+                128,
+                61,
+                101,
+                163
+              ]
+            }
+          }
+        },
+        {
+          "name": "mayhem_token_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "sol_vault_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "global",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "bonding_curve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  111,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  45,
+                  99,
+                  117,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
     },
     {
       "name": "set_metaplex_creator",
@@ -4121,6 +4915,86 @@
       "args": []
     },
     {
+      "name": "toggle_cashback_enabled",
+      "discriminator": [
+        115,
+        103,
+        224,
+        255,
+        189,
+        89,
+        86,
+        195
+      ],
+      "accounts": [
+        {
+          "name": "global",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "global"
+          ]
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "enabled",
+          "type": "bool"
+        }
+      ]
+    },
+    {
       "name": "toggle_create_v2",
       "discriminator": [
         28,
@@ -4412,6 +5286,19 @@
       ]
     },
     {
+      "name": "SharingConfig",
+      "discriminator": [
+        216,
+        74,
+        9,
+        0,
+        56,
+        140,
+        93,
+        75
+      ]
+    },
+    {
       "name": "UserVolumeAccumulator",
       "discriminator": [
         86,
@@ -4463,6 +5350,19 @@
         29,
         67,
         222
+      ]
+    },
+    {
+      "name": "ClaimCashbackEvent",
+      "discriminator": [
+        226,
+        214,
+        246,
+        33,
+        7,
+        242,
+        147,
+        229
       ]
     },
     {
@@ -4544,6 +5444,19 @@
       ]
     },
     {
+      "name": "DistributeCreatorFeesEvent",
+      "discriminator": [
+        165,
+        55,
+        129,
+        112,
+        4,
+        179,
+        202,
+        40
+      ]
+    },
+    {
       "name": "ExtendAccountEvent",
       "discriminator": [
         97,
@@ -4567,6 +5480,32 @@
         101,
         130,
         216
+      ]
+    },
+    {
+      "name": "MigrateBondingCurveCreatorEvent",
+      "discriminator": [
+        155,
+        167,
+        104,
+        220,
+        213,
+        108,
+        243,
+        3
+      ]
+    },
+    {
+      "name": "MinimumDistributableFeeEvent",
+      "discriminator": [
+        168,
+        216,
+        132,
+        239,
+        235,
+        182,
+        49,
+        52
       ]
     },
     {
@@ -4658,6 +5597,19 @@
         206,
         207,
         247
+      ]
+    },
+    {
+      "name": "UpdateMayhemVirtualParamsEvent",
+      "discriminator": [
+        117,
+        123,
+        228,
+        182,
+        161,
+        168,
+        220,
+        214
       ]
     }
   ],
@@ -4891,6 +5843,46 @@
     {
       "code": 6048,
       "name": "MayhemModeDisabled"
+    },
+    {
+      "code": 6049,
+      "name": "CreatorMigratedToSharingConfig",
+      "msg": "creator has been migrated to sharing config, use pump_fees::reset_fee_sharing_config instead"
+    },
+    {
+      "code": 6050,
+      "name": "UnableToDistributeCreatorVaultMigratedToSharingConfig",
+      "msg": "creator_vault has been migrated to sharing config, use pump:distribute_creator_fees instead"
+    },
+    {
+      "code": 6051,
+      "name": "SharingConfigNotActive",
+      "msg": "Sharing config is not active"
+    },
+    {
+      "code": 6052,
+      "name": "UnableToDistributeCreatorFeesToExecutableRecipient",
+      "msg": "The recipient account is executable, so it cannot receive lamports, remove it from the team first"
+    },
+    {
+      "code": 6053,
+      "name": "BondingCurveAndSharingConfigCreatorMismatch",
+      "msg": "Bonding curve creator does not match sharing config"
+    },
+    {
+      "code": 6054,
+      "name": "ShareholdersAndRemainingAccountsMismatch",
+      "msg": "Remaining accounts do not match shareholders, make sure to pass exactly the same pubkeys in the same order"
+    },
+    {
+      "code": 6055,
+      "name": "InvalidShareBps",
+      "msg": "Share bps must be greater than 0"
+    },
+    {
+      "code": 6056,
+      "name": "CashbackNotEnabled",
+      "msg": "Cashback is not enabled"
     }
   ],
   "types": [
@@ -5010,6 +6002,38 @@
           {
             "name": "is_mayhem_mode",
             "type": "bool"
+          },
+          {
+            "name": "is_cashback_coin",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ClaimCashbackEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "total_claimed",
+            "type": "u64"
+          },
+          {
+            "name": "total_cashback_earned",
+            "type": "u64"
           }
         ]
       }
@@ -5163,6 +6187,20 @@
       }
     },
     {
+      "name": "ConfigStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Paused"
+          },
+          {
+            "name": "Active"
+          }
+        ]
+      }
+    },
+    {
       "name": "CreateEvent",
       "type": {
         "kind": "struct",
@@ -5222,6 +6260,52 @@
           {
             "name": "is_mayhem_mode",
             "type": "bool"
+          },
+          {
+            "name": "is_cashback_enabled",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "DistributeCreatorFeesEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "bonding_curve",
+            "type": "pubkey"
+          },
+          {
+            "name": "sharing_config",
+            "type": "pubkey"
+          },
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "shareholders",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "Shareholder"
+                }
+              }
+            }
+          },
+          {
+            "name": "distributed",
+            "type": "u64"
           }
         ]
       }
@@ -5428,6 +6512,10 @@
                 7
               ]
             }
+          },
+          {
+            "name": "is_cashback_enabled",
+            "type": "bool"
           }
         ]
       }
@@ -5490,6 +6578,58 @@
           {
             "name": "timestamp",
             "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MigrateBondingCurveCreatorEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "bonding_curve",
+            "type": "pubkey"
+          },
+          {
+            "name": "sharing_config",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_creator",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MinimumDistributableFeeEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "minimum_required",
+            "type": "u64"
+          },
+          {
+            "name": "distributable_fees",
+            "type": "u64"
+          },
+          {
+            "name": "can_distribute",
+            "type": "bool"
           }
         ]
       }
@@ -5650,6 +6790,68 @@
       }
     },
     {
+      "name": "Shareholder",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "address",
+            "type": "pubkey"
+          },
+          {
+            "name": "share_bps",
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SharingConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "ConfigStatus"
+              }
+            }
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "admin_revoked",
+            "type": "bool"
+          },
+          {
+            "name": "shareholders",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "Shareholder"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
       "name": "SyncUserVolumeAccumulatorEvent",
       "type": {
         "kind": "struct",
@@ -5768,6 +6970,18 @@
           {
             "name": "ix_name",
             "type": "string"
+          },
+          {
+            "name": "mayhem_mode",
+            "type": "bool"
+          },
+          {
+            "name": "cashback_fee_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "cashback",
+            "type": "u64"
           }
         ]
       }
@@ -5792,6 +7006,46 @@
           {
             "name": "timestamp",
             "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UpdateMayhemVirtualParamsEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "virtual_token_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "virtual_sol_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "new_virtual_token_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "new_virtual_sol_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "real_token_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "real_sol_reserves",
+            "type": "u64"
           }
         ]
       }
@@ -5828,6 +7082,14 @@
           {
             "name": "has_total_claimed_tokens",
             "type": "bool"
+          },
+          {
+            "name": "cashback_earned",
+            "type": "u64"
+          },
+          {
+            "name": "total_cashback_claimed",
+            "type": "u64"
           }
         ]
       }
