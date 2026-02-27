@@ -76,6 +76,22 @@ class PumpFunAddresses:
         return derived_address
 
     @staticmethod
+    def find_bonding_curve_v2(mint: Pubkey) -> Pubkey:
+        """Derive the bonding curve v2 PDA for a token mint.
+
+        Args:
+            mint: Token mint address
+
+        Returns:
+            Pubkey of the derived bonding curve v2 account
+        """
+        derived_address, _ = Pubkey.find_program_address(
+            [b"bonding-curve-v2", bytes(mint)],
+            PumpFunAddresses.PROGRAM,
+        )
+        return derived_address
+
+    @staticmethod
     def find_fee_config() -> Pubkey:
         """
         Derive the Program Derived Address (PDA) for the fee config.
@@ -256,6 +272,17 @@ class PumpFunAddressProvider(AddressProvider):
         """
         return PumpFunAddresses.find_user_volume_accumulator(user)
 
+    def derive_bonding_curve_v2(self, mint: Pubkey) -> Pubkey:
+        """Derive the bonding curve v2 PDA for a token mint.
+
+        Args:
+            mint: Token mint address
+
+        Returns:
+            Bonding curve v2 address
+        """
+        return PumpFunAddresses.find_bonding_curve_v2(mint)
+
     def derive_fee_config(self) -> Pubkey:
         """Derive the fee config PDA.
 
@@ -326,6 +353,7 @@ class PumpFunAddressProvider(AddressProvider):
             "user_volume_accumulator": self.derive_user_volume_accumulator(user),
             "fee_config": self.derive_fee_config(),
             "fee_program": PumpFunAddresses.FEE_PROGRAM,
+            "bonding_curve_v2": self.derive_bonding_curve_v2(token_info.mint),
         }
 
     def get_sell_instruction_accounts(
@@ -375,4 +403,6 @@ class PumpFunAddressProvider(AddressProvider):
             "program": PumpFunAddresses.PROGRAM,
             "fee_config": self.derive_fee_config(),
             "fee_program": PumpFunAddresses.FEE_PROGRAM,
+            "bonding_curve_v2": self.derive_bonding_curve_v2(token_info.mint),
+            "user_volume_accumulator": self.derive_user_volume_accumulator(user),
         }

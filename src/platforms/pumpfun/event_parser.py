@@ -48,8 +48,8 @@ class PumpFunEventParser(EventParser):
         )[0]
 
         # Support for token2022 (create_v2 instruction)
-        self._create_v2_instruction_discriminator_bytes = instruction_discriminators.get(
-            "create_v2"
+        self._create_v2_instruction_discriminator_bytes = (
+            instruction_discriminators.get("create_v2")
         )
         self._create_v2_instruction_discriminator = (
             struct.unpack("<Q", self._create_v2_instruction_discriminator_bytes)[0]
@@ -110,10 +110,15 @@ class PumpFunEventParser(EventParser):
 
             # First, collect all Program data entries and note when Create instruction happens
             for i, log in enumerate(logs):
-                if "Program log: Instruction: Create" in log or "Program log: Instruction: Create_v2" in log:
+                if (
+                    "Program log: Instruction: Create" in log
+                    or "Program log: Instruction: Create_v2" in log
+                ):
                     create_instruction_found = True
                     instruction_type = "Create_v2" if "Create_v2" in log else "Create"
-                    logger.info(f"📝 Found {instruction_type} instruction at log index {i}")
+                    logger.info(
+                        f"📝 Found {instruction_type} instruction at log index {i}"
+                    )
                 elif "Program data:" in log:
                     # Extract base64 encoded event data
                     encoded_data = log.split("Program data: ")[1].strip()
@@ -269,6 +274,7 @@ class PumpFunEventParser(EventParser):
                         creator=creator,
                         creator_vault=creator_vault,
                         token_program_id=token_program_id,
+                        is_cashback_coin=fields.get("is_cashback_enabled", False),
                         creation_timestamp=monotonic(),
                     )
 
@@ -304,7 +310,9 @@ class PumpFunEventParser(EventParser):
             is_create_v2 = False
         elif (
             self._create_v2_instruction_discriminator_bytes
-            and instruction_data.startswith(self._create_v2_instruction_discriminator_bytes)
+            and instruction_data.startswith(
+                self._create_v2_instruction_discriminator_bytes
+            )
         ):
             is_create_v2 = True
         else:
@@ -354,6 +362,16 @@ class PumpFunEventParser(EventParser):
                 else SystemAddresses.TOKEN_PROGRAM
             )
 
+            # Extract cashback flag from OptionBool struct (decoded as {"field_0": bool})
+            is_cashback_raw = args.get("is_cashback_enabled")
+            is_cashback = (
+                is_cashback_raw.get("field_0", False)
+                if isinstance(is_cashback_raw, dict)
+                else bool(is_cashback_raw)
+                if is_cashback_raw is not None
+                else False
+            )
+
             return TokenInfo(
                 name=args.get("name", ""),
                 symbol=args.get("symbol", ""),
@@ -366,6 +384,7 @@ class PumpFunEventParser(EventParser):
                 creator=creator,
                 creator_vault=creator_vault,
                 token_program_id=token_program_id,
+                is_cashback_coin=is_cashback,
                 creation_timestamp=monotonic(),
             )
 
@@ -480,11 +499,13 @@ class PumpFunEventParser(EventParser):
                                 discriminator = struct.unpack("<Q", ix_data[:8])[0]
 
                                 is_create = (
-                                    discriminator == self._create_instruction_discriminator
+                                    discriminator
+                                    == self._create_instruction_discriminator
                                 )
                                 is_create_v2 = (
                                     self._create_v2_instruction_discriminator
-                                    and discriminator == self._create_v2_instruction_discriminator
+                                    and discriminator
+                                    == self._create_v2_instruction_discriminator
                                 )
 
                                 if is_create or is_create_v2:
@@ -543,11 +564,13 @@ class PumpFunEventParser(EventParser):
                                 discriminator = struct.unpack("<Q", ix_data[:8])[0]
 
                                 is_create = (
-                                    discriminator == self._create_instruction_discriminator
+                                    discriminator
+                                    == self._create_instruction_discriminator
                                 )
                                 is_create_v2 = (
                                     self._create_v2_instruction_discriminator
-                                    and discriminator == self._create_v2_instruction_discriminator
+                                    and discriminator
+                                    == self._create_v2_instruction_discriminator
                                 )
 
                                 if is_create or is_create_v2:
@@ -594,7 +617,10 @@ class PumpFunEventParser(EventParser):
         return derived_address
 
     def _derive_associated_bonding_curve(
-        self, mint: Pubkey, bonding_curve: Pubkey, token_program_id: Pubkey | None = None
+        self,
+        mint: Pubkey,
+        bonding_curve: Pubkey,
+        token_program_id: Pubkey | None = None,
     ) -> Pubkey:
         """Derive the associated bonding curve (ATA of bonding curve for the token).
 
