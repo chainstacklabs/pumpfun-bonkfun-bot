@@ -159,6 +159,14 @@ def _find_fee_config() -> Pubkey:
     return derived_address
 
 
+def _find_bonding_curve_v2(mint: Pubkey) -> Pubkey:
+    derived_address, _ = Pubkey.find_program_address(
+        [b"bonding-curve-v2", bytes(mint)],
+        PUMP_PROGRAM,
+    )
+    return derived_address
+
+
 def create_pump_create_v2_instruction(
     mint: Pubkey,
     mint_authority: Pubkey,
@@ -304,6 +312,12 @@ def create_buy_instruction(
         # Index 15: fee_program (readonly)
         AccountMeta(
             pubkey=PUMP_FEE_PROGRAM,
+            is_signer=False,
+            is_writable=False,
+        ),
+        # Remaining account: bonding_curve_v2 (readonly, required for all coins)
+        AccountMeta(
+            pubkey=_find_bonding_curve_v2(mint),
             is_signer=False,
             is_writable=False,
         ),
