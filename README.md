@@ -223,3 +223,9 @@ As of April 30, 2025, all changes from **refactored/main-v2** are merged into th
 - Priority: Stages progress from simple to complex features
 - Completion guarantee: Full completion of Stage 1, other stages dependent on feedback and feasibility
 
+---
+
+> **Also by Chainstack** — if you prefer a terminal interface or want to give an AI agent trading capabilities:
+> - [**pumpfun-cli**](https://github.com/chainstacklabs/pumpfun-cli) — CLI for trading, launching, and managing tokens on pump.fun; buy, sell, wallet management, and smart routing between bonding curve and PumpSwap AMM.
+> - [**pumpclaw**](https://github.com/chainstacklabs/pumpclaw) — agent skill that equips AI assistants (Claude Code, Cursor, Codex) with the ability to operate pumpfun-cli.
+
