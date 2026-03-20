@@ -22,6 +22,10 @@ For instant updates from the network, you can enable [Yellowstone gRPC Geyser pl
 
 The official maintainers are in the [MAINTAINERS.md](MAINTAINERS.md) file. Leave your feedback by opening **Issues**.
 
+> **Also by Chainstack** — if you prefer a terminal interface or want to give an AI agent trading capabilities:
+> - [**pumpfun-cli**](https://github.com/chainstacklabs/pumpfun-cli) — CLI for trading, launching, and managing tokens on pump.fun; buy, sell, wallet management, and smart routing between bonding curve and PumpSwap AMM.
+> - [**pumpclaw**](https://github.com/chainstacklabs/pumpclaw) — agent skill that equips AI assistants (OpenClaw, Claude Code, Cursor, Codex) with the ability to operate pumpfun-cli.
+
 ---
 
 **🚨 SCAM ALERT**: Issues section is often targeted by scam bots willing to redirect you to an external resource and drain your funds. I have enabled a GitHub actions script to detect the common patterns and tag them, which obviously is not 100% accurate. This is also why you will see deleted comments in the issues—I only delete the scam bot comments targeting your private keys. Not everyone is a scammer though, sometimes there are helpful outside devs who comment and I absolutely appreciate it.
@@ -216,16 +220,4 @@ As of April 30, 2025, all changes from **refactored/main-v2** are merged into th
 | | Geyser implementation | Leverage Solana Geyser for real-time data stream processing | ✅ |
 | **Stage 4: Minting experience** | Token minting | Ability to mint tokens (based on user request - someone minted 18k tokens) | ✅ |
 
-
-## Development timeline
-- Development begins: Week of March 10, 2025
-- Implementation approach: Gradual rollout in separate branch
-- Priority: Stages progress from simple to complex features
-- Completion guarantee: Full completion of Stage 1, other stages dependent on feedback and feasibility
-
 ---
-
-> **Also by Chainstack** — if you prefer a terminal interface or want to give an AI agent trading capabilities:
-> - [**pumpfun-cli**](https://github.com/chainstacklabs/pumpfun-cli) — CLI for trading, launching, and managing tokens on pump.fun; buy, sell, wallet management, and smart routing between bonding curve and PumpSwap AMM.
-> - [**pumpclaw**](https://github.com/chainstacklabs/pumpclaw) — agent skill that equips AI assistants (OpenClaw, Claude Code, Cursor, Codex) with the ability to operate pumpfun-cli.
-
