@@ -6,7 +6,7 @@ by implementing the AddressProvider interface.
 """
 
 from dataclasses import dataclass
-from typing import Final
+from typing import ClassVar, Final
 
 from solders.pubkey import Pubkey
 from spl.token.instructions import get_associated_token_address
@@ -43,6 +43,29 @@ class PumpFunAddresses:
     FEE_PROGRAM: Final[Pubkey] = Pubkey.from_string(
         "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
     )
+    # 8 breaking-upgrade fee recipients (pump.fun program upgrade 2026-04-28).
+    # One must be appended (mutable) AFTER bonding-curve-v2 on every buy/sell.
+    # Doc: github.com/pump-fun/pump-public-docs/blob/main/docs/BREAKING_FEE_RECIPIENT.md
+    BREAKING_FEE_RECIPIENTS: ClassVar[list[Pubkey]] = [
+        Pubkey.from_string("5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD"),
+        Pubkey.from_string("9M4giFFMxmFGXtc3feFzRai56WbBqehoSeRE5GK7gf7"),
+        Pubkey.from_string("GXPFM2caqTtQYC2cJ5yJRi9VDkpsYZXzYdwYpGnLmtDL"),
+        Pubkey.from_string("3BpXnfJaUTiwXnJNe7Ej1rcbzqTTQUvLShZaWazebsVR"),
+        Pubkey.from_string("5cjcW9wExnJJiqgLjq7DEG75Pm6JBgE1hNv4B2vHXUW6"),
+        Pubkey.from_string("EHAAiTxcdDwQ3U4bU6YcMsQGaekdzLS3B5SmYo46kJtL"),
+        Pubkey.from_string("5eHhjP8JaYkz83CWwvGU2uMUXefd3AazWGx4gpcuEEYD"),
+        Pubkey.from_string("A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW"),
+    ]
+
+    @staticmethod
+    def pick_breaking_fee_recipient() -> Pubkey:
+        """Pick one of the 8 breaking-upgrade fee recipients at random.
+
+        Spreads load across recipients per pump.fun's recommendation.
+        """
+        import random
+
+        return random.choice(PumpFunAddresses.BREAKING_FEE_RECIPIENTS)
 
     @staticmethod
     def find_global_volume_accumulator() -> Pubkey:
@@ -354,6 +377,7 @@ class PumpFunAddressProvider(AddressProvider):
             "fee_config": self.derive_fee_config(),
             "fee_program": PumpFunAddresses.FEE_PROGRAM,
             "bonding_curve_v2": self.derive_bonding_curve_v2(token_info.mint),
+            "breaking_fee_recipient": PumpFunAddresses.pick_breaking_fee_recipient(),
         }
 
     def get_sell_instruction_accounts(
@@ -405,4 +429,5 @@ class PumpFunAddressProvider(AddressProvider):
             "fee_program": PumpFunAddresses.FEE_PROGRAM,
             "bonding_curve_v2": self.derive_bonding_curve_v2(token_info.mint),
             "user_volume_accumulator": self.derive_user_volume_accumulator(user),
+            "breaking_fee_recipient": PumpFunAddresses.pick_breaking_fee_recipient(),
         }

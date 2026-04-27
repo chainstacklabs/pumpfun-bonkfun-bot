@@ -274,6 +274,7 @@ class PumpFunEventParser(EventParser):
                         creator=creator,
                         creator_vault=creator_vault,
                         token_program_id=token_program_id,
+                        is_mayhem_mode=fields.get("is_mayhem_mode", False),
                         is_cashback_coin=fields.get("is_cashback_enabled", False),
                         creation_timestamp=monotonic(),
                     )
@@ -384,6 +385,7 @@ class PumpFunEventParser(EventParser):
                 creator=creator,
                 creator_vault=creator_vault,
                 token_program_id=token_program_id,
+                is_mayhem_mode=bool(args.get("is_mayhem_mode", False)),
                 is_cashback_coin=is_cashback,
                 creation_timestamp=monotonic(),
             )

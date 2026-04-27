@@ -77,8 +77,13 @@ class PlatformAwareBuyer(Trader):
                         f"(mint: {token_info.mint}) - cannot execute buy with zero/invalid price"
                     )
 
-                # Set is_mayhem_mode from bonding curve state
+                # Set mayhem-mode and cashback flags from bonding-curve state
+                # so the instruction builder picks the correct fee_recipient and
+                # account-list shape (cashback sells use 17 accounts, non-cashback 16).
                 token_info.is_mayhem_mode = pool_state.get("is_mayhem_mode", False)
+                token_info.is_cashback_coin = pool_state.get(
+                    "is_cashback_coin", token_info.is_cashback_coin
+                )
                 token_amount = self.amount / token_price_sol
 
             # Calculate minimum token amount with slippage
@@ -304,6 +309,28 @@ class PlatformAwareSeller(Trader):
             )
             address_provider = implementations.address_provider
             instruction_builder = implementations.instruction_builder
+            curve_manager = implementations.curve_manager
+
+            # Refresh mayhem-mode and cashback flags from curve state.
+            # The sell account list is 16 (non-cashback) vs 17 (cashback), and
+            # fee_recipient differs in mayhem mode — both can change between
+            # buy and sell, so re-read from chain instead of trusting create-time
+            # flags carried in token_info.
+            try:
+                pool_address = self._get_pool_address(token_info, address_provider)
+                pool_state = await curve_manager.get_pool_state(pool_address)
+                token_info.is_mayhem_mode = pool_state.get(
+                    "is_mayhem_mode", token_info.is_mayhem_mode
+                )
+                token_info.is_cashback_coin = pool_state.get(
+                    "is_cashback_coin", token_info.is_cashback_coin
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    f"Could not refresh curve flags before sell ({e}); "
+                    f"using token_info values is_mayhem_mode={token_info.is_mayhem_mode}, "
+                    f"is_cashback_coin={token_info.is_cashback_coin}"
+                )
 
             # Use pre-known amount and price (no RPC delay)
             token_balance_decimal = token_amount
