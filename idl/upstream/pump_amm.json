@@ -1,0 +1,6268 @@
+{
+  "address": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+  "metadata": {
+    "name": "pump_amm",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "admin_set_coin_creator",
+      "docs": [
+        "Overrides the coin creator for a canonical pump pool"
+      ],
+      "discriminator": [
+        242,
+        40,
+        117,
+        145,
+        73,
+        96,
+        105,
+        104
+      ],
+      "accounts": [
+        {
+          "name": "admin_set_coin_creator_authority",
+          "signer": true,
+          "relations": [
+            "global_config"
+          ]
+        },
+        {
+          "name": "global_config"
+        },
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "coin_creator",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "admin_update_token_incentives",
+      "discriminator": [
+        209,
+        11,
+        115,
+        87,
+        213,
+        23,
+        124,
+        204
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "global_config"
+          ]
+        },
+        {
+          "name": "global_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_volume_accumulator",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  118,
+                  111,
+                  108,
+                  117,
+                  109,
+                  101,
+                  95,
+                  97,
+                  99,
+                  99,
+                  117,
+                  109,
+                  117,
+                  108,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "global_incentive_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "global_volume_accumulator"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "start_time",
+          "type": "i64"
+        },
+        {
+          "name": "end_time",
+          "type": "i64"
+        },
+        {
+          "name": "seconds_in_a_day",
+          "type": "i64"
+        },
+        {
+          "name": "day_number",
+          "type": "u64"
+        },
+        {
+          "name": "token_supply_per_day",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "buy",
+      "docs": [
+        "For cashback coins, optionally pass user_volume_accumulator_wsol_ata as remaining_accounts[0].",
+        "If provided and valid, the ATA will be initialized if needed."
+      ],
+      "discriminator": [
+        102,
+        6,
+        61,
+        18,
+        1,
+        218,
+        235,
+        234
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "global_config"
+        },
+        {
+          "name": "base_mint",
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "quote_mint",
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "user_base_token_account",
+          "writable": true
+        },
+        {
+          "name": "user_quote_token_account",
+          "writable": true
+        },
+        {
+          "name": "pool_base_token_account",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "pool_quote_token_account",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "protocol_fee_recipient"
+        },
+        {
+          "name": "protocol_fee_recipient_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "protocol_fee_recipient"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "base_token_program"
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "address": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+        },
+        {
+          "name": "coin_creator_vault_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "coin_creator_vault_authority"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "coin_creator_vault_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  97,
+                  116,
+                  111,
+                  114,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool.coin_creator",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_volume_accumulator",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  118,
+                  111,
+                  108,
+                  117,
+                  109,
+                  101,
+                  95,
+                  97,
+                  99,
+                  99,
+                  117,
+                  109,
+                  117,
+                  108,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_volume_accumulator",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  118,
+                  111,
+                  108,
+                  117,
+                  109,
+                  101,
+                  95,
+                  97,
+                  99,
+                  99,
+                  117,
+                  109,
+                  117,
+                  108,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "fee_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  12,
+                  20,
+                  222,
+                  252,
+                  130,
+                  94,
+                  198,
+                  118,
+                  148,
+                  37,
+                  8,
+                  24,
+                  187,
+                  101,
+                  64,
+                  101,
+                  244,
+                  41,
+                  141,
+                  49,
+                  86,
+                  213,
+                  113,
+                  180,
+                  212,
+                  248,
+                  9,
+                  12,
+                  24,
+                  233,
+                  168,
+                  99
+                ]
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "fee_program"
+            }
+          }
+        },
+        {
+          "name": "fee_program",
+          "address": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
+        }
+      ],
+      "args": [
+        {
+          "name": "base_amount_out",
+          "type": "u64"
+        },
+        {
+          "name": "max_quote_amount_in",
+          "type": "u64"
+        },
+        {
+          "name": "track_volume",
+          "type": {
+            "defined": {
+              "name": "OptionBool"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "buy_exact_quote_in",
+      "docs": [
+        "Given a budget of spendable_quote_in, buy at least min_base_amount_out",
+        "Fees will be deducted from spendable_quote_in",
+        "",
+        "f(quote) = tokens, where tokens >= min_base_amount_out",
+        "",
+        "Make sure the payer has enough SOL to cover creation of the following accounts (unless already created):",
+        "- protocol_fee_recipient_token_account: rent.minimum_balance(TokenAccount::LEN)",
+        "- coin_creator_vault_ata: rent.minimum_balance(TokenAccount::LEN)",
+        "- user_volume_accumulator: rent.minimum_balance(UserVolumeAccumulator::LEN)",
+        "",
+        "For cashback coins, optionally pass user_volume_accumulator_wsol_ata as remaining_accounts[0].",
+        "If provided and valid, the ATA will be initialized if needed."
+      ],
+      "discriminator": [
+        198,
+        46,
+        21,
+        82,
+        180,
+        217,
+        232,
+        112
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "global_config"
+        },
+        {
+          "name": "base_mint",
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "quote_mint",
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "user_base_token_account",
+          "writable": true
+        },
+        {
+          "name": "user_quote_token_account",
+          "writable": true
+        },
+        {
+          "name": "pool_base_token_account",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "pool_quote_token_account",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "protocol_fee_recipient"
+        },
+        {
+          "name": "protocol_fee_recipient_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "protocol_fee_recipient"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "base_token_program"
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "address": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+        },
+        {
+          "name": "coin_creator_vault_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "coin_creator_vault_authority"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "coin_creator_vault_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  97,
+                  116,
+                  111,
+                  114,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool.coin_creator",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_volume_accumulator",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  118,
+                  111,
+                  108,
+                  117,
+                  109,
+                  101,
+                  95,
+                  97,
+                  99,
+                  99,
+                  117,
+                  109,
+                  117,
+                  108,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_volume_accumulator",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  118,
+                  111,
+                  108,
+                  117,
+                  109,
+                  101,
+                  95,
+                  97,
+                  99,
+                  99,
+                  117,
+                  109,
+                  117,
+                  108,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "fee_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  12,
+                  20,
+                  222,
+                  252,
+                  130,
+                  94,
+                  198,
+                  118,
+                  148,
+                  37,
+                  8,
+                  24,
+                  187,
+                  101,
+                  64,
+                  101,
+                  244,
+                  41,
+                  141,
+                  49,
+                  86,
+                  213,
+                  113,
+                  180,
+                  212,
+                  248,
+                  9,
+                  12,
+                  24,
+                  233,
+                  168,
+                  99
+                ]
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "fee_program"
+            }
+          }
+        },
+        {
+          "name": "fee_program",
+          "address": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
+        }
+      ],
+      "args": [
+        {
+          "name": "spendable_quote_in",
+          "type": "u64"
+        },
+        {
+          "name": "min_base_amount_out",
+          "type": "u64"
+        },
+        {
+          "name": "track_volume",
+          "type": {
+            "defined": {
+              "name": "OptionBool"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "claim_cashback",
+      "discriminator": [
+        37,
+        58,
+        35,
+        126,
+        190,
+        53,
+        228,
+        197
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true
+        },
+        {
+          "name": "user_volume_accumulator",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  118,
+                  111,
+                  108,
+                  117,
+                  109,
+                  101,
+                  95,
+                  97,
+                  99,
+                  99,
+                  117,
+                  109,
+                  117,
+                  108,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "quote_mint"
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "user_volume_accumulator_wsol_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user_volume_accumulator"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "user_wsol_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "address": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "claim_token_incentives",
+      "discriminator": [
+        16,
+        4,
+        71,
+        28,
+        204,
+        1,
+        40,
+        27
+      ],
+      "accounts": [
+        {
+          "name": "user"
+        },
+        {
+          "name": "user_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "global_volume_accumulator",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  118,
+                  111,
+                  108,
+                  117,
+                  109,
+                  101,
+                  95,
+                  97,
+                  99,
+                  99,
+                  117,
+                  109,
+                  117,
+                  108,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_incentive_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "global_volume_accumulator"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "user_volume_accumulator",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  118,
+                  111,
+                  108,
+                  117,
+                  109,
+                  101,
+                  95,
+                  97,
+                  99,
+                  99,
+                  117,
+                  109,
+                  117,
+                  108,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "global_volume_accumulator"
+          ]
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "address": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "close_user_volume_accumulator",
+      "discriminator": [
+        249,
+        69,
+        164,
+        218,
+        150,
+        103,
+        84,
+        138
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "user_volume_accumulator",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  118,
+                  111,
+                  108,
+                  117,
+                  109,
+                  101,
+                  95,
+                  97,
+                  99,
+                  99,
+                  117,
+                  109,
+                  117,
+                  108,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "collect_coin_creator_fee",
+      "discriminator": [
+        160,
+        57,
+        89,
+        42,
+        181,
+        139,
+        43,
+        66
+      ],
+      "accounts": [
+        {
+          "name": "quote_mint"
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "coin_creator"
+        },
+        {
+          "name": "coin_creator_vault_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  97,
+                  116,
+                  111,
+                  114,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "coin_creator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "coin_creator_vault_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "coin_creator_vault_authority"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "coin_creator_token_account",
+          "writable": true
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "create_config",
+      "discriminator": [
+        201,
+        207,
+        243,
+        114,
+        75,
+        111,
+        47,
+        189
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true,
+          "address": "8LWu7QM2dGR1G8nKDHthckea57bkCzXyBTAKPJUBDHo8"
+        },
+        {
+          "name": "global_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "lp_fee_basis_points",
+          "type": "u64"
+        },
+        {
+          "name": "protocol_fee_basis_points",
+          "type": "u64"
+        },
+        {
+          "name": "protocol_fee_recipients",
+          "type": {
+            "array": [
+              "pubkey",
+              8
+            ]
+          }
+        },
+        {
+          "name": "coin_creator_fee_basis_points",
+          "type": "u64"
+        },
+        {
+          "name": "admin_set_coin_creator_authority",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "create_pool",
+      "discriminator": [
+        233,
+        146,
+        209,
+        142,
+        207,
+        104,
+        64,
+        188
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "index"
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_config"
+        },
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "base_mint"
+        },
+        {
+          "name": "quote_mint"
+        },
+        {
+          "name": "lp_mint",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  108,
+                  112,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_base_token_account",
+          "writable": true
+        },
+        {
+          "name": "user_quote_token_account",
+          "writable": true
+        },
+        {
+          "name": "user_pool_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "creator"
+              },
+              {
+                "kind": "account",
+                "path": "token_2022_program"
+              },
+              {
+                "kind": "account",
+                "path": "lp_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "pool_base_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "base_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "pool_quote_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_2022_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "base_token_program"
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "index",
+          "type": "u16"
+        },
+        {
+          "name": "base_amount_in",
+          "type": "u64"
+        },
+        {
+          "name": "quote_amount_in",
+          "type": "u64"
+        },
+        {
+          "name": "coin_creator",
+          "type": "pubkey"
+        },
+        {
+          "name": "is_mayhem_mode",
+          "type": "bool"
+        },
+        {
+          "name": "is_cashback_coin",
+          "type": {
+            "defined": {
+              "name": "OptionBool"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "deposit",
+      "discriminator": [
+        242,
+        35,
+        198,
+        137,
+        82,
+        225,
+        242,
+        182
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "global_config"
+        },
+        {
+          "name": "user",
+          "signer": true
+        },
+        {
+          "name": "base_mint",
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "quote_mint",
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "lp_mint",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "user_base_token_account",
+          "writable": true
+        },
+        {
+          "name": "user_quote_token_account",
+          "writable": true
+        },
+        {
+          "name": "user_pool_token_account",
+          "writable": true
+        },
+        {
+          "name": "pool_base_token_account",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "pool_quote_token_account",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "token_2022_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "lp_token_amount_out",
+          "type": "u64"
+        },
+        {
+          "name": "max_base_amount_in",
+          "type": "u64"
+        },
+        {
+          "name": "max_quote_amount_in",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "disable",
+      "discriminator": [
+        185,
+        173,
+        187,
+        90,
+        216,
+        15,
+        238,
+        233
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "global_config"
+          ]
+        },
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "disable_create_pool",
+          "type": "bool"
+        },
+        {
+          "name": "disable_deposit",
+          "type": "bool"
+        },
+        {
+          "name": "disable_withdraw",
+          "type": "bool"
+        },
+        {
+          "name": "disable_buy",
+          "type": "bool"
+        },
+        {
+          "name": "disable_sell",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "extend_account",
+      "discriminator": [
+        234,
+        102,
+        194,
+        203,
+        150,
+        72,
+        62,
+        229
+      ],
+      "accounts": [
+        {
+          "name": "account",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "init_user_volume_accumulator",
+      "discriminator": [
+        94,
+        6,
+        202,
+        115,
+        255,
+        96,
+        232,
+        183
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "user"
+        },
+        {
+          "name": "user_volume_accumulator",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  118,
+                  111,
+                  108,
+                  117,
+                  109,
+                  101,
+                  95,
+                  97,
+                  99,
+                  99,
+                  117,
+                  109,
+                  117,
+                  108,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "migrate_pool_coin_creator",
+      "docs": [
+        "Migrate Pool Coin Creator to Sharing Config"
+      ],
+      "discriminator": [
+        208,
+        8,
+        159,
+        4,
+        74,
+        175,
+        16,
+        58
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool.index",
+                "account": "Pool"
+              },
+              {
+                "kind": "account",
+                "path": "pool.creator",
+                "account": "Pool"
+              },
+              {
+                "kind": "account",
+                "path": "pool.base_mint",
+                "account": "Pool"
+              },
+              {
+                "kind": "account",
+                "path": "pool.quote_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "sharing_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  104,
+                  97,
+                  114,
+                  105,
+                  110,
+                  103,
+                  45,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool.base_mint",
+                "account": "Pool"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                12,
+                53,
+                255,
+                169,
+                5,
+                90,
+                142,
+                86,
+                141,
+                168,
+                247,
+                188,
+                7,
+                86,
+                21,
+                39,
+                76,
+                241,
+                201,
+                44,
+                164,
+                31,
+                64,
+                0,
+                156,
+                81,
+                106,
+                164,
+                20,
+                194,
+                124,
+                112
+              ]
+            }
+          }
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "sell",
+      "discriminator": [
+        51,
+        230,
+        133,
+        164,
+        1,
+        127,
+        131,
+        173
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "global_config"
+        },
+        {
+          "name": "base_mint",
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "quote_mint",
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "user_base_token_account",
+          "writable": true
+        },
+        {
+          "name": "user_quote_token_account",
+          "writable": true
+        },
+        {
+          "name": "pool_base_token_account",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "pool_quote_token_account",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "protocol_fee_recipient"
+        },
+        {
+          "name": "protocol_fee_recipient_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "protocol_fee_recipient"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "base_token_program"
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "address": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+        },
+        {
+          "name": "coin_creator_vault_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "coin_creator_vault_authority"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "coin_creator_vault_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  97,
+                  116,
+                  111,
+                  114,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool.coin_creator",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "fee_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  12,
+                  20,
+                  222,
+                  252,
+                  130,
+                  94,
+                  198,
+                  118,
+                  148,
+                  37,
+                  8,
+                  24,
+                  187,
+                  101,
+                  64,
+                  101,
+                  244,
+                  41,
+                  141,
+                  49,
+                  86,
+                  213,
+                  113,
+                  180,
+                  212,
+                  248,
+                  9,
+                  12,
+                  24,
+                  233,
+                  168,
+                  99
+                ]
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "fee_program"
+            }
+          }
+        },
+        {
+          "name": "fee_program",
+          "address": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
+        }
+      ],
+      "args": [
+        {
+          "name": "base_amount_in",
+          "type": "u64"
+        },
+        {
+          "name": "min_quote_amount_out",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "set_coin_creator",
+      "docs": [
+        "Sets Pool::coin_creator from Metaplex metadata creator or BondingCurve::creator"
+      ],
+      "discriminator": [
+        210,
+        149,
+        128,
+        45,
+        188,
+        58,
+        78,
+        175
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "metadata",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  11,
+                  112,
+                  101,
+                  177,
+                  227,
+                  209,
+                  124,
+                  69,
+                  56,
+                  157,
+                  82,
+                  127,
+                  107,
+                  4,
+                  195,
+                  205,
+                  88,
+                  184,
+                  108,
+                  115,
+                  26,
+                  160,
+                  253,
+                  181,
+                  73,
+                  182,
+                  209,
+                  188,
+                  3,
+                  248,
+                  41,
+                  70
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool.base_mint",
+                "account": "Pool"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                11,
+                112,
+                101,
+                177,
+                227,
+                209,
+                124,
+                69,
+                56,
+                157,
+                82,
+                127,
+                107,
+                4,
+                195,
+                205,
+                88,
+                184,
+                108,
+                115,
+                26,
+                160,
+                253,
+                181,
+                73,
+                182,
+                209,
+                188,
+                3,
+                248,
+                41,
+                70
+              ]
+            }
+          }
+        },
+        {
+          "name": "bonding_curve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  111,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  45,
+                  99,
+                  117,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool.base_mint",
+                "account": "Pool"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                1,
+                86,
+                224,
+                246,
+                147,
+                102,
+                90,
+                207,
+                68,
+                219,
+                21,
+                104,
+                191,
+                23,
+                91,
+                170,
+                81,
+                137,
+                203,
+                151,
+                245,
+                210,
+                255,
+                59,
+                101,
+                93,
+                43,
+                182,
+                253,
+                109,
+                24,
+                176
+              ]
+            }
+          }
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "set_reserved_fee_recipients",
+      "discriminator": [
+        111,
+        172,
+        162,
+        232,
+        114,
+        89,
+        213,
+        142
+      ],
+      "accounts": [
+        {
+          "name": "global_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "global_config"
+          ]
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "whitelist_pda",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "sync_user_volume_accumulator",
+      "discriminator": [
+        86,
+        31,
+        192,
+        87,
+        163,
+        87,
+        79,
+        238
+      ],
+      "accounts": [
+        {
+          "name": "user"
+        },
+        {
+          "name": "global_volume_accumulator",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  118,
+                  111,
+                  108,
+                  117,
+                  109,
+                  101,
+                  95,
+                  97,
+                  99,
+                  99,
+                  117,
+                  109,
+                  117,
+                  108,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_volume_accumulator",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  118,
+                  111,
+                  108,
+                  117,
+                  109,
+                  101,
+                  95,
+                  97,
+                  99,
+                  99,
+                  117,
+                  109,
+                  117,
+                  108,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "toggle_cashback_enabled",
+      "discriminator": [
+        115,
+        103,
+        224,
+        255,
+        189,
+        89,
+        86,
+        195
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "global_config"
+          ]
+        },
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "enabled",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "toggle_mayhem_mode",
+      "discriminator": [
+        1,
+        9,
+        111,
+        208,
+        100,
+        31,
+        255,
+        163
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "global_config"
+          ]
+        },
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "enabled",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "transfer_creator_fees_to_pump",
+      "docs": [
+        "Transfer creator fees to pump creator vault",
+        "If coin creator fees are currently below rent.minimum_balance(TokenAccount::LEN)",
+        "The transfer will be skipped"
+      ],
+      "discriminator": [
+        139,
+        52,
+        134,
+        85,
+        228,
+        229,
+        108,
+        241
+      ],
+      "accounts": [
+        {
+          "name": "wsol_mint",
+          "docs": [
+            "Pump Canonical Pool are quoted in wSOL"
+          ]
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "coin_creator"
+        },
+        {
+          "name": "coin_creator_vault_authority",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  97,
+                  116,
+                  111,
+                  114,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "coin_creator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "coin_creator_vault_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "coin_creator_vault_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "wsol_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "pump_creator_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  97,
+                  116,
+                  111,
+                  114,
+                  45,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "coin_creator"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                1,
+                86,
+                224,
+                246,
+                147,
+                102,
+                90,
+                207,
+                68,
+                219,
+                21,
+                104,
+                191,
+                23,
+                91,
+                170,
+                81,
+                137,
+                203,
+                151,
+                245,
+                210,
+                255,
+                59,
+                101,
+                93,
+                43,
+                182,
+                253,
+                109,
+                24,
+                176
+              ]
+            }
+          }
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "update_admin",
+      "discriminator": [
+        161,
+        176,
+        40,
+        213,
+        60,
+        184,
+        179,
+        228
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "global_config"
+          ]
+        },
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "new_admin"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "update_fee_config",
+      "discriminator": [
+        104,
+        184,
+        103,
+        242,
+        88,
+        151,
+        107,
+        20
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "global_config"
+          ]
+        },
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "lp_fee_basis_points",
+          "type": "u64"
+        },
+        {
+          "name": "protocol_fee_basis_points",
+          "type": "u64"
+        },
+        {
+          "name": "protocol_fee_recipients",
+          "type": {
+            "array": [
+              "pubkey",
+              8
+            ]
+          }
+        },
+        {
+          "name": "coin_creator_fee_basis_points",
+          "type": "u64"
+        },
+        {
+          "name": "admin_set_coin_creator_authority",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "withdraw",
+      "discriminator": [
+        183,
+        18,
+        70,
+        156,
+        148,
+        109,
+        161,
+        34
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "global_config"
+        },
+        {
+          "name": "user",
+          "signer": true
+        },
+        {
+          "name": "base_mint",
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "quote_mint",
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "lp_mint",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "user_base_token_account",
+          "writable": true
+        },
+        {
+          "name": "user_quote_token_account",
+          "writable": true
+        },
+        {
+          "name": "user_pool_token_account",
+          "writable": true
+        },
+        {
+          "name": "pool_base_token_account",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "pool_quote_token_account",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "token_2022_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "lp_token_amount_in",
+          "type": "u64"
+        },
+        {
+          "name": "min_base_amount_out",
+          "type": "u64"
+        },
+        {
+          "name": "min_quote_amount_out",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "BondingCurve",
+      "discriminator": [
+        23,
+        183,
+        248,
+        55,
+        96,
+        216,
+        172,
+        96
+      ]
+    },
+    {
+      "name": "FeeConfig",
+      "discriminator": [
+        143,
+        52,
+        146,
+        187,
+        219,
+        123,
+        76,
+        155
+      ]
+    },
+    {
+      "name": "GlobalConfig",
+      "discriminator": [
+        149,
+        8,
+        156,
+        202,
+        160,
+        252,
+        176,
+        217
+      ]
+    },
+    {
+      "name": "GlobalVolumeAccumulator",
+      "discriminator": [
+        202,
+        42,
+        246,
+        43,
+        142,
+        190,
+        30,
+        255
+      ]
+    },
+    {
+      "name": "Pool",
+      "discriminator": [
+        241,
+        154,
+        109,
+        4,
+        17,
+        177,
+        109,
+        188
+      ]
+    },
+    {
+      "name": "SharingConfig",
+      "discriminator": [
+        216,
+        74,
+        9,
+        0,
+        56,
+        140,
+        93,
+        75
+      ]
+    },
+    {
+      "name": "UserVolumeAccumulator",
+      "discriminator": [
+        86,
+        255,
+        112,
+        14,
+        102,
+        53,
+        154,
+        250
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "AdminSetCoinCreatorEvent",
+      "discriminator": [
+        45,
+        220,
+        93,
+        24,
+        25,
+        97,
+        172,
+        104
+      ]
+    },
+    {
+      "name": "AdminUpdateTokenIncentivesEvent",
+      "discriminator": [
+        147,
+        250,
+        108,
+        120,
+        247,
+        29,
+        67,
+        222
+      ]
+    },
+    {
+      "name": "BuyEvent",
+      "discriminator": [
+        103,
+        244,
+        82,
+        31,
+        44,
+        245,
+        119,
+        119
+      ]
+    },
+    {
+      "name": "ClaimCashbackEvent",
+      "discriminator": [
+        226,
+        214,
+        246,
+        33,
+        7,
+        242,
+        147,
+        229
+      ]
+    },
+    {
+      "name": "ClaimTokenIncentivesEvent",
+      "discriminator": [
+        79,
+        172,
+        246,
+        49,
+        205,
+        91,
+        206,
+        232
+      ]
+    },
+    {
+      "name": "CloseUserVolumeAccumulatorEvent",
+      "discriminator": [
+        146,
+        159,
+        189,
+        172,
+        146,
+        88,
+        56,
+        244
+      ]
+    },
+    {
+      "name": "CollectCoinCreatorFeeEvent",
+      "discriminator": [
+        232,
+        245,
+        194,
+        238,
+        234,
+        218,
+        58,
+        89
+      ]
+    },
+    {
+      "name": "CreateConfigEvent",
+      "discriminator": [
+        107,
+        52,
+        89,
+        129,
+        55,
+        226,
+        81,
+        22
+      ]
+    },
+    {
+      "name": "CreatePoolEvent",
+      "discriminator": [
+        177,
+        49,
+        12,
+        210,
+        160,
+        118,
+        167,
+        116
+      ]
+    },
+    {
+      "name": "DepositEvent",
+      "discriminator": [
+        120,
+        248,
+        61,
+        83,
+        31,
+        142,
+        107,
+        144
+      ]
+    },
+    {
+      "name": "DisableEvent",
+      "discriminator": [
+        107,
+        253,
+        193,
+        76,
+        228,
+        202,
+        27,
+        104
+      ]
+    },
+    {
+      "name": "ExtendAccountEvent",
+      "discriminator": [
+        97,
+        97,
+        215,
+        144,
+        93,
+        146,
+        22,
+        124
+      ]
+    },
+    {
+      "name": "InitUserVolumeAccumulatorEvent",
+      "discriminator": [
+        134,
+        36,
+        13,
+        72,
+        232,
+        101,
+        130,
+        216
+      ]
+    },
+    {
+      "name": "MigratePoolCoinCreatorEvent",
+      "discriminator": [
+        170,
+        221,
+        82,
+        199,
+        147,
+        165,
+        247,
+        46
+      ]
+    },
+    {
+      "name": "ReservedFeeRecipientsEvent",
+      "discriminator": [
+        43,
+        188,
+        250,
+        18,
+        221,
+        75,
+        187,
+        95
+      ]
+    },
+    {
+      "name": "SellEvent",
+      "discriminator": [
+        62,
+        47,
+        55,
+        10,
+        165,
+        3,
+        220,
+        42
+      ]
+    },
+    {
+      "name": "SetBondingCurveCoinCreatorEvent",
+      "discriminator": [
+        242,
+        231,
+        235,
+        102,
+        65,
+        99,
+        189,
+        211
+      ]
+    },
+    {
+      "name": "SetMetaplexCoinCreatorEvent",
+      "discriminator": [
+        150,
+        107,
+        199,
+        123,
+        124,
+        207,
+        102,
+        228
+      ]
+    },
+    {
+      "name": "SyncUserVolumeAccumulatorEvent",
+      "discriminator": [
+        197,
+        122,
+        167,
+        124,
+        116,
+        81,
+        91,
+        255
+      ]
+    },
+    {
+      "name": "UpdateAdminEvent",
+      "discriminator": [
+        225,
+        152,
+        171,
+        87,
+        246,
+        63,
+        66,
+        234
+      ]
+    },
+    {
+      "name": "UpdateFeeConfigEvent",
+      "discriminator": [
+        90,
+        23,
+        65,
+        35,
+        62,
+        244,
+        188,
+        208
+      ]
+    },
+    {
+      "name": "WithdrawEvent",
+      "discriminator": [
+        22,
+        9,
+        133,
+        26,
+        160,
+        44,
+        71,
+        192
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "FeeBasisPointsExceedsMaximum"
+    },
+    {
+      "code": 6001,
+      "name": "ZeroBaseAmount"
+    },
+    {
+      "code": 6002,
+      "name": "ZeroQuoteAmount"
+    },
+    {
+      "code": 6003,
+      "name": "TooLittlePoolTokenLiquidity"
+    },
+    {
+      "code": 6004,
+      "name": "ExceededSlippage"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidAdmin"
+    },
+    {
+      "code": 6006,
+      "name": "UnsupportedBaseMint"
+    },
+    {
+      "code": 6007,
+      "name": "UnsupportedQuoteMint"
+    },
+    {
+      "code": 6008,
+      "name": "InvalidBaseMint"
+    },
+    {
+      "code": 6009,
+      "name": "InvalidQuoteMint"
+    },
+    {
+      "code": 6010,
+      "name": "InvalidLpMint"
+    },
+    {
+      "code": 6011,
+      "name": "AllProtocolFeeRecipientsShouldBeNonZero"
+    },
+    {
+      "code": 6012,
+      "name": "UnsortedNotUniqueProtocolFeeRecipients"
+    },
+    {
+      "code": 6013,
+      "name": "InvalidProtocolFeeRecipient"
+    },
+    {
+      "code": 6014,
+      "name": "InvalidPoolBaseTokenAccount"
+    },
+    {
+      "code": 6015,
+      "name": "InvalidPoolQuoteTokenAccount"
+    },
+    {
+      "code": 6016,
+      "name": "BuyMoreBaseAmountThanPoolReserves"
+    },
+    {
+      "code": 6017,
+      "name": "DisabledCreatePool"
+    },
+    {
+      "code": 6018,
+      "name": "DisabledDeposit"
+    },
+    {
+      "code": 6019,
+      "name": "DisabledWithdraw"
+    },
+    {
+      "code": 6020,
+      "name": "DisabledBuy"
+    },
+    {
+      "code": 6021,
+      "name": "DisabledSell"
+    },
+    {
+      "code": 6022,
+      "name": "SameMint"
+    },
+    {
+      "code": 6023,
+      "name": "Overflow"
+    },
+    {
+      "code": 6024,
+      "name": "Truncation"
+    },
+    {
+      "code": 6025,
+      "name": "DivisionByZero"
+    },
+    {
+      "code": 6026,
+      "name": "NewSizeLessThanCurrentSize"
+    },
+    {
+      "code": 6027,
+      "name": "AccountTypeNotSupported"
+    },
+    {
+      "code": 6028,
+      "name": "OnlyCanonicalPumpPoolsCanHaveCoinCreator"
+    },
+    {
+      "code": 6029,
+      "name": "InvalidAdminSetCoinCreatorAuthority"
+    },
+    {
+      "code": 6030,
+      "name": "StartTimeInThePast"
+    },
+    {
+      "code": 6031,
+      "name": "EndTimeInThePast"
+    },
+    {
+      "code": 6032,
+      "name": "EndTimeBeforeStartTime"
+    },
+    {
+      "code": 6033,
+      "name": "TimeRangeTooLarge"
+    },
+    {
+      "code": 6034,
+      "name": "EndTimeBeforeCurrentDay"
+    },
+    {
+      "code": 6035,
+      "name": "SupplyUpdateForFinishedRange"
+    },
+    {
+      "code": 6036,
+      "name": "DayIndexAfterEndIndex"
+    },
+    {
+      "code": 6037,
+      "name": "DayInActiveRange"
+    },
+    {
+      "code": 6038,
+      "name": "InvalidIncentiveMint"
+    },
+    {
+      "code": 6039,
+      "name": "BuyNotEnoughQuoteTokensToCoverFees",
+      "msg": "buy: Not enough quote tokens to cover for fees."
+    },
+    {
+      "code": 6040,
+      "name": "BuySlippageBelowMinBaseAmountOut",
+      "msg": "buy: slippage - would buy less tokens than expected min_base_amount_out"
+    },
+    {
+      "code": 6041,
+      "name": "MayhemModeDisabled"
+    },
+    {
+      "code": 6042,
+      "name": "OnlyPumpPoolsMayhemMode"
+    },
+    {
+      "code": 6043,
+      "name": "MayhemModeInDesiredState"
+    },
+    {
+      "code": 6044,
+      "name": "NotEnoughRemainingAccounts"
+    },
+    {
+      "code": 6045,
+      "name": "InvalidSharingConfigBaseMint"
+    },
+    {
+      "code": 6046,
+      "name": "InvalidSharingConfigCoinCreator"
+    },
+    {
+      "code": 6047,
+      "name": "CoinCreatorMigratedToSharingConfig",
+      "msg": "coin creator has been migrated to sharing config, use pump_fees::reset_fee_sharing_config instead"
+    },
+    {
+      "code": 6048,
+      "name": "CreatorVaultMigratedToSharingConfig",
+      "msg": "creator_vault has been migrated to sharing config, use pump:distribute_creator_fees instead"
+    },
+    {
+      "code": 6049,
+      "name": "CashbackNotEnabled",
+      "msg": "Cashback is disabled"
+    },
+    {
+      "code": 6050,
+      "name": "OnlyPumpPoolsCashback"
+    },
+    {
+      "code": 6051,
+      "name": "CashbackNotInDesiredState"
+    },
+    {
+      "code": 6052,
+      "name": "CashbackEarnedDoesNotMatchTokenInVault"
+    }
+  ],
+  "types": [
+    {
+      "name": "AdminSetCoinCreatorEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "admin_set_coin_creator_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "base_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_coin_creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_coin_creator",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AdminUpdateTokenIncentivesEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "start_time",
+            "type": "i64"
+          },
+          {
+            "name": "end_time",
+            "type": "i64"
+          },
+          {
+            "name": "day_number",
+            "type": "u64"
+          },
+          {
+            "name": "token_supply_per_day",
+            "type": "u64"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "seconds_in_a_day",
+            "type": "i64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "BondingCurve",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "virtual_token_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "virtual_sol_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "real_token_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "real_sol_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "token_total_supply",
+            "type": "u64"
+          },
+          {
+            "name": "complete",
+            "type": "bool"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "is_mayhem_mode",
+            "type": "bool"
+          },
+          {
+            "name": "is_cashback_coin",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "BuyEvent",
+      "docs": [
+        "ix_name: \"buy\" | \"buy_exact_quote_in\""
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "base_amount_out",
+            "type": "u64"
+          },
+          {
+            "name": "max_quote_amount_in",
+            "type": "u64"
+          },
+          {
+            "name": "user_base_token_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "user_quote_token_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "pool_base_token_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "pool_quote_token_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "quote_amount_in",
+            "type": "u64"
+          },
+          {
+            "name": "lp_fee_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "lp_fee",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_fee_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_fee",
+            "type": "u64"
+          },
+          {
+            "name": "quote_amount_in_with_lp_fee",
+            "type": "u64"
+          },
+          {
+            "name": "user_quote_amount_in",
+            "type": "u64"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "user_base_token_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "user_quote_token_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "protocol_fee_recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "protocol_fee_recipient_token_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "coin_creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "coin_creator_fee_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "coin_creator_fee",
+            "type": "u64"
+          },
+          {
+            "name": "track_volume",
+            "type": "bool"
+          },
+          {
+            "name": "total_unclaimed_tokens",
+            "type": "u64"
+          },
+          {
+            "name": "total_claimed_tokens",
+            "type": "u64"
+          },
+          {
+            "name": "current_sol_volume",
+            "type": "u64"
+          },
+          {
+            "name": "last_update_timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "min_base_amount_out",
+            "type": "u64"
+          },
+          {
+            "name": "ix_name",
+            "type": "string"
+          },
+          {
+            "name": "cashback_fee_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "cashback",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ClaimCashbackEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "total_claimed",
+            "type": "u64"
+          },
+          {
+            "name": "total_cashback_earned",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ClaimTokenIncentivesEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "total_claimed_tokens",
+            "type": "u64"
+          },
+          {
+            "name": "current_sol_volume",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CloseUserVolumeAccumulatorEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "total_unclaimed_tokens",
+            "type": "u64"
+          },
+          {
+            "name": "total_claimed_tokens",
+            "type": "u64"
+          },
+          {
+            "name": "current_sol_volume",
+            "type": "u64"
+          },
+          {
+            "name": "last_update_timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CollectCoinCreatorFeeEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "coin_creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "coin_creator_fee",
+            "type": "u64"
+          },
+          {
+            "name": "coin_creator_vault_ata",
+            "type": "pubkey"
+          },
+          {
+            "name": "coin_creator_token_account",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ConfigStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Paused"
+          },
+          {
+            "name": "Active"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CreateConfigEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "lp_fee_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_fee_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_fee_recipients",
+            "type": {
+              "array": [
+                "pubkey",
+                8
+              ]
+            }
+          },
+          {
+            "name": "coin_creator_fee_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "admin_set_coin_creator_authority",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CreatePoolEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "index",
+            "type": "u16"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "base_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "base_mint_decimals",
+            "type": "u8"
+          },
+          {
+            "name": "quote_mint_decimals",
+            "type": "u8"
+          },
+          {
+            "name": "base_amount_in",
+            "type": "u64"
+          },
+          {
+            "name": "quote_amount_in",
+            "type": "u64"
+          },
+          {
+            "name": "pool_base_amount",
+            "type": "u64"
+          },
+          {
+            "name": "pool_quote_amount",
+            "type": "u64"
+          },
+          {
+            "name": "minimum_liquidity",
+            "type": "u64"
+          },
+          {
+            "name": "initial_liquidity",
+            "type": "u64"
+          },
+          {
+            "name": "lp_token_amount_out",
+            "type": "u64"
+          },
+          {
+            "name": "pool_bump",
+            "type": "u8"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "lp_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "user_base_token_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "user_quote_token_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "coin_creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "is_mayhem_mode",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "DepositEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "lp_token_amount_out",
+            "type": "u64"
+          },
+          {
+            "name": "max_base_amount_in",
+            "type": "u64"
+          },
+          {
+            "name": "max_quote_amount_in",
+            "type": "u64"
+          },
+          {
+            "name": "user_base_token_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "user_quote_token_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "pool_base_token_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "pool_quote_token_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "base_amount_in",
+            "type": "u64"
+          },
+          {
+            "name": "quote_amount_in",
+            "type": "u64"
+          },
+          {
+            "name": "lp_mint_supply",
+            "type": "u64"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "user_base_token_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "user_quote_token_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "user_pool_token_account",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "DisableEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "disable_create_pool",
+            "type": "bool"
+          },
+          {
+            "name": "disable_deposit",
+            "type": "bool"
+          },
+          {
+            "name": "disable_withdraw",
+            "type": "bool"
+          },
+          {
+            "name": "disable_buy",
+            "type": "bool"
+          },
+          {
+            "name": "disable_sell",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ExtendAccountEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "account",
+            "type": "pubkey"
+          },
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "current_size",
+            "type": "u64"
+          },
+          {
+            "name": "new_size",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeeConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "flat_fees",
+            "type": {
+              "defined": {
+                "name": "Fees"
+              }
+            }
+          },
+          {
+            "name": "fee_tiers",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "FeeTier"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeeTier",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_cap_lamports_threshold",
+            "type": "u128"
+          },
+          {
+            "name": "fees",
+            "type": {
+              "defined": {
+                "name": "Fees"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "Fees",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "lp_fee_bps",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_fee_bps",
+            "type": "u64"
+          },
+          {
+            "name": "creator_fee_bps",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GlobalConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "docs": [
+              "The admin pubkey"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "lp_fee_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_fee_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "disable_flags",
+            "docs": [
+              "Flags to disable certain functionality",
+              "bit 0 - Disable create pool",
+              "bit 1 - Disable deposit",
+              "bit 2 - Disable withdraw",
+              "bit 3 - Disable buy",
+              "bit 4 - Disable sell"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "protocol_fee_recipients",
+            "docs": [
+              "Addresses of the protocol fee recipients"
+            ],
+            "type": {
+              "array": [
+                "pubkey",
+                8
+              ]
+            }
+          },
+          {
+            "name": "coin_creator_fee_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "admin_set_coin_creator_authority",
+            "docs": [
+              "The admin authority for setting coin creators"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "whitelist_pda",
+            "type": "pubkey"
+          },
+          {
+            "name": "reserved_fee_recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "mayhem_mode_enabled",
+            "type": "bool"
+          },
+          {
+            "name": "reserved_fee_recipients",
+            "type": {
+              "array": [
+                "pubkey",
+                7
+              ]
+            }
+          },
+          {
+            "name": "is_cashback_enabled",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GlobalVolumeAccumulator",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "start_time",
+            "type": "i64"
+          },
+          {
+            "name": "end_time",
+            "type": "i64"
+          },
+          {
+            "name": "seconds_in_a_day",
+            "type": "i64"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "total_token_supply",
+            "type": {
+              "array": [
+                "u64",
+                30
+              ]
+            }
+          },
+          {
+            "name": "sol_volumes",
+            "type": {
+              "array": [
+                "u64",
+                30
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "InitUserVolumeAccumulatorEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "payer",
+            "type": "pubkey"
+          },
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MigratePoolCoinCreatorEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "base_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "sharing_config",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_coin_creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_coin_creator",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OptionBool",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          "bool"
+        ]
+      }
+    },
+    {
+      "name": "Pool",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool_bump",
+            "type": "u8"
+          },
+          {
+            "name": "index",
+            "type": "u16"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "base_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "lp_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool_base_token_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool_quote_token_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "lp_supply",
+            "docs": [
+              "True circulating supply without burns and lock-ups"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "coin_creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "is_mayhem_mode",
+            "type": "bool"
+          },
+          {
+            "name": "is_cashback_coin",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReservedFeeRecipientsEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "reserved_fee_recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "reserved_fee_recipients",
+            "type": {
+              "array": [
+                "pubkey",
+                7
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "SellEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "base_amount_in",
+            "type": "u64"
+          },
+          {
+            "name": "min_quote_amount_out",
+            "type": "u64"
+          },
+          {
+            "name": "user_base_token_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "user_quote_token_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "pool_base_token_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "pool_quote_token_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "quote_amount_out",
+            "type": "u64"
+          },
+          {
+            "name": "lp_fee_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "lp_fee",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_fee_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_fee",
+            "type": "u64"
+          },
+          {
+            "name": "quote_amount_out_without_lp_fee",
+            "type": "u64"
+          },
+          {
+            "name": "user_quote_amount_out",
+            "type": "u64"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "user_base_token_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "user_quote_token_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "protocol_fee_recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "protocol_fee_recipient_token_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "coin_creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "coin_creator_fee_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "coin_creator_fee",
+            "type": "u64"
+          },
+          {
+            "name": "cashback_fee_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "cashback",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SetBondingCurveCoinCreatorEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "base_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "bonding_curve",
+            "type": "pubkey"
+          },
+          {
+            "name": "coin_creator",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SetMetaplexCoinCreatorEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "base_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "metadata",
+            "type": "pubkey"
+          },
+          {
+            "name": "coin_creator",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Shareholder",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "address",
+            "type": "pubkey"
+          },
+          {
+            "name": "share_bps",
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SharingConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "ConfigStatus"
+              }
+            }
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "admin_revoked",
+            "type": "bool"
+          },
+          {
+            "name": "shareholders",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "Shareholder"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "SyncUserVolumeAccumulatorEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "total_claimed_tokens_before",
+            "type": "u64"
+          },
+          {
+            "name": "total_claimed_tokens_after",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UpdateAdminEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_admin",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UpdateFeeConfigEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "lp_fee_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_fee_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_fee_recipients",
+            "type": {
+              "array": [
+                "pubkey",
+                8
+              ]
+            }
+          },
+          {
+            "name": "coin_creator_fee_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "admin_set_coin_creator_authority",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UserVolumeAccumulator",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "needs_claim",
+            "type": "bool"
+          },
+          {
+            "name": "total_unclaimed_tokens",
+            "type": "u64"
+          },
+          {
+            "name": "total_claimed_tokens",
+            "type": "u64"
+          },
+          {
+            "name": "current_sol_volume",
+            "type": "u64"
+          },
+          {
+            "name": "last_update_timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "has_total_claimed_tokens",
+            "type": "bool"
+          },
+          {
+            "name": "cashback_earned",
+            "type": "u64"
+          },
+          {
+            "name": "total_cashback_claimed",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "WithdrawEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "lp_token_amount_in",
+            "type": "u64"
+          },
+          {
+            "name": "min_base_amount_out",
+            "type": "u64"
+          },
+          {
+            "name": "min_quote_amount_out",
+            "type": "u64"
+          },
+          {
+            "name": "user_base_token_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "user_quote_token_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "pool_base_token_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "pool_quote_token_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "base_amount_out",
+            "type": "u64"
+          },
+          {
+            "name": "quote_amount_out",
+            "type": "u64"
+          },
+          {
+            "name": "lp_mint_supply",
+            "type": "u64"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "user_base_token_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "user_quote_token_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "user_pool_token_account",
+            "type": "pubkey"
+          }
+        ]
+      }
+    }
+  ]
+}

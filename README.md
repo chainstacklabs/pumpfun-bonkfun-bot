@@ -120,6 +120,10 @@ The bot now includes built-in RPC rate limiting to prevent hitting provider limi
 
 This helps ensure reliable operation within your node provider's rate limits without manual throttling.
 
+## Reference IDLs
+
+Latest pump.fun program IDLs (bonding curve, PumpAMM, fees) are vendored under [`idl/upstream/`](idl/upstream/) for reference and easier local diffing. Source: [pump-fun/pump-public-docs](https://github.com/pump-fun/pump-public-docs). Refresh instructions are in [`idl/upstream/SOURCE.md`](idl/upstream/SOURCE.md).
+
 ## Changelog
 
 Quick note on a couple on a few new scripts in `/learning-examples`:
