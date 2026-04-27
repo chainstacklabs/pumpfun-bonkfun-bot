@@ -22,6 +22,7 @@ import base64
 import hashlib
 import json
 import os
+import random
 import struct
 
 import base58
@@ -53,6 +54,20 @@ PUMP_EVENT_AUTHORITY = Pubkey.from_string(
 )
 PUMP_FEE = Pubkey.from_string("CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM")
 PUMP_FEE_PROGRAM = Pubkey.from_string("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ")
+
+# 8 breaking-upgrade fee recipients (pump.fun program upgrade 2026-04-28).
+# One must be appended (mutable) AFTER bonding-curve-v2 on every buy/sell.
+# Doc: github.com/pump-fun/pump-public-docs/blob/main/docs/BREAKING_FEE_RECIPIENT.md
+BREAKING_FEE_RECIPIENTS = [
+    Pubkey.from_string("5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD"),
+    Pubkey.from_string("9M4giFFMxmFGXtc3feFzRai56WbBqehoSeRE5GK7gf7"),
+    Pubkey.from_string("GXPFM2caqTtQYC2cJ5yJRi9VDkpsYZXzYdwYpGnLmtDL"),
+    Pubkey.from_string("3BpXnfJaUTiwXnJNe7Ej1rcbzqTTQUvLShZaWazebsVR"),
+    Pubkey.from_string("5cjcW9wExnJJiqgLjq7DEG75Pm6JBgE1hNv4B2vHXUW6"),
+    Pubkey.from_string("EHAAiTxcdDwQ3U4bU6YcMsQGaekdzLS3B5SmYo46kJtL"),
+    Pubkey.from_string("5eHhjP8JaYkz83CWwvGU2uMUXefd3AazWGx4gpcuEEYD"),
+    Pubkey.from_string("A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW"),
+]
 SYSTEM_PROGRAM = Pubkey.from_string("11111111111111111111111111111111")
 SYSTEM_TOKEN_PROGRAM = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
 TOKEN_2022_PROGRAM = Pubkey.from_string("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
@@ -333,6 +348,12 @@ async def buy_token(
                 is_signer=False,
                 is_writable=False,
             ),
+            # 18th account: breaking-upgrade fee recipient (mutable) — required from 2026-04-28
+            AccountMeta(
+                pubkey=random.choice(BREAKING_FEE_RECIPIENTS),
+                is_signer=False,
+                is_writable=True,
+            ),
         ]
 
         discriminator = struct.pack("<Q", 16927863322537952870)
@@ -350,7 +371,10 @@ async def buy_token(
         # CU OPTIMIZATION: Limit account data to 512KB (down from 64MB default)
         # This reduces CU cost from 16k to ~128 CU and improves tx priority.
         # Must be placed FIRST in the instruction list.
-        cu_limit_ix = set_loaded_accounts_data_size_limit(512_000)
+        # 16MB limit: works for cashback-coin Token-2022 buys on mainnet.
+        # Smaller values (4–8MB) trigger MaxLoadedAccountsDataSizeExceeded for
+        # Token-2022 mints with extensions. Still 4× smaller than the 64MB default.
+        cu_limit_ix = set_loaded_accounts_data_size_limit(16_384_000)
 
         msg = Message(
             [cu_limit_ix, set_compute_unit_price(1_000), idempotent_ata_ix, buy_ix],
@@ -402,16 +426,21 @@ def decode_create_instruction(ix_data, ix_def, accounts):
     args = {}
     offset = 8
     for arg in ix_def["args"]:
-        if arg["type"] == "string":
+        t = arg["type"]
+        if t == "string":
             length = struct.unpack_from("<I", ix_data, offset)[0]
             offset += 4
             value = ix_data[offset : offset + length].decode("utf-8")
             offset += length
-        elif arg["type"] == "pubkey":
+        elif t == "pubkey":
             value = base58.b58encode(ix_data[offset : offset + 32]).decode("utf-8")
             offset += 32
+        elif t == "bool" or (isinstance(t, dict) and "defined" in t):
+            # `bool` and `OptionBool` (struct {bool}) both serialize as 1 byte
+            value = bool(ix_data[offset])
+            offset += 1
         else:
-            raise ValueError(f"Unsupported type: {arg['type']}")
+            raise ValueError(f"Unsupported type: {t}")
         args[arg["name"]] = value
 
     args["mint"] = str(accounts[0])
@@ -499,6 +528,12 @@ async def listen_for_create_transaction():
                                                     for instr in idl["instructions"]
                                                     if instr["name"] == instruction_name
                                                 )
+                                                # Skip txs that use Address Lookup Tables — their
+                                                # instruction account indices reference ALT-loaded keys
+                                                # not present in transaction.message.account_keys.
+                                                static_keys = transaction.message.account_keys
+                                                if any(idx >= len(static_keys) for idx in ix.accounts):
+                                                    continue
                                                 account_keys = [
                                                     str(
                                                         transaction.message.account_keys[
@@ -554,7 +589,7 @@ async def main():
     print(
         f"Buying {amount:.6f} SOL worth of the new token with {slippage * 100:.1f}% slippage tolerance..."
     )
-    print("CU Optimization: Enabled (512KB account data limit)")
+    print("CU Optimization: Enabled (16MB account data limit)")
     await buy_token(
         mint,
         bonding_curve,

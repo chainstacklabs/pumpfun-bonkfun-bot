@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import random
 import struct
 import sys
 
@@ -39,6 +40,20 @@ PUMP_EVENT_AUTHORITY = Pubkey.from_string(
 )
 PUMP_FEE = Pubkey.from_string("CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM")
 PUMP_FEE_PROGRAM = Pubkey.from_string("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ")
+
+# 8 breaking-upgrade fee recipients (pump.fun program upgrade 2026-04-28).
+# One must be appended (mutable) AFTER bonding-curve-v2 on every buy/sell.
+# Doc: github.com/pump-fun/pump-public-docs/blob/main/docs/BREAKING_FEE_RECIPIENT.md
+BREAKING_FEE_RECIPIENTS = [
+    Pubkey.from_string("5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD"),
+    Pubkey.from_string("9M4giFFMxmFGXtc3feFzRai56WbBqehoSeRE5GK7gf7"),
+    Pubkey.from_string("GXPFM2caqTtQYC2cJ5yJRi9VDkpsYZXzYdwYpGnLmtDL"),
+    Pubkey.from_string("3BpXnfJaUTiwXnJNe7Ej1rcbzqTTQUvLShZaWazebsVR"),
+    Pubkey.from_string("5cjcW9wExnJJiqgLjq7DEG75Pm6JBgE1hNv4B2vHXUW6"),
+    Pubkey.from_string("EHAAiTxcdDwQ3U4bU6YcMsQGaekdzLS3B5SmYo46kJtL"),
+    Pubkey.from_string("5eHhjP8JaYkz83CWwvGU2uMUXefd3AazWGx4gpcuEEYD"),
+    Pubkey.from_string("A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW"),
+]
 SYSTEM_PROGRAM = Pubkey.from_string("11111111111111111111111111111111")
 SYSTEM_TOKEN_PROGRAM = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
 SYSTEM_TOKEN_2022_PROGRAM = Pubkey.from_string(
@@ -365,19 +380,11 @@ async def buy_token(
         )
         amount_lamports = int(amount * LAMPORTS_PER_SOL)
 
-        # Fetch bonding curve state to calculate price and determine fee recipient
-        # NOTE: Price calculation is commented out to speed up testing - using fixed values
-        # For production, uncomment the lines below to:
-        # 1. Calculate proper token amounts based on current price
-        # 2. Detect mayhem mode and use correct fee recipient
-        # curve_state = await get_pump_curve_state(client, bonding_curve)
-        # token_price_sol = calculate_pump_curve_price(curve_state)
-        # token_amount = amount / token_price_sol
-        # fee_recipient = await get_fee_recipient(client, curve_state)
-
-        # Testing values - replace with code above for production
-        token_amount = 100  # Fixed token amount
-        fee_recipient = PUMP_FEE  # Standard fee recipient (doesn't detect mayhem mode)
+        # Fetch bonding curve state for price + mayhem-mode-aware fee recipient.
+        curve_state = await get_pump_curve_state(client, bonding_curve)
+        token_price_sol = calculate_pump_curve_price(curve_state)
+        token_amount = amount / token_price_sol
+        fee_recipient = await get_fee_recipient(client, curve_state)
 
         # Calculate maximum SOL to spend with slippage
         max_amount_lamports = int(amount_lamports * (1 + slippage))
@@ -432,6 +439,12 @@ async def buy_token(
                 pubkey=_find_bonding_curve_v2(mint),
                 is_signer=False,
                 is_writable=False,
+            ),
+            # 18th account: breaking-upgrade fee recipient (mutable) — required from 2026-04-28
+            AccountMeta(
+                pubkey=random.choice(BREAKING_FEE_RECIPIENTS),
+                is_signer=False,
+                is_writable=True,
             ),
         ]
 

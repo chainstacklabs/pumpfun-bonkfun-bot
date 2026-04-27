@@ -3,6 +3,7 @@ import base64
 import hashlib
 import json
 import os
+import random
 import struct
 
 import base58
@@ -42,6 +43,20 @@ SYSTEM_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM = Pubkey.from_string(
 )
 SOL = Pubkey.from_string("So11111111111111111111111111111111111111112")
 LAMPORTS_PER_SOL = 1_000_000_000
+
+# 8 breaking-upgrade fee recipients (pump.fun program upgrade 2026-04-28).
+# One must be appended (mutable) AFTER bonding-curve-v2 on every buy/sell.
+# Doc: github.com/pump-fun/pump-public-docs/blob/main/docs/BREAKING_FEE_RECIPIENT.md
+BREAKING_FEE_RECIPIENTS = [
+    Pubkey.from_string("5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD"),
+    Pubkey.from_string("9M4giFFMxmFGXtc3feFzRai56WbBqehoSeRE5GK7gf7"),
+    Pubkey.from_string("GXPFM2caqTtQYC2cJ5yJRi9VDkpsYZXzYdwYpGnLmtDL"),
+    Pubkey.from_string("3BpXnfJaUTiwXnJNe7Ej1rcbzqTTQUvLShZaWazebsVR"),
+    Pubkey.from_string("5cjcW9wExnJJiqgLjq7DEG75Pm6JBgE1hNv4B2vHXUW6"),
+    Pubkey.from_string("EHAAiTxcdDwQ3U4bU6YcMsQGaekdzLS3B5SmYo46kJtL"),
+    Pubkey.from_string("5eHhjP8JaYkz83CWwvGU2uMUXefd3AazWGx4gpcuEEYD"),
+    Pubkey.from_string("A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW"),
+]
 
 # RPC ENDPOINTS
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
@@ -295,6 +310,12 @@ async def buy_token(
                 is_signer=False,
                 is_writable=False,
             ),
+            # 18th account: breaking-upgrade fee recipient (mutable) — required from 2026-04-28
+            AccountMeta(
+                pubkey=random.choice(BREAKING_FEE_RECIPIENTS),
+                is_signer=False,
+                is_writable=True,
+            ),
         ]
 
         discriminator = struct.pack("<Q", 16927863322537952870)
@@ -359,16 +380,24 @@ def decode_create_instruction(ix_data, ix_def, accounts):
     offset = 8  # Skip 8-byte discriminator
 
     for arg in ix_def["args"]:
-        if arg["type"] == "string":
+        t = arg["type"]
+        if t == "string":
             length = struct.unpack_from("<I", ix_data, offset)[0]
             offset += 4
             value = ix_data[offset : offset + length].decode("utf-8")
             offset += length
-        elif arg["type"] == "pubkey":
+        elif t == "pubkey":
             value = base58.b58encode(ix_data[offset : offset + 32]).decode("utf-8")
             offset += 32
+        elif t == "bool":
+            value = bool(ix_data[offset])
+            offset += 1
+        elif isinstance(t, dict) and "defined" in t:
+            # OptionBool = struct { bool } = 1 byte
+            value = bool(ix_data[offset])
+            offset += 1
         else:
-            raise ValueError(f"Unsupported type: {arg['type']}")
+            raise ValueError(f"Unsupported type: {t}")
 
         args[arg["name"]] = value
 
@@ -457,12 +486,14 @@ async def listen_for_create_transaction():
                                                     for instr in idl["instructions"]
                                                     if instr["name"] == instruction_name
                                                 )
+                                                # Skip txs that use Address Lookup Tables — their
+                                                # instruction account indices reference ALT-loaded keys
+                                                # not present in transaction.message.account_keys.
+                                                static_keys = transaction.message.account_keys
+                                                if any(idx >= len(static_keys) for idx in ix.accounts):
+                                                    continue
                                                 account_keys = [
-                                                    str(
-                                                        transaction.message.account_keys[
-                                                            index
-                                                        ]
-                                                    )
+                                                    str(static_keys[index])
                                                     for index in ix.accounts
                                                 ]
                                                 decoded_args = (
