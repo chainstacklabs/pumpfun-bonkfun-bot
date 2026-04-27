@@ -236,6 +236,16 @@ def find_fee_config() -> Pubkey:
     return derived_address
 
 
+def find_pool_v2(base_mint: Pubkey) -> Pubkey:
+    """Derive the PDA for the pool-v2 account (per-base-mint), required as the
+    last "pre-upgrade" account on every pump-swap buy/sell."""
+    derived_address, _ = Pubkey.find_program_address(
+        [b"pool-v2", bytes(base_mint)],
+        PUMP_AMM_PROGRAM_ID,
+    )
+    return derived_address
+
+
 # ============================================================================
 # Mayhem Mode Fee Handling
 # ============================================================================
@@ -506,6 +516,8 @@ async def sell_pump_swap(
         ),
         AccountMeta(pubkey=find_fee_config(), is_signer=False, is_writable=False),
         AccountMeta(pubkey=PUMP_FEE_PROGRAM, is_signer=False, is_writable=False),
+        # pool-v2 PDA (per-base-mint) — the last "pre-upgrade" account.
+        AccountMeta(pubkey=find_pool_v2(base_mint), is_signer=False, is_writable=False),
     ]
     # 2 new accounts required from 2026-04-28 16:00 UTC pump-swap program upgrade,
     # AFTER pool-v2: breaking-upgrade fee recipient (readonly, second-to-last) and
@@ -571,7 +583,7 @@ async def sell_pump_swap(
 
 async def main() -> None:
     """Execute the complete sell flow."""
-    async with AsyncClient(RPC_ENDPOINT) as client:
+    async with AsyncClient(RPC_ENDPOINT, timeout=120) as client:
         # Step 1: Find the pool address for our token
         market_address = await get_market_address_by_base_mint(
             client, TOKEN_MINT, PUMP_AMM_PROGRAM_ID

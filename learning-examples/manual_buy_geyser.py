@@ -344,6 +344,11 @@ async def listen_for_create_transaction_geyser():
             else:
                 continue
 
+            # Skip txs whose create ix references ALT-loaded accounts not in
+            # msg.account_keys (indices >= len(msg.account_keys)).
+            if any(idx >= len(msg.account_keys) for idx in ix.accounts):
+                continue
+
             # Found a create instruction
             token_data = decode_create_instruction_geyser(
                 ix.data, msg.account_keys, ix.accounts
@@ -513,9 +518,9 @@ async def main():
     print("New token created:")
     print(json.dumps(token_data, indent=2))
 
-    # sleep_duration_sec = 15
-    # print(f"Waiting for {sleep_duration_sec} seconds for things to stabilize...")
-    # await asyncio.sleep(sleep_duration_sec)
+    sleep_duration_sec = 15
+    print(f"Waiting {sleep_duration_sec}s for the bonding curve account to propagate...")
+    await asyncio.sleep(sleep_duration_sec)
 
     mint = Pubkey.from_string(token_data["mint"])
     bonding_curve = Pubkey.from_string(token_data["bondingCurve"])
