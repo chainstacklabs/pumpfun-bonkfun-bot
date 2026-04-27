@@ -18,13 +18,15 @@ load_dotenv()
 
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 PUMP_AMM_PROGRAM_ID = Pubkey.from_string("pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA")
-TOKEN_MINT = Pubkey.from_string("...")
+import sys
+
+TOKEN_MINT = Pubkey.from_string(sys.argv[1] if len(sys.argv) > 1 else "...")  # argv[1] or hardcode
 
 
 async def get_market_address_by_base_mint(
     base_mint_address: Pubkey, amm_program_id: Pubkey
 ):
-    async with AsyncClient(RPC_ENDPOINT) as client:
+    async with AsyncClient(RPC_ENDPOINT, timeout=120) as client:
         base_mint_bytes = bytes(base_mint_address)
 
         # Define the offset for base_mint field
@@ -45,7 +47,7 @@ async def get_market_address_by_base_mint(
 
 
 async def get_market_data(market_address: Pubkey):
-    async with AsyncClient(RPC_ENDPOINT) as client:
+    async with AsyncClient(RPC_ENDPOINT, timeout=120) as client:
         response = await client.get_account_info(market_address, encoding="base64")
         data = response.value.data
         parsed_data = {}

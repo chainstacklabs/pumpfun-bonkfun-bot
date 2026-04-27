@@ -21,7 +21,7 @@ load_dotenv()
 
 # Configuration
 WSS_ENDPOINT = os.environ.get("SOLANA_NODE_WSS_ENDPOINT")
-WALLET_TO_TRACK = "..."  # Change this to your target wallet
+WALLET_TO_TRACK = sys.argv[1] if len(sys.argv) > 1 else "..."  # Pass wallet as argv[1] or hardcode
 
 # Pump.fun program constants
 PUMP_BONDING_CURVE_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"

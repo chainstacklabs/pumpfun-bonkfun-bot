@@ -141,7 +141,7 @@ def get_mint_address(data: bytes) -> str:
 
 async def main() -> None:
     """Main entry point for querying and processing bonding curves."""
-    async with AsyncClient(RPC_ENDPOINT, commitment="processed", timeout=120) as client:
+    async with AsyncClient(RPC_ENDPOINT, commitment="processed", timeout=240) as client:
         await client.is_connected()
 
         bonding_curves = await get_bonding_curves_by_reserves(client)
