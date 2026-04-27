@@ -92,27 +92,38 @@ def parse_create_instruction(data):
     Returns:
         Dictionary containing decoded token information, or None if parsing fails
     """
+    return _parse_create_event(data, token_standard_hint="legacy")
+
+
+_CREATE_EVENT_FIELDS = [
+    ("name", "string"),
+    ("symbol", "string"),
+    ("uri", "string"),
+    ("mint", "publicKey"),
+    ("bondingCurve", "publicKey"),
+    ("user", "publicKey"),
+    ("creator", "publicKey"),
+    ("timestamp", "i64"),
+    ("virtual_token_reserves", "u64"),
+    ("virtual_sol_reserves", "u64"),
+    ("real_token_reserves", "u64"),
+    ("token_total_supply", "u64"),
+    ("token_program", "publicKey"),
+    ("is_mayhem_mode", "bool"),
+    ("is_cashback_enabled", "bool"),
+]
+
+
+def _parse_create_event(data, token_standard_hint):
+    """Parse a CreateEvent payload (same on-chain layout for both create and create_v2)."""
     if len(data) < 8:
         print(f"⚠️  Data too short for Create event: {len(data)} bytes")
         return None
-    offset = 8  # Skip event discriminator
+    offset = 8
     parsed_data = {}
-
-    # Parse fields based on CreateEvent structure
-    fields = [
-        ("name", "string"),
-        ("symbol", "string"),
-        ("uri", "string"),
-        ("mint", "publicKey"),
-        ("bondingCurve", "publicKey"),
-        ("user", "publicKey"),
-        ("creator", "publicKey"),
-    ]
-
     try:
-        for field_name, field_type in fields:
+        for field_name, field_type in _CREATE_EVENT_FIELDS:
             if field_type == "string":
-                # String format: 4-byte length prefix + UTF-8 encoded string
                 if offset + 4 > len(data):
                     raise ValueError(f"Not enough data for {field_name} length at offset {offset}")
                 length = struct.unpack("<I", data[offset : offset + 4])[0]
@@ -122,93 +133,33 @@ def parse_create_instruction(data):
                 value = data[offset : offset + length].decode("utf-8")
                 offset += length
             elif field_type == "publicKey":
-                # Pubkey is 32 bytes, encoded as base58
                 if offset + 32 > len(data):
                     raise ValueError(f"Not enough data for {field_name} at offset {offset}")
                 value = base58.b58encode(data[offset : offset + 32]).decode("utf-8")
                 offset += 32
-
+            elif field_type == "u64":
+                value = struct.unpack("<Q", data[offset : offset + 8])[0]
+                offset += 8
+            elif field_type == "i64":
+                value = struct.unpack("<q", data[offset : offset + 8])[0]
+                offset += 8
+            elif field_type == "bool":
+                value = bool(data[offset]) if offset < len(data) else False
+                offset += 1
             parsed_data[field_name] = value
 
-        parsed_data["token_standard"] = "legacy"
-        parsed_data["is_mayhem_mode"] = False
+        parsed_data["token_standard"] = token_standard_hint
         return parsed_data
     except Exception as e:
-        print(f"❌ Parse Create error: {e}")
+        print(f"❌ Parse Create event error: {e}")
         print(f"   Data length: {len(data)} bytes, offset: {offset}")
         print(f"   Data hex: {data.hex()[:200]}...")
         return None
 
 
 def parse_create_v2_instruction(data):
-    """
-    Parse CreateEvent data from CreateV2 instruction (Token2022 tokens).
-
-    CreateV2 uses Token-2022 standard with additional features. The event format
-    is identical to Create, with an additional optional is_mayhem_mode flag at the end.
-
-    Token-2022 Reference:
-    https://spl.solana.com/token-2022
-
-    Args:
-        data: Raw event data bytes from program logs
-
-    Returns:
-        Dictionary containing decoded token information, or None if parsing fails
-    """
-    if len(data) < 8:
-        print(f"⚠️  Data too short for CreateV2 event: {len(data)} bytes")
-        return None
-    offset = 8  # Skip event discriminator
-    parsed_data = {}
-
-    # Parse fields based on CreateV2Event structure
-    fields = [
-        ("name", "string"),
-        ("symbol", "string"),
-        ("uri", "string"),
-        ("mint", "publicKey"),
-        ("bondingCurve", "publicKey"),
-        ("user", "publicKey"),
-        ("creator", "publicKey"),
-    ]
-
-    try:
-        for field_name, field_type in fields:
-            if field_type == "string":
-                # String format: 4-byte length prefix + UTF-8 encoded string
-                if offset + 4 > len(data):
-                    raise ValueError(f"Not enough data for {field_name} length at offset {offset}")
-                length = struct.unpack("<I", data[offset : offset + 4])[0]
-                offset += 4
-                if offset + length > len(data):
-                    raise ValueError(f"Not enough data for {field_name} value (length={length}) at offset {offset}")
-                value = data[offset : offset + length].decode("utf-8")
-                offset += length
-            elif field_type == "publicKey":
-                # Pubkey is 32 bytes, encoded as base58
-                if offset + 32 > len(data):
-                    raise ValueError(f"Not enough data for {field_name} at offset {offset}")
-                value = base58.b58encode(data[offset : offset + 32]).decode("utf-8")
-                offset += 32
-
-            parsed_data[field_name] = value
-
-        # Parse is_mayhem_mode (OptionBool at the end)
-        # Format: 1 byte (0 = false/None, 1 = true)
-        if offset < len(data):
-            is_mayhem_mode = bool(data[offset])
-            parsed_data["is_mayhem_mode"] = is_mayhem_mode
-        else:
-            parsed_data["is_mayhem_mode"] = False
-
-        parsed_data["token_standard"] = "token2022"
-        return parsed_data
-    except Exception as e:
-        print(f"❌ Parse CreateV2 error: {e}")
-        print(f"   Data length: {len(data)} bytes, offset: {offset}")
-        print(f"   Data hex: {data.hex()[:200]}...")
-        return None
+    """Parse CreateEvent emitted by CreateV2 instruction (Token2022 tokens)."""
+    return _parse_create_event(data, token_standard_hint="token2022")
 
 
 async def listen_for_new_tokens():

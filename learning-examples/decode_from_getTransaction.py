@@ -27,8 +27,10 @@ print(json.dumps(tx_data, indent=2))
 
 
 def decode_create_instruction(data):
-    """Decode legacy Create instruction (Metaplex tokens)."""
-    # The Create instruction has 3 string arguments: name, symbol, uri
+    """Decode legacy Create instruction (Metaplex tokens).
+
+    IDL args (March 7, 2026 program upgrade): name, symbol, uri, creator (pubkey).
+    """
     offset = 8  # Skip the 8-byte discriminator
     results = []
     for _ in range(3):
@@ -37,18 +39,25 @@ def decode_create_instruction(data):
         string_data = data[offset : offset + length].decode("utf-8")
         results.append(string_data)
         offset += length
+
+    creator = base58.b58encode(data[offset : offset + 32]).decode("utf-8") if offset + 32 <= len(data) else None
+
     return {
         "name": results[0],
         "symbol": results[1],
         "uri": results[2],
+        "creator": creator,
         "token_standard": "legacy",
         "is_mayhem_mode": False,
     }
 
 
 def decode_create_v2_instruction(data):
-    """Decode CreateV2 instruction (Token2022 tokens)."""
-    # The CreateV2 instruction has 3 string arguments: name, symbol, uri + is_mayhem_mode
+    """Decode CreateV2 instruction (Token2022 tokens).
+
+    IDL args: name, symbol, uri, creator (pubkey), is_mayhem_mode (bool),
+    is_cashback_enabled (OptionBool = 1 byte).
+    """
     offset = 8  # Skip the 8-byte discriminator
     results = []
     for _ in range(3):
@@ -58,20 +67,22 @@ def decode_create_v2_instruction(data):
         results.append(string_data)
         offset += length
 
-    # Skip creator pubkey (32 bytes)
+    creator = base58.b58encode(data[offset : offset + 32]).decode("utf-8") if offset + 32 <= len(data) else None
     offset += 32
 
-    # Parse is_mayhem_mode (OptionBool at the end)
-    is_mayhem_mode = False
-    if offset < len(data):
-        is_mayhem_mode = bool(data[offset])
+    is_mayhem_mode = bool(data[offset]) if offset < len(data) else False
+    offset += 1
+
+    is_cashback_enabled = bool(data[offset]) if offset < len(data) else False
 
     return {
         "name": results[0],
         "symbol": results[1],
         "uri": results[2],
+        "creator": creator,
         "token_standard": "token2022",
         "is_mayhem_mode": is_mayhem_mode,
+        "is_cashback_enabled": is_cashback_enabled,
     }
 
 
@@ -84,7 +95,7 @@ def decode_buy_instruction(data):
 def decode_instruction_data(instruction, accounts, data):
     if instruction["name"] == "create":
         return decode_create_instruction(data)
-    elif instruction["name"] == "createV2":
+    elif instruction["name"] == "create_v2":
         return decode_create_v2_instruction(data)
     elif instruction["name"] == "buy":
         return decode_buy_instruction(data)

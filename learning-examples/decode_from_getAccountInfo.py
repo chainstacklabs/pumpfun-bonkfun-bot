@@ -51,11 +51,19 @@ class BondingCurveState:
 
             if len(data) > offset:
                 self.is_mayhem_mode = bool(data[offset])
+                offset += 1
             else:
                 self.is_mayhem_mode = None
 
+            if len(data) > offset:
+                self.is_cashback_coin = bool(data[offset])
+            else:
+                self.is_cashback_coin = None
+
         else:
             self.creator = None
+            self.is_mayhem_mode = None
+            self.is_cashback_coin = None
 
 
 def calculate_bonding_curve_price(curve_state: BondingCurveState) -> float:

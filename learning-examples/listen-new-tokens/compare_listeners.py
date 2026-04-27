@@ -334,11 +334,16 @@ def decode_create_v2_instruction(ix_data, account_keys):
         parsed_data["uri"] = read_string()
         parsed_data["creator"] = read_pubkey()
 
-        # Parse is_mayhem_mode (OptionBool at the end)
+        # CreateV2 trailing args: is_mayhem_mode (bool, 1B), is_cashback_enabled (OptionBool, 1B)
         if offset < len(ix_data):
             parsed_data["is_mayhem_mode"] = bool(ix_data[offset])
+            offset += 1
         else:
             parsed_data["is_mayhem_mode"] = False
+        if offset < len(ix_data):
+            parsed_data["is_cashback_enabled"] = bool(ix_data[offset])
+        else:
+            parsed_data["is_cashback_enabled"] = False
 
         # Extract accounts from account_keys array
         if len(account_keys) >= 6:
@@ -355,27 +360,33 @@ def decode_create_v2_instruction(ix_data, account_keys):
         return None
 
 
-def parse_create_event(data):
-    """Parse legacy Create event from logs (event data includes all fields)."""
+_CREATE_EVENT_FIELDS = [
+    ("name", "string"),
+    ("symbol", "string"),
+    ("uri", "string"),
+    ("mint", "publicKey"),
+    ("bondingCurve", "publicKey"),
+    ("user", "publicKey"),
+    ("creator", "publicKey"),
+    ("timestamp", "i64"),
+    ("virtual_token_reserves", "u64"),
+    ("virtual_sol_reserves", "u64"),
+    ("real_token_reserves", "u64"),
+    ("token_total_supply", "u64"),
+    ("token_program", "publicKey"),
+    ("is_mayhem_mode", "bool"),
+    ("is_cashback_enabled", "bool"),
+]
+
+
+def _parse_create_event(data, token_standard_hint):
+    """Parse a CreateEvent payload (same on-chain layout for create and create_v2)."""
     if len(data) < 8:
         return None
-
-    offset = 8  # Skip discriminator
+    offset = 8
     parsed_data = {}
-
-    # Parse fields based on CreateEvent structure
-    fields = [
-        ("name", "string"),
-        ("symbol", "string"),
-        ("uri", "string"),
-        ("mint", "publicKey"),
-        ("bondingCurve", "publicKey"),
-        ("user", "publicKey"),
-        ("creator", "publicKey"),
-    ]
-
     try:
-        for field_name, field_type in fields:
+        for field_name, field_type in _CREATE_EVENT_FIELDS:
             if field_type == "string":
                 if offset + 4 > len(data):
                     raise ValueError(f"Not enough data for {field_name} length at offset {offset}")
@@ -390,67 +401,31 @@ def parse_create_event(data):
                     raise ValueError(f"Not enough data for {field_name} at offset {offset}")
                 value = base58.b58encode(data[offset : offset + 32]).decode("utf-8")
                 offset += 32
-
+            elif field_type == "u64":
+                value = struct.unpack("<Q", data[offset : offset + 8])[0]
+                offset += 8
+            elif field_type == "i64":
+                value = struct.unpack("<q", data[offset : offset + 8])[0]
+                offset += 8
+            elif field_type == "bool":
+                value = bool(data[offset]) if offset < len(data) else False
+                offset += 1
             parsed_data[field_name] = value
-
-        parsed_data["token_standard"] = "legacy"
-        parsed_data["is_mayhem_mode"] = False
+        parsed_data["token_standard"] = token_standard_hint
         return parsed_data
     except Exception as e:
         print(f"[ERROR] Failed to parse create event: {e}")
         return None
 
 
+def parse_create_event(data):
+    """Parse CreateEvent emitted by legacy Create instruction."""
+    return _parse_create_event(data, token_standard_hint="legacy")
+
+
 def parse_create_v2_event(data):
-    """Parse CreateV2 event from logs (event data includes all fields)."""
-    if len(data) < 8:
-        return None
-
-    offset = 8  # Skip discriminator
-    parsed_data = {}
-
-    # Parse fields based on CreateV2Event structure
-    fields = [
-        ("name", "string"),
-        ("symbol", "string"),
-        ("uri", "string"),
-        ("mint", "publicKey"),
-        ("bondingCurve", "publicKey"),
-        ("user", "publicKey"),
-        ("creator", "publicKey"),
-    ]
-
-    try:
-        for field_name, field_type in fields:
-            if field_type == "string":
-                if offset + 4 > len(data):
-                    raise ValueError(f"Not enough data for {field_name} length at offset {offset}")
-                length = struct.unpack("<I", data[offset : offset + 4])[0]
-                offset += 4
-                if offset + length > len(data):
-                    raise ValueError(f"Not enough data for {field_name} value (length={length}) at offset {offset}")
-                value = data[offset : offset + length].decode("utf-8")
-                offset += length
-            elif field_type == "publicKey":
-                if offset + 32 > len(data):
-                    raise ValueError(f"Not enough data for {field_name} at offset {offset}")
-                value = base58.b58encode(data[offset : offset + 32]).decode("utf-8")
-                offset += 32
-
-            parsed_data[field_name] = value
-
-        # Parse is_mayhem_mode (OptionBool at the end)
-        if offset < len(data):
-            is_mayhem_mode = bool(data[offset])
-            parsed_data["is_mayhem_mode"] = is_mayhem_mode
-        else:
-            parsed_data["is_mayhem_mode"] = False
-
-        parsed_data["token_standard"] = "token2022"
-        return parsed_data
-    except Exception as e:
-        print(f"[ERROR] Failed to parse create v2 event: {e}")
-        return None
+    """Parse CreateEvent emitted by CreateV2 instruction (Token2022 tokens)."""
+    return _parse_create_event(data, token_standard_hint="token2022")
 
 
 def is_transaction_successful(logs):

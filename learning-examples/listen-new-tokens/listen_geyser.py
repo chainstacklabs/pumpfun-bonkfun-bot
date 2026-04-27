@@ -194,10 +194,14 @@ def decode_create_v2_instruction(ix_data: bytes, keys, accounts) -> dict:
     uri = read_string()
     creator = read_pubkey()
 
-    # Parse is_mayhem_mode (OptionBool at the end)
+    # CreateV2 trailing args: is_mayhem_mode (bool, 1B), is_cashback_enabled (OptionBool, 1B)
     is_mayhem_mode = False
+    is_cashback_enabled = False
     if offset < len(ix_data):
         is_mayhem_mode = bool(ix_data[offset])
+        offset += 1
+    if offset < len(ix_data):
+        is_cashback_enabled = bool(ix_data[offset])
 
     token_info = {
         "name": name,
@@ -210,6 +214,7 @@ def decode_create_v2_instruction(ix_data: bytes, keys, accounts) -> dict:
         "user": get_account_key(5),
         "token_standard": "token2022",
         "is_mayhem_mode": is_mayhem_mode,
+        "is_cashback_enabled": is_cashback_enabled,
     }
 
     return token_info

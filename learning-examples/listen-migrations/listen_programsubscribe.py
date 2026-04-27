@@ -24,7 +24,7 @@ WSS_ENDPOINT = os.environ.get("SOLANA_NODE_WSS_ENDPOINT")
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 PUMP_AMM_PROGRAM_ID = Pubkey.from_string("pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA")
 
-MARKET_ACCOUNT_LENGTH = 8 + 1 + 2 + 32 * 6 + 8 + 32 + 1  # discriminator + pool_bump + index + 6 pubkeys + lp_supply + coin_creator + is_mayhem_mode = 244 bytes
+MARKET_ACCOUNT_LENGTH = 8 + 1 + 2 + 32 * 6 + 8 + 32 + 1 + 1  # disc + pool_bump + index + 6 pubkeys + lp_supply + coin_creator + is_mayhem_mode + is_cashback_coin = 245 bytes
 MARKET_DISCRIMINATOR = base58.b58encode(b"\xf1\x9am\x04\x11\xb1m\xbc").decode()
 QUOTE_MINT_SOL = base58.b58encode(
     bytes(Pubkey.from_string("So11111111111111111111111111111111111111112"))
@@ -77,6 +77,7 @@ def parse_market_account_data(data):
         ("lp_supply", "u64"),
         ("coin_creator", "pubkey"),
         ("is_mayhem_mode", "bool"),
+        ("is_cashback_coin", "bool"),
     ]
 
     try:

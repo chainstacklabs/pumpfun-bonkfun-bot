@@ -41,7 +41,7 @@ QUOTE_MINT_SOL = base58.b58encode(
 ).decode()
 
 MARKET_DISCRIMINATOR = base58.b58encode(b"\xf1\x9am\x04\x11\xb1m\xbc").decode()
-MARKET_ACCOUNT_LENGTH = 8 + 1 + 2 + 32 * 6 + 8 + 32 + 1  # Pool account with is_mayhem_mode = 244 bytes
+MARKET_ACCOUNT_LENGTH = 8 + 1 + 2 + 32 * 6 + 8 + 32 + 1 + 1  # Pool with is_mayhem_mode + is_cashback_coin = 245 bytes
 
 
 class DetectionTracker:
@@ -333,6 +333,7 @@ def parse_market_account_data(data):
         ("lp_supply", "u64"),
         ("coin_creator", "pubkey"),
         ("is_mayhem_mode", "bool"),
+        ("is_cashback_coin", "bool"),
     ]
 
     try:

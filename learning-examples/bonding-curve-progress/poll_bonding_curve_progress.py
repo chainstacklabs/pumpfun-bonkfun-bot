@@ -104,6 +104,12 @@ def parse_curve_state(data: bytes) -> dict:
     else:
         result["is_mayhem_mode"] = False
 
+    # Parse is_cashback_coin if present (added in late-Feb 2026 cashback upgrade)
+    if data_length >= 75:
+        result["is_cashback_coin"] = bool(data[82])
+    else:
+        result["is_cashback_coin"] = False
+
     return result
 
 

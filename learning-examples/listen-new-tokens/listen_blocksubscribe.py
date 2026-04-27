@@ -197,28 +197,33 @@ def decode_create_v2_instruction(ix_data, ix_def, accounts):
     args = {}
     offset = 8  # Skip 8-byte discriminator
 
-    # Parse instruction arguments according to IDL definition
+    # Parse instruction arguments according to IDL definition.
+    # CreateV2 args: name, symbol, uri, creator (pubkey), is_mayhem_mode (bool),
+    # is_cashback_enabled (OptionBool, serialized as 1 byte).
     for arg in ix_def["args"]:
-        if arg["type"] == "string":
-            # String format: 4-byte length prefix + UTF-8 encoded string
+        t = arg["type"]
+        if t == "string":
             length = struct.unpack_from("<I", ix_data, offset)[0]
             offset += 4
             value = ix_data[offset : offset + length].decode("utf-8")
             offset += length
-        elif arg["type"] == "pubkey":
-            # Pubkey is 32 bytes, encoded as base58
+        elif t == "pubkey":
             value = base58.b58encode(ix_data[offset : offset + 32]).decode("utf-8")
             offset += 32
+        elif t == "bool":
+            value = bool(ix_data[offset]) if offset < len(ix_data) else False
+            offset += 1
+        elif isinstance(t, dict) and "defined" in t:
+            defined_name = t["defined"]["name"] if isinstance(t["defined"], dict) else t["defined"]
+            if defined_name == "OptionBool":
+                value = bool(ix_data[offset]) if offset < len(ix_data) else False
+                offset += 1
+            else:
+                raise ValueError(f"Unsupported defined type: {defined_name}")
         else:
-            raise ValueError(f"Unsupported type: {arg['type']}")
+            raise ValueError(f"Unsupported type: {t}")
 
         args[arg["name"]] = value
-
-    # Parse is_mayhem_mode (OptionBool at the end)
-    # Format: 1 byte (0 = false/None, 1 = true)
-    is_mayhem_mode = False
-    if offset < len(ix_data):
-        is_mayhem_mode = bool(ix_data[offset])
 
     # Extract account addresses from the accounts array
     # Account layout for CreateV2 instruction:
@@ -229,7 +234,6 @@ def decode_create_v2_instruction(ix_data, ix_def, accounts):
     args["associatedBondingCurve"] = str(accounts[3])
     args["user"] = str(accounts[5])
     args["token_standard"] = "token2022"
-    args["is_mayhem_mode"] = is_mayhem_mode
 
     return args
 
@@ -338,7 +342,7 @@ async def listen_and_decode_create():
                                                     # CreateV2 instruction (Token2022 tokens)
                                                     create_v2_ix = next(
                                                         (instr for instr in idl["instructions"]
-                                                         if instr["name"] == "createV2"),
+                                                         if instr["name"] == "create_v2"),
                                                         next(instr for instr in idl["instructions"]
                                                              if instr["name"] == "create")
                                                     )

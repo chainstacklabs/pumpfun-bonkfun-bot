@@ -19,23 +19,52 @@ def load_transaction(file_path):
 
 
 def decode_instruction(ix_data, ix_def):
+    """Decode an instruction's args based on its IDL definition.
+
+    Supports the primitive scalar types and the `OptionBool` defined type
+    (added in the late-Feb 2026 cashback upgrade — `OptionBool` is a struct
+    wrapping a single bool, so it serializes as 1 byte on the wire).
+    """
     args = {}
     offset = 8  # Skip 8-byte discriminator
 
     for arg in ix_def["args"]:
-        if arg["type"] == "u64":
+        t = arg["type"]
+        if t == "u64":
             value = struct.unpack_from("<Q", ix_data, offset)[0]
             offset += 8
-        elif arg["type"] == "pubkey":
+        elif t == "i64":
+            value = struct.unpack_from("<q", ix_data, offset)[0]
+            offset += 8
+        elif t == "u32":
+            value = struct.unpack_from("<I", ix_data, offset)[0]
+            offset += 4
+        elif t == "u16":
+            value = struct.unpack_from("<H", ix_data, offset)[0]
+            offset += 2
+        elif t == "u8":
+            value = ix_data[offset]
+            offset += 1
+        elif t == "bool":
+            value = bool(ix_data[offset])
+            offset += 1
+        elif t == "pubkey":
             value = ix_data[offset : offset + 32].hex()
             offset += 32
-        elif arg["type"] == "string":
+        elif t == "string":
             length = struct.unpack_from("<I", ix_data, offset)[0]
             offset += 4
             value = ix_data[offset : offset + length].decode("utf-8")
             offset += length
+        elif isinstance(t, dict) and "defined" in t:
+            defined_name = t["defined"]["name"] if isinstance(t["defined"], dict) else t["defined"]
+            if defined_name == "OptionBool":
+                value = bool(ix_data[offset])
+                offset += 1
+            else:
+                raise ValueError(f"Unsupported defined type: {defined_name}")
         else:
-            raise ValueError(f"Unsupported type: {arg['type']}")
+            raise ValueError(f"Unsupported type: {t}")
 
         args[arg["name"]] = value
 

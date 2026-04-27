@@ -65,6 +65,19 @@ class BondingCurveState:
         "is_mayhem_mode" / Flag,  # Added mayhem mode flag - 1 byte
     )
 
+    # V4: V3 + is_cashback_coin (83 bytes total: 8 discriminator + 75 data) — added in the late-Feb 2026 cashback upgrade
+    _STRUCT_V4 = Struct(
+        "virtual_token_reserves" / Int64ul,
+        "virtual_sol_reserves" / Int64ul,
+        "real_token_reserves" / Int64ul,
+        "real_sol_reserves" / Int64ul,
+        "token_total_supply" / Int64ul,
+        "complete" / Flag,
+        "creator" / Bytes(32),
+        "is_mayhem_mode" / Flag,
+        "is_cashback_coin" / Flag,
+    )
+
     def __init__(self, data: bytes) -> None:
         """Parse bonding curve data."""
         if data[:8] != EXPECTED_DISCRIMINATOR:
@@ -75,14 +88,19 @@ class BondingCurveState:
         if total_length == 81:  # V2: Creator only
             parsed = self._STRUCT_V2.parse(data[8:])
             self.__dict__.update(parsed)
-            # Convert raw bytes to Pubkey for creator field
             self.creator = Pubkey.from_bytes(self.creator)
             self.is_mayhem_mode = False
+            self.is_cashback_coin = False
 
-        elif total_length >= 82:  # V3: Creator + mayhem mode
+        elif total_length == 82:  # V3: Creator + mayhem
             parsed = self._STRUCT_V3.parse(data[8:])
             self.__dict__.update(parsed)
-            # Convert raw bytes to Pubkey for creator field
+            self.creator = Pubkey.from_bytes(self.creator)
+            self.is_cashback_coin = False
+
+        elif total_length >= 83:  # V4: Creator + mayhem + cashback
+            parsed = self._STRUCT_V4.parse(data[8:])
+            self.__dict__.update(parsed)
             self.creator = Pubkey.from_bytes(self.creator)
 
         else:
@@ -161,6 +179,9 @@ async def check_token_status(mint_address: str) -> None:
                 print(f"Creator:             {curve_state.creator}")
                 print(
                     f"Mayhem Mode:         {'✅ Enabled' if curve_state.is_mayhem_mode else '❌ Disabled'}"
+                )
+                print(
+                    f"Cashback Coin:       {'✅ Enabled' if curve_state.is_cashback_coin else '❌ Disabled'}"
                 )
                 print(
                     f"Completed:           {'✅ Migrated' if curve_state.complete else '❌ Bonding curve'}"
