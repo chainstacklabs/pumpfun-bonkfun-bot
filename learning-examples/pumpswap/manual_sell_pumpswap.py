@@ -519,20 +519,20 @@ async def sell_pump_swap(
         # pool-v2 PDA (per-base-mint) — the last "pre-upgrade" account.
         AccountMeta(pubkey=find_pool_v2(base_mint), is_signer=False, is_writable=False),
     ]
-    # 2 new accounts required from 2026-04-28 16:00 UTC pump-swap program upgrade,
-    # AFTER pool-v2: breaking-upgrade fee recipient (readonly, second-to-last) and
-    # its quote-mint ATA (mutable, last). Set to True to opt in.
+    # 2 new accounts required by the 2026-04-28 16:00 UTC pump-swap program upgrade,
+    # appended AFTER pool-v2: breaking-upgrade fee recipient (readonly) and its
+    # quote-mint ATA (mutable). Note the BREAKING_FEE_RECIPIENT.md doc shows
+    # sell counts of 24 (non-cashback) / 26 (cashback) — verify against an
+    # on-chain successful sell after cutover before relying on these counts.
     # Doc: github.com/pump-fun/pump-public-docs/blob/main/docs/BREAKING_FEE_RECIPIENT.md
-    INCLUDE_BREAKING_FEE_ACCOUNTS = False  # flip True after 2026-04-28 16:00 UTC
-    if INCLUDE_BREAKING_FEE_ACCOUNTS:
-        breaking_fee_recipient = random.choice(BREAKING_FEE_RECIPIENTS)
-        breaking_fee_quote_ata = get_associated_token_address(
-            breaking_fee_recipient, SOL, SYSTEM_TOKEN_PROGRAM
-        )
-        accounts.extend([
-            AccountMeta(pubkey=breaking_fee_recipient, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=breaking_fee_quote_ata, is_signer=False, is_writable=True),
-        ])
+    breaking_fee_recipient = random.choice(BREAKING_FEE_RECIPIENTS)
+    breaking_fee_quote_ata = get_associated_token_address(
+        breaking_fee_recipient, SOL, SYSTEM_TOKEN_PROGRAM
+    )
+    accounts.extend([
+        AccountMeta(pubkey=breaking_fee_recipient, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=breaking_fee_quote_ata, is_signer=False, is_writable=True),
+    ])
 
     # Instruction data format: discriminator (8 bytes) + amount (8 bytes) + min_out (8 bytes)
     # All integers are little-endian (<)

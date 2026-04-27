@@ -124,6 +124,22 @@ This helps ensure reliable operation within your node provider's rate limits wit
 
 The IDLs under [`idl/`](idl/) are vendored from [pump-fun/pump-public-docs](https://github.com/pump-fun/pump-public-docs). To refresh, copy `pump.json`, `pump_amm.json`, `pump_fees.json` from that repo into `pump_fun_idl.json`, `pump_swap_idl.json`, `pump_fees.json` respectively, and reference the upstream commit hash in your commit message.
 
+> **The IDL is incomplete.** It doesn't list two PDAs that the on-chain program actually requires:
+> - `bonding-curve-v2` — required on every BC `buy` (18 accounts) and `sell` (16/17 accounts). Seed: `["bonding-curve-v2", mint]` under the pump program.
+> - `pool-v2` — required on every PumpSwap `buy`/`sell`. Seed: `["pool-v2", base_mint]` under the pump-amm program. **Without it, pump-amm throws `AnchorError 6023 (Overflow)` after the trade transfers complete** — a misleading error code for a missing-account issue.
+>
+> Always cross-check your account lists against a recent successful on-chain tx (`getSignaturesForAddress` + `getTransaction`) before trusting the IDL.
+
+## 2026-04-28 program upgrade
+
+Pump.fun shipped a breaking program upgrade on **2026-04-28 16:00 UTC** ([BREAKING_FEE_RECIPIENT.md](https://github.com/pump-fun/pump-public-docs/blob/main/docs/BREAKING_FEE_RECIPIENT.md)). The bot is updated for it:
+
+- BC `buy` ix is now **18 accounts** (was 17). Trailing account is one of 8 `BREAKING_FEE_RECIPIENTS` (mutable), AFTER `bonding-curve-v2`.
+- BC `sell` ix is now **16 accounts non-cashback / 17 cashback** (was 15/16). Same trailing fee recipient.
+- PumpSwap `buy`/`sell` get **+2 accounts** appended after `pool-v2`: a fee recipient (readonly) and its quote-mint ATA (mutable).
+
+The 8 fee recipients are randomized per tx in code (per pump.fun's recommendation to spread program-tx throughput).
+
 ## Changelog
 
 Quick note on a couple on a few new scripts in `/learning-examples`:
