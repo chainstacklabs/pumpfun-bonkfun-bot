@@ -8,6 +8,115 @@
   },
   "instructions": [
     {
+      "name": "claim_social_fee_pda",
+      "discriminator": [
+        225,
+        21,
+        251,
+        133,
+        161,
+        30,
+        199,
+        226
+      ],
+      "accounts": [
+        {
+          "name": "recipient",
+          "writable": true
+        },
+        {
+          "name": "social_fee_pda",
+          "writable": true
+        },
+        {
+          "name": "fee_program_global",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  45,
+                  112,
+                  114,
+                  111,
+                  103,
+                  114,
+                  97,
+                  109,
+                  45,
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "social_claim_authority",
+          "signer": true,
+          "relations": [
+            "fee_program_global"
+          ]
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "user_id",
+          "type": "string"
+        },
+        {
+          "name": "platform",
+          "type": "u8"
+        }
+      ],
+      "returns": {
+        "option": {
+          "defined": {
+            "name": "SocialFeePdaClaimed"
+          }
+        }
+      }
+    },
+    {
       "name": "create_fee_sharing_config",
       "docs": [
         "Create Fee Sharing Config"
@@ -372,6 +481,106 @@
       "args": []
     },
     {
+      "name": "create_social_fee_pda",
+      "discriminator": [
+        144,
+        224,
+        59,
+        211,
+        78,
+        248,
+        202,
+        220
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "social_fee_pda",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "fee_program_global",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  45,
+                  112,
+                  114,
+                  111,
+                  103,
+                  114,
+                  97,
+                  109,
+                  45,
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "user_id",
+          "type": "string"
+        },
+        {
+          "name": "platform",
+          "type": "u8"
+        }
+      ]
+    },
+    {
       "name": "get_fees",
       "docs": [
         "Get Fees"
@@ -529,9 +738,168 @@
       "args": []
     },
     {
+      "name": "initialize_fee_program_global",
+      "discriminator": [
+        35,
+        215,
+        130,
+        84,
+        233,
+        56,
+        124,
+        167
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "pump_global"
+          ]
+        },
+        {
+          "name": "pump_global",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                1,
+                86,
+                224,
+                246,
+                147,
+                102,
+                90,
+                207,
+                68,
+                219,
+                21,
+                104,
+                191,
+                23,
+                91,
+                170,
+                81,
+                137,
+                203,
+                151,
+                245,
+                210,
+                255,
+                59,
+                101,
+                93,
+                43,
+                182,
+                253,
+                109,
+                24,
+                176
+              ]
+            }
+          }
+        },
+        {
+          "name": "fee_program_global",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  45,
+                  112,
+                  114,
+                  111,
+                  103,
+                  114,
+                  97,
+                  109,
+                  45,
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "social_claim_authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "disable_flags",
+          "type": "u8"
+        },
+        {
+          "name": "claim_rate_limit",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "reset_fee_sharing_config",
       "docs": [
-        "Reset Fee Sharing Config, make sure to distribute all the fees before calling this"
+        "Reset Fee Sharing Config and distribute pending fees first"
       ],
       "discriminator": [
         10,
@@ -544,6 +912,42 @@
         186
       ],
       "accounts": [
+        {
+          "name": "new_admin"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "address": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
+        },
         {
           "name": "authority",
           "signer": true
@@ -604,9 +1008,6 @@
           }
         },
         {
-          "name": "new_admin"
-        },
-        {
           "name": "mint",
           "relations": [
             "sharing_config"
@@ -644,7 +1045,148 @@
           }
         },
         {
-          "name": "event_authority",
+          "name": "bonding_curve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  111,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  45,
+                  99,
+                  117,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                1,
+                86,
+                224,
+                246,
+                147,
+                102,
+                90,
+                207,
+                68,
+                219,
+                21,
+                104,
+                191,
+                23,
+                91,
+                170,
+                81,
+                137,
+                203,
+                151,
+                245,
+                210,
+                255,
+                59,
+                101,
+                93,
+                43,
+                182,
+                253,
+                109,
+                24,
+                176
+              ]
+            }
+          }
+        },
+        {
+          "name": "pump_creator_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  97,
+                  116,
+                  111,
+                  114,
+                  45,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "sharing_config"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                1,
+                86,
+                224,
+                246,
+                147,
+                102,
+                90,
+                207,
+                68,
+                219,
+                21,
+                104,
+                191,
+                23,
+                91,
+                170,
+                81,
+                137,
+                203,
+                151,
+                245,
+                210,
+                255,
+                59,
+                101,
+                93,
+                43,
+                182,
+                253,
+                109,
+                24,
+                176
+              ]
+            }
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "pump_program",
+          "address": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+        },
+        {
+          "name": "pump_event_authority",
           "pda": {
             "seeds": [
               {
@@ -669,11 +1211,198 @@
                   121
                 ]
               }
-            ]
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                1,
+                86,
+                224,
+                246,
+                147,
+                102,
+                90,
+                207,
+                68,
+                219,
+                21,
+                104,
+                191,
+                23,
+                91,
+                170,
+                81,
+                137,
+                203,
+                151,
+                245,
+                210,
+                255,
+                59,
+                101,
+                93,
+                43,
+                182,
+                253,
+                109,
+                24,
+                176
+              ]
+            }
           }
         },
         {
-          "name": "program"
+          "name": "pump_amm_program",
+          "address": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+        },
+        {
+          "name": "amm_event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                12,
+                20,
+                222,
+                252,
+                130,
+                94,
+                198,
+                118,
+                148,
+                37,
+                8,
+                24,
+                187,
+                101,
+                64,
+                101,
+                244,
+                41,
+                141,
+                49,
+                86,
+                213,
+                113,
+                180,
+                212,
+                248,
+                9,
+                12,
+                24,
+                233,
+                168,
+                99
+              ]
+            }
+          }
+        },
+        {
+          "name": "wsol_mint",
+          "address": "So11111111111111111111111111111111111111112"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "coin_creator_vault_authority",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  97,
+                  116,
+                  111,
+                  114,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "sharing_config"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                12,
+                20,
+                222,
+                252,
+                130,
+                94,
+                198,
+                118,
+                148,
+                37,
+                8,
+                24,
+                187,
+                101,
+                64,
+                101,
+                244,
+                41,
+                141,
+                49,
+                86,
+                213,
+                113,
+                180,
+                212,
+                248,
+                9,
+                12,
+                24,
+                233,
+                168,
+                99
+              ]
+            }
+          }
+        },
+        {
+          "name": "coin_creator_vault_ata",
+          "writable": true
         }
       ],
       "args": []
@@ -693,18 +1422,50 @@
         58,
         104
       ],
+      "accounts": [],
+      "args": []
+    },
+    {
+      "name": "set_authority",
+      "discriminator": [
+        133,
+        250,
+        37,
+        21,
+        110,
+        163,
+        26,
+        121
+      ],
       "accounts": [
         {
           "name": "authority",
-          "signer": true
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "fee_program_global"
+          ]
         },
         {
-          "name": "global",
+          "name": "fee_program_global",
+          "writable": true,
           "pda": {
             "seeds": [
               {
                 "kind": "const",
                 "value": [
+                  102,
+                  101,
+                  101,
+                  45,
+                  112,
+                  114,
+                  111,
+                  103,
+                  114,
+                  97,
+                  109,
+                  45,
                   103,
                   108,
                   111,
@@ -712,80 +1473,6 @@
                   97,
                   108
                 ]
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                1,
-                86,
-                224,
-                246,
-                147,
-                102,
-                90,
-                207,
-                68,
-                219,
-                21,
-                104,
-                191,
-                23,
-                91,
-                170,
-                81,
-                137,
-                203,
-                151,
-                245,
-                210,
-                255,
-                59,
-                101,
-                93,
-                43,
-                182,
-                253,
-                109,
-                24,
-                176
-              ]
-            }
-          }
-        },
-        {
-          "name": "mint",
-          "relations": [
-            "sharing_config"
-          ]
-        },
-        {
-          "name": "sharing_config",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  115,
-                  104,
-                  97,
-                  114,
-                  105,
-                  110,
-                  103,
-                  45,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "mint"
               }
             ]
           }
@@ -823,7 +1510,288 @@
           "name": "program"
         }
       ],
-      "args": []
+      "args": [
+        {
+          "name": "new_authority",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "set_claim_rate_limit",
+      "discriminator": [
+        185,
+        211,
+        159,
+        174,
+        212,
+        49,
+        88,
+        4
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "fee_program_global"
+          ]
+        },
+        {
+          "name": "fee_program_global",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  45,
+                  112,
+                  114,
+                  111,
+                  103,
+                  114,
+                  97,
+                  109,
+                  45,
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "claim_rate_limit",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "set_disable_flags",
+      "discriminator": [
+        194,
+        217,
+        112,
+        35,
+        114,
+        222,
+        51,
+        190
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "fee_program_global"
+          ]
+        },
+        {
+          "name": "fee_program_global",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  45,
+                  112,
+                  114,
+                  111,
+                  103,
+                  114,
+                  97,
+                  109,
+                  45,
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "disable_flags",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "set_social_claim_authority",
+      "discriminator": [
+        147,
+        54,
+        184,
+        154,
+        136,
+        237,
+        185,
+        153
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "fee_program_global"
+          ]
+        },
+        {
+          "name": "fee_program_global",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  45,
+                  112,
+                  114,
+                  111,
+                  103,
+                  114,
+                  97,
+                  109,
+                  45,
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "social_claim_authority",
+          "type": "pubkey"
+        }
+      ]
     },
     {
       "name": "transfer_fee_sharing_authority",
@@ -840,139 +1808,7 @@
         210,
         96
       ],
-      "accounts": [
-        {
-          "name": "authority",
-          "signer": true
-        },
-        {
-          "name": "global",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108
-                ]
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                1,
-                86,
-                224,
-                246,
-                147,
-                102,
-                90,
-                207,
-                68,
-                219,
-                21,
-                104,
-                191,
-                23,
-                91,
-                170,
-                81,
-                137,
-                203,
-                151,
-                245,
-                210,
-                255,
-                59,
-                101,
-                93,
-                43,
-                182,
-                253,
-                109,
-                24,
-                176
-              ]
-            }
-          }
-        },
-        {
-          "name": "mint",
-          "relations": [
-            "sharing_config"
-          ]
-        },
-        {
-          "name": "sharing_config",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  115,
-                  104,
-                  97,
-                  114,
-                  105,
-                  110,
-                  103,
-                  45,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "mint"
-              }
-            ]
-          }
-        },
-        {
-          "name": "new_admin"
-        },
-        {
-          "name": "event_authority",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "program"
-        }
-      ],
+      "accounts": [],
       "args": []
     },
     {
@@ -1824,6 +2660,19 @@
       ]
     },
     {
+      "name": "FeeProgramGlobal",
+      "discriminator": [
+        162,
+        165,
+        245,
+        49,
+        29,
+        37,
+        55,
+        242
+      ]
+    },
+    {
       "name": "Global",
       "discriminator": [
         167,
@@ -1861,6 +2710,19 @@
         93,
         75
       ]
+    },
+    {
+      "name": "SocialFeePda",
+      "discriminator": [
+        139,
+        96,
+        53,
+        17,
+        42,
+        169,
+        206,
+        150
+      ]
     }
   ],
   "events": [
@@ -1891,6 +2753,19 @@
       ]
     },
     {
+      "name": "InitializeFeeProgramGlobalEvent",
+      "discriminator": [
+        40,
+        233,
+        156,
+        78,
+        95,
+        0,
+        8,
+        199
+      ]
+    },
+    {
       "name": "ResetFeeSharingConfigEvent",
       "discriminator": [
         203,
@@ -1904,29 +2779,81 @@
       ]
     },
     {
-      "name": "RevokeFeeSharingAuthorityEvent",
+      "name": "SetAuthorityEvent",
       "discriminator": [
-        114,
-        23,
-        101,
-        60,
-        14,
-        190,
-        153,
-        62
+        18,
+        175,
+        132,
+        66,
+        208,
+        201,
+        87,
+        242
       ]
     },
     {
-      "name": "TransferFeeSharingAuthorityEvent",
+      "name": "SetClaimRateLimitEvent",
       "discriminator": [
-        124,
+        13,
         143,
-        198,
-        245,
-        77,
-        184,
+        143,
+        235,
+        181,
+        19,
+        51,
+        40
+      ]
+    },
+    {
+      "name": "SetDisableFlagsEvent",
+      "discriminator": [
+        5,
         8,
+        179,
+        65,
+        49,
+        55,
+        145,
+        126
+      ]
+    },
+    {
+      "name": "SetSocialClaimAuthorityEvent",
+      "discriminator": [
+        60,
+        118,
+        127,
+        132,
+        239,
+        52,
+        254,
+        14
+      ]
+    },
+    {
+      "name": "SocialFeePdaClaimed",
+      "discriminator": [
+        50,
+        18,
+        193,
+        65,
+        237,
+        210,
+        234,
         236
+      ]
+    },
+    {
+      "name": "SocialFeePdaCreated",
+      "discriminator": [
+        183,
+        183,
+        218,
+        147,
+        24,
+        124,
+        137,
+        169
       ]
     },
     {
@@ -2031,7 +2958,7 @@
     {
       "code": 6009,
       "name": "SharingConfigAdminRevoked",
-      "msg": "Sharing config admin has been revoked"
+      "msg": "Sharing config authority has been revoked - sharing config can only be updated once"
     },
     {
       "code": 6010,
@@ -2087,6 +3014,26 @@
       "code": 6020,
       "name": "ShareholderAccountMismatch",
       "msg": "Remaining account key doesn't match shareholder address"
+    },
+    {
+      "code": 6021,
+      "name": "FeatureDeactivated",
+      "msg": "Feature is currently deactivated"
+    },
+    {
+      "code": 6022,
+      "name": "UserIdTooLong",
+      "msg": "User ID exceeds maximum length"
+    },
+    {
+      "code": 6023,
+      "name": "DeprecatedInstruction",
+      "msg": "Instruction is deprecated"
+    },
+    {
+      "code": 6024,
+      "name": "FeeSharesAlreadyUpdated",
+      "msg": "Reward split can only be updated once"
     }
   ],
   "types": [
@@ -2237,6 +3184,43 @@
                   "name": "FeeTier"
                 }
               }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeeProgramGlobal",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "disable_flags",
+            "type": "u8"
+          },
+          {
+            "name": "social_claim_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "claim_rate_limit",
+            "type": "u64"
+          },
+          {
+            "name": "_reserved",
+            "type": {
+              "array": [
+                "u8",
+                256
+              ]
             }
           }
         ]
@@ -2401,6 +3385,34 @@
       }
     },
     {
+      "name": "InitializeFeeProgramGlobalEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "social_claim_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "disable_flags",
+            "type": "u8"
+          },
+          {
+            "name": "claim_rate_limit",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
       "name": "Pool",
       "type": {
         "kind": "struct",
@@ -2496,12 +3508,20 @@
                 }
               }
             }
+          },
+          {
+            "name": "old_version",
+            "type": "u8"
+          },
+          {
+            "name": "new_version",
+            "type": "u8"
           }
         ]
       }
     },
     {
-      "name": "RevokeFeeSharingAuthorityEvent",
+      "name": "SetAuthorityEvent",
       "type": {
         "kind": "struct",
         "fields": [
@@ -2510,15 +3530,59 @@
             "type": "i64"
           },
           {
-            "name": "mint",
+            "name": "old_authority",
             "type": "pubkey"
           },
           {
-            "name": "sharing_config",
+            "name": "new_authority",
             "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SetClaimRateLimitEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
           },
           {
-            "name": "admin",
+            "name": "claim_rate_limit",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SetDisableFlagsEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "disable_flags",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SetSocialClaimAuthorityEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "social_claim_authority",
             "type": "pubkey"
           }
         ]
@@ -2587,7 +3651,55 @@
       }
     },
     {
-      "name": "TransferFeeSharingAuthorityEvent",
+      "name": "SocialFeePda",
+      "docs": [
+        "Platform identifier: 0=pump, 1=twitter, etc."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "user_id",
+            "docs": [
+              "Max 20 characters to fit u64::MAX (18,446,744,073,709,551,615) as a string.",
+              "Actual storage: 4 bytes (length prefix) + 20 bytes (content) = 24 bytes."
+            ],
+            "type": "string"
+          },
+          {
+            "name": "platform",
+            "type": "u8"
+          },
+          {
+            "name": "total_claimed",
+            "type": "u64"
+          },
+          {
+            "name": "last_claimed",
+            "type": "u64"
+          },
+          {
+            "name": "_reserved",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "SocialFeePdaClaimed",
       "type": {
         "kind": "struct",
         "fields": [
@@ -2596,19 +3708,71 @@
             "type": "i64"
           },
           {
-            "name": "mint",
+            "name": "user_id",
+            "type": "string"
+          },
+          {
+            "name": "platform",
+            "type": "u8"
+          },
+          {
+            "name": "social_fee_pda",
             "type": "pubkey"
           },
           {
-            "name": "sharing_config",
+            "name": "recipient",
             "type": "pubkey"
           },
           {
-            "name": "old_admin",
+            "name": "social_claim_authority",
             "type": "pubkey"
           },
           {
-            "name": "new_admin",
+            "name": "amount_claimed",
+            "type": "u64"
+          },
+          {
+            "name": "claimable_before",
+            "type": "u64"
+          },
+          {
+            "name": "lifetime_claimed",
+            "type": "u64"
+          },
+          {
+            "name": "recipient_balance_before",
+            "type": "u64"
+          },
+          {
+            "name": "recipient_balance_after",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SocialFeePdaCreated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "user_id",
+            "type": "string"
+          },
+          {
+            "name": "platform",
+            "type": "u8"
+          },
+          {
+            "name": "social_fee_pda",
+            "type": "pubkey"
+          },
+          {
+            "name": "created_by",
             "type": "pubkey"
           }
         ]
@@ -2702,6 +3866,10 @@
                 }
               }
             }
+          },
+          {
+            "name": "version",
+            "type": "u8"
           }
         ]
       }
@@ -2743,9 +3911,52 @@
   ],
   "constants": [
     {
+      "name": "AMM_CREATOR_VAULT_AUTHORITY_SEED",
+      "type": {
+        "array": [
+          "u8",
+          13
+        ]
+      },
+      "value": "[99, 114, 101, 97, 116, 111, 114, 95, 118, 97, 117, 108, 116]"
+    },
+    {
       "name": "FEE_CONFIG_SEED",
       "type": "bytes",
       "value": "[102, 101, 101, 95, 99, 111, 110, 102, 105, 103]"
+    },
+    {
+      "name": "FEE_PROGRAM_GLOBAL_SEED",
+      "type": {
+        "array": [
+          "u8",
+          18
+        ]
+      },
+      "value": "[102, 101, 101, 45, 112, 114, 111, 103, 114, 97, 109, 45, 103, 108, 111, 98, 97, 108]"
+    },
+    {
+      "name": "PUMP_CREATOR_VAULT_SEED",
+      "type": {
+        "array": [
+          "u8",
+          13
+        ]
+      },
+      "value": "[99, 114, 101, 97, 116, 111, 114, 45, 118, 97, 117, 108, 116]"
+    },
+    {
+      "name": "PUMP_GLOBAL_SEED",
+      "docs": [
+        "Bonding Curve Program Global Seed"
+      ],
+      "type": {
+        "array": [
+          "u8",
+          6
+        ]
+      },
+      "value": "[103, 108, 111, 98, 97, 108]"
     },
     {
       "name": "SHARING_CONFIG_SEED",
@@ -2756,6 +3967,16 @@
         ]
       },
       "value": "[115, 104, 97, 114, 105, 110, 103, 45, 99, 111, 110, 102, 105, 103]"
+    },
+    {
+      "name": "SOCIAL_FEE_PDA_SEED",
+      "type": {
+        "array": [
+          "u8",
+          14
+        ]
+      },
+      "value": "[115, 111, 99, 105, 97, 108, 45, 102, 101, 101, 45, 112, 100, 97]"
     }
   ]
 }
