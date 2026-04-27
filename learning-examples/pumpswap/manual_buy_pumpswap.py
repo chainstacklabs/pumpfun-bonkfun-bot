@@ -15,6 +15,7 @@ Key concepts demonstrated:
 
 import asyncio
 import os
+import random
 import struct
 
 import base58
@@ -43,7 +44,9 @@ load_dotenv()
 # ============================================================================
 
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
-TOKEN_MINT = Pubkey.from_string("...")  # Replace with your token mint address
+import sys
+
+TOKEN_MINT = Pubkey.from_string(sys.argv[1] if len(sys.argv) > 1 else "...")  # Pass mint as argv[1]
 PRIVATE_KEY = base58.b58decode(os.environ.get("SOLANA_PRIVATE_KEY"))
 PAYER = Keypair.from_bytes(PRIVATE_KEY)
 SLIPPAGE = 0.3  # 30% - maximum acceptable price movement during trade
@@ -73,6 +76,21 @@ PUMP_SWAP_EVENT_AUTHORITY = Pubkey.from_string(
     "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR"
 )
 PUMP_FEE_PROGRAM = Pubkey.from_string("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ")
+
+# 8 breaking-upgrade fee recipients (pump-swap program upgrade 2026-04-28).
+# Two new accounts must be appended after pool-v2: the fee recipient (readonly)
+# and its quote-mint ATA (mutable).
+# Doc: github.com/pump-fun/pump-public-docs/blob/main/docs/BREAKING_FEE_RECIPIENT.md
+BREAKING_FEE_RECIPIENTS = [
+    Pubkey.from_string("5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD"),
+    Pubkey.from_string("9M4giFFMxmFGXtc3feFzRai56WbBqehoSeRE5GK7gf7"),
+    Pubkey.from_string("GXPFM2caqTtQYC2cJ5yJRi9VDkpsYZXzYdwYpGnLmtDL"),
+    Pubkey.from_string("3BpXnfJaUTiwXnJNe7Ej1rcbzqTTQUvLShZaWazebsVR"),
+    Pubkey.from_string("5cjcW9wExnJJiqgLjq7DEG75Pm6JBgE1hNv4B2vHXUW6"),
+    Pubkey.from_string("EHAAiTxcdDwQ3U4bU6YcMsQGaekdzLS3B5SmYo46kJtL"),
+    Pubkey.from_string("5eHhjP8JaYkz83CWwvGU2uMUXefd3AazWGx4gpcuEEYD"),
+    Pubkey.from_string("A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW"),
+]
 
 # ============================================================================
 # Constants for Account Structure Parsing
@@ -501,6 +519,20 @@ async def buy_pump_swap(
         AccountMeta(pubkey=find_fee_config(), is_signer=False, is_writable=False),
         AccountMeta(pubkey=PUMP_FEE_PROGRAM, is_signer=False, is_writable=False),
     ]
+    # 2 new accounts required from 2026-04-28 16:00 UTC pump-swap program upgrade,
+    # AFTER pool-v2: breaking-upgrade fee recipient (readonly, second-to-last) and
+    # its quote-mint ATA (mutable, last). Set to True to opt in.
+    # Doc: github.com/pump-fun/pump-public-docs/blob/main/docs/BREAKING_FEE_RECIPIENT.md
+    INCLUDE_BREAKING_FEE_ACCOUNTS = False  # flip True after 2026-04-28 16:00 UTC
+    if INCLUDE_BREAKING_FEE_ACCOUNTS:
+        breaking_fee_recipient = random.choice(BREAKING_FEE_RECIPIENTS)
+        breaking_fee_quote_ata = get_associated_token_address(
+            breaking_fee_recipient, SOL, SYSTEM_TOKEN_PROGRAM
+        )
+        accounts.extend([
+            AccountMeta(pubkey=breaking_fee_recipient, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=breaking_fee_quote_ata, is_signer=False, is_writable=True),
+        ])
 
     # Instruction data format:
     # discriminator (8 bytes) + amount_out (8 bytes) + max_in (8 bytes) + track_volume (1 byte)
@@ -576,6 +608,12 @@ async def buy_pump_swap(
     simulation = await client.simulate_transaction(tx)
     if simulation.value.err:
         print(f"Simulation error: {simulation.value.err}")
+        for log in (simulation.value.logs or []):
+            print(f"  log: {log}")
+        # NOTE: pump-swap may throw AnchorError 6023 (Overflow) at buy.rs:400 on
+        # the dynamic creator-fee calc for some pools. The script's account list
+        # matches the IDL — the error is from the program itself, likely related
+        # to the 2026-03 dynamic-fee overhaul. Pending investigation.
         return None
 
     print(
