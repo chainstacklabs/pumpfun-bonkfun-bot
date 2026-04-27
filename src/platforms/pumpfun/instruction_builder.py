@@ -149,6 +149,12 @@ class PumpFunInstructionBuilder(InstructionBuilder):
                 is_signer=False,
                 is_writable=False,
             ),
+            # 18th account: breaking-upgrade fee recipient (mutable) — required from 2026-04-28
+            AccountMeta(
+                pubkey=accounts_info["breaking_fee_recipient"],
+                is_signer=False,
+                is_writable=True,
+            ),
         ]
 
         # Build instruction data: discriminator + token_amount + max_sol_cost + track_volume
@@ -271,6 +277,14 @@ class PumpFunInstructionBuilder(InstructionBuilder):
                 is_writable=False,
             )
         )
+        # 16/17th account: breaking-upgrade fee recipient (mutable) — required from 2026-04-28
+        sell_accounts.append(
+            AccountMeta(
+                pubkey=accounts_info["breaking_fee_recipient"],
+                is_signer=False,
+                is_writable=True,
+            )
+        )
 
         # Build instruction data: discriminator + token_amount + min_sol_output + track_volume
         # Encode OptionBool for track_volume: [1, 1] = Some(true)
@@ -319,6 +333,7 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             accounts_info["fee_config"],
             accounts_info["fee_program"],
             accounts_info["bonding_curve_v2"],
+            accounts_info["breaking_fee_recipient"],
         ]
 
     def get_required_accounts_for_sell(
@@ -347,6 +362,7 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             accounts_info["fee_config"],
             accounts_info["fee_program"],
             accounts_info["bonding_curve_v2"],
+            accounts_info["breaking_fee_recipient"],
         ]
 
     def calculate_token_amount_raw(self, token_amount_decimal: float) -> int:
