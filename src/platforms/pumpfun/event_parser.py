@@ -477,6 +477,22 @@ class PumpFunEventParser(EventParser):
                 if not isinstance(tx, dict) or "transaction" not in tx:
                     continue
 
+                # Prefer parsing the CreateEvent from logs — args.creator on the
+                # ix is user-supplied and post-2026-04-28 may differ from the
+                # canonical BC.creator (which the program writes as a PFEE PDA
+                # in some cases). The CreateEvent log carries the canonical
+                # creator, so creator_vault derived from it matches the program
+                # constraint.
+                meta = tx.get("meta")
+                if isinstance(meta, dict):
+                    logs = meta.get("logMessages") or meta.get("log_messages")
+                    if logs:
+                        token_info = self.parse_token_creation_from_logs(
+                            logs, signature=""
+                        )
+                        if token_info:
+                            return token_info
+
                 # Decode base64 transaction data if needed
                 tx_data = tx["transaction"]
                 if isinstance(tx_data, list) and len(tx_data) > 0:

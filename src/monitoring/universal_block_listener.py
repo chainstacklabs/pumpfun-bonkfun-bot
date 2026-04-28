@@ -258,6 +258,12 @@ class UniversalBlockListener(BaseTokenListener):
             if not isinstance(tx, dict) or "transaction" not in tx:
                 continue
 
+            # Skip failed txs — sniping a failed create yields a non-existent
+            # mint and the buy-side tx then fails with InvalidMint.
+            meta = tx.get("meta")
+            if isinstance(meta, dict) and meta.get("err") is not None:
+                continue
+
             tx_data = tx["transaction"]
 
             # Handle base64 encoded transaction data
