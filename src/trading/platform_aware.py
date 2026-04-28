@@ -325,6 +325,24 @@ class PlatformAwareSeller(Trader):
                 token_info.is_cashback_coin = pool_state.get(
                     "is_cashback_coin", token_info.is_cashback_coin
                 )
+                # Refresh creator/creator_vault from current BC state. Post
+                # 2026-04-28 the program may delegate BC.creator to a PFEE-owned
+                # PDA after the initial creator buy, so the create-time vault
+                # cached on token_info goes stale before the sell lands. Failing
+                # to refresh manifests as ConstraintSeeds (0x7d6) on Sell.
+                fresh_creator = pool_state.get("creator")
+                if fresh_creator:
+                    from solders.pubkey import Pubkey as _Pubkey
+
+                    new_creator = (
+                        _Pubkey.from_string(fresh_creator)
+                        if isinstance(fresh_creator, str)
+                        else fresh_creator
+                    )
+                    token_info.creator = new_creator
+                    token_info.creator_vault = address_provider.derive_creator_vault(
+                        new_creator
+                    )
             except Exception as e:  # noqa: BLE001
                 logger.warning(
                     f"Could not refresh curve flags before sell ({e}); "
