@@ -136,7 +136,7 @@ Pump.fun shipped a breaking program upgrade on **2026-04-28 16:00 UTC** ([BREAKI
 
 - BC `buy` ix is now **18 accounts** (was 17). Trailing account is one of 8 `BREAKING_FEE_RECIPIENTS` (mutable), AFTER `bonding-curve-v2`.
 - BC `sell` ix is now **16 accounts non-cashback / 17 cashback** (was 15/16). Same trailing fee recipient.
-- PumpSwap `buy`/`sell` get **+2 accounts** appended after `pool-v2`: a fee recipient (readonly) and its quote-mint ATA (mutable).
+- PumpSwap `buy`/`sell` get **+2 accounts** appended after `pool-v2`: a fee recipient (readonly) and its quote-mint ATA (mutable). Counts: buy = 26 non-cashback / 27 cashback; sell = 24 / 26. Cashback pools insert `user_volume_accumulator_quote_ata` (writable) BEFORE `pool-v2` on buys; sells insert both that ATA and `user_volume_accumulator` (both writable) BEFORE `pool-v2`. Detect cashback via pool data byte 244.
 
 The 8 fee recipients are randomized per tx in code (per pump.fun's recommendation to spread program-tx throughput).
 

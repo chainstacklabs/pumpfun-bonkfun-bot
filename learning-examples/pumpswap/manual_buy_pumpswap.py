@@ -100,6 +100,7 @@ BREAKING_FEE_RECIPIENTS = [
 POOL_DISCRIMINATOR_SIZE = 8
 POOL_BASE_MINT_OFFSET = 43  # Where base_mint field starts in pool account data
 POOL_MAYHEM_MODE_OFFSET = 243  # Where is_mayhem_mode flag is stored
+POOL_IS_CASHBACK_OFFSET = 244  # Where is_cashback_coin flag is stored
 POOL_MAYHEM_MODE_MIN_SIZE = 244  # Minimum size for pool data with mayhem flag
 
 # GlobalConfig structure offsets
@@ -326,18 +327,11 @@ async def get_reserved_fee_recipient_pumpswap(client: AsyncClient) -> Pubkey:
 
 async def get_pumpswap_fee_recipients(
     client: AsyncClient, pool: Pubkey
-) -> tuple[Pubkey, Pubkey]:
-    """Determine the correct fee recipient based on pool's mayhem mode status.
-
-    This function checks if mayhem mode is enabled for the pool and returns
-    the appropriate fee recipient and their WSOL token account.
-
-    Args:
-        client: Solana RPC client
-        pool: Address of the AMM pool
+) -> tuple[Pubkey, Pubkey, bool]:
+    """Determine the correct fee recipient and whether the pool is cashback.
 
     Returns:
-        Tuple of (fee_recipient_pubkey, fee_recipient_token_account)
+        Tuple of (fee_recipient_pubkey, fee_recipient_token_account, is_cashback)
     """
     response = await client.get_account_info(pool, encoding="base64")
     if not response.value or not response.value.data:
@@ -346,23 +340,23 @@ async def get_pumpswap_fee_recipients(
 
     pool_data = response.value.data
 
-    # Check if mayhem mode flag exists and is enabled
     is_mayhem_mode = len(pool_data) >= POOL_MAYHEM_MODE_MIN_SIZE and bool(
         pool_data[POOL_MAYHEM_MODE_OFFSET]
     )
+    is_cashback = len(pool_data) > POOL_IS_CASHBACK_OFFSET and bool(
+        pool_data[POOL_IS_CASHBACK_OFFSET]
+    )
 
-    # Select appropriate fee recipient
     if is_mayhem_mode:
         fee_recipient = await get_reserved_fee_recipient_pumpswap(client)
     else:
         fee_recipient = STANDARD_PUMPSWAP_FEE_RECIPIENT
 
-    # Get the fee recipient's WSOL token account
     fee_recipient_token_account = get_associated_token_address(
         fee_recipient, SOL, SYSTEM_TOKEN_PROGRAM
     )
 
-    return (fee_recipient, fee_recipient_token_account)
+    return (fee_recipient, fee_recipient_token_account, is_cashback)
 
 
 # ============================================================================
@@ -483,9 +477,16 @@ async def buy_pump_swap(
     global_volume_accumulator = find_global_volume_accumulator()
     user_volume_accumulator = find_user_volume_accumulator(payer.pubkey())
 
-    # Get fee recipient based on mayhem mode
-    fee_recipient, fee_recipient_token_account = await get_pumpswap_fee_recipients(
-        client, market
+    # Get fee recipient based on mayhem mode + detect cashback pool
+    (
+        fee_recipient,
+        fee_recipient_token_account,
+        is_cashback,
+    ) = await get_pumpswap_fee_recipients(client, market)
+
+    # WSOL ATA of user_volume_accumulator — only required for cashback pools.
+    user_volume_accumulator_quote_ata = get_associated_token_address(
+        user_volume_accumulator, SOL, SYSTEM_TOKEN_PROGRAM
     )
 
     # Build account list for buy instruction
@@ -528,16 +529,25 @@ async def buy_pump_swap(
         AccountMeta(pubkey=user_volume_accumulator, is_signer=False, is_writable=True),
         AccountMeta(pubkey=find_fee_config(), is_signer=False, is_writable=False),
         AccountMeta(pubkey=PUMP_FEE_PROGRAM, is_signer=False, is_writable=False),
-        # pool-v2 PDA (per-base-mint) — the last "pre-upgrade" account.
-        AccountMeta(pubkey=find_pool_v2(base_mint), is_signer=False, is_writable=False),
     ]
-    # 2 new accounts required by the 2026-04-28 16:00 UTC pump-swap program upgrade,
-    # appended AFTER pool-v2: breaking-upgrade fee recipient (readonly) and its
-    # quote-mint ATA (mutable). Per BREAKING_FEE_RECIPIENT.md this brings
-    # buy account counts to 26 (non-cashback) / 27 (cashback). For cashback
-    # coins, the doc additionally requires an extra account; sample an on-chain
-    # successful cashback buy after cutover to confirm the seed/position before
-    # enabling the cashback path here.
+    # Cashback pools require user_volume_accumulator_quote_ata (writable) BEFORE
+    # pool-v2. Confirmed against on-chain post-cutover cashback buy
+    # (sig 4JaWdExj6zzU3aGNWqNFhmtCyhbjRU3zLrsA3vASGu9krQrLjAfbBygP9i7yXmruSbuYn4StgMdMFBi22oQCfvjK).
+    if is_cashback:
+        accounts.append(
+            AccountMeta(
+                pubkey=user_volume_accumulator_quote_ata,
+                is_signer=False,
+                is_writable=True,
+            )
+        )
+    # pool-v2 PDA (per-base-mint) — the last "pre-upgrade" account.
+    accounts.append(
+        AccountMeta(pubkey=find_pool_v2(base_mint), is_signer=False, is_writable=False)
+    )
+    # 2 accounts required by the 2026-04-28 pump-swap upgrade, appended AFTER
+    # pool-v2: breaking-fee recipient (readonly) + its quote-mint ATA (mutable).
+    # Buy counts: 26 non-cashback / 27 cashback.
     # Doc: github.com/pump-fun/pump-public-docs/blob/main/docs/BREAKING_FEE_RECIPIENT.md
     breaking_fee_recipient = random.choice(BREAKING_FEE_RECIPIENTS)
     breaking_fee_quote_ata = get_associated_token_address(
