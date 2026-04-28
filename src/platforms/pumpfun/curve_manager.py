@@ -38,17 +38,24 @@ class PumpFunCurveManager(CurveManager):
         """Get the platform this manager serves."""
         return Platform.PUMP_FUN
 
-    async def get_pool_state(self, pool_address: Pubkey) -> dict[str, Any]:
+    async def get_pool_state(
+        self, pool_address: Pubkey, commitment: str | None = None
+    ) -> dict[str, Any]:
         """Get the current state of a pump.fun bonding curve.
 
         Args:
             pool_address: Address of the bonding curve
+            commitment: Optional commitment override. Pass "processed" right
+                after a geyser/logs event so the BC is readable in the same
+                slot it was created (default: confirmed, ~1-2 slot lag).
 
         Returns:
             Dictionary containing bonding curve state data
         """
         try:
-            account = await self.client.get_account_info(pool_address)
+            account = await self.client.get_account_info(
+                pool_address, commitment=commitment
+            )
             if not account.data:
                 raise ValueError(f"No data in bonding curve account {pool_address}")
 

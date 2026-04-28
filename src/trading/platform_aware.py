@@ -76,18 +76,19 @@ class PlatformAwareBuyer(Trader):
                     )
                     pool_state = None
                     last_err: Exception | None = None
-                    # Up to ~6s of retries — pumpportal frequently fires before
-                    # the BC account is RPC-readable. Without a settled BC the
-                    # bot can't pick the right fee_recipient or creator_vault.
-                    for attempt in range(10):
+                    # Use processed commitment — geyser/logs fire on processed
+                    # so the BC is typically readable in the same slot. Most
+                    # listeners only need 1 attempt; pumpportal occasionally
+                    # races the on-chain commit, so allow a few quick retries.
+                    for attempt in range(4):
                         try:
                             pool_state = await curve_manager.get_pool_state(
-                                pool_address
+                                pool_address, commitment="processed"
                             )
                             break
                         except Exception as inner:  # noqa: BLE001
                             last_err = inner
-                            await asyncio.sleep(min(0.3 + 0.3 * attempt, 1.5))
+                            await asyncio.sleep(0.15)
                     if pool_state is None:
                         raise last_err or RuntimeError(
                             "pool_state unavailable after retries"

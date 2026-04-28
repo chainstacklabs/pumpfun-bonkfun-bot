@@ -147,11 +147,15 @@ class SolanaClient:
             return result["result"]
         return None
 
-    async def get_account_info(self, pubkey: Pubkey) -> dict[str, Any]:
+    async def get_account_info(
+        self, pubkey: Pubkey, commitment: str | None = None
+    ) -> dict[str, Any]:
         """Get account info from the blockchain.
 
         Args:
             pubkey: Public key of the account
+            commitment: Optional commitment override (e.g., "processed" for
+                fresh state right after a geyser event; default "confirmed")
 
         Returns:
             Account info response
@@ -161,9 +165,10 @@ class SolanaClient:
         """
         await self._rate_limiter.acquire()
         client = await self.get_client()
-        response = await client.get_account_info(
-            pubkey, encoding="base64"
-        )  # base64 encoding for account data by default
+        kwargs: dict[str, Any] = {"encoding": "base64"}
+        if commitment is not None:
+            kwargs["commitment"] = commitment
+        response = await client.get_account_info(pubkey, **kwargs)
         if not response.value:
             raise ValueError(f"Account {pubkey} not found")
         return response.value
