@@ -3,6 +3,8 @@ Platform-aware trader implementations that use the interface system.
 Final cleanup removing all platform-specific hardcoding.
 """
 
+import asyncio
+
 from solders.pubkey import Pubkey
 
 from core.client import SolanaClient
@@ -61,6 +63,61 @@ class PlatformAwareBuyer(Trader):
                 # Skip the wait and directly calculate the amount
                 token_amount = self.extreme_fast_token_amount
                 token_price_sol = self.amount / token_amount if token_amount > 0 else 0
+                # Even in extreme_fast_mode, refresh mayhem/cashback/creator from
+                # chain — listeners (especially pumpportal) often don't carry
+                # these, and the program rejects with NotAuthorized (0x1770) /
+                # ConstraintSeeds (0x7d6) when fee_recipient or creator_vault
+                # is wrong. PumpPortal often notifies before the BC account is
+                # readable, so retry briefly. One handful of RPC calls is cheap
+                # relative to a failed buy.
+                try:
+                    pool_address = self._get_pool_address(
+                        token_info, address_provider
+                    )
+                    pool_state = None
+                    last_err: Exception | None = None
+                    # Up to ~6s of retries — pumpportal frequently fires before
+                    # the BC account is RPC-readable. Without a settled BC the
+                    # bot can't pick the right fee_recipient or creator_vault.
+                    for attempt in range(10):
+                        try:
+                            pool_state = await curve_manager.get_pool_state(
+                                pool_address
+                            )
+                            break
+                        except Exception as inner:  # noqa: BLE001
+                            last_err = inner
+                            await asyncio.sleep(min(0.3 + 0.3 * attempt, 1.5))
+                    if pool_state is None:
+                        raise last_err or RuntimeError(
+                            "pool_state unavailable after retries"
+                        )
+                    token_info.is_mayhem_mode = pool_state.get(
+                        "is_mayhem_mode", token_info.is_mayhem_mode
+                    )
+                    token_info.is_cashback_coin = pool_state.get(
+                        "is_cashback_coin", token_info.is_cashback_coin
+                    )
+                    fresh_creator = pool_state.get("creator")
+                    if fresh_creator and hasattr(
+                        address_provider, "derive_creator_vault"
+                    ):
+                        from solders.pubkey import Pubkey as _Pubkey
+
+                        new_creator = (
+                            _Pubkey.from_string(fresh_creator)
+                            if isinstance(fresh_creator, str)
+                            else fresh_creator
+                        )
+                        token_info.creator = new_creator
+                        token_info.creator_vault = (
+                            address_provider.derive_creator_vault(new_creator)
+                        )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        f"extreme_fast_mode buy: could not refresh curve flags "
+                        f"({e}); proceeding with token_info defaults"
+                    )
             else:
                 # Get pool address based on platform using platform-agnostic method
                 pool_address = self._get_pool_address(token_info, address_provider)

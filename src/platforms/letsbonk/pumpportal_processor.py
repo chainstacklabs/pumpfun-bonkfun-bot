@@ -5,6 +5,7 @@ File: src/platforms/letsbonk/pumpportal_processor.py
 
 from solders.pubkey import Pubkey
 
+from core.pubkeys import SystemAddresses
 from interfaces.core import Platform, TokenInfo
 from platforms.letsbonk.address_provider import LetsBonkAddressProvider
 from utils.logger import get_logger
@@ -113,6 +114,12 @@ class LetsBonkPumpPortalProcessor:
                 quote_vault=quote_vault,
                 user=user,
                 creator=creator,
+                # PumpPortal data does not carry the token program. LetsBonk
+                # tokens are predominantly regular SPL (Token), not Token-2022.
+                # Default here so the ATA-create ix uses the correct program;
+                # without this the universal builder defaults to Token-2022 and
+                # the buy fails with IncorrectProgramId on GetAccountDataSize.
+                token_program_id=SystemAddresses.TOKEN_PROGRAM,
             )
 
         except Exception:
