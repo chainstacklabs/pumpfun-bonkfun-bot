@@ -100,7 +100,11 @@ BREAKING_FEE_RECIPIENTS = [
 POOL_DISCRIMINATOR_SIZE = 8
 POOL_BASE_MINT_OFFSET = 43  # Where base_mint field starts in pool account data
 POOL_MAYHEM_MODE_OFFSET = 243  # Where is_mayhem_mode flag is stored
-POOL_IS_CASHBACK_OFFSET = 244  # Where is_cashback_coin flag is stored
+POOL_IS_CASHBACK_OFFSET = 244
+# virtual_quote_reserves is an i128 appended after the flags. Pool fields
+# end at 261; live accounts are 301 bytes with trailing padding.
+POOL_VIRTUAL_QUOTE_RESERVES_OFFSET = 245
+POOL_VIRTUAL_QUOTE_RESERVES_SIZE = 16
 POOL_MAYHEM_MODE_MIN_SIZE = 244  # Minimum size for pool data with mayhem flag
 
 # GlobalConfig structure offsets
@@ -188,6 +192,11 @@ async def get_market_data(client: AsyncClient, market_address: Pubkey) -> dict:
         ("pool_quote_token_account", "pubkey"),
         ("lp_supply", "u64"),
         ("coin_creator", "pubkey"),
+        # Appended after coin_creator: is_mayhem_mode (243), is_cashback_coin
+        # (244), then virtual_quote_reserves as an i128 at 245..261. Live pool
+        # accounts are 301 bytes (fields end at 261, rest is padding).
+        ("is_mayhem_mode", "u8"),
+        ("is_cashback_coin", "u8"),
     ]
 
     for field_name, field_type in fields:
@@ -364,23 +373,54 @@ async def get_pumpswap_fee_recipients(
 # ============================================================================
 
 
+async def read_virtual_quote_reserves(client: AsyncClient, pool: Pubkey) -> int:
+    """Read Pool::virtual_quote_reserves, the field appended after the flags.
+
+    Args:
+        client: Solana RPC client
+        pool: Pool (market) address
+
+    Returns:
+        Raw virtual quote reserves, or 0 if the account predates the field
+    """
+    response = await client.get_account_info(pool, encoding="base64")
+    if not response.value or not response.value.data:
+        return 0
+    data = response.value.data
+    end = POOL_VIRTUAL_QUOTE_RESERVES_OFFSET + POOL_VIRTUAL_QUOTE_RESERVES_SIZE
+    if len(data) < end:
+        return 0
+    return int.from_bytes(
+        data[POOL_VIRTUAL_QUOTE_RESERVES_OFFSET : end], "little", signed=True
+    )
+
+
 async def calculate_token_pool_price(
     client: AsyncClient,
     pool_base_token_account: Pubkey,
     pool_quote_token_account: Pubkey,
+    virtual_quote_reserves: int = 0,
 ) -> float:
-    """Calculate current token price from AMM pool balances.
+    """Calculate current token price from AMM pool reserves.
 
-    AMM price is determined by the ratio of tokens in the pool:
-    price = quote_balance / base_balance
+    Price is the ratio of *effective* quote reserves to base reserves:
+
+        effective_quote_reserves =
+            pool_quote_token_account.amount + Pool::virtual_quote_reserves
+
+    PumpSwap added `virtual_quote_reserves` to the Pool account. Upstream's
+    release note says it is 0 on every pool, but that is out of date: live pools
+    carry non-zero values (17.58 SOL observed on a 148 SOL pool, i.e. quoting
+    off the raw vault balance under-prices by ~10.6%). Always add it.
 
     Args:
         client: Solana RPC client
         pool_base_token_account: Pool's token account (the token being priced)
-        pool_quote_token_account: Pool's SOL account (the quote currency)
+        pool_quote_token_account: Pool's quote account
+        virtual_quote_reserves: Pool::virtual_quote_reserves, in raw quote units
 
     Returns:
-        Price in SOL per token
+        Price in quote asset per token
     """
     base_balance_resp = await client.get_token_account_balance(pool_base_token_account)
     quote_balance_resp = await client.get_token_account_balance(
@@ -388,7 +428,9 @@ async def calculate_token_pool_price(
     )
 
     base_amount = float(base_balance_resp.value.ui_amount)
-    quote_amount = float(quote_balance_resp.value.ui_amount)
+    quote_decimals = int(quote_balance_resp.value.decimals)
+    quote_raw = int(quote_balance_resp.value.amount) + int(virtual_quote_reserves)
+    quote_amount = quote_raw / 10**quote_decimals
 
     return quote_amount / base_amount
 
@@ -462,7 +504,10 @@ async def buy_pump_swap(
     """
     token_program_id = await get_token_program_id(client, base_mint)
     token_price_sol = await calculate_token_pool_price(
-        client, pool_base_token_account, pool_quote_token_account
+        client,
+        pool_base_token_account,
+        pool_quote_token_account,
+        await read_virtual_quote_reserves(client, market),
     )
     print(f"Token price in SOL: {token_price_sol:.10f} SOL")
 

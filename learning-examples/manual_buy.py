@@ -3,28 +3,25 @@ import base64
 import hashlib
 import json
 import os
-import random
 import struct
 
 import base58
+import pump_v2
 import websockets
-from construct import Flag, Int64ul, Struct
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
 from solana.rpc.types import TxOpts
 from solders.compute_budget import set_compute_unit_price
-from solders.instruction import AccountMeta, Instruction
 from solders.keypair import Keypair
 from solders.message import Message
 from solders.pubkey import Pubkey
 from solders.transaction import Transaction, VersionedTransaction
 from spl.token.instructions import (
     create_idempotent_associated_token_account,
-    get_associated_token_address,
 )
 
 # Here and later all the discriminators are precalculated. See learning-examples/calculate_discriminator.py
-EXPECTED_DISCRIMINATOR = struct.pack("<Q", 6966180631402821399)
+EXPECTED_DISCRIMINATOR = pump_v2.BONDING_CURVE_DISCRIMINATOR
 TOKEN_DECIMALS = 6
 
 # Global constants
@@ -44,189 +41,59 @@ SYSTEM_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM = Pubkey.from_string(
 SOL = Pubkey.from_string("So11111111111111111111111111111111111111112")
 LAMPORTS_PER_SOL = 1_000_000_000
 
-# 8 breaking-upgrade fee recipients (pump.fun program upgrade 2026-04-28).
-# One must be appended (mutable) AFTER bonding-curve-v2 on every buy/sell.
-# Doc: github.com/pump-fun/pump-public-docs/blob/main/docs/BREAKING_FEE_RECIPIENT.md
-BREAKING_FEE_RECIPIENTS = [
-    Pubkey.from_string("5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD"),
-    Pubkey.from_string("9M4giFFMxmFGXtc3feFzRai56WbBqehoSeRE5GK7gf7"),
-    Pubkey.from_string("GXPFM2caqTtQYC2cJ5yJRi9VDkpsYZXzYdwYpGnLmtDL"),
-    Pubkey.from_string("3BpXnfJaUTiwXnJNe7Ej1rcbzqTTQUvLShZaWazebsVR"),
-    Pubkey.from_string("5cjcW9wExnJJiqgLjq7DEG75Pm6JBgE1hNv4B2vHXUW6"),
-    Pubkey.from_string("EHAAiTxcdDwQ3U4bU6YcMsQGaekdzLS3B5SmYo46kJtL"),
-    Pubkey.from_string("5eHhjP8JaYkz83CWwvGU2uMUXefd3AazWGx4gpcuEEYD"),
-    Pubkey.from_string("A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW"),
-]
 
 # RPC ENDPOINTS
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 RPC_WEBSOCKET = os.environ.get("SOLANA_NODE_WSS_ENDPOINT")
 
+# logsSubscribe frames exceed the websockets library's 1 MiB default, which
+# closes the connection with 1009 ("message too big").
+WEBSOCKET_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
 
-class BondingCurveState:
-    """Bonding curve state parser with progressive field parsing.
 
-    Parses bonding curve account data progressively based on available bytes,
-    making it forward-compatible with future schema versions.
-    """
-
-    # Base struct present in all versions
-    _BASE_STRUCT = Struct(
-        "virtual_token_reserves" / Int64ul,
-        "virtual_sol_reserves" / Int64ul,
-        "real_token_reserves" / Int64ul,
-        "real_sol_reserves" / Int64ul,
-        "token_total_supply" / Int64ul,
-        "complete" / Flag,
-    )
-
-    def __init__(self, data: bytes) -> None:
-        """Parse bonding curve data progressively based on available bytes.
-
-        Args:
-            data: Raw account data including discriminator
-
-        Raises:
-            ValueError: If discriminator is invalid or data is too short
-        """
-        if len(data) < 8:
-            raise ValueError("Data too short to contain discriminator")
-
-        if data[:8] != EXPECTED_DISCRIMINATOR:
-            raise ValueError("Invalid curve state discriminator")
-
-        # Parse base fields (always present)
-        offset = 8
-        base_data = data[offset:]
-        parsed = self._BASE_STRUCT.parse(base_data)
-        self.__dict__.update(parsed)
-
-        # Calculate offset after base struct
-        offset += self._BASE_STRUCT.sizeof()
-
-        # Parse creator if bytes remaining (added in V2)
-        if len(data) >= offset + 32:
-            creator_bytes = data[offset : offset + 32]
-            self.creator = Pubkey.from_bytes(creator_bytes)
-            offset += 32
-        else:
-            self.creator = None
-
-        # Parse mayhem mode flag if bytes remaining (added in V3)
-        if len(data) >= offset + 1:
-            self.is_mayhem_mode = bool(data[offset])
-        else:
-            self.is_mayhem_mode = False
+# The bonding curve account and the v2 instruction layout live in pump_v2 so
+# every example shares one copy. See learning-examples/pump_v2.py.
+BondingCurveState = pump_v2.BondingCurveState
 
 
 async def get_pump_curve_state(
     conn: AsyncClient, curve_address: Pubkey
-) -> BondingCurveState:
+) -> pump_v2.BondingCurveState:
+    """Fetch and parse a bonding curve account.
+
+    Args:
+        conn: Solana RPC client
+        curve_address: Bonding curve address
+
+    Returns:
+        Parsed curve state
+
+    Raises:
+        ValueError: If the account is missing or not a bonding curve
+    """
     response = await conn.get_account_info(curve_address, encoding="base64")
     if not response.value or not response.value.data:
         raise ValueError("Invalid curve state: No data")
 
-    data = response.value.data
-    if data[:8] != EXPECTED_DISCRIMINATOR:
-        raise ValueError("Invalid curve state discriminator")
-
-    return BondingCurveState(data)
+    return pump_v2.BondingCurveState(response.value.data)
 
 
-def calculate_pump_curve_price(curve_state: BondingCurveState) -> float:
-    if curve_state.virtual_token_reserves <= 0 or curve_state.virtual_sol_reserves <= 0:
-        raise ValueError("Invalid reserve state")
-
-    return (curve_state.virtual_sol_reserves / LAMPORTS_PER_SOL) / (
-        curve_state.virtual_token_reserves / 10**TOKEN_DECIMALS
-    )
-
-
-def _find_creator_vault(creator: Pubkey) -> Pubkey:
-    derived_address, _ = Pubkey.find_program_address(
-        [b"creator-vault", bytes(creator)],
-        PUMP_PROGRAM,
-    )
-    return derived_address
-
-
-def _find_global_volume_accumulator() -> Pubkey:
-    derived_address, _ = Pubkey.find_program_address(
-        [b"global_volume_accumulator"],
-        PUMP_PROGRAM,
-    )
-    return derived_address
-
-
-def _find_user_volume_accumulator(user: Pubkey) -> Pubkey:
-    derived_address, _ = Pubkey.find_program_address(
-        [b"user_volume_accumulator", bytes(user)],
-        PUMP_PROGRAM,
-    )
-    return derived_address
-
-
-def _find_fee_config() -> Pubkey:
-    derived_address, _ = Pubkey.find_program_address(
-        [b"fee_config", bytes(PUMP_PROGRAM)],
-        PUMP_FEE_PROGRAM,
-    )
-    return derived_address
-
-
-def _find_bonding_curve_v2(mint: Pubkey) -> Pubkey:
-    derived_address, _ = Pubkey.find_program_address(
-        [b"bonding-curve-v2", bytes(mint)],
-        PUMP_PROGRAM,
-    )
-    return derived_address
-
-
-async def get_fee_recipient(
-    client: AsyncClient, curve_state: BondingCurveState
-) -> Pubkey:
-    """Determine the correct fee recipient based on mayhem mode.
-
-    Mayhem mode tokens use a different fee recipient (reserved_fee_recipient from Global account)
-    instead of the standard fee recipient. This function checks the bonding curve state
-    and returns the appropriate fee recipient.
+def calculate_pump_curve_price(curve_state: pump_v2.BondingCurveState) -> float:
+    """Price of one whole token in whole quote units.
 
     Args:
-        client: Solana RPC client to fetch Global account data
-        curve_state: Parsed bonding curve state containing is_mayhem_mode flag
+        curve_state: Parsed curve state
 
     Returns:
-        Appropriate fee recipient pubkey (mayhem or standard)
+        Price in the curve's quote asset
+
+    Raises:
+        ValueError: If reserves are empty
     """
-    if not curve_state.is_mayhem_mode:
-        return PUMP_FEE
-
-    # Fetch Global account to get reserved_fee_recipient for mayhem mode tokens
-    response = await client.get_account_info(PUMP_GLOBAL, encoding="base64")
-    if not response.value or not response.value.data:
-        # Fallback to standard fee if Global account cannot be fetched
-        return PUMP_FEE
-
-    data = response.value.data
-
-    # Parse reserved_fee_recipient from Global account
-    # Offset calculation based on pump_fun_idl.json Global struct:
-    # discriminator(8) + initialized(1) + authority(32) + fee_recipient(32) +
-    # initial_virtual_token_reserves(8) + initial_virtual_sol_reserves(8) +
-    # initial_real_token_reserves(8) + token_total_supply(8) + fee_basis_points(8) +
-    # withdraw_authority(32) + enable_migrate(1) + pool_migration_fee(8) +
-    # creator_fee_basis_points(8) + fee_recipients[7](224) + set_creator_authority(32) +
-    # admin_set_creator_authority(32) + create_v2_enabled(1) + whitelist_pda(32) = 483
-    RESERVED_FEE_RECIPIENT_OFFSET = 483
-
-    if len(data) < RESERVED_FEE_RECIPIENT_OFFSET + 32:
-        # Fallback if account data is too short
-        return PUMP_FEE
-
-    reserved_fee_recipient_bytes = data[
-        RESERVED_FEE_RECIPIENT_OFFSET : RESERVED_FEE_RECIPIENT_OFFSET + 32
-    ]
-    return Pubkey.from_bytes(reserved_fee_recipient_bytes)
+    price = curve_state.price_per_token()
+    if price <= 0:
+        raise ValueError("Invalid reserve state")
+    return price
 
 
 async def buy_token(
@@ -243,97 +110,54 @@ async def buy_token(
     payer = Keypair.from_bytes(private_key)
 
     async with AsyncClient(RPC_ENDPOINT) as client:
-        associated_token_account = get_associated_token_address(
-            payer.pubkey(), mint, token_program_id=token_program
-        )
-        amount_lamports = int(amount * LAMPORTS_PER_SOL)
-
-        # Fetch bonding curve state to calculate price and determine fee recipient
+        # Fetch bonding curve state for price, mayhem mode and quote asset.
         curve_state = await get_pump_curve_state(client, bonding_curve)
         token_price_sol = calculate_pump_curve_price(curve_state)
+
+        # Amounts are denominated in the curve's quote asset, which is not
+        # necessarily SOL any more.
+        quote_mint = pump_v2.normalize_quote_mint(
+            getattr(curve_state, "quote_mint", None)
+        )
+        quote_unit = pump_v2.quote_units(quote_mint)
         token_amount = amount / token_price_sol
+        max_quote_cost = int(amount * quote_unit * (1 + slippage))
 
-        # Calculate maximum SOL to spend with slippage
-        max_amount_lamports = int(amount_lamports * (1 + slippage))
+        print(f"Quote asset: {quote_mint}")
+        print(f"Buying {token_amount:.6f} tokens, max cost {max_quote_cost} raw units")
 
-        # Determine fee recipient based on whether token uses mayhem mode
-        fee_recipient = await get_fee_recipient(client, curve_state)
+        # buy_v2 takes 27 mandatory accounts in a fixed order for every coin.
+        buy_ix = pump_v2.build_buy_v2_instruction(
+            base_mint=mint,
+            creator=curve_state.creator,
+            user=payer.pubkey(),
+            token_amount_raw=int(token_amount * 10**TOKEN_DECIMALS),
+            max_quote_cost_raw=max_quote_cost,
+            quote_mint=quote_mint,
+            base_token_program=token_program,
+            is_mayhem_mode=curve_state.is_mayhem_mode,
+        )
 
-        accounts = [
-            AccountMeta(pubkey=PUMP_GLOBAL, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=fee_recipient, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=mint, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=bonding_curve, is_signer=False, is_writable=True),
-            AccountMeta(
-                pubkey=associated_bonding_curve,
-                is_signer=False,
-                is_writable=True,
-            ),
-            AccountMeta(
-                pubkey=associated_token_account,
-                is_signer=False,
-                is_writable=True,
-            ),
-            AccountMeta(pubkey=payer.pubkey(), is_signer=True, is_writable=True),
-            AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=token_program, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=creator_vault, is_signer=False, is_writable=True),
-            AccountMeta(
-                pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False
-            ),
-            AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
-            AccountMeta(
-                pubkey=_find_global_volume_accumulator(),
-                is_signer=False,
-                is_writable=False,
-            ),
-            AccountMeta(
-                pubkey=_find_user_volume_accumulator(payer.pubkey()),
-                is_signer=False,
-                is_writable=True,
-            ),
-            # Index 14: fee_config (readonly)
-            AccountMeta(
-                pubkey=_find_fee_config(),
-                is_signer=False,
-                is_writable=False,
-            ),
-            # Index 15: fee_program (readonly)
-            AccountMeta(
-                pubkey=PUMP_FEE_PROGRAM,
-                is_signer=False,
-                is_writable=False,
-            ),
-            # Remaining account: bonding_curve_v2 (readonly, required for all coins)
-            AccountMeta(
-                pubkey=_find_bonding_curve_v2(mint),
-                is_signer=False,
-                is_writable=False,
-            ),
-            # 18th account: breaking-upgrade fee recipient (mutable) — required from 2026-04-28
-            AccountMeta(
-                pubkey=random.choice(BREAKING_FEE_RECIPIENTS),
-                is_signer=False,
-                is_writable=True,
+        instructions = [
+            set_compute_unit_price(1_000),
+            create_idempotent_associated_token_account(
+                payer.pubkey(), payer.pubkey(), mint, token_program_id=token_program
             ),
         ]
+        # SOL-paired coins settle in native SOL and only seed-check the quote
+        # ATA, so creating it would waste rent. Other quotes need a real account.
+        if not pump_v2.is_sol_paired(quote_mint):
+            instructions.append(
+                create_idempotent_associated_token_account(
+                    payer.pubkey(),
+                    payer.pubkey(),
+                    quote_mint,
+                    token_program_id=pump_v2.quote_token_program(quote_mint),
+                )
+            )
+        instructions.append(buy_ix)
 
-        discriminator = struct.pack("<Q", 16927863322537952870)
-        # Encode OptionBool for track_volume: [1, 1] = Some(true)
-        track_volume_bytes = bytes([1, 1])
-        data = (
-            discriminator
-            + struct.pack("<Q", int(token_amount * 10**6))
-            + struct.pack("<Q", max_amount_lamports)
-            + track_volume_bytes
-        )
-        buy_ix = Instruction(PUMP_PROGRAM, data, accounts)
-        idempotent_ata_ix = create_idempotent_associated_token_account(
-            payer.pubkey(), payer.pubkey(), mint, token_program_id=token_program
-        )
-        msg = Message(
-            [set_compute_unit_price(1_000), idempotent_ata_ix, buy_ix], payer.pubkey()
-        )
+        msg = Message(instructions, payer.pubkey())
         recent_blockhash = await client.get_latest_blockhash()
         opts = TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
 
@@ -416,7 +240,9 @@ async def listen_for_create_transaction():
     create_discriminator = calculate_discriminator("global:create")
     create_v2_discriminator = calculate_discriminator("global:create_v2")
 
-    async with websockets.connect(RPC_WEBSOCKET) as websocket:
+    async with websockets.connect(
+        RPC_WEBSOCKET, max_size=WEBSOCKET_MAX_MESSAGE_BYTES
+    ) as websocket:
         subscription_message = json.dumps(
             {
                 "jsonrpc": "2.0",
@@ -489,8 +315,13 @@ async def listen_for_create_transaction():
                                                 # Skip txs that use Address Lookup Tables — their
                                                 # instruction account indices reference ALT-loaded keys
                                                 # not present in transaction.message.account_keys.
-                                                static_keys = transaction.message.account_keys
-                                                if any(idx >= len(static_keys) for idx in ix.accounts):
+                                                static_keys = (
+                                                    transaction.message.account_keys
+                                                )
+                                                if any(
+                                                    idx >= len(static_keys)
+                                                    for idx in ix.accounts
+                                                ):
                                                     continue
                                                 account_keys = [
                                                     str(static_keys[index])
@@ -524,7 +355,9 @@ async def main():
     mint = Pubkey.from_string(token_data["mint"])
     bonding_curve = Pubkey.from_string(token_data["bondingCurve"])
     associated_bonding_curve = Pubkey.from_string(token_data["associatedBondingCurve"])
-    creator_vault = _find_creator_vault(Pubkey.from_string(token_data["creator"]))
+    creator_vault = pump_v2.find_creator_vault(
+        Pubkey.from_string(token_data["creator"])
+    )
     token_program = Pubkey.from_string(token_data["token_program"])
 
     # Fetch the token price

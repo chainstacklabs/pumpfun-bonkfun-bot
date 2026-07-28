@@ -10,7 +10,13 @@ from typing import Any
 from solders.pubkey import Pubkey
 
 from core.client import SolanaClient
-from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
+from core.pubkeys import (
+    LAMPORTS_PER_SOL,
+    TOKEN_DECIMALS,
+    is_sol_paired,
+    normalize_quote_mint,
+    quote_units_per_token,
+)
 from interfaces.core import CurveManager, Platform
 from utils.idl_parser import IDLParser
 from utils.logger import get_logger
@@ -75,20 +81,17 @@ class PumpFunCurveManager(CurveManager):
             pool_address: Address of the bonding curve
 
         Returns:
-            Current token price in SOL
+            Current token price denominated in the curve's quote asset
+            (SOL for SOL-paired coins, USDC for USDC-paired coins)
         """
         pool_state = await self.get_pool_state(pool_address)
 
-        # Use virtual reserves for price calculation
-        virtual_token_reserves = pool_state["virtual_token_reserves"]
-        virtual_sol_reserves = pool_state["virtual_sol_reserves"]
-
-        if virtual_token_reserves <= 0:
+        if pool_state["virtual_token_reserves"] <= 0:
             return 0.0
 
-        # Price = sol_reserves / token_reserves
-        price_lamports = virtual_sol_reserves / virtual_token_reserves
-        return price_lamports * (10**TOKEN_DECIMALS) / LAMPORTS_PER_SOL
+        # _decode_curve_state_with_idl already scales by the quote mint's
+        # decimals, so don't re-derive the price with a hardcoded 1e9 here.
+        return pool_state["price_per_token"]
 
     async def calculate_buy_amount_out(
         self, pool_address: Pubkey, amount_in: int
@@ -185,21 +188,40 @@ class PumpFunCurveManager(CurveManager):
         if not decoded_curve_state:
             raise ValueError("Failed to decode bonding curve state with IDL parser")
 
-        # Extract the fields we need for trading calculations
-        # Based on the BondingCurve structure from the IDL
+        # Extract the fields we need for trading calculations.
+        # The BondingCurve struct renamed its SOL fields to quote fields when
+        # pump.fun added non-SOL quote assets, and appended quote_mint. The
+        # old names are kept as aliases below so callers written against the
+        # SOL-only layout keep working for SOL-paired coins.
+        raw_quote_mint = decoded_curve_state.get("quote_mint")
+        quote_mint = normalize_quote_mint(
+            Pubkey.from_string(raw_quote_mint)
+            if isinstance(raw_quote_mint, str)
+            else raw_quote_mint
+        )
+        quote_unit = quote_units_per_token(quote_mint)
+
         curve_data = {
             "virtual_token_reserves": decoded_curve_state.get(
                 "virtual_token_reserves", 0
             ),
-            "virtual_sol_reserves": decoded_curve_state.get("virtual_sol_reserves", 0),
+            "virtual_quote_reserves": decoded_curve_state.get(
+                "virtual_quote_reserves", 0
+            ),
             "real_token_reserves": decoded_curve_state.get("real_token_reserves", 0),
-            "real_sol_reserves": decoded_curve_state.get("real_sol_reserves", 0),
+            "real_quote_reserves": decoded_curve_state.get("real_quote_reserves", 0),
             "token_total_supply": decoded_curve_state.get("token_total_supply", 0),
             "complete": decoded_curve_state.get("complete", False),
             "creator": decoded_curve_state.get("creator", ""),
             "is_mayhem_mode": decoded_curve_state.get("is_mayhem_mode", False),
             "is_cashback_coin": decoded_curve_state.get("is_cashback_coin", False),
+            "quote_mint": quote_mint,
+            "is_sol_paired": is_sol_paired(quote_mint),
         }
+
+        # Back-compat aliases for the pre-quote-mint field names.
+        curve_data["virtual_sol_reserves"] = curve_data["virtual_quote_reserves"]
+        curve_data["real_sol_reserves"] = curve_data["real_quote_reserves"]
 
         # Calculate additional metrics
         # Validate reserves are positive before calculating price
@@ -207,29 +229,36 @@ class PumpFunCurveManager(CurveManager):
             raise ValueError(
                 f"Invalid virtual_token_reserves: {curve_data['virtual_token_reserves']} - cannot calculate price"
             )
-        if curve_data["virtual_sol_reserves"] <= 0:
+        if curve_data["virtual_quote_reserves"] <= 0:
             raise ValueError(
-                f"Invalid virtual_sol_reserves: {curve_data['virtual_sol_reserves']} - cannot calculate price"
+                f"Invalid virtual_quote_reserves: {curve_data['virtual_quote_reserves']} - cannot calculate price"
             )
 
+        # Price is denominated in the curve's quote asset, so scale by that
+        # mint's decimals (1e9 for SOL, 1e6 for USDC) rather than assuming SOL.
         curve_data["price_per_token"] = (
-            (curve_data["virtual_sol_reserves"] / curve_data["virtual_token_reserves"])
+            (
+                curve_data["virtual_quote_reserves"]
+                / curve_data["virtual_token_reserves"]
+            )
             * (10**TOKEN_DECIMALS)
-            / LAMPORTS_PER_SOL
+            / quote_unit
         )
 
         # Add convenience decimal fields
         curve_data["token_reserves_decimal"] = (
             curve_data["virtual_token_reserves"] / 10**TOKEN_DECIMALS
         )
-        curve_data["sol_reserves_decimal"] = (
-            curve_data["virtual_sol_reserves"] / LAMPORTS_PER_SOL
+        curve_data["quote_reserves_decimal"] = (
+            curve_data["virtual_quote_reserves"] / quote_unit
         )
+        curve_data["sol_reserves_decimal"] = curve_data["quote_reserves_decimal"]
 
         logger.debug(
             f"Decoded curve state: virtual_token_reserves={curve_data['virtual_token_reserves']}, "
-            f"virtual_sol_reserves={curve_data['virtual_sol_reserves']}, "
-            f"price={curve_data['price_per_token']:.8f} SOL"
+            f"virtual_quote_reserves={curve_data['virtual_quote_reserves']}, "
+            f"quote_mint={quote_mint}, "
+            f"price={curve_data['price_per_token']:.8f} quote/token"
         )
 
         return curve_data

@@ -8,27 +8,63 @@
   },
   "instructions": [
     {
+      "name": "add_quote_mint",
+      "discriminator": [111, 121, 21, 56, 40, 24, 94, 209],
+      "accounts": [
+        {
+          "name": "global",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [103, 108, 111, 98, 97, 108]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": ["global"]
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "quote_mint",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "admin_set_creator",
       "docs": [
         "Allows Global::admin_set_creator_authority to override the bonding curve creator"
       ],
-      "discriminator": [
-        69,
-        25,
-        171,
-        142,
-        57,
-        239,
-        13,
-        4
-      ],
+      "discriminator": [69, 25, 171, 142, 57, 239, 13, 4],
       "accounts": [
         {
           "name": "admin_set_creator_authority",
           "signer": true,
-          "relations": [
-            "global"
-          ]
+          "relations": ["global"]
         },
         {
           "name": "global",
@@ -36,14 +72,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108
-                ]
+                "value": [103, 108, 111, 98, 97, 108]
               }
             ]
           }
@@ -59,19 +88,7 @@
               {
                 "kind": "const",
                 "value": [
-                  98,
-                  111,
-                  110,
-                  100,
-                  105,
-                  110,
-                  103,
-                  45,
-                  99,
-                  117,
-                  114,
-                  118,
-                  101
+                  98, 111, 110, 100, 105, 110, 103, 45, 99, 117, 114, 118, 101
                 ]
               },
               {
@@ -88,23 +105,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -123,23 +125,12 @@
     },
     {
       "name": "admin_set_idl_authority",
-      "discriminator": [
-        8,
-        217,
-        96,
-        231,
-        144,
-        104,
-        192,
-        5
-      ],
+      "discriminator": [8, 217, 96, 231, 144, 104, 192, 5],
       "accounts": [
         {
           "name": "authority",
           "signer": true,
-          "relations": [
-            "global"
-          ]
+          "relations": ["global"]
         },
         {
           "name": "global",
@@ -147,14 +138,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108
-                ]
+                "value": [103, 108, 111, 98, 97, 108]
               }
             ]
           }
@@ -180,23 +164,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -215,24 +184,13 @@
     },
     {
       "name": "admin_update_token_incentives",
-      "discriminator": [
-        209,
-        11,
-        115,
-        87,
-        213,
-        23,
-        124,
-        204
-      ],
+      "discriminator": [209, 11, 115, 87, 213, 23, 124, 204],
       "accounts": [
         {
           "name": "authority",
           "writable": true,
           "signer": true,
-          "relations": [
-            "global"
-          ]
+          "relations": ["global"]
         },
         {
           "name": "global",
@@ -240,14 +198,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108
-                ]
+                "value": [103, 108, 111, 98, 97, 108]
               }
             ]
           }
@@ -260,31 +211,8 @@
               {
                 "kind": "const",
                 "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108,
-                  95,
-                  118,
-                  111,
-                  108,
-                  117,
-                  109,
-                  101,
-                  95,
-                  97,
-                  99,
-                  99,
-                  117,
-                  109,
-                  117,
-                  108,
-                  97,
-                  116,
-                  111,
-                  114
+                  103, 108, 111, 98, 97, 108, 95, 118, 111, 108, 117, 109, 101,
+                  95, 97, 99, 99, 117, 109, 117, 108, 97, 116, 111, 114
                 ]
               }
             ]
@@ -314,38 +242,9 @@
             "program": {
               "kind": "const",
               "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
               ]
             }
           }
@@ -368,23 +267,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -419,19 +303,8 @@
     },
     {
       "name": "buy",
-      "docs": [
-        "Buys tokens from a bonding curve."
-      ],
-      "discriminator": [
-        102,
-        6,
-        61,
-        18,
-        1,
-        218,
-        235,
-        234
-      ],
+      "docs": ["Buys tokens from a bonding curve."],
+      "discriminator": [102, 6, 61, 18, 1, 218, 235, 234],
       "accounts": [
         {
           "name": "global",
@@ -439,14 +312,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108
-                ]
+                "value": [103, 108, 111, 98, 97, 108]
               }
             ]
           }
@@ -466,19 +332,7 @@
               {
                 "kind": "const",
                 "value": [
-                  98,
-                  111,
-                  110,
-                  100,
-                  105,
-                  110,
-                  103,
-                  45,
-                  99,
-                  117,
-                  114,
-                  118,
-                  101
+                  98, 111, 110, 100, 105, 110, 103, 45, 99, 117, 114, 118, 101
                 ]
               },
               {
@@ -509,38 +363,9 @@
             "program": {
               "kind": "const",
               "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
               ]
             }
           }
@@ -569,19 +394,7 @@
               {
                 "kind": "const",
                 "value": [
-                  99,
-                  114,
-                  101,
-                  97,
-                  116,
-                  111,
-                  114,
-                  45,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
+                  99, 114, 101, 97, 116, 111, 114, 45, 118, 97, 117, 108, 116
                 ]
               },
               {
@@ -599,23 +412,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -632,31 +430,8 @@
               {
                 "kind": "const",
                 "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108,
-                  95,
-                  118,
-                  111,
-                  108,
-                  117,
-                  109,
-                  101,
-                  95,
-                  97,
-                  99,
-                  99,
-                  117,
-                  109,
-                  117,
-                  108,
-                  97,
-                  116,
-                  111,
-                  114
+                  103, 108, 111, 98, 97, 108, 95, 118, 111, 108, 117, 109, 101,
+                  95, 97, 99, 99, 117, 109, 117, 108, 97, 116, 111, 114
                 ]
               }
             ]
@@ -670,29 +445,8 @@
               {
                 "kind": "const",
                 "value": [
-                  117,
-                  115,
-                  101,
-                  114,
-                  95,
-                  118,
-                  111,
-                  108,
-                  117,
-                  109,
-                  101,
-                  95,
-                  97,
-                  99,
-                  99,
-                  117,
-                  109,
-                  117,
-                  108,
-                  97,
-                  116,
-                  111,
-                  114
+                  117, 115, 101, 114, 95, 118, 111, 108, 117, 109, 101, 95, 97,
+                  99, 99, 117, 109, 117, 108, 97, 116, 111, 114
                 ]
               },
               {
@@ -708,54 +462,14 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  102,
-                  101,
-                  101,
-                  95,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
+                "value": [102, 101, 101, 95, 99, 111, 110, 102, 105, 103]
               },
               {
                 "kind": "const",
                 "value": [
-                  1,
-                  86,
-                  224,
-                  246,
-                  147,
-                  102,
-                  90,
-                  207,
-                  68,
-                  219,
-                  21,
-                  104,
-                  191,
-                  23,
-                  91,
-                  170,
-                  81,
-                  137,
-                  203,
-                  151,
-                  245,
-                  210,
-                  255,
-                  59,
-                  101,
-                  93,
-                  43,
-                  182,
-                  253,
-                  109,
-                  24,
-                  176
+                  1, 86, 224, 246, 147, 102, 90, 207, 68, 219, 21, 104, 191, 23,
+                  91, 170, 81, 137, 203, 151, 245, 210, 255, 59, 101, 93, 43,
+                  182, 253, 109, 24, 176
                 ]
               }
             ],
@@ -790,6 +504,412 @@
       ]
     },
     {
+      "name": "buy_exact_quote_in_v2",
+      "discriminator": [194, 171, 28, 70, 104, 77, 91, 47],
+      "accounts": [
+        {
+          "name": "global",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [103, 108, 111, 98, 97, 108]
+              }
+            ]
+          }
+        },
+        {
+          "name": "base_mint"
+        },
+        {
+          "name": "quote_mint"
+        },
+        {
+          "name": "base_token_program"
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "fee_recipient",
+          "writable": true
+        },
+        {
+          "name": "associated_quote_fee_recipient",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "fee_recipient"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "buyback_fee_recipient",
+          "writable": true
+        },
+        {
+          "name": "associated_quote_buyback_fee_recipient",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "buyback_fee_recipient"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "bonding_curve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98, 111, 110, 100, 105, 110, 103, 45, 99, 117, 114, 118, 101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "associated_base_bonding_curve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "bonding_curve"
+              },
+              {
+                "kind": "account",
+                "path": "base_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "associated_quote_bonding_curve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "bonding_curve"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "associated_base_user",
+          "writable": true
+        },
+        {
+          "name": "associated_quote_user",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "creator_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99, 114, 101, 97, 116, 111, 114, 45, 118, 97, 117, 108, 116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bonding_curve.creator",
+                "account": "BondingCurve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "associated_creator_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "creator_vault"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "sharing_config",
+          "docs": [
+            "seeds; the account is intentionally not deserialized here because it may be uninitialized",
+            "for mints that have not created a fee sharing config. Handlers must check",
+            "`data_is_empty()` / owner before reading."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115, 104, 97, 114, 105, 110, 103, 45, 99, 111, 110, 102, 105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                12, 53, 255, 169, 5, 90, 142, 86, 141, 168, 247, 188, 7, 86, 21,
+                39, 76, 241, 201, 44, 164, 31, 64, 0, 156, 81, 106, 164, 20,
+                194, 124, 112
+              ]
+            }
+          }
+        },
+        {
+          "name": "global_volume_accumulator",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103, 108, 111, 98, 97, 108, 95, 118, 111, 108, 117, 109, 101,
+                  95, 97, 99, 99, 117, 109, 117, 108, 97, 116, 111, 114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_volume_accumulator",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117, 115, 101, 114, 95, 118, 111, 108, 117, 109, 101, 95, 97,
+                  99, 99, 117, 109, 117, 108, 97, 116, 111, 114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "associated_user_volume_accumulator",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user_volume_accumulator"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "fee_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [102, 101, 101, 95, 99, 111, 110, 102, 105, 103]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  1, 86, 224, 246, 147, 102, 90, 207, 68, 219, 21, 104, 191, 23,
+                  91, 170, 81, 137, 203, 151, 245, 210, 255, 59, 101, 93, 43,
+                  182, 253, 109, 24, 176
+                ]
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "fee_program"
+            }
+          }
+        },
+        {
+          "name": "fee_program",
+          "address": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "address": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+        }
+      ],
+      "args": [
+        {
+          "name": "spendable_quote_in",
+          "type": "u64"
+        },
+        {
+          "name": "min_tokens_out",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "buy_exact_sol_in",
       "docs": [
         "Given a budget of spendable SOL, buy at least min_tokens_out tokens.",
@@ -818,16 +938,7 @@
         "- creator_vault: rent.minimum_balance(0)",
         "- user_volume_accumulator: rent.minimum_balance(UserVolumeAccumulator::LEN)"
       ],
-      "discriminator": [
-        56,
-        252,
-        116,
-        8,
-        158,
-        223,
-        205,
-        95
-      ],
+      "discriminator": [56, 252, 116, 8, 158, 223, 205, 95],
       "accounts": [
         {
           "name": "global",
@@ -835,14 +946,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108
-                ]
+                "value": [103, 108, 111, 98, 97, 108]
               }
             ]
           }
@@ -862,19 +966,7 @@
               {
                 "kind": "const",
                 "value": [
-                  98,
-                  111,
-                  110,
-                  100,
-                  105,
-                  110,
-                  103,
-                  45,
-                  99,
-                  117,
-                  114,
-                  118,
-                  101
+                  98, 111, 110, 100, 105, 110, 103, 45, 99, 117, 114, 118, 101
                 ]
               },
               {
@@ -905,38 +997,9 @@
             "program": {
               "kind": "const",
               "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
               ]
             }
           }
@@ -965,19 +1028,7 @@
               {
                 "kind": "const",
                 "value": [
-                  99,
-                  114,
-                  101,
-                  97,
-                  116,
-                  111,
-                  114,
-                  45,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
+                  99, 114, 101, 97, 116, 111, 114, 45, 118, 97, 117, 108, 116
                 ]
               },
               {
@@ -995,23 +1046,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -1028,31 +1064,8 @@
               {
                 "kind": "const",
                 "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108,
-                  95,
-                  118,
-                  111,
-                  108,
-                  117,
-                  109,
-                  101,
-                  95,
-                  97,
-                  99,
-                  99,
-                  117,
-                  109,
-                  117,
-                  108,
-                  97,
-                  116,
-                  111,
-                  114
+                  103, 108, 111, 98, 97, 108, 95, 118, 111, 108, 117, 109, 101,
+                  95, 97, 99, 99, 117, 109, 117, 108, 97, 116, 111, 114
                 ]
               }
             ]
@@ -1066,29 +1079,8 @@
               {
                 "kind": "const",
                 "value": [
-                  117,
-                  115,
-                  101,
-                  114,
-                  95,
-                  118,
-                  111,
-                  108,
-                  117,
-                  109,
-                  101,
-                  95,
-                  97,
-                  99,
-                  99,
-                  117,
-                  109,
-                  117,
-                  108,
-                  97,
-                  116,
-                  111,
-                  114
+                  117, 115, 101, 114, 95, 118, 111, 108, 117, 109, 101, 95, 97,
+                  99, 99, 117, 109, 117, 108, 97, 116, 111, 114
                 ]
               },
               {
@@ -1104,54 +1096,14 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  102,
-                  101,
-                  101,
-                  95,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
+                "value": [102, 101, 101, 95, 99, 111, 110, 102, 105, 103]
               },
               {
                 "kind": "const",
                 "value": [
-                  1,
-                  86,
-                  224,
-                  246,
-                  147,
-                  102,
-                  90,
-                  207,
-                  68,
-                  219,
-                  21,
-                  104,
-                  191,
-                  23,
-                  91,
-                  170,
-                  81,
-                  137,
-                  203,
-                  151,
-                  245,
-                  210,
-                  255,
-                  59,
-                  101,
-                  93,
-                  43,
-                  182,
-                  253,
-                  109,
-                  24,
-                  176
+                  1, 86, 224, 246, 147, 102, 90, 207, 68, 219, 21, 104, 191, 23,
+                  91, 170, 81, 137, 203, 151, 245, 210, 255, 59, 101, 93, 43,
+                  182, 253, 109, 24, 176
                 ]
               }
             ],
@@ -1186,17 +1138,414 @@
       ]
     },
     {
-      "name": "claim_cashback",
-      "discriminator": [
-        37,
-        58,
-        35,
-        126,
-        190,
-        53,
-        228,
-        197
+      "name": "buy_v2",
+      "discriminator": [184, 23, 238, 97, 103, 197, 211, 61],
+      "accounts": [
+        {
+          "name": "global",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [103, 108, 111, 98, 97, 108]
+              }
+            ]
+          }
+        },
+        {
+          "name": "base_mint"
+        },
+        {
+          "name": "quote_mint"
+        },
+        {
+          "name": "base_token_program"
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "fee_recipient",
+          "writable": true
+        },
+        {
+          "name": "associated_quote_fee_recipient",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "fee_recipient"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "buyback_fee_recipient",
+          "writable": true
+        },
+        {
+          "name": "associated_quote_buyback_fee_recipient",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "buyback_fee_recipient"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "bonding_curve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98, 111, 110, 100, 105, 110, 103, 45, 99, 117, 114, 118, 101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "associated_base_bonding_curve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "bonding_curve"
+              },
+              {
+                "kind": "account",
+                "path": "base_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "associated_quote_bonding_curve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "bonding_curve"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "associated_base_user",
+          "writable": true
+        },
+        {
+          "name": "associated_quote_user",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "creator_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99, 114, 101, 97, 116, 111, 114, 45, 118, 97, 117, 108, 116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bonding_curve.creator",
+                "account": "BondingCurve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "associated_creator_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "creator_vault"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "sharing_config",
+          "docs": [
+            "seeds; the account is intentionally not deserialized here because it may be uninitialized",
+            "for mints that have not created a fee sharing config. Handlers must check",
+            "`data_is_empty()` / owner before reading."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115, 104, 97, 114, 105, 110, 103, 45, 99, 111, 110, 102, 105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                12, 53, 255, 169, 5, 90, 142, 86, 141, 168, 247, 188, 7, 86, 21,
+                39, 76, 241, 201, 44, 164, 31, 64, 0, 156, 81, 106, 164, 20,
+                194, 124, 112
+              ]
+            }
+          }
+        },
+        {
+          "name": "global_volume_accumulator",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103, 108, 111, 98, 97, 108, 95, 118, 111, 108, 117, 109, 101,
+                  95, 97, 99, 99, 117, 109, 117, 108, 97, 116, 111, 114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_volume_accumulator",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117, 115, 101, 114, 95, 118, 111, 108, 117, 109, 101, 95, 97,
+                  99, 99, 117, 109, 117, 108, 97, 116, 111, 114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "associated_user_volume_accumulator",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user_volume_accumulator"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "fee_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [102, 101, 101, 95, 99, 111, 110, 102, 105, 103]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  1, 86, 224, 246, 147, 102, 90, 207, 68, 219, 21, 104, 191, 23,
+                  91, 170, 81, 137, 203, 151, 245, 210, 255, 59, 101, 93, 43,
+                  182, 253, 109, 24, 176
+                ]
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "fee_program"
+            }
+          }
+        },
+        {
+          "name": "fee_program",
+          "address": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "address": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+        }
       ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "max_sol_cost",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "claim_cashback",
+      "discriminator": [37, 58, 35, 126, 190, 53, 228, 197],
       "accounts": [
         {
           "name": "user",
@@ -1210,29 +1559,8 @@
               {
                 "kind": "const",
                 "value": [
-                  117,
-                  115,
-                  101,
-                  114,
-                  95,
-                  118,
-                  111,
-                  108,
-                  117,
-                  109,
-                  101,
-                  95,
-                  97,
-                  99,
-                  99,
-                  117,
-                  109,
-                  117,
-                  108,
-                  97,
-                  116,
-                  111,
-                  114
+                  117, 115, 101, 114, 95, 118, 111, 108, 117, 109, 101, 95, 97,
+                  99, 99, 117, 109, 117, 108, 97, 116, 111, 114
                 ]
               },
               {
@@ -1253,23 +1581,118 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "address": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "claim_cashback_v2",
+      "discriminator": [122, 243, 204, 65, 94, 116, 29, 55],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true
+        },
+        {
+          "name": "user_volume_accumulator",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117, 115, 101, 114, 95, 118, 111, 108, 117, 109, 101, 95, 97,
+                  99, 99, 117, 109, 117, 108, 97, 116, 111, 114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "quote_mint"
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "associated_user_volume_accumulator",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user_volume_accumulator"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "associated_token_program"
+            }
+          }
+        },
+        {
+          "name": "associated_quote_user",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "associated_token_program"
+            }
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -1284,16 +1707,7 @@
     },
     {
       "name": "claim_token_incentives",
-      "discriminator": [
-        16,
-        4,
-        71,
-        28,
-        204,
-        1,
-        40,
-        27
-      ],
+      "discriminator": [16, 4, 71, 28, 204, 1, 40, 27],
       "accounts": [
         {
           "name": "user"
@@ -1319,38 +1733,9 @@
             "program": {
               "kind": "const",
               "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
               ]
             }
           }
@@ -1362,31 +1747,8 @@
               {
                 "kind": "const",
                 "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108,
-                  95,
-                  118,
-                  111,
-                  108,
-                  117,
-                  109,
-                  101,
-                  95,
-                  97,
-                  99,
-                  99,
-                  117,
-                  109,
-                  117,
-                  108,
-                  97,
-                  116,
-                  111,
-                  114
+                  103, 108, 111, 98, 97, 108, 95, 118, 111, 108, 117, 109, 101,
+                  95, 97, 99, 99, 117, 109, 117, 108, 97, 116, 111, 114
                 ]
               }
             ]
@@ -1413,38 +1775,9 @@
             "program": {
               "kind": "const",
               "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
               ]
             }
           }
@@ -1457,29 +1790,8 @@
               {
                 "kind": "const",
                 "value": [
-                  117,
-                  115,
-                  101,
-                  114,
-                  95,
-                  118,
-                  111,
-                  108,
-                  117,
-                  109,
-                  101,
-                  95,
-                  97,
-                  99,
-                  99,
-                  117,
-                  109,
-                  117,
-                  108,
-                  97,
-                  116,
-                  111,
-                  114
+                  117, 115, 101, 114, 95, 118, 111, 108, 117, 109, 101, 95, 97,
+                  99, 99, 117, 109, 117, 108, 97, 116, 111, 114
                 ]
               },
               {
@@ -1491,9 +1803,7 @@
         },
         {
           "name": "mint",
-          "relations": [
-            "global_volume_accumulator"
-          ]
+          "relations": ["global_volume_accumulator"]
         },
         {
           "name": "token_program"
@@ -1513,23 +1823,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -1549,16 +1844,7 @@
     },
     {
       "name": "close_user_volume_accumulator",
-      "discriminator": [
-        249,
-        69,
-        164,
-        218,
-        150,
-        103,
-        84,
-        138
-      ],
+      "discriminator": [249, 69, 164, 218, 150, 103, 84, 138],
       "accounts": [
         {
           "name": "user",
@@ -1573,29 +1859,8 @@
               {
                 "kind": "const",
                 "value": [
-                  117,
-                  115,
-                  101,
-                  114,
-                  95,
-                  118,
-                  111,
-                  108,
-                  117,
-                  109,
-                  101,
-                  95,
-                  97,
-                  99,
-                  99,
-                  117,
-                  109,
-                  117,
-                  108,
-                  97,
-                  116,
-                  111,
-                  114
+                  117, 115, 101, 114, 95, 118, 111, 108, 117, 109, 101, 95, 97,
+                  99, 99, 117, 109, 117, 108, 97, 116, 111, 114
                 ]
               },
               {
@@ -1612,23 +1877,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -1645,16 +1895,7 @@
       "docs": [
         "Collects creator_fee from creator_vault to the coin creator account"
       ],
-      "discriminator": [
-        20,
-        22,
-        86,
-        123,
-        198,
-        28,
-        219,
-        132
-      ],
+      "discriminator": [20, 22, 86, 123, 198, 28, 219, 132],
       "accounts": [
         {
           "name": "creator",
@@ -1668,19 +1909,7 @@
               {
                 "kind": "const",
                 "value": [
-                  99,
-                  114,
-                  101,
-                  97,
-                  116,
-                  111,
-                  114,
-                  45,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
+                  99, 114, 101, 97, 116, 111, 114, 45, 118, 97, 117, 108, 116
                 ]
               },
               {
@@ -1701,23 +1930,119 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "collect_creator_fee_v2",
+      "docs": [
+        "Collects creator_fee from creator_vault to the coin creator account"
+      ],
+      "discriminator": [207, 17, 138, 242, 4, 34, 19, 56],
+      "accounts": [
+        {
+          "name": "creator",
+          "writable": true
+        },
+        {
+          "name": "creator_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "creator"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "associated_token_program"
+            }
+          }
+        },
+        {
+          "name": "creator_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99, 114, 101, 97, 116, 111, 114, 45, 118, 97, 117, 108, 116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator_vault_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "creator_vault"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "associated_token_program"
+            }
+          }
+        },
+        {
+          "name": "quote_mint"
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -1731,19 +2056,8 @@
     },
     {
       "name": "create",
-      "docs": [
-        "Creates a new coin and bonding curve."
-      ],
-      "discriminator": [
-        24,
-        30,
-        200,
-        40,
-        5,
-        28,
-        7,
-        119
-      ],
+      "docs": ["Creates a new coin and bonding curve."],
+      "discriminator": [24, 30, 200, 40, 5, 28, 7, 119],
       "accounts": [
         {
           "name": "mint",
@@ -1757,19 +2071,7 @@
               {
                 "kind": "const",
                 "value": [
-                  109,
-                  105,
-                  110,
-                  116,
-                  45,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
+                  109, 105, 110, 116, 45, 97, 117, 116, 104, 111, 114, 105, 116,
                   121
                 ]
               }
@@ -1784,19 +2086,7 @@
               {
                 "kind": "const",
                 "value": [
-                  98,
-                  111,
-                  110,
-                  100,
-                  105,
-                  110,
-                  103,
-                  45,
-                  99,
-                  117,
-                  114,
-                  118,
-                  101
+                  98, 111, 110, 100, 105, 110, 103, 45, 99, 117, 114, 118, 101
                 ]
               },
               {
@@ -1818,38 +2108,9 @@
               {
                 "kind": "const",
                 "value": [
-                  6,
-                  221,
-                  246,
-                  225,
-                  215,
-                  101,
-                  161,
-                  147,
-                  217,
-                  203,
-                  225,
-                  70,
-                  206,
-                  235,
-                  121,
-                  172,
-                  28,
-                  180,
-                  133,
-                  237,
-                  95,
-                  91,
-                  55,
-                  145,
-                  58,
-                  140,
-                  245,
-                  133,
-                  126,
-                  255,
-                  0,
-                  169
+                  6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206,
+                  235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140,
+                  245, 133, 126, 255, 0, 169
                 ]
               },
               {
@@ -1860,38 +2121,9 @@
             "program": {
               "kind": "const",
               "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
               ]
             }
           }
@@ -1902,14 +2134,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108
-                ]
+                "value": [103, 108, 111, 98, 97, 108]
               }
             ]
           }
@@ -1925,52 +2150,14 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  109,
-                  101,
-                  116,
-                  97,
-                  100,
-                  97,
-                  116,
-                  97
-                ]
+                "value": [109, 101, 116, 97, 100, 97, 116, 97]
               },
               {
                 "kind": "const",
                 "value": [
-                  11,
-                  112,
-                  101,
-                  177,
-                  227,
-                  209,
-                  124,
-                  69,
-                  56,
-                  157,
-                  82,
-                  127,
-                  107,
-                  4,
-                  195,
-                  205,
-                  88,
-                  184,
-                  108,
-                  115,
-                  26,
-                  160,
-                  253,
-                  181,
-                  73,
-                  182,
-                  209,
-                  188,
-                  3,
-                  248,
-                  41,
-                  70
+                  11, 112, 101, 177, 227, 209, 124, 69, 56, 157, 82, 127, 107,
+                  4, 195, 205, 88, 184, 108, 115, 26, 160, 253, 181, 73, 182,
+                  209, 188, 3, 248, 41, 70
                 ]
               },
               {
@@ -2012,23 +2199,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -2059,19 +2231,8 @@
     },
     {
       "name": "create_v2",
-      "docs": [
-        "Creates a new spl-22 coin and bonding curve."
-      ],
-      "discriminator": [
-        214,
-        144,
-        76,
-        236,
-        95,
-        139,
-        49,
-        180
-      ],
+      "docs": ["Creates a new spl-22 coin and bonding curve."],
+      "discriminator": [214, 144, 76, 236, 95, 139, 49, 180],
       "accounts": [
         {
           "name": "mint",
@@ -2085,19 +2246,7 @@
               {
                 "kind": "const",
                 "value": [
-                  109,
-                  105,
-                  110,
-                  116,
-                  45,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
+                  109, 105, 110, 116, 45, 97, 117, 116, 104, 111, 114, 105, 116,
                   121
                 ]
               }
@@ -2112,19 +2261,7 @@
               {
                 "kind": "const",
                 "value": [
-                  98,
-                  111,
-                  110,
-                  100,
-                  105,
-                  110,
-                  103,
-                  45,
-                  99,
-                  117,
-                  114,
-                  118,
-                  101
+                  98, 111, 110, 100, 105, 110, 103, 45, 99, 117, 114, 118, 101
                 ]
               },
               {
@@ -2155,38 +2292,9 @@
             "program": {
               "kind": "const",
               "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
               ]
             }
           }
@@ -2197,14 +2305,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108
-                ]
+                "value": [103, 108, 111, 98, 97, 108]
               }
             ]
           }
@@ -2238,57 +2339,16 @@
               {
                 "kind": "const",
                 "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108,
-                  45,
-                  112,
-                  97,
-                  114,
-                  97,
-                  109,
-                  115
+                  103, 108, 111, 98, 97, 108, 45, 112, 97, 114, 97, 109, 115
                 ]
               }
             ],
             "program": {
               "kind": "const",
               "value": [
-                5,
-                42,
-                229,
-                215,
-                167,
-                218,
-                167,
-                36,
-                166,
-                234,
-                176,
-                167,
-                41,
-                84,
-                145,
-                133,
-                90,
-                212,
-                160,
-                103,
-                22,
-                96,
-                103,
-                76,
-                78,
-                3,
-                69,
-                89,
-                128,
-                61,
-                101,
-                163
+                5, 42, 229, 215, 167, 218, 167, 36, 166, 234, 176, 167, 41, 84,
+                145, 133, 90, 212, 160, 103, 22, 96, 103, 76, 78, 3, 69, 89,
+                128, 61, 101, 163
               ]
             }
           }
@@ -2300,54 +2360,15 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  115,
-                  111,
-                  108,
-                  45,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
+                "value": [115, 111, 108, 45, 118, 97, 117, 108, 116]
               }
             ],
             "program": {
               "kind": "const",
               "value": [
-                5,
-                42,
-                229,
-                215,
-                167,
-                218,
-                167,
-                36,
-                166,
-                234,
-                176,
-                167,
-                41,
-                84,
-                145,
-                133,
-                90,
-                212,
-                160,
-                103,
-                22,
-                96,
-                103,
-                76,
-                78,
-                3,
-                69,
-                89,
-                128,
-                61,
-                101,
-                163
+                5, 42, 229, 215, 167, 218, 167, 36, 166, 234, 176, 167, 41, 84,
+                145, 133, 90, 212, 160, 103, 22, 96, 103, 76, 78, 3, 69, 89,
+                128, 61, 101, 163
               ]
             }
           }
@@ -2360,18 +2381,7 @@
               {
                 "kind": "const",
                 "value": [
-                  109,
-                  97,
-                  121,
-                  104,
-                  101,
-                  109,
-                  45,
-                  115,
-                  116,
-                  97,
-                  116,
-                  101
+                  109, 97, 121, 104, 101, 109, 45, 115, 116, 97, 116, 101
                 ]
               },
               {
@@ -2382,38 +2392,9 @@
             "program": {
               "kind": "const",
               "value": [
-                5,
-                42,
-                229,
-                215,
-                167,
-                218,
-                167,
-                36,
-                166,
-                234,
-                176,
-                167,
-                41,
-                84,
-                145,
-                133,
-                90,
-                212,
-                160,
-                103,
-                22,
-                96,
-                103,
-                76,
-                78,
-                3,
-                69,
-                89,
-                128,
-                61,
-                101,
-                163
+                5, 42, 229, 215, 167, 218, 167, 36, 166, 234, 176, 167, 41, 84,
+                145, 133, 90, 212, 160, 103, 22, 96, 103, 76, 78, 3, 69, 89,
+                128, 61, 101, 163
               ]
             }
           }
@@ -2429,23 +2410,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -2493,22 +2459,11 @@
         "The creator vault needs to have at least the minimum distributable amount to distribute fees",
         "This can be checked with the get_minimum_distributable_fee instruction"
       ],
-      "discriminator": [
-        165,
-        114,
-        103,
-        0,
-        121,
-        206,
-        247,
-        81
-      ],
+      "discriminator": [165, 114, 103, 0, 121, 206, 247, 81],
       "accounts": [
         {
           "name": "mint",
-          "relations": [
-            "sharing_config"
-          ]
+          "relations": ["sharing_config"]
         },
         {
           "name": "bonding_curve",
@@ -2517,19 +2472,7 @@
               {
                 "kind": "const",
                 "value": [
-                  98,
-                  111,
-                  110,
-                  100,
-                  105,
-                  110,
-                  103,
-                  45,
-                  99,
-                  117,
-                  114,
-                  118,
-                  101
+                  98, 111, 110, 100, 105, 110, 103, 45, 99, 117, 114, 118, 101
                 ]
               },
               {
@@ -2546,19 +2489,7 @@
               {
                 "kind": "const",
                 "value": [
-                  115,
-                  104,
-                  97,
-                  114,
-                  105,
-                  110,
-                  103,
-                  45,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
+                  115, 104, 97, 114, 105, 110, 103, 45, 99, 111, 110, 102, 105,
                   103
                 ]
               },
@@ -2570,38 +2501,9 @@
             "program": {
               "kind": "const",
               "value": [
-                12,
-                53,
-                255,
-                169,
-                5,
-                90,
-                142,
-                86,
-                141,
-                168,
-                247,
-                188,
-                7,
-                86,
-                21,
-                39,
-                76,
-                241,
-                201,
-                44,
-                164,
-                31,
-                64,
-                0,
-                156,
-                81,
-                106,
-                164,
-                20,
-                194,
-                124,
-                112
+                12, 53, 255, 169, 5, 90, 142, 86, 141, 168, 247, 188, 7, 86, 21,
+                39, 76, 241, 201, 44, 164, 31, 64, 0, 156, 81, 106, 164, 20,
+                194, 124, 112
               ]
             }
           }
@@ -2614,19 +2516,7 @@
               {
                 "kind": "const",
                 "value": [
-                  99,
-                  114,
-                  101,
-                  97,
-                  116,
-                  111,
-                  114,
-                  45,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
+                  99, 114, 101, 97, 116, 111, 114, 45, 118, 97, 117, 108, 116
                 ]
               },
               {
@@ -2648,23 +2538,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -2683,20 +2558,156 @@
       }
     },
     {
+      "name": "distribute_creator_fees_v2",
+      "discriminator": [255, 203, 19, 79, 244, 68, 8, 159],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "mint",
+          "relations": ["sharing_config"]
+        },
+        {
+          "name": "bonding_curve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98, 111, 110, 100, 105, 110, 103, 45, 99, 117, 114, 118, 101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "sharing_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115, 104, 97, 114, 105, 110, 103, 45, 99, 111, 110, 102, 105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                12, 53, 255, 169, 5, 90, 142, 86, 141, 168, 247, 188, 7, 86, 21,
+                39, 76, 241, 201, 44, 164, 31, 64, 0, 156, 81, 106, 164, 20,
+                194, 124, 112
+              ]
+            }
+          }
+        },
+        {
+          "name": "creator_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99, 114, 101, 97, 116, 111, 114, 45, 118, 97, 117, 108, 116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bonding_curve.creator",
+                "account": "BondingCurve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "address": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+        },
+        {
+          "name": "creator_vault_quote_token_account",
+          "docs": [
+            "Deserialized manually in the handler for non-legacy quote mints."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "creator_vault"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "associated_token_program"
+            }
+          }
+        },
+        {
+          "name": "quote_mint"
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        }
+      ],
+      "args": [
+        {
+          "name": "initialize_ata",
+          "type": "bool"
+        }
+      ],
+      "returns": {
+        "defined": {
+          "name": "DistributeCreatorFeesEvent"
+        }
+      }
+    },
+    {
       "name": "extend_account",
-      "docs": [
-        "Extends the size of program-owned accounts"
-      ],
-      "discriminator": [
-        234,
-        102,
-        194,
-        203,
-        150,
-        72,
-        62,
-        229
-      ],
+      "docs": ["Extends the size of program-owned accounts"],
+      "discriminator": [234, 102, 194, 203, 150, 72, 62, 229],
       "accounts": [
         {
           "name": "account",
@@ -2717,23 +2728,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -2751,22 +2747,11 @@
         "Permissionless instruction to check the minimum required fees for distribution",
         "Returns the minimum required balance from the creator_vault and whether distribution can proceed"
       ],
-      "discriminator": [
-        117,
-        225,
-        127,
-        202,
-        134,
-        95,
-        68,
-        35
-      ],
+      "discriminator": [117, 225, 127, 202, 134, 95, 68, 35],
       "accounts": [
         {
           "name": "mint",
-          "relations": [
-            "sharing_config"
-          ]
+          "relations": ["sharing_config"]
         },
         {
           "name": "bonding_curve",
@@ -2775,19 +2760,7 @@
               {
                 "kind": "const",
                 "value": [
-                  98,
-                  111,
-                  110,
-                  100,
-                  105,
-                  110,
-                  103,
-                  45,
-                  99,
-                  117,
-                  114,
-                  118,
-                  101
+                  98, 111, 110, 100, 105, 110, 103, 45, 99, 117, 114, 118, 101
                 ]
               },
               {
@@ -2804,19 +2777,7 @@
               {
                 "kind": "const",
                 "value": [
-                  115,
-                  104,
-                  97,
-                  114,
-                  105,
-                  110,
-                  103,
-                  45,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
+                  115, 104, 97, 114, 105, 110, 103, 45, 99, 111, 110, 102, 105,
                   103
                 ]
               },
@@ -2828,38 +2789,9 @@
             "program": {
               "kind": "const",
               "value": [
-                12,
-                53,
-                255,
-                169,
-                5,
-                90,
-                142,
-                86,
-                141,
-                168,
-                247,
-                188,
-                7,
-                86,
-                21,
-                39,
-                76,
-                241,
-                201,
-                44,
-                164,
-                31,
-                64,
-                0,
-                156,
-                81,
-                106,
-                164,
-                20,
-                194,
-                124,
-                112
+                12, 53, 255, 169, 5, 90, 142, 86, 141, 168, 247, 188, 7, 86, 21,
+                39, 76, 241, 201, 44, 164, 31, 64, 0, 156, 81, 106, 164, 20,
+                194, 124, 112
               ]
             }
           }
@@ -2871,19 +2803,7 @@
               {
                 "kind": "const",
                 "value": [
-                  99,
-                  114,
-                  101,
-                  97,
-                  116,
-                  111,
-                  114,
-                  45,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
+                  99, 114, 101, 97, 116, 111, 114, 45, 118, 97, 117, 108, 116
                 ]
               },
               {
@@ -2904,16 +2824,7 @@
     },
     {
       "name": "init_user_volume_accumulator",
-      "discriminator": [
-        94,
-        6,
-        202,
-        115,
-        255,
-        96,
-        232,
-        183
-      ],
+      "discriminator": [94, 6, 202, 115, 255, 96, 232, 183],
       "accounts": [
         {
           "name": "payer",
@@ -2931,29 +2842,8 @@
               {
                 "kind": "const",
                 "value": [
-                  117,
-                  115,
-                  101,
-                  114,
-                  95,
-                  118,
-                  111,
-                  108,
-                  117,
-                  109,
-                  101,
-                  95,
-                  97,
-                  99,
-                  99,
-                  117,
-                  109,
-                  117,
-                  108,
-                  97,
-                  116,
-                  111,
-                  114
+                  117, 115, 101, 114, 95, 118, 111, 108, 117, 109, 101, 95, 97,
+                  99, 99, 117, 109, 117, 108, 97, 116, 111, 114
                 ]
               },
               {
@@ -2974,23 +2864,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -3004,19 +2879,8 @@
     },
     {
       "name": "initialize",
-      "docs": [
-        "Creates the global state."
-      ],
-      "discriminator": [
-        175,
-        175,
-        109,
-        31,
-        13,
-        152,
-        155,
-        237
-      ],
+      "docs": ["Creates the global state."],
+      "discriminator": [175, 175, 109, 31, 13, 152, 155, 237],
       "accounts": [
         {
           "name": "global",
@@ -3025,14 +2889,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108
-                ]
+                "value": [103, 108, 111, 98, 97, 108]
               }
             ]
           }
@@ -3054,16 +2911,7 @@
       "docs": [
         "Migrates liquidity to pump_amm if the bonding curve is complete"
       ],
-      "discriminator": [
-        155,
-        234,
-        231,
-        146,
-        236,
-        158,
-        162,
-        30
-      ],
+      "discriminator": [155, 234, 231, 146, 236, 158, 162, 30],
       "accounts": [
         {
           "name": "global",
@@ -3071,14 +2919,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108
-                ]
+                "value": [103, 108, 111, 98, 97, 108]
               }
             ]
           }
@@ -3086,9 +2927,7 @@
         {
           "name": "withdraw_authority",
           "writable": true,
-          "relations": [
-            "global"
-          ]
+          "relations": ["global"]
         },
         {
           "name": "mint"
@@ -3101,19 +2940,7 @@
               {
                 "kind": "const",
                 "value": [
-                  98,
-                  111,
-                  110,
-                  100,
-                  105,
-                  110,
-                  103,
-                  45,
-                  99,
-                  117,
-                  114,
-                  118,
-                  101
+                  98, 111, 110, 100, 105, 110, 103, 45, 99, 117, 114, 118, 101
                 ]
               },
               {
@@ -3144,38 +2971,9 @@
             "program": {
               "kind": "const",
               "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
               ]
             }
           }
@@ -3203,19 +3001,11 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  112,
-                  111,
-                  111,
-                  108
-                ]
+                "value": [112, 111, 111, 108]
               },
               {
                 "kind": "const",
-                "value": [
-                  0,
-                  0
-                ]
+                "value": [0, 0]
               },
               {
                 "kind": "account",
@@ -3244,19 +3034,7 @@
               {
                 "kind": "const",
                 "value": [
-                  112,
-                  111,
-                  111,
-                  108,
-                  45,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
+                  112, 111, 111, 108, 45, 97, 117, 116, 104, 111, 114, 105, 116,
                   121
                 ]
               },
@@ -3322,19 +3100,7 @@
               {
                 "kind": "const",
                 "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108,
-                  95,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
+                  103, 108, 111, 98, 97, 108, 95, 99, 111, 110, 102, 105, 103
                 ]
               }
             ],
@@ -3356,18 +3122,7 @@
               {
                 "kind": "const",
                 "value": [
-                  112,
-                  111,
-                  111,
-                  108,
-                  95,
-                  108,
-                  112,
-                  95,
-                  109,
-                  105,
-                  110,
-                  116
+                  112, 111, 111, 108, 95, 108, 112, 95, 109, 105, 110, 116
                 ]
               },
               {
@@ -3468,23 +3223,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ],
@@ -3501,52 +3241,31 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
           }
         },
         {
-          "name": "program"
+          "name": "program",
+          "address": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+        },
+        {
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
         }
       ],
       "args": []
     },
     {
       "name": "migrate_bonding_curve_creator",
-      "discriminator": [
-        87,
-        124,
-        52,
-        191,
-        52,
-        38,
-        214,
-        232
-      ],
+      "discriminator": [87, 124, 52, 191, 52, 38, 214, 232],
       "accounts": [
         {
           "name": "mint",
-          "relations": [
-            "sharing_config"
-          ]
+          "relations": ["sharing_config"]
         },
         {
           "name": "bonding_curve",
@@ -3556,19 +3275,7 @@
               {
                 "kind": "const",
                 "value": [
-                  98,
-                  111,
-                  110,
-                  100,
-                  105,
-                  110,
-                  103,
-                  45,
-                  99,
-                  117,
-                  114,
-                  118,
-                  101
+                  98, 111, 110, 100, 105, 110, 103, 45, 99, 117, 114, 118, 101
                 ]
               },
               {
@@ -3585,19 +3292,7 @@
               {
                 "kind": "const",
                 "value": [
-                  115,
-                  104,
-                  97,
-                  114,
-                  105,
-                  110,
-                  103,
-                  45,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
+                  115, 104, 97, 114, 105, 110, 103, 45, 99, 111, 110, 102, 105,
                   103
                 ]
               },
@@ -3609,38 +3304,9 @@
             "program": {
               "kind": "const",
               "value": [
-                12,
-                53,
-                255,
-                169,
-                5,
-                90,
-                142,
-                86,
-                141,
-                168,
-                247,
-                188,
-                7,
-                86,
-                21,
-                39,
-                76,
-                241,
-                201,
-                44,
-                164,
-                31,
-                64,
-                0,
-                156,
-                81,
-                106,
-                164,
-                20,
-                194,
-                124,
-                112
+                12, 53, 255, 169, 5, 90, 142, 86, 141, 168, 247, 188, 7, 86, 21,
+                39, 76, 241, 201, 44, 164, 31, 64, 0, 156, 81, 106, 164, 20,
+                194, 124, 112
               ]
             }
           }
@@ -3652,23 +3318,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -3681,23 +3332,11 @@
       "args": []
     },
     {
-      "name": "sell",
+      "name": "migrate_v2",
       "docs": [
-        "Sells tokens into a bonding curve.",
-        "For cashback coins, optionally pass user_volume_accumulator as remaining_accounts[0].",
-        "If provided and valid, creator_fee goes to user_volume_accumulator.",
-        "Otherwise, falls back to transferring creator_fee to creator_vault."
+        "Migrates liquidity to pump_amm if the bonding curve is complete"
       ],
-      "discriminator": [
-        51,
-        230,
-        133,
-        164,
-        1,
-        127,
-        131,
-        173
-      ],
+      "discriminator": [187, 203, 18, 31, 206, 237, 254, 41],
       "accounts": [
         {
           "name": "global",
@@ -3705,14 +3344,419 @@
             "seeds": [
               {
                 "kind": "const",
+                "value": [103, 108, 111, 98, 97, 108]
+              }
+            ]
+          }
+        },
+        {
+          "name": "withdraw_authority",
+          "writable": true,
+          "relations": ["global"]
+        },
+        {
+          "name": "base_mint"
+        },
+        {
+          "name": "quote_mint"
+        },
+        {
+          "name": "bonding_curve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
                 "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108
+                  98, 111, 110, 100, 105, 110, 103, 45, 99, 117, 114, 118, 101
                 ]
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "associated_base_bonding_curve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "bonding_curve"
+              },
+              {
+                "kind": "account",
+                "path": "base_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "associated_quote_bonding_curve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "bonding_curve"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "associated_token_program"
+            }
+          }
+        },
+        {
+          "name": "user",
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "pump_amm",
+          "address": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+        },
+        {
+          "name": "pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 111, 111, 108]
+              },
+              {
+                "kind": "const",
+                "value": [0, 0]
+              },
+              {
+                "kind": "account",
+                "path": "pool_authority"
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "pump_amm"
+            }
+          }
+        },
+        {
+          "name": "pool_authority",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112, 111, 111, 108, 45, 97, 117, 116, 104, 111, 114, 105, 116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool_authority_mint_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "pool_authority"
+              },
+              {
+                "kind": "account",
+                "path": "base_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "associated_token_program"
+            }
+          }
+        },
+        {
+          "name": "pool_authority_quote_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "pool_authority"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "associated_token_program"
+            }
+          }
+        },
+        {
+          "name": "amm_global_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103, 108, 111, 98, 97, 108, 95, 99, 111, 110, 102, 105, 103
+                ]
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "pump_amm"
+            }
+          }
+        },
+        {
+          "name": "lp_mint",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112, 111, 111, 108, 95, 108, 112, 95, 109, 105, 110, 116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "pump_amm"
+            }
+          }
+        },
+        {
+          "name": "user_pool_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "pool_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_2022_program"
+              },
+              {
+                "kind": "account",
+                "path": "lp_mint"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "associated_token_program"
+            }
+          }
+        },
+        {
+          "name": "pool_base_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "base_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "associated_token_program"
+            }
+          }
+        },
+        {
+          "name": "pool_quote_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "associated_token_program"
+            }
+          }
+        },
+        {
+          "name": "base_token_program"
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "token_2022_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "pump_amm_event_authority"
+        },
+        {
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "remove_quote_mint",
+      "discriminator": [177, 65, 223, 38, 88, 209, 158, 155],
+      "accounts": [
+        {
+          "name": "global",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [103, 108, 111, 98, 97, 108]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": ["global"]
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "quote_mint",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "sell",
+      "docs": [
+        "Sells tokens into a bonding curve.",
+        "For cashback coins, pass as remaining_accounts: [0] user_volume_accumulator,",
+        "[1] bonding_curve_v2. If provided and valid, creator_fee goes to user_volume_accumulator.",
+        "Otherwise, falls back to transferring creator_fee to creator_vault."
+      ],
+      "discriminator": [51, 230, 133, 164, 1, 127, 131, 173],
+      "accounts": [
+        {
+          "name": "global",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [103, 108, 111, 98, 97, 108]
               }
             ]
           }
@@ -3732,19 +3776,7 @@
               {
                 "kind": "const",
                 "value": [
-                  98,
-                  111,
-                  110,
-                  100,
-                  105,
-                  110,
-                  103,
-                  45,
-                  99,
-                  117,
-                  114,
-                  118,
-                  101
+                  98, 111, 110, 100, 105, 110, 103, 45, 99, 117, 114, 118, 101
                 ]
               },
               {
@@ -3775,38 +3807,9 @@
             "program": {
               "kind": "const",
               "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
               ]
             }
           }
@@ -3832,19 +3835,7 @@
               {
                 "kind": "const",
                 "value": [
-                  99,
-                  114,
-                  101,
-                  97,
-                  116,
-                  111,
-                  114,
-                  45,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
+                  99, 114, 101, 97, 116, 111, 114, 45, 118, 97, 117, 108, 116
                 ]
               },
               {
@@ -3865,23 +3856,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -3897,54 +3873,14 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  102,
-                  101,
-                  101,
-                  95,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
+                "value": [102, 101, 101, 95, 99, 111, 110, 102, 105, 103]
               },
               {
                 "kind": "const",
                 "value": [
-                  1,
-                  86,
-                  224,
-                  246,
-                  147,
-                  102,
-                  90,
-                  207,
-                  68,
-                  219,
-                  21,
-                  104,
-                  191,
-                  23,
-                  91,
-                  170,
-                  81,
-                  137,
-                  203,
-                  151,
-                  245,
-                  210,
-                  255,
-                  59,
-                  101,
-                  93,
-                  43,
-                  182,
-                  253,
-                  109,
-                  24,
-                  176
+                  1, 86, 224, 246, 147, 102, 90, 207, 68, 219, 21, 104, 191, 23,
+                  91, 170, 81, 137, 203, 151, 245, 210, 255, 59, 101, 93, 43,
+                  182, 253, 109, 24, 176
                 ]
               }
             ],
@@ -3971,27 +3907,408 @@
       ]
     },
     {
+      "name": "sell_v2",
+      "discriminator": [93, 246, 130, 60, 231, 233, 64, 178],
+      "accounts": [
+        {
+          "name": "global",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [103, 108, 111, 98, 97, 108]
+              }
+            ]
+          }
+        },
+        {
+          "name": "base_mint"
+        },
+        {
+          "name": "quote_mint"
+        },
+        {
+          "name": "base_token_program"
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "fee_recipient",
+          "writable": true
+        },
+        {
+          "name": "associated_quote_fee_recipient",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "fee_recipient"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "buyback_fee_recipient",
+          "writable": true
+        },
+        {
+          "name": "associated_quote_buyback_fee_recipient",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "buyback_fee_recipient"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "bonding_curve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98, 111, 110, 100, 105, 110, 103, 45, 99, 117, 114, 118, 101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "associated_base_bonding_curve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "bonding_curve"
+              },
+              {
+                "kind": "account",
+                "path": "base_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "associated_quote_bonding_curve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "bonding_curve"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "associated_base_user",
+          "writable": true
+        },
+        {
+          "name": "associated_quote_user",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "creator_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99, 114, 101, 97, 116, 111, 114, 45, 118, 97, 117, 108, 116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bonding_curve.creator",
+                "account": "BondingCurve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "associated_creator_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "creator_vault"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "sharing_config",
+          "docs": [
+            "seeds; the account is intentionally not deserialized here because it may be uninitialized",
+            "for mints that have not created a fee sharing config. Handlers must check",
+            "`data_is_empty()` / owner before reading."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115, 104, 97, 114, 105, 110, 103, 45, 99, 111, 110, 102, 105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                12, 53, 255, 169, 5, 90, 142, 86, 141, 168, 247, 188, 7, 86, 21,
+                39, 76, 241, 201, 44, 164, 31, 64, 0, 156, 81, 106, 164, 20,
+                194, 124, 112
+              ]
+            }
+          }
+        },
+        {
+          "name": "user_volume_accumulator",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117, 115, 101, 114, 95, 118, 111, 108, 117, 109, 101, 95, 97,
+                  99, 99, 117, 109, 117, 108, 97, 116, 111, 114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "associated_user_volume_accumulator",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user_volume_accumulator"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "fee_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [102, 101, 101, 95, 99, 111, 110, 102, 105, 103]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  1, 86, 224, 246, 147, 102, 90, 207, 68, 219, 21, 104, 191, 23,
+                  91, 170, 81, 137, 203, 151, 245, 210, 255, 59, 101, 93, 43,
+                  182, 253, 109, 24, 176
+                ]
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "fee_program"
+            }
+          }
+        },
+        {
+          "name": "fee_program",
+          "address": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "address": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "min_sol_output",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "set_creator",
       "docs": [
         "Allows Global::set_creator_authority to set the bonding curve creator from Metaplex metadata or input argument"
       ],
-      "discriminator": [
-        254,
-        148,
-        255,
-        112,
-        207,
-        142,
-        170,
-        165
-      ],
+      "discriminator": [254, 148, 255, 112, 207, 142, 170, 165],
       "accounts": [
         {
           "name": "set_creator_authority",
           "signer": true,
-          "relations": [
-            "global"
-          ]
+          "relations": ["global"]
         },
         {
           "name": "global",
@@ -3999,14 +4316,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108
-                ]
+                "value": [103, 108, 111, 98, 97, 108]
               }
             ]
           }
@@ -4020,52 +4330,14 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  109,
-                  101,
-                  116,
-                  97,
-                  100,
-                  97,
-                  116,
-                  97
-                ]
+                "value": [109, 101, 116, 97, 100, 97, 116, 97]
               },
               {
                 "kind": "const",
                 "value": [
-                  11,
-                  112,
-                  101,
-                  177,
-                  227,
-                  209,
-                  124,
-                  69,
-                  56,
-                  157,
-                  82,
-                  127,
-                  107,
-                  4,
-                  195,
-                  205,
-                  88,
-                  184,
-                  108,
-                  115,
-                  26,
-                  160,
-                  253,
-                  181,
-                  73,
-                  182,
-                  209,
-                  188,
-                  3,
-                  248,
-                  41,
-                  70
+                  11, 112, 101, 177, 227, 209, 124, 69, 56, 157, 82, 127, 107,
+                  4, 195, 205, 88, 184, 108, 115, 26, 160, 253, 181, 73, 182,
+                  209, 188, 3, 248, 41, 70
                 ]
               },
               {
@@ -4076,38 +4348,9 @@
             "program": {
               "kind": "const",
               "value": [
-                11,
-                112,
-                101,
-                177,
-                227,
-                209,
-                124,
-                69,
-                56,
-                157,
-                82,
-                127,
-                107,
-                4,
-                195,
-                205,
-                88,
-                184,
-                108,
-                115,
-                26,
-                160,
-                253,
-                181,
-                73,
-                182,
-                209,
-                188,
-                3,
-                248,
-                41,
-                70
+                11, 112, 101, 177, 227, 209, 124, 69, 56, 157, 82, 127, 107, 4,
+                195, 205, 88, 184, 108, 115, 26, 160, 253, 181, 73, 182, 209,
+                188, 3, 248, 41, 70
               ]
             }
           }
@@ -4120,19 +4363,7 @@
               {
                 "kind": "const",
                 "value": [
-                  98,
-                  111,
-                  110,
-                  100,
-                  105,
-                  110,
-                  103,
-                  45,
-                  99,
-                  117,
-                  114,
-                  118,
-                  101
+                  98, 111, 110, 100, 105, 110, 103, 45, 99, 117, 114, 118, 101
                 ]
               },
               {
@@ -4149,23 +4380,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -4184,16 +4400,7 @@
     },
     {
       "name": "set_mayhem_virtual_params",
-      "discriminator": [
-        61,
-        169,
-        188,
-        191,
-        153,
-        149,
-        42,
-        97
-      ],
+      "discriminator": [61, 169, 188, 191, 153, 149, 42, 97],
       "accounts": [
         {
           "name": "sol_vault_authority",
@@ -4203,54 +4410,15 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  115,
-                  111,
-                  108,
-                  45,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
+                "value": [115, 111, 108, 45, 118, 97, 117, 108, 116]
               }
             ],
             "program": {
               "kind": "const",
               "value": [
-                5,
-                42,
-                229,
-                215,
-                167,
-                218,
-                167,
-                36,
-                166,
-                234,
-                176,
-                167,
-                41,
-                84,
-                145,
-                133,
-                90,
-                212,
-                160,
-                103,
-                22,
-                96,
-                103,
-                76,
-                78,
-                3,
-                69,
-                89,
-                128,
-                61,
-                101,
-                163
+                5, 42, 229, 215, 167, 218, 167, 36, 166, 234, 176, 167, 41, 84,
+                145, 133, 90, 212, 160, 103, 22, 96, 103, 76, 78, 3, 69, 89,
+                128, 61, 101, 163
               ]
             }
           }
@@ -4276,38 +4444,9 @@
             "program": {
               "kind": "const",
               "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142,
+                13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216,
+                219, 233, 248, 89
               ]
             }
           }
@@ -4321,14 +4460,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108
-                ]
+                "value": [103, 108, 111, 98, 97, 108]
               }
             ]
           }
@@ -4341,19 +4473,7 @@
               {
                 "kind": "const",
                 "value": [
-                  98,
-                  111,
-                  110,
-                  100,
-                  105,
-                  110,
-                  103,
-                  45,
-                  99,
-                  117,
-                  114,
-                  118,
-                  101
+                  98, 111, 110, 100, 105, 110, 103, 45, 99, 117, 114, 118, 101
                 ]
               },
               {
@@ -4374,23 +4494,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -4407,16 +4512,7 @@
       "docs": [
         "Syncs the bonding curve creator with the Metaplex metadata creator if it exists"
       ],
-      "discriminator": [
-        138,
-        96,
-        174,
-        217,
-        48,
-        85,
-        197,
-        246
-      ],
+      "discriminator": [138, 96, 174, 217, 48, 85, 197, 246],
       "accounts": [
         {
           "name": "mint"
@@ -4427,52 +4523,14 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  109,
-                  101,
-                  116,
-                  97,
-                  100,
-                  97,
-                  116,
-                  97
-                ]
+                "value": [109, 101, 116, 97, 100, 97, 116, 97]
               },
               {
                 "kind": "const",
                 "value": [
-                  11,
-                  112,
-                  101,
-                  177,
-                  227,
-                  209,
-                  124,
-                  69,
-                  56,
-                  157,
-                  82,
-                  127,
-                  107,
-                  4,
-                  195,
-                  205,
-                  88,
-                  184,
-                  108,
-                  115,
-                  26,
-                  160,
-                  253,
-                  181,
-                  73,
-                  182,
-                  209,
-                  188,
-                  3,
-                  248,
-                  41,
-                  70
+                  11, 112, 101, 177, 227, 209, 124, 69, 56, 157, 82, 127, 107,
+                  4, 195, 205, 88, 184, 108, 115, 26, 160, 253, 181, 73, 182,
+                  209, 188, 3, 248, 41, 70
                 ]
               },
               {
@@ -4483,38 +4541,9 @@
             "program": {
               "kind": "const",
               "value": [
-                11,
-                112,
-                101,
-                177,
-                227,
-                209,
-                124,
-                69,
-                56,
-                157,
-                82,
-                127,
-                107,
-                4,
-                195,
-                205,
-                88,
-                184,
-                108,
-                115,
-                26,
-                160,
-                253,
-                181,
-                73,
-                182,
-                209,
-                188,
-                3,
-                248,
-                41,
-                70
+                11, 112, 101, 177, 227, 209, 124, 69, 56, 157, 82, 127, 107, 4,
+                195, 205, 88, 184, 108, 115, 26, 160, 253, 181, 73, 182, 209,
+                188, 3, 248, 41, 70
               ]
             }
           }
@@ -4527,19 +4556,7 @@
               {
                 "kind": "const",
                 "value": [
-                  98,
-                  111,
-                  110,
-                  100,
-                  105,
-                  110,
-                  103,
-                  45,
-                  99,
-                  117,
-                  114,
-                  118,
-                  101
+                  98, 111, 110, 100, 105, 110, 103, 45, 99, 117, 114, 118, 101
                 ]
               },
               {
@@ -4556,23 +4573,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -4586,19 +4588,8 @@
     },
     {
       "name": "set_params",
-      "docs": [
-        "Sets the global state parameters."
-      ],
-      "discriminator": [
-        27,
-        234,
-        178,
-        52,
-        147,
-        2,
-        187,
-        141
-      ],
+      "docs": ["Sets the global state parameters."],
+      "discriminator": [27, 234, 178, 52, 147, 2, 187, 141],
       "accounts": [
         {
           "name": "global",
@@ -4607,14 +4598,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108
-                ]
+                "value": [103, 108, 111, 98, 97, 108]
               }
             ]
           }
@@ -4623,9 +4607,7 @@
           "name": "authority",
           "writable": true,
           "signer": true,
-          "relations": [
-            "global"
-          ]
+          "relations": ["global"]
         },
         {
           "name": "event_authority",
@@ -4634,23 +4616,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -4709,16 +4676,7 @@
     },
     {
       "name": "set_reserved_fee_recipients",
-      "discriminator": [
-        111,
-        172,
-        162,
-        232,
-        114,
-        89,
-        213,
-        142
-      ],
+      "discriminator": [111, 172, 162, 232, 114, 89, 213, 142],
       "accounts": [
         {
           "name": "global",
@@ -4727,14 +4685,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108
-                ]
+                "value": [103, 108, 111, 98, 97, 108]
               }
             ]
           }
@@ -4742,9 +4693,7 @@
         {
           "name": "authority",
           "signer": true,
-          "relations": [
-            "global"
-          ]
+          "relations": ["global"]
         },
         {
           "name": "event_authority",
@@ -4753,23 +4702,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -4787,17 +4721,55 @@
       ]
     },
     {
-      "name": "sync_user_volume_accumulator",
-      "discriminator": [
-        86,
-        31,
-        192,
-        87,
-        163,
-        87,
-        79,
-        238
+      "name": "set_virtual_quote_reserves",
+      "discriminator": [101, 135, 191, 104, 9, 88, 20, 96],
+      "accounts": [
+        {
+          "name": "global",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [103, 108, 111, 98, 97, 108]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": ["global"]
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
       ],
+      "args": [
+        {
+          "name": "initial_virtual_quote_reserves",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "sync_user_volume_accumulator",
+      "discriminator": [86, 31, 192, 87, 163, 87, 79, 238],
       "accounts": [
         {
           "name": "user"
@@ -4809,31 +4781,8 @@
               {
                 "kind": "const",
                 "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108,
-                  95,
-                  118,
-                  111,
-                  108,
-                  117,
-                  109,
-                  101,
-                  95,
-                  97,
-                  99,
-                  99,
-                  117,
-                  109,
-                  117,
-                  108,
-                  97,
-                  116,
-                  111,
-                  114
+                  103, 108, 111, 98, 97, 108, 95, 118, 111, 108, 117, 109, 101,
+                  95, 97, 99, 99, 117, 109, 117, 108, 97, 116, 111, 114
                 ]
               }
             ]
@@ -4847,29 +4796,8 @@
               {
                 "kind": "const",
                 "value": [
-                  117,
-                  115,
-                  101,
-                  114,
-                  95,
-                  118,
-                  111,
-                  108,
-                  117,
-                  109,
-                  101,
-                  95,
-                  97,
-                  99,
-                  99,
-                  117,
-                  109,
-                  117,
-                  108,
-                  97,
-                  116,
-                  111,
-                  114
+                  117, 115, 101, 114, 95, 118, 111, 108, 117, 109, 101, 95, 97,
+                  99, 99, 117, 109, 117, 108, 97, 116, 111, 114
                 ]
               },
               {
@@ -4886,23 +4814,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -4916,16 +4829,7 @@
     },
     {
       "name": "toggle_cashback_enabled",
-      "discriminator": [
-        115,
-        103,
-        224,
-        255,
-        189,
-        89,
-        86,
-        195
-      ],
+      "discriminator": [115, 103, 224, 255, 189, 89, 86, 195],
       "accounts": [
         {
           "name": "global",
@@ -4934,14 +4838,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108
-                ]
+                "value": [103, 108, 111, 98, 97, 108]
               }
             ]
           }
@@ -4950,9 +4847,7 @@
           "name": "authority",
           "writable": true,
           "signer": true,
-          "relations": [
-            "global"
-          ]
+          "relations": ["global"]
         },
         {
           "name": "event_authority",
@@ -4961,23 +4856,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -4996,16 +4876,7 @@
     },
     {
       "name": "toggle_create_v2",
-      "discriminator": [
-        28,
-        255,
-        230,
-        240,
-        172,
-        107,
-        203,
-        171
-      ],
+      "discriminator": [28, 255, 230, 240, 172, 107, 203, 171],
       "accounts": [
         {
           "name": "global",
@@ -5014,14 +4885,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108
-                ]
+                "value": [103, 108, 111, 98, 97, 108]
               }
             ]
           }
@@ -5030,9 +4894,7 @@
           "name": "authority",
           "writable": true,
           "signer": true,
-          "relations": [
-            "global"
-          ]
+          "relations": ["global"]
         },
         {
           "name": "event_authority",
@@ -5041,23 +4903,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -5076,16 +4923,7 @@
     },
     {
       "name": "toggle_mayhem_mode",
-      "discriminator": [
-        1,
-        9,
-        111,
-        208,
-        100,
-        31,
-        255,
-        163
-      ],
+      "discriminator": [1, 9, 111, 208, 100, 31, 255, 163],
       "accounts": [
         {
           "name": "global",
@@ -5094,14 +4932,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108
-                ]
+                "value": [103, 108, 111, 98, 97, 108]
               }
             ]
           }
@@ -5110,9 +4941,7 @@
           "name": "authority",
           "writable": true,
           "signer": true,
-          "relations": [
-            "global"
-          ]
+          "relations": ["global"]
         },
         {
           "name": "event_authority",
@@ -5121,23 +4950,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -5155,17 +4969,8 @@
       ]
     },
     {
-      "name": "update_global_authority",
-      "discriminator": [
-        227,
-        181,
-        74,
-        196,
-        208,
-        21,
-        97,
-        213
-      ],
+      "name": "update_buyback_config",
+      "discriminator": [251, 224, 171, 146, 160, 26, 113, 233],
       "accounts": [
         {
           "name": "global",
@@ -5174,14 +4979,56 @@
             "seeds": [
               {
                 "kind": "const",
+                "value": [103, 108, 111, 98, 97, 108]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": ["global"]
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
                 "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "buyback_basis_points",
+          "type": {
+            "option": "u64"
+          }
+        }
+      ]
+    },
+    {
+      "name": "update_global_authority",
+      "discriminator": [227, 181, 74, 196, 208, 21, 97, 213],
+      "accounts": [
+        {
+          "name": "global",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [103, 108, 111, 98, 97, 108]
               }
             ]
           }
@@ -5189,9 +5036,7 @@
         {
           "name": "authority",
           "signer": true,
-          "relations": [
-            "global"
-          ]
+          "relations": ["global"]
         },
         {
           "name": "new_authority"
@@ -5203,23 +5048,8 @@
               {
                 "kind": "const",
                 "value": [
-                  95,
-                  95,
-                  101,
-                  118,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
+                  95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111,
+                  114, 105, 116, 121
                 ]
               }
             ]
@@ -5235,382 +5065,121 @@
   "accounts": [
     {
       "name": "BondingCurve",
-      "discriminator": [
-        23,
-        183,
-        248,
-        55,
-        96,
-        216,
-        172,
-        96
-      ]
+      "discriminator": [23, 183, 248, 55, 96, 216, 172, 96]
     },
     {
       "name": "FeeConfig",
-      "discriminator": [
-        143,
-        52,
-        146,
-        187,
-        219,
-        123,
-        76,
-        155
-      ]
+      "discriminator": [143, 52, 146, 187, 219, 123, 76, 155]
     },
     {
       "name": "Global",
-      "discriminator": [
-        167,
-        232,
-        232,
-        177,
-        200,
-        108,
-        114,
-        127
-      ]
+      "discriminator": [167, 232, 232, 177, 200, 108, 114, 127]
     },
     {
       "name": "GlobalVolumeAccumulator",
-      "discriminator": [
-        202,
-        42,
-        246,
-        43,
-        142,
-        190,
-        30,
-        255
-      ]
+      "discriminator": [202, 42, 246, 43, 142, 190, 30, 255]
     },
     {
       "name": "SharingConfig",
-      "discriminator": [
-        216,
-        74,
-        9,
-        0,
-        56,
-        140,
-        93,
-        75
-      ]
+      "discriminator": [216, 74, 9, 0, 56, 140, 93, 75]
     },
     {
       "name": "UserVolumeAccumulator",
-      "discriminator": [
-        86,
-        255,
-        112,
-        14,
-        102,
-        53,
-        154,
-        250
-      ]
+      "discriminator": [86, 255, 112, 14, 102, 53, 154, 250]
     }
   ],
   "events": [
     {
       "name": "AdminSetCreatorEvent",
-      "discriminator": [
-        64,
-        69,
-        192,
-        104,
-        29,
-        30,
-        25,
-        107
-      ]
+      "discriminator": [64, 69, 192, 104, 29, 30, 25, 107]
     },
     {
       "name": "AdminSetIdlAuthorityEvent",
-      "discriminator": [
-        245,
-        59,
-        70,
-        34,
-        75,
-        185,
-        109,
-        92
-      ]
+      "discriminator": [245, 59, 70, 34, 75, 185, 109, 92]
     },
     {
       "name": "AdminUpdateTokenIncentivesEvent",
-      "discriminator": [
-        147,
-        250,
-        108,
-        120,
-        247,
-        29,
-        67,
-        222
-      ]
+      "discriminator": [147, 250, 108, 120, 247, 29, 67, 222]
     },
     {
       "name": "ClaimCashbackEvent",
-      "discriminator": [
-        226,
-        214,
-        246,
-        33,
-        7,
-        242,
-        147,
-        229
-      ]
+      "discriminator": [226, 214, 246, 33, 7, 242, 147, 229]
     },
     {
       "name": "ClaimTokenIncentivesEvent",
-      "discriminator": [
-        79,
-        172,
-        246,
-        49,
-        205,
-        91,
-        206,
-        232
-      ]
+      "discriminator": [79, 172, 246, 49, 205, 91, 206, 232]
     },
     {
       "name": "CloseUserVolumeAccumulatorEvent",
-      "discriminator": [
-        146,
-        159,
-        189,
-        172,
-        146,
-        88,
-        56,
-        244
-      ]
+      "discriminator": [146, 159, 189, 172, 146, 88, 56, 244]
     },
     {
       "name": "CollectCreatorFeeEvent",
-      "discriminator": [
-        122,
-        2,
-        127,
-        1,
-        14,
-        191,
-        12,
-        175
-      ]
+      "discriminator": [122, 2, 127, 1, 14, 191, 12, 175]
     },
     {
       "name": "CompleteEvent",
-      "discriminator": [
-        95,
-        114,
-        97,
-        156,
-        212,
-        46,
-        152,
-        8
-      ]
+      "discriminator": [95, 114, 97, 156, 212, 46, 152, 8]
     },
     {
       "name": "CompletePumpAmmMigrationEvent",
-      "discriminator": [
-        189,
-        233,
-        93,
-        185,
-        92,
-        148,
-        234,
-        148
-      ]
+      "discriminator": [189, 233, 93, 185, 92, 148, 234, 148]
     },
     {
       "name": "CreateEvent",
-      "discriminator": [
-        27,
-        114,
-        169,
-        77,
-        222,
-        235,
-        99,
-        118
-      ]
+      "discriminator": [27, 114, 169, 77, 222, 235, 99, 118]
     },
     {
       "name": "DistributeCreatorFeesEvent",
-      "discriminator": [
-        165,
-        55,
-        129,
-        112,
-        4,
-        179,
-        202,
-        40
-      ]
+      "discriminator": [165, 55, 129, 112, 4, 179, 202, 40]
     },
     {
       "name": "ExtendAccountEvent",
-      "discriminator": [
-        97,
-        97,
-        215,
-        144,
-        93,
-        146,
-        22,
-        124
-      ]
+      "discriminator": [97, 97, 215, 144, 93, 146, 22, 124]
     },
     {
       "name": "InitUserVolumeAccumulatorEvent",
-      "discriminator": [
-        134,
-        36,
-        13,
-        72,
-        232,
-        101,
-        130,
-        216
-      ]
+      "discriminator": [134, 36, 13, 72, 232, 101, 130, 216]
     },
     {
       "name": "MigrateBondingCurveCreatorEvent",
-      "discriminator": [
-        155,
-        167,
-        104,
-        220,
-        213,
-        108,
-        243,
-        3
-      ]
+      "discriminator": [155, 167, 104, 220, 213, 108, 243, 3]
     },
     {
       "name": "MinimumDistributableFeeEvent",
-      "discriminator": [
-        168,
-        216,
-        132,
-        239,
-        235,
-        182,
-        49,
-        52
-      ]
+      "discriminator": [168, 216, 132, 239, 235, 182, 49, 52]
     },
     {
       "name": "ReservedFeeRecipientsEvent",
-      "discriminator": [
-        43,
-        188,
-        250,
-        18,
-        221,
-        75,
-        187,
-        95
-      ]
+      "discriminator": [43, 188, 250, 18, 221, 75, 187, 95]
     },
     {
       "name": "SetCreatorEvent",
-      "discriminator": [
-        237,
-        52,
-        123,
-        37,
-        245,
-        251,
-        72,
-        210
-      ]
+      "discriminator": [237, 52, 123, 37, 245, 251, 72, 210]
     },
     {
       "name": "SetMetaplexCreatorEvent",
-      "discriminator": [
-        142,
-        203,
-        6,
-        32,
-        127,
-        105,
-        191,
-        162
-      ]
+      "discriminator": [142, 203, 6, 32, 127, 105, 191, 162]
     },
     {
       "name": "SetParamsEvent",
-      "discriminator": [
-        223,
-        195,
-        159,
-        246,
-        62,
-        48,
-        143,
-        131
-      ]
+      "discriminator": [223, 195, 159, 246, 62, 48, 143, 131]
     },
     {
       "name": "SyncUserVolumeAccumulatorEvent",
-      "discriminator": [
-        197,
-        122,
-        167,
-        124,
-        116,
-        81,
-        91,
-        255
-      ]
+      "discriminator": [197, 122, 167, 124, 116, 81, 91, 255]
     },
     {
       "name": "TradeEvent",
-      "discriminator": [
-        189,
-        219,
-        127,
-        211,
-        78,
-        230,
-        97,
-        238
-      ]
+      "discriminator": [189, 219, 127, 211, 78, 230, 97, 238]
     },
     {
       "name": "UpdateGlobalAuthorityEvent",
-      "discriminator": [
-        182,
-        195,
-        137,
-        42,
-        35,
-        206,
-        207,
-        247
-      ]
+      "discriminator": [182, 195, 137, 42, 35, 206, 207, 247]
     },
     {
       "name": "UpdateMayhemVirtualParamsEvent",
-      "discriminator": [
-        117,
-        123,
-        228,
-        182,
-        161,
-        168,
-        220,
-        214
-      ]
+      "discriminator": [117, 123, 228, 182, 161, 168, 220, 214]
     }
   ],
   "errors": [
@@ -5883,6 +5452,78 @@
       "code": 6056,
       "name": "CashbackNotEnabled",
       "msg": "Cashback is not enabled"
+    },
+    {
+      "code": 6057,
+      "name": "BuybackFeeRecipientNotAuthorized",
+      "msg": "Buyback fee recipient not authorized"
+    },
+    {
+      "code": 6058,
+      "name": "AllBuybackFeeRecipientsShouldBeNonZero"
+    },
+    {
+      "code": 6059,
+      "name": "NotUniqueBuybackFeeRecipients"
+    },
+    {
+      "code": 6060,
+      "name": "BuybackBasisPointsOutOfRange",
+      "msg": "buyback_basis_points must be <= 10_000"
+    },
+    {
+      "code": 6061,
+      "name": "WrongBuybackFeeRecipientsCount",
+      "msg": "buyback fee recipients require exactly 8 remaining accounts (or none)"
+    },
+    {
+      "code": 6062,
+      "name": "BuybackFeeRecipientMissing"
+    },
+    {
+      "code": 6063,
+      "name": "UnsupportedQuoteMint",
+      "msg": "Unsupported quote mint"
+    },
+    {
+      "code": 6064,
+      "name": "InvalidQuoteTokenProgram",
+      "msg": "Create v2: quote token program must be legacy SPL Token"
+    },
+    {
+      "code": 6065,
+      "name": "InvalidAssociatedQuoteBondingCurve",
+      "msg": "Create v2: associated quote bonding curve address does not match derivation"
+    },
+    {
+      "code": 6066,
+      "name": "QuoteMintWhitelistFull",
+      "msg": "Quote mint whitelist is full"
+    },
+    {
+      "code": 6067,
+      "name": "QuoteMintAlreadyWhitelisted",
+      "msg": "Quote mint is already whitelisted"
+    },
+    {
+      "code": 6068,
+      "name": "QuoteMintNotWhitelisted",
+      "msg": "Quote mint is not in the whitelist"
+    },
+    {
+      "code": 6069,
+      "name": "QuoteMintNotEligibleForWhitelist",
+      "msg": "Quote mint cannot be added or removed via whitelist (default or native SOL mint)"
+    },
+    {
+      "code": 6070,
+      "name": "UnableToDistributeCreatorFeesToUninitializedAccount",
+      "msg": "Unable to distribute creator fees to uninitialized account"
+    },
+    {
+      "code": 6071,
+      "name": "MayhemModeQuoteMintNotAllowed",
+      "msg": "Mayhem mode quote mint not allowed"
     }
   ],
   "types": [
@@ -5976,7 +5617,7 @@
             "type": "u64"
           },
           {
-            "name": "virtual_sol_reserves",
+            "name": "virtual_quote_reserves",
             "type": "u64"
           },
           {
@@ -5984,7 +5625,7 @@
             "type": "u64"
           },
           {
-            "name": "real_sol_reserves",
+            "name": "real_quote_reserves",
             "type": "u64"
           },
           {
@@ -6006,6 +5647,10 @@
           {
             "name": "is_cashback_coin",
             "type": "bool"
+          },
+          {
+            "name": "quote_mint",
+            "type": "pubkey"
           }
         ]
       }
@@ -6118,6 +5763,10 @@
           {
             "name": "creator_fee",
             "type": "u64"
+          },
+          {
+            "name": "quote_mint",
+            "type": "pubkey"
           }
         ]
       }
@@ -6142,6 +5791,10 @@
           {
             "name": "timestamp",
             "type": "i64"
+          },
+          {
+            "name": "quote_mint",
+            "type": "pubkey"
           }
         ]
       }
@@ -6181,6 +5834,10 @@
           },
           {
             "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_mint",
             "type": "pubkey"
           }
         ]
@@ -6264,6 +5921,14 @@
           {
             "name": "is_cashback_enabled",
             "type": "bool"
+          },
+          {
+            "name": "quote_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "virtual_quote_reserves",
+            "type": "u64"
           }
         ]
       }
@@ -6306,6 +5971,10 @@
           {
             "name": "distributed",
             "type": "u64"
+          },
+          {
+            "name": "quote_mint",
+            "type": "pubkey"
           }
         ]
       }
@@ -6368,6 +6037,16 @@
                 }
               }
             }
+          },
+          {
+            "name": "stable_fee_tiers",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "FeeTier"
+                }
+              }
+            }
           }
         ]
       }
@@ -6419,9 +6098,7 @@
         "fields": [
           {
             "name": "initialized",
-            "docs": [
-              "Unused"
-            ],
+            "docs": ["Unused"],
             "type": "bool"
           },
           {
@@ -6458,9 +6135,7 @@
           },
           {
             "name": "enable_migrate",
-            "docs": [
-              "Unused"
-            ],
+            "docs": ["Unused"],
             "type": "bool"
           },
           {
@@ -6474,10 +6149,7 @@
           {
             "name": "fee_recipients",
             "type": {
-              "array": [
-                "pubkey",
-                7
-              ]
+              "array": ["pubkey", 7]
             }
           },
           {
@@ -6507,15 +6179,32 @@
           {
             "name": "reserved_fee_recipients",
             "type": {
-              "array": [
-                "pubkey",
-                7
-              ]
+              "array": ["pubkey", 7]
             }
           },
           {
             "name": "is_cashback_enabled",
             "type": "bool"
+          },
+          {
+            "name": "buyback_fee_recipients",
+            "type": {
+              "array": ["pubkey", 8]
+            }
+          },
+          {
+            "name": "buyback_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "initial_virtual_quote_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "whitelisted_quote_mints",
+            "type": {
+              "array": ["pubkey", 1]
+            }
           }
         ]
       }
@@ -6544,19 +6233,13 @@
           {
             "name": "total_token_supply",
             "type": {
-              "array": [
-                "u64",
-                30
-              ]
+              "array": ["u64", 30]
             }
           },
           {
             "name": "sol_volumes",
             "type": {
-              "array": [
-                "u64",
-                30
-              ]
+              "array": ["u64", 30]
             }
           }
         ]
@@ -6638,9 +6321,7 @@
       "name": "OptionBool",
       "type": {
         "kind": "struct",
-        "fields": [
-          "bool"
-        ]
+        "fields": ["bool"]
       }
     },
     {
@@ -6659,10 +6340,7 @@
           {
             "name": "reserved_fee_recipients",
             "type": {
-              "array": [
-                "pubkey",
-                7
-              ]
+              "array": ["pubkey", 7]
             }
           }
         ]
@@ -6768,10 +6446,7 @@
           {
             "name": "fee_recipients",
             "type": {
-              "array": [
-                "pubkey",
-                8
-              ]
+              "array": ["pubkey", 8]
             }
           },
           {
@@ -6877,9 +6552,7 @@
     },
     {
       "name": "TradeEvent",
-      "docs": [
-        "ix_name: \"buy\" | \"sell\" | \"buy_exact_sol_in\""
-      ],
+      "docs": ["ix_name: \"buy\" | \"sell\" | \"buy_exact_sol_in\""],
       "type": {
         "kind": "struct",
         "fields": [
@@ -6981,6 +6654,40 @@
           },
           {
             "name": "cashback",
+            "type": "u64"
+          },
+          {
+            "name": "buyback_fee_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "buyback_fee",
+            "type": "u64"
+          },
+          {
+            "name": "shareholders",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "Shareholder"
+                }
+              }
+            }
+          },
+          {
+            "name": "quote_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_amount",
+            "type": "u64"
+          },
+          {
+            "name": "virtual_quote_reserves",
+            "type": "u64"
+          },
+          {
+            "name": "real_quote_reserves",
             "type": "u64"
           }
         ]
@@ -7089,6 +6796,14 @@
           },
           {
             "name": "total_cashback_claimed",
+            "type": "u64"
+          },
+          {
+            "name": "stable_cashback_earned",
+            "type": "u64"
+          },
+          {
+            "name": "total_stable_cashback_claimed",
             "type": "u64"
           }
         ]

@@ -9,7 +9,13 @@ from solders.pubkey import Pubkey
 
 from core.client import SolanaClient
 from core.priority_fee.manager import PriorityFeeManager
-from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
+from core.pubkeys import (
+    TOKEN_DECIMALS,
+    WSOL_MINT,
+    is_sol_paired,
+    normalize_quote_mint,
+    quote_units_per_token,
+)
 from core.wallet import Wallet
 from interfaces.core import AddressProvider, Platform, TokenInfo
 from platforms import get_platform_implementations
@@ -17,6 +23,79 @@ from trading.base import Trader, TradeResult
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _quote_symbol(quote_mint: Pubkey) -> str:
+    """Human-readable label for a quote mint, for logging only.
+
+    Args:
+        quote_mint: Quote mint address
+
+    Returns:
+        "SOL" for wrapped SOL, otherwise a truncated mint address
+    """
+    if is_sol_paired(quote_mint):
+        return "SOL"
+    mint_str = str(quote_mint)
+    return f"{mint_str[:4]}..{mint_str[-4:]}"
+
+
+async def _read_pool_state_with_retry(
+    curve_manager: object,
+    pool_address: Pubkey,
+    attempts: int = 4,
+    delay_seconds: float = 0.15,
+) -> dict:
+    """Read bonding curve state, retrying briefly on a lagging RPC node.
+
+    A freshly created curve may not be visible at `confirmed` yet, and a node
+    can momentarily serve a slot that predates it — both surface as "account
+    not found". Reading at `processed` and retrying a few times costs a handful
+    of RPC calls, which is far cheaper than trading on stale account data.
+
+    Args:
+        curve_manager: Platform curve manager
+        pool_address: Bonding curve / pool address
+        attempts: How many reads to try before giving up
+        delay_seconds: Pause between attempts
+
+    Returns:
+        Decoded pool state
+
+    Raises:
+        Exception: The last read error if every attempt fails
+    """
+    last_error: Exception | None = None
+    for _ in range(attempts):
+        try:
+            return await curve_manager.get_pool_state(
+                pool_address, commitment="processed"
+            )
+        except Exception as error:  # noqa: BLE001
+            last_error = error
+            await asyncio.sleep(delay_seconds)
+
+    raise last_error or RuntimeError("pool_state unavailable after retries")
+
+
+def _refresh_quote_mint(token_info: TokenInfo, pool_state: dict) -> Pubkey:
+    """Sync token_info's quote asset from freshly-read curve state.
+
+    Listeners do not all carry quote_mint (pumpportal carries none of the
+    per-coin flags), and the curve is authoritative, so prefer its value.
+
+    Args:
+        token_info: Token information, mutated in place
+        pool_state: Decoded bonding curve state
+
+    Returns:
+        The resolved quote mint
+    """
+    quote_mint = normalize_quote_mint(
+        pool_state.get("quote_mint", token_info.quote_mint)
+    )
+    token_info.quote_mint = quote_mint
+    return quote_mint
 
 
 class PlatformAwareBuyer(Trader):
@@ -33,8 +112,25 @@ class PlatformAwareBuyer(Trader):
         extreme_fast_token_amount: int = 0,
         extreme_fast_mode: bool = False,
         compute_units: dict | None = None,
+        quote_amounts: dict[Pubkey, float] | None = None,
     ):
-        """Initialize platform-aware token buyer."""
+        """Initialize platform-aware token buyer.
+
+        Args:
+            client: Solana RPC client
+            wallet: Trading wallet
+            priority_fee_manager: Priority fee strategy
+            amount: Amount of SOL to spend per buy on SOL-paired coins
+            slippage: Acceptable price deviation
+            max_retries: Transaction submission attempts
+            extreme_fast_token_amount: Tokens to buy when skipping price checks
+            extreme_fast_mode: Skip curve stabilization and price check
+            compute_units: Optional CU overrides
+            quote_amounts: Per-quote-mint spend amounts in whole quote units,
+                for coins paired against something other than SOL. A coin whose
+                quote mint is absent from this map is skipped rather than
+                traded with a SOL-denominated amount.
+        """
         self.client = client
         self.wallet = wallet
         self.priority_fee_manager = priority_fee_manager
@@ -44,6 +140,23 @@ class PlatformAwareBuyer(Trader):
         self.extreme_fast_mode = extreme_fast_mode
         self.extreme_fast_token_amount = extreme_fast_token_amount
         self.compute_units = compute_units or {}
+        # SOL-paired coins always use `amount`; other quotes need an explicit
+        # per-mint amount because 0.0001 USDC and 0.0001 SOL are not comparable.
+        self.quote_amounts: dict[Pubkey, float] = {
+            WSOL_MINT: amount,
+            **(quote_amounts or {}),
+        }
+
+    def _resolve_quote_amount(self, quote_mint: Pubkey) -> float | None:
+        """Get the configured spend amount for a quote mint.
+
+        Args:
+            quote_mint: Normalized quote mint
+
+        Returns:
+            Amount in whole quote units, or None if this quote is not configured
+        """
+        return self.quote_amounts.get(quote_mint)
 
     async def execute(self, token_info: TokenInfo) -> TradeResult:
         """Execute buy operation using platform-specific implementations."""
@@ -56,13 +169,13 @@ class PlatformAwareBuyer(Trader):
             instruction_builder = implementations.instruction_builder
             curve_manager = implementations.curve_manager
 
-            # Convert amount to lamports
-            amount_lamports = int(self.amount * LAMPORTS_PER_SOL)
+            # Quote asset is resolved from the curve below; start from whatever
+            # the listener gave us so extreme_fast_mode has a usable default.
+            quote_mint = normalize_quote_mint(token_info.quote_mint)
 
             if self.extreme_fast_mode:
-                # Skip the wait and directly calculate the amount
-                token_amount = self.extreme_fast_token_amount
-                token_price_sol = self.amount / token_amount if token_amount > 0 else 0
+                # Skip the price check; the token count is fixed by config and
+                # sizing is finished once the quote amount is resolved below.
                 # Even in extreme_fast_mode, refresh mayhem/cashback/creator from
                 # chain — listeners (especially pumpportal) often don't carry
                 # these, and the program rejects with NotAuthorized (0x1770) /
@@ -71,34 +184,23 @@ class PlatformAwareBuyer(Trader):
                 # readable, so retry briefly. One handful of RPC calls is cheap
                 # relative to a failed buy.
                 try:
-                    pool_address = self._get_pool_address(
-                        token_info, address_provider
+                    pool_address = self._get_pool_address(token_info, address_provider)
+                    # Geyser/logs fire on processed, so the BC is typically
+                    # readable in the same slot; pumpportal occasionally races
+                    # the on-chain commit, hence the retries.
+                    pool_state = await _read_pool_state_with_retry(
+                        curve_manager, pool_address
                     )
-                    pool_state = None
-                    last_err: Exception | None = None
-                    # Use processed commitment — geyser/logs fire on processed
-                    # so the BC is typically readable in the same slot. Most
-                    # listeners only need 1 attempt; pumpportal occasionally
-                    # races the on-chain commit, so allow a few quick retries.
-                    for attempt in range(4):
-                        try:
-                            pool_state = await curve_manager.get_pool_state(
-                                pool_address, commitment="processed"
-                            )
-                            break
-                        except Exception as inner:  # noqa: BLE001
-                            last_err = inner
-                            await asyncio.sleep(0.15)
-                    if pool_state is None:
-                        raise last_err or RuntimeError(
-                            "pool_state unavailable after retries"
-                        )
                     token_info.is_mayhem_mode = pool_state.get(
                         "is_mayhem_mode", token_info.is_mayhem_mode
                     )
                     token_info.is_cashback_coin = pool_state.get(
                         "is_cashback_coin", token_info.is_cashback_coin
                     )
+                    # The quote asset decides which balance we spend and how
+                    # amounts are scaled, so it must come from the curve rather
+                    # than a listener guess.
+                    quote_mint = _refresh_quote_mint(token_info, pool_state)
                     fresh_creator = pool_state.get("creator")
                     if fresh_creator and hasattr(
                         address_provider, "derive_creator_vault"
@@ -142,20 +244,48 @@ class PlatformAwareBuyer(Trader):
                 token_info.is_cashback_coin = pool_state.get(
                     "is_cashback_coin", token_info.is_cashback_coin
                 )
-                token_amount = self.amount / token_price_sol
+                quote_mint = _refresh_quote_mint(token_info, pool_state)
+
+            # A coin paired against a quote asset we have no configured amount
+            # for cannot be traded — spending `amount` of it would be a
+            # different order of magnitude entirely.
+            quote_amount = self._resolve_quote_amount(quote_mint)
+            if quote_amount is None:
+                return TradeResult(
+                    success=False,
+                    platform=token_info.platform,
+                    error_message=(
+                        f"No configured buy amount for quote mint {quote_mint}; "
+                        f"set trade.quote_amounts for this mint to trade it"
+                    ),
+                )
+
+            quote_unit = quote_units_per_token(quote_mint)
+            quote_label = _quote_symbol(quote_mint)
+
+            # Both branches need the resolved quote amount to finish sizing the
+            # trade: extreme_fast_mode fixes the token count and back-derives an
+            # implied price, while the regular path fixes the spend and derives
+            # the token count from the curve price.
+            if self.extreme_fast_mode:
+                token_amount = self.extreme_fast_token_amount
+                token_price_sol = quote_amount / token_amount if token_amount > 0 else 0
+            else:
+                token_amount = quote_amount / token_price_sol
 
             # Calculate minimum token amount with slippage
             minimum_token_amount = token_amount * (1 - self.slippage)
             minimum_token_amount_raw = int(minimum_token_amount * 10**TOKEN_DECIMALS)
 
-            # Calculate maximum SOL to spend with slippage
-            max_amount_lamports = int(amount_lamports * (1 + self.slippage))
+            # Calculate maximum quote to spend with slippage, in the quote
+            # mint's own raw units (lamports for SOL, 1e-6 for USDC).
+            max_quote_amount_raw = int(quote_amount * quote_unit * (1 + self.slippage))
 
             # Build buy instructions using platform-specific builder
             instructions = await instruction_builder.build_buy_instruction(
                 token_info,
                 self.wallet.pubkey,
-                max_amount_lamports,  # amount_in (SOL)
+                max_quote_amount_raw,  # amount_in (raw quote units)
                 minimum_token_amount_raw,  # minimum_amount_out (tokens)
                 address_provider,
             )
@@ -166,10 +296,12 @@ class PlatformAwareBuyer(Trader):
             )
 
             logger.info(
-                f"Buying {token_amount:.6f} tokens at {token_price_sol:.8f} SOL per token on {token_info.platform.value}"
+                f"Buying {token_amount:.6f} tokens at {token_price_sol:.8f} "
+                f"{quote_label} per token on {token_info.platform.value}"
             )
             logger.info(
-                f"Total cost: {self.amount:.6f} SOL (max: {max_amount_lamports / LAMPORTS_PER_SOL:.6f} SOL)"
+                f"Total cost: {quote_amount:.6f} {quote_label} "
+                f"(max: {max_quote_amount_raw / quote_unit:.6f} {quote_label})"
             )
 
             # Send transaction
@@ -199,27 +331,33 @@ class PlatformAwareBuyer(Trader):
                 sol_destination = self._get_sol_destination(
                     token_info, address_provider
                 )
-                tokens_raw, sol_spent = await self.client.get_buy_transaction_details(
-                    str(tx_signature), token_info.mint, sol_destination
+                tokens_raw, quote_spent = await self.client.get_buy_transaction_details(
+                    str(tx_signature),
+                    token_info.mint,
+                    sol_destination,
+                    quote_mint=quote_mint,
                 )
 
-                if tokens_raw is not None and sol_spent is not None:
+                if tokens_raw is not None and quote_spent is not None:
                     actual_amount = tokens_raw / 10**TOKEN_DECIMALS
-                    actual_price = (sol_spent / LAMPORTS_PER_SOL) / actual_amount
+                    actual_price = (quote_spent / quote_unit) / actual_amount
                     logger.info(
                         f"Actual tokens received: {actual_amount:.6f} "
                         f"(expected: {token_amount:.6f})"
                     )
                     logger.info(
-                        f"Actual SOL spent: {sol_spent / LAMPORTS_PER_SOL:.10f} SOL"
+                        f"Actual {quote_label} spent: "
+                        f"{quote_spent / quote_unit:.10f} {quote_label}"
                     )
-                    logger.info(f"Actual price: {actual_price:.10f} SOL/token")
+                    logger.info(
+                        f"Actual price: {actual_price:.10f} {quote_label}/token"
+                    )
                     token_amount = actual_amount
                     token_price_sol = actual_price
                 else:
                     raise ValueError(
                         f"Failed to parse transaction details: tokens={tokens_raw}, "
-                        f"sol_spent={sol_spent} (tx: {tx_signature}). "
+                        f"quote_spent={quote_spent} (tx: {tx_signature}). "
                         f"The transaction may have failed on-chain — check explorer."
                     )
 
@@ -369,6 +507,9 @@ class PlatformAwareSeller(Trader):
             instruction_builder = implementations.instruction_builder
             curve_manager = implementations.curve_manager
 
+            # Fall back to the listener's quote asset if the refresh below fails.
+            quote_mint = normalize_quote_mint(token_info.quote_mint)
+
             # Refresh mayhem-mode and cashback flags from curve state.
             # The sell account list is 16 (non-cashback) vs 17 (cashback), and
             # fee_recipient differs in mayhem mode — both can change between
@@ -376,13 +517,20 @@ class PlatformAwareSeller(Trader):
             # flags carried in token_info.
             try:
                 pool_address = self._get_pool_address(token_info, address_provider)
-                pool_state = await curve_manager.get_pool_state(pool_address)
+                # Retry rather than reading once at `confirmed`: a node serving a
+                # slightly stale slot reports the curve as missing, and silently
+                # falling back to create-time values risks a wrong creator_vault
+                # (ConstraintSeeds 0x7d6) or wrong mayhem fee_recipient.
+                pool_state = await _read_pool_state_with_retry(
+                    curve_manager, pool_address
+                )
                 token_info.is_mayhem_mode = pool_state.get(
                     "is_mayhem_mode", token_info.is_mayhem_mode
                 )
                 token_info.is_cashback_coin = pool_state.get(
                     "is_cashback_coin", token_info.is_cashback_coin
                 )
+                quote_mint = _refresh_quote_mint(token_info, pool_state)
                 # Refresh creator/creator_vault from current BC state. Post
                 # 2026-04-28 the program may delegate BC.creator to a PFEE-owned
                 # PDA after the initial creator buy, so the create-time vault
@@ -408,13 +556,18 @@ class PlatformAwareSeller(Trader):
                     f"is_cashback_coin={token_info.is_cashback_coin}"
                 )
 
+            quote_unit = quote_units_per_token(quote_mint)
+            quote_label = _quote_symbol(quote_mint)
+
             # Use pre-known amount and price (no RPC delay)
             token_balance_decimal = token_amount
             token_balance = int(token_amount * 10**TOKEN_DECIMALS)
             token_price_sol = token_price
 
             logger.info(f"Token balance: {token_balance_decimal:.6f}")
-            logger.info(f"Price per Token (from buy): {token_price_sol:.8f} SOL")
+            logger.info(
+                f"Price per Token (from buy): {token_price_sol:.8f} {quote_label}"
+            )
 
             if token_balance == 0:
                 logger.info("No tokens to sell.")
@@ -424,19 +577,23 @@ class PlatformAwareSeller(Trader):
                     error_message="No tokens to sell",
                 )
 
-            # Calculate expected SOL output with slippage protection
-            expected_sol_output = token_balance_decimal * token_price_sol
-            min_sol_output = max(
+            # Calculate expected quote output with slippage protection, in the
+            # quote mint's raw units.
+            expected_quote_output = token_balance_decimal * token_price_sol
+            min_quote_output = max(
                 1,
-                int((expected_sol_output * (1 - self.slippage)) * LAMPORTS_PER_SOL),
+                int((expected_quote_output * (1 - self.slippage)) * quote_unit),
             )
             logger.info(
                 f"Selling {token_balance_decimal} tokens on {token_info.platform.value}"
             )
-            logger.info(f"Expected SOL output: {expected_sol_output:.10f} SOL")
             logger.info(
-                f"Minimum SOL output (with {self.slippage * 100:.1f}% slippage): "
-                f"{min_sol_output / LAMPORTS_PER_SOL:.10f} SOL ({min_sol_output} lamports)"
+                f"Expected {quote_label} output: {expected_quote_output:.10f} {quote_label}"
+            )
+            logger.info(
+                f"Minimum {quote_label} output (with {self.slippage * 100:.1f}% slippage): "
+                f"{min_quote_output / quote_unit:.10f} {quote_label} "
+                f"({min_quote_output} raw units)"
             )
 
             # Build sell instructions using platform-specific builder
@@ -444,7 +601,7 @@ class PlatformAwareSeller(Trader):
                 token_info,
                 self.wallet.pubkey,
                 token_balance,  # amount_in (tokens)
-                min_sol_output,  # minimum_amount_out (SOL)
+                min_quote_output,  # minimum_amount_out (raw quote units)
                 address_provider,
             )
 

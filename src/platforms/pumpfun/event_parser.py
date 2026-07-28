@@ -13,13 +13,49 @@ from typing import Any
 from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
 
-from core.pubkeys import SystemAddresses
+from core.pubkeys import (
+    SystemAddresses,
+    normalize_quote_mint,
+    quote_token_program,
+)
 from interfaces.core import EventParser, Platform, TokenInfo
 from platforms.pumpfun.address_provider import PumpFunAddresses
 from utils.idl_parser import IDLParser
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Index of the optional `quote_mint` remaining account on create_v2. Accounts
+# 1-16 are in the IDL; 17-19 are optional remaining accounts appended only when
+# creating a coin with a non-native quote mint. See COIN_CREATION.md in the
+# pump-fun public docs repository.
+_CREATE_V2_QUOTE_MINT_ACCOUNT_INDEX = 16
+
+# Length of a Solana public key in bytes.
+PUBKEY_BYTE_LENGTH = 32
+
+
+def _coerce_pubkey(value: object) -> Pubkey | None:
+    """Coerce a decoded IDL pubkey field into a Pubkey.
+
+    Args:
+        value: Decoded field, which may be a str, Pubkey, bytes or None
+
+    Returns:
+        Pubkey, or None if the value cannot be interpreted
+    """
+    if value is None:
+        return None
+    if isinstance(value, Pubkey):
+        return value
+    if isinstance(value, str):
+        try:
+            return Pubkey.from_string(value)
+        except (ValueError, TypeError):
+            return None
+    if isinstance(value, bytes | bytearray) and len(value) == PUBKEY_BYTE_LENGTH:
+        return Pubkey.from_bytes(bytes(value))
+    return None
 
 
 class PumpFunEventParser(EventParser):
@@ -262,6 +298,14 @@ class PumpFunEventParser(EventParser):
                         f"✅ Successfully parsed CreateEvent for token: {fields.get('symbol', 'Unknown')}"
                     )
 
+                    # CreateEvent gained quote_mint and virtual_quote_reserves
+                    # when pump.fun added non-SOL quote assets. Carry them on
+                    # TokenInfo so extreme_fast_mode — which skips the curve
+                    # fetch — still knows which quote asset to trade against.
+                    quote_mint = normalize_quote_mint(
+                        _coerce_pubkey(fields.get("quote_mint"))
+                    )
+
                     return TokenInfo(
                         name=fields["name"],
                         symbol=fields["symbol"],
@@ -276,6 +320,9 @@ class PumpFunEventParser(EventParser):
                         token_program_id=token_program_id,
                         is_mayhem_mode=fields.get("is_mayhem_mode", False),
                         is_cashback_coin=fields.get("is_cashback_enabled", False),
+                        quote_mint=quote_mint,
+                        quote_token_program_id=quote_token_program(quote_mint),
+                        virtual_quote_reserves=fields.get("virtual_quote_reserves"),
                         creation_timestamp=monotonic(),
                     )
 
@@ -373,6 +420,14 @@ class PumpFunEventParser(EventParser):
                 else False
             )
 
+            # create_v2 passes a non-native quote mint as optional remaining
+            # account 17 (index 16). Absent means the coin is SOL-paired.
+            quote_mint = normalize_quote_mint(
+                get_account_key(_CREATE_V2_QUOTE_MINT_ACCOUNT_INDEX)
+                if is_create_v2
+                else None
+            )
+
             return TokenInfo(
                 name=args.get("name", ""),
                 symbol=args.get("symbol", ""),
@@ -387,6 +442,8 @@ class PumpFunEventParser(EventParser):
                 token_program_id=token_program_id,
                 is_mayhem_mode=bool(args.get("is_mayhem_mode", False)),
                 is_cashback_coin=is_cashback,
+                quote_mint=quote_mint,
+                quote_token_program_id=quote_token_program(quote_mint),
                 creation_timestamp=monotonic(),
             )
 
