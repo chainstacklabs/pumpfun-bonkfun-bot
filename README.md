@@ -124,15 +124,59 @@ This helps ensure reliable operation within your node provider's rate limits wit
 
 The IDLs under [`idl/`](idl/) are vendored from [pump-fun/pump-public-docs](https://github.com/pump-fun/pump-public-docs). To refresh, copy `pump.json`, `pump_amm.json`, `pump_fees.json` from that repo into `pump_fun_idl.json`, `pump_swap_idl.json`, `pump_fees.json` respectively, and reference the upstream commit hash in your commit message.
 
-> **The IDL is incomplete.** It doesn't list two PDAs that the on-chain program actually requires:
-> - `bonding-curve-v2` — required on every BC `buy` (18 accounts) and `sell` (16/17 accounts). Seed: `["bonding-curve-v2", mint]` under the pump program.
+Currently vendored from upstream commit `9c82f61`.
+
+> **The IDL under-reports the legacy instructions.** It omits two PDAs that the on-chain program requires on the pre-v2 path:
+> - `bonding-curve-v2` — required on every legacy BC `buy` (18 accounts) and `sell` (16/17 accounts). Seed: `["bonding-curve-v2", mint]` under the pump program.
 > - `pool-v2` — required on every PumpSwap `buy`/`sell`. Seed: `["pool-v2", base_mint]` under the pump-amm program. **Without it, pump-amm throws `AnchorError 6023 (Overflow)` after the trade transfers complete** — a misleading error code for a missing-account issue.
 >
-> Always cross-check your account lists against a recent successful on-chain tx (`getSignaturesForAddress` + `getTransaction`) before trusting the IDL.
+> The `buy_v2` / `sell_v2` account lists *are* complete in the IDL — that's the point of the v2 interface. For anything else, cross-check against a recent successful on-chain tx (`getSignaturesForAddress` + `getTransaction`) before trusting the IDL.
+
+## Quote assets: SOL and USDC (v2 trade instructions)
+
+Pump.fun added support for quote assets other than SOL, with USDC first. The bonding curve carries a `quote_mint` field (`Pubkey::default()` for SOL-paired coins), and trading non-SOL-paired coins **requires** the newer `buy_v2` / `sell_v2` instructions — the legacy `buy` / `sell` cannot do it at all.
+
+The bot uses `buy_v2` (27 accounts) and `sell_v2` (26 accounts) for every pump.fun trade. Every account is mandatory and the order is identical for all coins, regardless of quote asset, mayhem mode, or cashback — no more conditional account lists.
+
+To trade a non-SOL quote asset, give it a spend amount. Amounts are in that mint's own whole units, so `usdc: 1.0` is one USDC and is **not** comparable to `buy_amount`:
+
+```yaml
+trade:
+  buy_amount: 0.0001 # SOL-paired coins
+  quote_amounts:
+    usdc: 1.0 # USDC-paired coins
+
+filters:
+  allowed_quote_mints: ["sol", "usdc"] # omit to allow any configured quote
+```
+
+Keys accept the aliases `sol` / `wsol` / `usdc` or a raw base58 mint address. A coin whose quote mint has no configured amount is skipped with a log line rather than bought with a wrongly-scaled amount. SOL always falls back to `buy_amount`, so existing configs keep working untouched.
+
+Buying a USDC-paired coin requires USDC in the wallet plus a little SOL for fees and ATA rent.
+
+Verify the v2 wiring after any program upgrade:
+
+```bash
+uv run learning-examples/verify_v2_account_layout.py    # offline: layouts, PDAs, encoding
+uv run learning-examples/simulate_v2_trades.py <MINT>   # mainnet simulation, no funds moved
+uv run learning-examples/simulate_bot_buy_path.py       # whole bot buy path, simulated
+```
+
+## PumpSwap: quote against effective reserves
+
+The PumpSwap `Pool` account gained a trailing `virtual_quote_reserves` field (an **`i128`** at offset 245; fields end at 261, live accounts are 301 bytes). Price must be computed from **effective** quote reserves:
+
+```
+effective_quote_reserves = pool_quote_token_account.amount + Pool::virtual_quote_reserves
+```
+
+> ⚠️ Upstream's release note says `virtual_quote_reserves` is 0 on every pool. **That is out of date.** Verified on mainnet: pool `6Bv1JM1deBPeEeovhoRajFtbMVDKQidC9mXYRQWfGoXz` holds 17.584505433 SOL of virtual reserves against a 148.455 SOL vault — quoting off the raw vault balance under-prices by **~10.6%**. Note it is `i128`, not `u64`; an 8-byte read only works while the high half happens to be zero.
+
+`learning-examples/pumpswap/manual_buy_pumpswap.py` and `manual_sell_pumpswap.py` read and apply it. Note that pump-amm has **no** `buy_v2`/`sell_v2` — the AMM instruction names are unchanged; only the pool layout and quoting moved.
 
 ## 2026-04-28 program upgrade
 
-Pump.fun shipped a breaking program upgrade on **2026-04-28 16:00 UTC** ([BREAKING_FEE_RECIPIENT.md](https://github.com/pump-fun/pump-public-docs/blob/main/docs/BREAKING_FEE_RECIPIENT.md)). The bot is updated for it:
+Pump.fun shipped a breaking program upgrade on **2026-04-28 16:00 UTC** ([BREAKING_FEE_RECIPIENT.md](https://github.com/pump-fun/pump-public-docs/blob/main/docs/BREAKING_FEE_RECIPIENT.md)). This section describes the **legacy** instruction path, which the bot retains only as a fallback (`PumpFunInstructionBuilder(..., use_legacy_instructions=True)`) — see the quote-assets section above for the v2 path used by default:
 
 - BC `buy` ix is now **18 accounts** (was 17). Trailing account is one of 8 `BREAKING_FEE_RECIPIENTS` (mutable), AFTER `bonding-curve-v2`.
 - BC `sell` ix is now **16 accounts non-cashback / 17 cashback** (was 15/16). Same trailing fee recipient.

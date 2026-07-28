@@ -19,6 +19,7 @@ from solders.message import Message
 from solders.pubkey import Pubkey
 from solders.transaction import Transaction
 
+from core.pubkeys import is_sol_paired
 from core.rpc_rate_limiter import TokenBucketRateLimiter
 from utils.logger import get_logger
 
@@ -359,21 +360,30 @@ class SolanaClient:
         return None
 
     async def get_buy_transaction_details(
-        self, signature: str, mint: Pubkey, sol_destination: Pubkey
+        self,
+        signature: str,
+        mint: Pubkey,
+        sol_destination: Pubkey,
+        quote_mint: Pubkey | None = None,
     ) -> tuple[int | None, int | None]:
-        """Get actual tokens received and SOL spent from a buy transaction.
+        """Get actual tokens received and quote spent from a buy transaction.
 
         Uses preBalances/postBalances to find exact SOL transferred to the
         pool/curve and pre/post token balance diff to find tokens received.
+        For coins paired against an SPL quote asset (e.g. USDC) the quote spend
+        does not show up in lamport balances, so it is read from the quote
+        mint's token balance deltas instead.
 
         Args:
             signature: Transaction signature
             mint: Token mint address
             sol_destination: Address where SOL is sent (bonding curve for pump.fun,
                            quote_vault for letsbonk)
+            quote_mint: Quote mint of the coin. Pass None or wrapped SOL for
+                       SOL-paired coins.
 
         Returns:
-            Tuple of (tokens_received_raw, sol_spent_lamports), or (None, None)
+            Tuple of (tokens_received_raw, quote_spent_raw), or (None, None)
         """
         result = await self._get_transaction_result(signature)
         if not result:
@@ -384,47 +394,29 @@ class SolanaClient:
         # Check for transaction execution errors (e.g., MaxLoadedAccountsDataSizeExceeded)
         tx_err = meta.get("err")
         if tx_err:
-            logger.error(
-                f"Transaction {signature[:16]}... failed with error: {tx_err}"
-            )
+            logger.error(f"Transaction {signature[:16]}... failed with error: {tx_err}")
             return None, None
-
-        mint_str = str(mint)
 
         # Get tokens received from pre/post token balance diff
         # This works for Token2022 where owner might be different
-        tokens_received = None
-        pre_token_balances = meta.get("preTokenBalances", [])
-        post_token_balances = meta.get("postTokenBalances", [])
+        tokens_received = self._extract_positive_token_diff(meta, str(mint))
+        if tokens_received is not None:
+            logger.info(f"Tokens received from tx: {tokens_received}")
 
-        # Build lookup by account index
-        pre_by_idx = {b.get("accountIndex"): b for b in pre_token_balances}
-        post_by_idx = {b.get("accountIndex"): b for b in post_token_balances}
-
-        # Find positive token diff for our mint (user receiving tokens)
-        all_indices = set(pre_by_idx.keys()) | set(post_by_idx.keys())
-        for idx in all_indices:
-            pre = pre_by_idx.get(idx)
-            post = post_by_idx.get(idx)
-
-            # Check if this is our mint
-            balance_mint = (post or pre).get("mint", "")
-            if balance_mint != mint_str:
-                continue
-
-            pre_amount = (
-                int(pre.get("uiTokenAmount", {}).get("amount", 0)) if pre else 0
-            )
-            post_amount = (
-                int(post.get("uiTokenAmount", {}).get("amount", 0)) if post else 0
-            )
-            diff = post_amount - pre_amount
-
-            # Positive diff means tokens received (not the bonding curve's negative)
-            if diff > 0:
-                tokens_received = diff
-                logger.info(f"Tokens received from tx: {tokens_received}")
-                break
+        # Non-SOL quote assets move as SPL token transfers, so the lamport
+        # deltas below would report only rent/fees. Read the quote spend from
+        # the quote mint's token balance deltas: the positive diff is the
+        # curve's quote vault receiving what the buyer paid.
+        if quote_mint is not None and not is_sol_paired(quote_mint):
+            quote_spent = self._extract_positive_token_diff(meta, str(quote_mint))
+            if quote_spent is None:
+                logger.warning(
+                    f"No positive {quote_mint} balance diff found in tx "
+                    f"{signature[:16]}...; cannot determine quote spent"
+                )
+            else:
+                logger.info(f"Quote spent from tx: {quote_spent} (mint {quote_mint})")
+            return tokens_received, quote_spent
 
         # Get SOL spent from preBalances/postBalances at sol_destination
         sol_destination_str = str(sol_destination)
@@ -450,6 +442,45 @@ class SolanaClient:
                 break
 
         return tokens_received, sol_spent
+
+    @staticmethod
+    def _extract_positive_token_diff(meta: dict, mint_str: str) -> int | None:
+        """Find the largest positive token balance change for a mint in a tx.
+
+        Args:
+            meta: Transaction meta containing pre/postTokenBalances
+            mint_str: Mint address to look for
+
+        Returns:
+            Raw positive balance delta, or None if no account gained this mint
+        """
+        pre_by_idx = {
+            b.get("accountIndex"): b for b in meta.get("preTokenBalances", [])
+        }
+        post_by_idx = {
+            b.get("accountIndex"): b for b in meta.get("postTokenBalances", [])
+        }
+
+        best: int | None = None
+        for idx in set(pre_by_idx) | set(post_by_idx):
+            pre = pre_by_idx.get(idx)
+            post = post_by_idx.get(idx)
+
+            if (post or pre).get("mint", "") != mint_str:
+                continue
+
+            pre_amount = (
+                int(pre.get("uiTokenAmount", {}).get("amount", 0)) if pre else 0
+            )
+            post_amount = (
+                int(post.get("uiTokenAmount", {}).get("amount", 0)) if post else 0
+            )
+            diff = post_amount - pre_amount
+
+            if diff > 0 and (best is None or diff > best):
+                best = diff
+
+        return best
 
     async def _get_transaction_result(self, signature: str) -> dict | None:
         """Fetch transaction result from RPC.

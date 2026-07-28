@@ -1,10 +1,10 @@
 import asyncio
 import os
-import random
 import struct
 from typing import Final
 
 import base58
+import pump_v2
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
@@ -166,6 +166,32 @@ def _find_bonding_curve_v2(mint: Pubkey) -> Pubkey:
     return derived_address
 
 
+async def assert_transaction_succeeded(client: AsyncClient, signature) -> None:
+    """Raise if a confirmed transaction actually failed on-chain.
+
+    `confirm_transaction` only waits for the transaction to land — a landed
+    transaction can still have reverted. Without this check a failed buy prints
+    as a success, which is exactly how a wrong fee recipient (NotAuthorized,
+    6000) can look like a passing test.
+
+    Args:
+        client: Solana RPC client
+        signature: Transaction signature to inspect
+
+    Raises:
+        RuntimeError: If the transaction reverted
+    """
+    result = await client.get_transaction(
+        signature, commitment="confirmed", max_supported_transaction_version=0
+    )
+    value = result.value
+    if value is None:
+        raise RuntimeError(f"Transaction {signature} not found after confirmation")
+    err = value.transaction.meta.err if value.transaction.meta else None
+    if err:
+        raise RuntimeError(f"Transaction {signature} landed but failed on-chain: {err}")
+
+
 def create_pump_create_instruction(
     mint: Pubkey,
     mint_authority: Pubkey,
@@ -251,67 +277,45 @@ def create_buy_instruction(
     token_amount: int,
     max_sol_cost: int,
     track_volume: bool = True,
+    is_mayhem_mode: bool = False,
 ) -> Instruction:
-    """Create the buy instruction."""
-    accounts = [
-        AccountMeta(pubkey=global_state, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=fee_recipient, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=mint, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=bonding_curve, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=associated_bonding_curve, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=associated_user, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=user, is_signer=True, is_writable=True),
-        AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=creator_vault, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(
-            pubkey=_find_global_volume_accumulator(), is_signer=False, is_writable=False
-        ),
-        AccountMeta(
-            pubkey=_find_user_volume_accumulator(user),
-            is_signer=False,
-            is_writable=True,
-        ),
-        # Index 14: fee_config (readonly)
-        AccountMeta(
-            pubkey=_find_fee_config(),
-            is_signer=False,
-            is_writable=False,
-        ),
-        # Index 15: fee_program (readonly)
-        AccountMeta(
-            pubkey=PUMP_FEE_PROGRAM,
-            is_signer=False,
-            is_writable=False,
-        ),
-        # Remaining account: bonding_curve_v2 (readonly, required for all coins)
-        AccountMeta(
-            pubkey=_find_bonding_curve_v2(mint),
-            is_signer=False,
-            is_writable=False,
-        ),
-        # 18th account: breaking-upgrade fee recipient (mutable) — required from 2026-04-28
-        AccountMeta(
-            pubkey=random.choice(BREAKING_FEE_RECIPIENTS),
-            is_signer=False,
-            is_writable=True,
-        ),
-    ]
+    """Create the buy instruction (buy_v2).
 
-    # Encode OptionBool for track_volume
-    # OptionBool: [0] = None, [1, 0] = Some(false), [1, 1] = Some(true)
-    track_volume_bytes = bytes([1, 1 if track_volume else 0])
+    The signature is unchanged for callers, but this builds `buy_v2` with its 27
+    mandatory accounts. Several parameters are accepted only for backwards
+    compatibility and are derived or dropped internally: buy_v2 takes no
+    track_volume argument, and pump_v2 selects the fee recipient from the
+    documented set. This script mints the coin with `creator = payer`, so the
+    buyer is also the creator.
 
-    data = (
-        BUY_DISCRIMINATOR
-        + struct.pack("<Q", token_amount)
-        + struct.pack("<Q", max_sol_cost)
-        + track_volume_bytes
+    Args:
+        global_state: Unused; pump_v2 uses the canonical global PDA
+        fee_recipient: Unused; pump_v2 selects from the documented set
+        mint: Base token mint just created
+        bonding_curve: Unused; derived from the mint
+        associated_bonding_curve: Unused; derived
+        associated_user: Unused; derived
+        user: Buyer, and the coin's creator in this script
+        creator_vault: Unused; derived from the creator
+        token_amount: Base tokens to buy, raw units
+        max_sol_cost: Spend cap in lamports
+        track_volume: Ignored; volume tracking is unconditional under buy_v2
+        is_mayhem_mode: Mayhem coins must use a *reserved* fee recipient; passing
+            this wrong makes the program reject the buy with NotAuthorized (6000)
+
+    Returns:
+        The buy_v2 instruction
+    """
+    return pump_v2.build_buy_v2_instruction(
+        base_mint=mint,
+        creator=user,
+        user=user,
+        token_amount_raw=token_amount,
+        max_quote_cost_raw=max_sol_cost,
+        quote_mint=pump_v2.WSOL_MINT,
+        is_mayhem_mode=is_mayhem_mode,
+        base_token_program=SYSTEM_TOKEN_PROGRAM,
     )
-
-    return Instruction(PUMP_PROGRAM, data, accounts)
 
 
 async def main():
@@ -385,14 +389,19 @@ async def main():
             bonding_curve=bonding_curve,
             user=payer.pubkey(),
         ),
-        # Create user ATA
+    ]
+
+    # buy_v2's 27 accounts push a combined create+buy message past Solana's
+    # 1232-byte packet limit (measured 1972 bytes for the v2 pair), so the buy
+    # goes in a second transaction. The legacy 18-account buy used to fit;
+    # recovering atomicity would need an address lookup table.
+    buy_instructions = [
         create_idempotent_associated_token_account(
             payer.pubkey(),
             payer.pubkey(),
             mint_keypair.pubkey(),
             SYSTEM_TOKEN_PROGRAM,
         ),
-        # Buy tokens
         create_buy_instruction(
             global_state=PUMP_GLOBAL,
             fee_recipient=PUMP_FEE,
@@ -416,18 +425,33 @@ async def main():
             [payer, mint_keypair], message, recent_blockhash.value.blockhash
         )
 
-        print("\nSending transaction...")
+        print("\nSending create transaction...")
         opts = TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
 
         try:
             response = await client.send_transaction(transaction, opts)
             tx_hash = response.value
 
-            print(f"Transaction sent: https://solscan.io/tx/{tx_hash}")
+            print(f"Create sent: https://solscan.io/tx/{tx_hash}")
 
             print("Waiting for confirmation...")
             await client.confirm_transaction(tx_hash, commitment="confirmed")
-            print("Transaction confirmed!")
+            await assert_transaction_succeeded(client, tx_hash)
+            print("Create confirmed!")
+
+            buy_blockhash = await client.get_latest_blockhash()
+            buy_tx = Transaction(
+                [payer],
+                Message(buy_instructions, payer.pubkey()),
+                buy_blockhash.value.blockhash,
+            )
+            print("\nSending buy transaction (buy_v2)...")
+            buy_response = await client.send_transaction(buy_tx, opts)
+            buy_hash = buy_response.value
+            print(f"Buy sent: https://solscan.io/tx/{buy_hash}")
+            await client.confirm_transaction(buy_hash, commitment="confirmed")
+            await assert_transaction_succeeded(client, buy_hash)
+            print("Buy confirmed!")
 
             return tx_hash
 

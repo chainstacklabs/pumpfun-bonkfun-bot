@@ -188,6 +188,10 @@ def validate_config(config: dict) -> None:
         if "Missing required config key" not in str(e):
             raise
 
+    # Quote-asset configuration must resolve before the bot starts trading,
+    # otherwise a bad mint alias only surfaces on the first non-SOL coin.
+    validate_quote_config(config)
+
     # Platform-specific validation
     platform_str = config.get("platform", "pump_fun")
     try:
@@ -199,6 +203,35 @@ def validate_config(config: dict) -> None:
                 f"Invalid platform '{platform_str}'. Must be one of: {[p.value for p in Platform]}"
             )
         raise
+
+
+def validate_quote_config(config: dict) -> None:
+    """Validate trade.quote_amounts and filters.allowed_quote_mints.
+
+    Args:
+        config: Loaded bot configuration
+
+    Raises:
+        ValueError: If a quote mint alias/address or amount is invalid
+    """
+    from core.pubkeys import resolve_quote_amounts, resolve_quote_mint
+
+    quote_amounts = config.get("trade", {}).get("quote_amounts")
+    if quote_amounts is not None:
+        if not isinstance(quote_amounts, dict):
+            raise ValueError(
+                "trade.quote_amounts must be a mapping of quote mint to amount"
+            )
+        resolve_quote_amounts(quote_amounts)
+
+    allowed = config.get("filters", {}).get("allowed_quote_mints")
+    if allowed is not None:
+        if not isinstance(allowed, list) or not allowed:
+            raise ValueError(
+                "filters.allowed_quote_mints must be a non-empty list of quote mints"
+            )
+        for mint in allowed:
+            resolve_quote_mint(mint)
 
 
 def validate_platform_config(config: dict, platform: Platform) -> None:

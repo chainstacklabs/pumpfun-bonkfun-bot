@@ -19,6 +19,12 @@ from cleanup.modes import (
 )
 from core.client import SolanaClient
 from core.priority_fee.manager import PriorityFeeManager
+from core.pubkeys import (
+    WSOL_MINT,
+    normalize_quote_mint,
+    resolve_quote_amounts,
+    resolve_quote_mint,
+)
 from core.wallet import Wallet
 from interfaces.core import Platform, TokenInfo
 from monitoring.listener_factory import ListenerFactory
@@ -46,6 +52,34 @@ except ImportError:
 logger = get_logger(__name__)
 
 
+def _resolve_quote_config(
+    buy_amount: float,
+    quote_amounts: dict[str, float] | None,
+    allowed_quote_mints: list[str] | None,
+) -> tuple[dict[Pubkey, float], set[Pubkey] | None]:
+    """Resolve quote-asset configuration into per-mint amounts and an allowlist.
+
+    Keys may be mint addresses or the aliases "sol"/"usdc". SOL always falls
+    back to trade.buy_amount, so a config that never mentions quote assets
+    keeps its existing SOL-only behaviour.
+
+    Args:
+        buy_amount: SOL amount per buy from trade.buy_amount
+        quote_amounts: Optional map of quote mint -> amount in whole units
+        allowed_quote_mints: Optional list of quote mints permitted to trade
+
+    Returns:
+        Tuple of (amount per quote mint, allowed quote mints or None for any)
+    """
+    amounts = {WSOL_MINT: buy_amount, **resolve_quote_amounts(quote_amounts)}
+    allowed = (
+        {resolve_quote_mint(mint) for mint in allowed_quote_mints}
+        if allowed_quote_mints
+        else None
+    )
+    return amounts, allowed
+
+
 class UniversalTrader:
     """Universal trading coordinator that works with any supported platform."""
 
@@ -68,6 +102,9 @@ class UniversalTrader:
         # Trading configuration
         extreme_fast_mode: bool = False,
         extreme_fast_token_amount: int = 30,
+        # Quote asset configuration (pump.fun non-SOL pairs)
+        quote_amounts: dict[str, float] | None = None,
+        allowed_quote_mints: list[str] | None = None,
         # Exit strategy configuration
         exit_strategy: str = "time_based",
         take_profit_percentage: float | None = None,
@@ -137,29 +174,34 @@ class UniversalTrader:
             self.platform, self.solana_client
         )
 
-        # Store compute unit configuration
+        # Store compute unit and quote-asset configuration
         self.compute_units = compute_units or {}
-
-        # Create platform-aware traders
-        self.buyer = PlatformAwareBuyer(
-            self.solana_client,
-            self.wallet,
-            self.priority_fee_manager,
-            buy_amount,
-            buy_slippage,
-            max_retries,
-            extreme_fast_token_amount,
-            extreme_fast_mode,
-            compute_units=self.compute_units,
+        self.quote_amounts, self.allowed_quote_mints = _resolve_quote_config(
+            buy_amount, quote_amounts, allowed_quote_mints
         )
 
-        self.seller = PlatformAwareSeller(
-            self.solana_client,
-            self.wallet,
-            self.priority_fee_manager,
-            sell_slippage,
-            max_retries,
-            compute_units=self.compute_units,
+        # Create platform-aware traders
+        self.buyer, self.seller = (
+            PlatformAwareBuyer(
+                self.solana_client,
+                self.wallet,
+                self.priority_fee_manager,
+                buy_amount,
+                buy_slippage,
+                max_retries,
+                extreme_fast_token_amount,
+                extreme_fast_mode,
+                compute_units=self.compute_units,
+                quote_amounts=self.quote_amounts,
+            ),
+            PlatformAwareSeller(
+                self.solana_client,
+                self.wallet,
+                self.priority_fee_manager,
+                sell_slippage,
+                max_retries,
+                compute_units=self.compute_units,
+            ),
         )
 
         # Initialize the appropriate listener with platform filtering
@@ -427,6 +469,25 @@ class UniversalTrader:
                 )
                 return
 
+            # Skip coins paired against a quote asset we are not set up to
+            # trade. Cheaper to drop here than to fail a buy on-chain.
+            token_quote_mint = normalize_quote_mint(token_info.quote_mint)
+            if (
+                self.allowed_quote_mints is not None
+                and token_quote_mint not in self.allowed_quote_mints
+            ):
+                logger.info(
+                    f"Skipping {token_info.symbol} - quote mint {token_quote_mint} "
+                    f"not in allowed_quote_mints"
+                )
+                return
+            if token_quote_mint not in self.quote_amounts:
+                logger.info(
+                    f"Skipping {token_info.symbol} - no buy amount configured for "
+                    f"quote mint {token_quote_mint}"
+                )
+                return
+
             # Wait for pool/curve to stabilize (unless in extreme fast mode)
             if not self.extreme_fast_mode:
                 await self._save_token_info(token_info)
@@ -437,7 +498,9 @@ class UniversalTrader:
 
             # Buy token
             logger.info(
-                f"Buying {self.buy_amount:.6f} SOL worth of {token_info.symbol} on {token_info.platform.value}..."
+                f"Buying {self.quote_amounts[token_quote_mint]:.6f} of quote "
+                f"{token_quote_mint} worth of {token_info.symbol} "
+                f"on {token_info.platform.value}..."
             )
             buy_result: TradeResult = await self.buyer.execute(token_info)
 

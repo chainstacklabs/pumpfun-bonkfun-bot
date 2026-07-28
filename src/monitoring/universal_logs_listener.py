@@ -14,6 +14,12 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Solana logsSubscribe / blockSubscribe frames routinely exceed the websockets
+# library's 1 MiB default, which closes the connection with code 1009
+# ("message too big"). Reconnecting recovers, but every dropped frame is a
+# missed token, so raise the ceiling instead of eating the disconnects.
+WEBSOCKET_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
+
 
 class UniversalLogsListener(BaseTokenListener):
     """Universal logs listener that works with any platform."""
@@ -96,7 +102,9 @@ class UniversalLogsListener(BaseTokenListener):
 
         while True:
             try:
-                async with websockets.connect(self.wss_endpoint) as websocket:
+                async with websockets.connect(
+                    self.wss_endpoint, max_size=WEBSOCKET_MAX_MESSAGE_BYTES
+                ) as websocket:
                     await self._subscribe_to_logs(websocket)
                     ping_task = asyncio.create_task(self._ping_loop(websocket))
 

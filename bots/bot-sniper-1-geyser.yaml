@@ -27,6 +27,16 @@ trade:
   buy_slippage: 0.3 # Maximum acceptable price deviation (0.3 = 30%)
   sell_slippage: 0.3
 
+  # Spend amounts for coins paired against a non-SOL quote asset.
+  # pump.fun now supports quote mints other than SOL (USDC first). Amounts are
+  # in that mint's own whole units, so "usdc: 1.0" means one USDC — it is NOT
+  # comparable to buy_amount above. Keys accept the aliases "sol"/"usdc" or a
+  # raw base58 mint address. A coin whose quote mint has no entry here is
+  # skipped rather than bought with a SOL-sized amount.
+  # SOL always uses buy_amount above and needs no entry.
+  #quote_amounts:
+  #  usdc: 1.0
+
   # Exit strategy configuration
   exit_strategy: "time_based" # Options: "time_based", "tp_sl", "manual"
   #take_profit_percentage: 0.1 # Take profit at 10% gain (0.1 = 10%)
@@ -69,6 +79,10 @@ compute_units:
 filters:
   match_string: null # Only process tokens with this string in name/symbol
   bro_address: null # Only trade tokens created by this user address
+  # Restrict which quote assets to trade. Omit (or set null) to allow any quote
+  # mint that has an amount configured under trade.quote_amounts.
+  # Accepts "sol"/"usdc" aliases or raw mint addresses.
+  #allowed_quote_mints: ["sol"]
   listener_type: "geyser" # Method for detecting new tokens: "logs", "blocks", or "geyser"
   max_token_age: 0.001 # Maximum token age in seconds for processing
   marry_mode: false # Only buy tokens, skip selling

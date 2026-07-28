@@ -69,7 +69,16 @@ class AccountCleanupManager:
             balance = await self.client.get_token_account_balance(ata)
             instructions = []
 
-            if balance > 0 and self.close_with_force_burn:
+            # Never burn wrapped SOL: closing a WSOL account already returns
+            # both the wrapped lamports and the rent to the owner, so burning
+            # first would destroy real value.
+            if balance > 0 and mint == SystemAddresses.WSOL_MINT:
+                logger.info(
+                    f"Unwrapping {balance} lamports of wrapped SOL from {ata} "
+                    f"by closing it (burn skipped)"
+                )
+
+            elif balance > 0 and self.close_with_force_burn:
                 logger.info(
                     f"Burning {balance} tokens from ATA {ata} (mint: {mint})..."
                 )

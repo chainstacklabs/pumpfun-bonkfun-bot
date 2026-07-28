@@ -49,6 +49,13 @@ class TokenInfo:
     is_mayhem_mode: bool = False  # pump.fun mayhem mode flag
     is_cashback_coin: bool = False  # pump.fun cashback coin flag
 
+    # Quote asset (pump.fun v2 instructions). SOL-paired coins carry
+    # Pubkey::default() on-chain; normalize_quote_mint() maps that to wrapped
+    # SOL, which is what buy_v2/sell_v2 expect to be passed.
+    quote_mint: Pubkey | None = None
+    quote_token_program_id: Pubkey | None = None
+    virtual_quote_reserves: int | None = None
+
     # Metadata
     creation_timestamp: float | None = None
     additional_data: dict[str, Any] | None = None

@@ -289,6 +289,213 @@
       ]
     },
     {
+      "name": "boost_buy_and_burn",
+      "discriminator": [
+        105,
+        68,
+        6,
+        175,
+        0,
+        7,
+        35,
+        162
+      ],
+      "accounts": [
+        {
+          "name": "pool"
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "global_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "base_mint",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "quote_mint",
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "pool_base_token_account",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "pool_quote_token_account",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "boost_vault_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  111,
+                  111,
+                  115,
+                  116,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "boost_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "boost_vault_authority"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "base_token_program"
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "quote_amount_in",
+          "type": "u64"
+        },
+        {
+          "name": "min_base_amount_burned",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "buy",
       "docs": [
         "For cashback coins, optionally pass user_volume_accumulator_wsol_ata as remaining_accounts[0].",
@@ -2588,6 +2795,208 @@
       "args": []
     },
     {
+      "name": "init_boost",
+      "discriminator": [
+        140,
+        233,
+        33,
+        94,
+        132,
+        90,
+        194,
+        143
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "global_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "base_mint",
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "quote_mint",
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "pool_base_token_account",
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "pool_quote_token_account",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "boost_vault_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  111,
+                  111,
+                  115,
+                  116,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "boost_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "boost_vault_authority"
+              },
+              {
+                "kind": "account",
+                "path": "quote_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "quote_token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "init_user_volume_accumulator",
       "discriminator": [
         94,
@@ -3176,6 +3585,72 @@
       ]
     },
     {
+      "name": "set_boost_authority",
+      "discriminator": [
+        227,
+        149,
+        76,
+        42,
+        130,
+        39,
+        234,
+        205
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "global_config"
+          ]
+        },
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "boost_authority"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "set_coin_creator",
       "docs": [
         "Sets Pool::coin_creator from Metaplex metadata creator or BondingCurve::creator"
@@ -3611,6 +4086,38 @@
       "args": []
     },
     {
+      "name": "toggle_boost",
+      "discriminator": [
+        117,
+        161,
+        160,
+        74,
+        223,
+        137,
+        118,
+        99
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "global_config"
+          ]
+        },
+        {
+          "name": "global_config",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "enabled",
+          "type": "bool"
+        }
+      ]
+    },
+    {
       "name": "toggle_cashback_enabled",
       "discriminator": [
         115,
@@ -3966,6 +4473,254 @@
       "args": []
     },
     {
+      "name": "transfer_creator_fees_to_pump_v2",
+      "discriminator": [
+        1,
+        33,
+        78,
+        185,
+        33,
+        67,
+        44,
+        92
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "quote_mint"
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "coin_creator"
+        },
+        {
+          "name": "coin_creator_vault_authority",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  97,
+                  116,
+                  111,
+                  114,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "coin_creator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "coin_creator_vault_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "coin_creator_vault_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "pump_creator_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  97,
+                  116,
+                  111,
+                  114,
+                  45,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "coin_creator"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                1,
+                86,
+                224,
+                246,
+                147,
+                102,
+                90,
+                207,
+                68,
+                219,
+                21,
+                104,
+                191,
+                23,
+                91,
+                170,
+                81,
+                137,
+                203,
+                151,
+                245,
+                210,
+                255,
+                59,
+                101,
+                93,
+                43,
+                182,
+                253,
+                109,
+                24,
+                176
+              ]
+            }
+          }
+        },
+        {
+          "name": "pump_creator_vault_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "pump_creator_vault"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "associated_token_program"
+            }
+          }
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "update_admin",
       "discriminator": [
         161,
@@ -4026,6 +4781,72 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "update_buyback_config",
+      "discriminator": [
+        251,
+        224,
+        171,
+        146,
+        160,
+        26,
+        113,
+        233
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "global_config"
+          ]
+        },
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "buyback_basis_points",
+          "type": {
+            "option": "u64"
+          }
+        }
+      ]
     },
     {
       "name": "update_fee_config",
@@ -4359,6 +5180,19 @@
       ]
     },
     {
+      "name": "BoostBuyAndBurnEvent",
+      "discriminator": [
+        63,
+        69,
+        28,
+        22,
+        48,
+        92,
+        194,
+        185
+      ]
+    },
+    {
       "name": "BuyEvent",
       "discriminator": [
         103,
@@ -4489,6 +5323,19 @@
       ]
     },
     {
+      "name": "InitBoostEvent",
+      "discriminator": [
+        174,
+        124,
+        74,
+        249,
+        4,
+        81,
+        246,
+        17
+      ]
+    },
+    {
       "name": "InitUserVolumeAccumulatorEvent",
       "discriminator": [
         134,
@@ -4551,6 +5398,19 @@
         99,
         189,
         211
+      ]
+    },
+    {
+      "name": "SetBoostAuthorityEvent",
+      "discriminator": [
+        89,
+        128,
+        240,
+        141,
+        91,
+        202,
+        71,
+        105
       ]
     },
     {
@@ -4835,7 +5695,79 @@
     },
     {
       "code": 6052,
-      "name": "CashbackEarnedDoesNotMatchTokenInVault"
+      "name": "TokensInVaultLessThanCashbackEarned"
+    },
+    {
+      "code": 6053,
+      "name": "BuybackFeeRecipientNotAuthorized",
+      "msg": "Buyback fee recipient not authorized"
+    },
+    {
+      "code": 6054,
+      "name": "AllBuybackFeeRecipientsShouldBeNonZero"
+    },
+    {
+      "code": 6055,
+      "name": "NotUniqueBuybackFeeRecipients"
+    },
+    {
+      "code": 6056,
+      "name": "BuybackBasisPointsOutOfRange",
+      "msg": "buyback_basis_points must be <= 10_000"
+    },
+    {
+      "code": 6057,
+      "name": "WrongBuybackFeeRecipientsCount",
+      "msg": "buyback fee recipients require exactly 8 remaining accounts (or none)"
+    },
+    {
+      "code": 6058,
+      "name": "BuybackFeeRecipientMissing"
+    },
+    {
+      "code": 6059,
+      "name": "MissingCashbackAccounts",
+      "msg": "Cashback trade is missing the required remaining accounts"
+    },
+    {
+      "code": 6060,
+      "name": "InvalidCashbackAccumulator",
+      "msg": "Cashback user_volume_accumulator account is invalid"
+    },
+    {
+      "code": 6061,
+      "name": "InvalidCashbackAccumulatorAta",
+      "msg": "Cashback user_volume_accumulator ATA is missing or invalid"
+    },
+    {
+      "code": 6062,
+      "name": "InvalidPoolV2",
+      "msg": "pool_v2 remaining account is missing or invalid"
+    },
+    {
+      "code": 6063,
+      "name": "InsufficientRealQuoteReserves",
+      "msg": "BOOST: sell output exceeds the real quote vault. effective = real + virtual is pricing-only; payout is capped at real_vault, so quote min(out, real_vault)"
+    },
+    {
+      "code": 6064,
+      "name": "BoostPoolLiquidityUnsupported",
+      "msg": "BOOST: deposit/withdraw don't apply to boost pools"
+    },
+    {
+      "code": 6065,
+      "name": "PoolCannotBoost",
+      "msg": "BOOST: pool cannot be boosted (no virtual reserves)"
+    },
+    {
+      "code": 6066,
+      "name": "BoostDisabled",
+      "msg": "BOOST: boost is disabled"
+    },
+    {
+      "code": 6067,
+      "name": "SeedLockViolation",
+      "msg": "BOOST: lp_supply must never drop below the circulating LP mint supply"
     }
   ],
   "types": [
@@ -4947,6 +5879,62 @@
           {
             "name": "is_cashback_coin",
             "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "BoostBuyAndBurnEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "bonding_curve",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_amount_in_requested",
+            "type": "u64"
+          },
+          {
+            "name": "quote_amount_in_used",
+            "type": "u64"
+          },
+          {
+            "name": "base_amount_burned",
+            "type": "u64"
+          },
+          {
+            "name": "virtual_quote_reserves",
+            "type": "i128"
+          },
+          {
+            "name": "real_quote_reserves_after",
+            "type": "u64"
+          },
+          {
+            "name": "base_reserves_after",
+            "type": "u64"
+          },
+          {
+            "name": "boost_vault_remaining",
+            "type": "u64"
           }
         ]
       }
@@ -5085,6 +6073,26 @@
           },
           {
             "name": "cashback",
+            "type": "u64"
+          },
+          {
+            "name": "buyback_fee_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "buyback_fee",
+            "type": "u64"
+          },
+          {
+            "name": "virtual_quote_reserves",
+            "type": "i128"
+          },
+          {
+            "name": "can_boost",
+            "type": "bool"
+          },
+          {
+            "name": "base_supply",
             "type": "u64"
           }
         ]
@@ -5523,6 +6531,16 @@
                 }
               }
             }
+          },
+          {
+            "name": "stable_fee_tiers",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "FeeTier"
+                }
+              }
+            }
           }
         ]
       }
@@ -5646,6 +6664,27 @@
           {
             "name": "is_cashback_enabled",
             "type": "bool"
+          },
+          {
+            "name": "buyback_fee_recipients",
+            "type": {
+              "array": [
+                "pubkey",
+                8
+              ]
+            }
+          },
+          {
+            "name": "buyback_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "boost_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "boost_enabled",
+            "type": "bool"
           }
         ]
       }
@@ -5688,6 +6727,38 @@
                 30
               ]
             }
+          }
+        ]
+      }
+    },
+    {
+      "name": "InitBoostEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "bonding_curve",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "virtual_quote_reserves",
+            "type": "i128"
+          },
+          {
+            "name": "real_quote_reserves_after",
+            "type": "u64"
           }
         ]
       }
@@ -5808,6 +6879,13 @@
           {
             "name": "is_cashback_coin",
             "type": "bool"
+          },
+          {
+            "name": "virtual_quote_reserves",
+            "docs": [
+              "For non-boost pools, value is 0, so the behavior is identical to legacy pools."
+            ],
+            "type": "i128"
           }
         ]
       }
@@ -5941,6 +7019,26 @@
           {
             "name": "cashback",
             "type": "u64"
+          },
+          {
+            "name": "buyback_fee_basis_points",
+            "type": "u64"
+          },
+          {
+            "name": "buyback_fee",
+            "type": "u64"
+          },
+          {
+            "name": "virtual_quote_reserves",
+            "type": "i128"
+          },
+          {
+            "name": "can_boost",
+            "type": "bool"
+          },
+          {
+            "name": "base_supply",
+            "type": "u64"
           }
         ]
       }
@@ -5968,6 +7066,30 @@
           },
           {
             "name": "coin_creator",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SetBoostAuthorityEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_boost_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_boost_authority",
             "type": "pubkey"
           }
         ]
