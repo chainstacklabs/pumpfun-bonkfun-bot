@@ -6,6 +6,9 @@ blockSubscribe-transactions/
 .pylintrc
 .ruff_cache
 
+# Per-developer agent settings; AGENTS.md/CLAUDE.md are the shared config
+.claude/settings.local.json
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
