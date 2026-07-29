@@ -614,7 +614,11 @@ class SolanaClient:
                 logger.exception(f"Failed to decode RPC response for {method}")
                 return None
 
-            except aiohttp.ClientError:
+            # asyncio.TimeoutError is what aiohttp raises when the request
+            # timeout fires, and it is not an aiohttp.ClientError — without it
+            # here every RPC timeout propagated out of post_rpc unretried and
+            # crashed the caller with an exception whose str() is empty.
+            except (aiohttp.ClientError, asyncio.TimeoutError):
                 error_attempts += 1
                 if error_attempts >= max_retries:
                     logger.exception(

@@ -231,6 +231,45 @@ async def check_client_accepts_both_signature_types() -> None:
     await client.close()
 
 
+async def check_rpc_timeouts_are_retried_not_raised() -> None:
+    """An RPC timeout must be retried and reported, never raised at the caller.
+
+    aiohttp signals a request timeout with `asyncio.TimeoutError`, which is not
+    an `aiohttp.ClientError`. While `post_rpc` caught only the latter, every
+    timeout escaped un-retried — and `str()` on it is empty, so callers logged a
+    blank reason. This is what broke three of the four listeners in
+    live_listener_matrix mid-run.
+    """
+    client = SolanaClient("http://127.0.0.1:1")
+    attempts = 0
+
+    class _TimingOutSession:
+        def post(self, *_args: Any, **_kwargs: Any) -> Any:
+            nonlocal attempts
+            attempts += 1
+
+            class _Ctx:
+                async def __aenter__(_self) -> Any:
+                    raise TimeoutError
+
+                async def __aexit__(_self, *_exc: Any) -> bool:
+                    return False
+
+            return _Ctx()
+
+    async def _session() -> Any:
+        return _TimingOutSession()
+
+    client._get_session = _session  # noqa: SLF001
+    client._rate_limiter.acquire = lambda: asyncio.sleep(0)  # noqa: SLF001
+
+    result = await client.post_rpc({"method": "getTransaction"}, max_retries=2)
+    await client.close()
+
+    assert result is None, f"expected None on repeated timeout, got {result!r}"
+    assert attempts == 2, f"timeout should be retried; saw {attempts} attempt(s)"
+
+
 async def check_versioned_transactions_are_requested() -> None:
     """getTransaction must opt in to versioned transactions.
 
@@ -312,6 +351,7 @@ CHECKS = (
         "getTransaction requests versioned transactions",
         check_versioned_transactions_are_requested,
     ),
+    ("RPC timeouts are retried, not raised", check_rpc_timeouts_are_retried_not_raised),
     ("every example checks meta.err", check_examples_call_a_status_check),
     ("src/ reads the confirmation result", check_bot_reads_the_confirmation_result),
 )
@@ -328,11 +368,15 @@ async def main() -> int:
 
     failures = 0
     for label, check in CHECKS:
+        # Any exception is a failure of that check, not of the run: a check that
+        # raises must not stop the remaining ones from reporting. Some of these
+        # verify that a call does NOT raise, so the raise IS the finding.
         try:
             await check()
-        except AssertionError as exc:
+        except Exception as exc:  # noqa: BLE001
             failures += 1
-            print(f"{label} -> FAIL\n  {exc}")
+            reason = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            print(f"{label} -> FAIL\n  {reason}")
         else:
             print(f"{label} -> OK")
 
@@ -340,9 +384,10 @@ async def main() -> int:
         print("\nreplaying issue #175 signatures against mainnet...")
         try:
             await check_live_signatures()
-        except AssertionError as exc:
+        except Exception as exc:  # noqa: BLE001
             failures += 1
-            print(f"live signature replay -> FAIL\n  {exc}")
+            reason = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            print(f"live signature replay -> FAIL\n  {reason}")
         else:
             print("live signature replay -> OK")
 

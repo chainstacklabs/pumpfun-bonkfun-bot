@@ -92,6 +92,11 @@ with `BuybackFeeRecipientMissing` (6062) printed as confirmed buys.
 - `build_and_send_transaction` returns a solders `Signature`, not a `str`. A
   `Signature` is not JSON serializable and does not support slicing; a `str` is
   rejected by solana-py's `confirm_transaction`. Normalize at the boundary.
+- `post_rpc` must catch `asyncio.TimeoutError` alongside `aiohttp.ClientError`.
+  aiohttp raises the former when the request timeout fires and it is **not** a
+  `ClientError`, so leaving it out lets every RPC timeout escape unretried —
+  and `str()` on it is empty, so the caller logs a blank reason. A slow
+  `getAccountInfo` is enough to take down a whole listener run this way.
 
 ### Code Quality
 ```bash
