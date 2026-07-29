@@ -1,10 +1,12 @@
 """Dry-run the bot's real buy path against a freshly created coin.
 
 Detects a new pump.fun coin with the bot's own listener, runs the same
-PlatformAwareBuyer code the bot uses (including the extreme_fast_mode curve
-refresh), but intercepts the transaction just before submission and simulates it
-instead. This exercises the listener -> event parser -> curve manager ->
-address provider -> instruction builder chain as a unit.
+PlatformAwareBuyer code the bot uses (the zero-RPC path for
+CreateEvent-sourced tokens, or the curve refresh otherwise — watch the
+state_from_event line in the output), but intercepts the transaction just
+before submission and simulates it instead. This exercises the listener ->
+event parser -> curve manager -> address provider -> instruction builder
+chain as a unit.
 
 No funds move: `build_and_send_transaction` is monkeypatched to simulate.
 

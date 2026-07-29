@@ -329,9 +329,12 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   for legacy `create`. Deriving with the wrong program returns a valid-looking
   address that does not exist on chain. Verified: curve `3jJ83ND…` derives to
   `Cd4iC3Jn…` under Token2022 (matches chain) and `AhNzZsBp…` under SPL Token.
-- `extreme_fast_mode` skips the curve-state price fetch but still refreshes
-  mayhem/cashback/creator/**quote_mint** from chain, because the wrong quote mint
-  means spending the wrong balance entirely. Event parsers also populate
+- `extreme_fast_mode` skips the curve-state price fetch. Whether it also reads
+  the curve for mayhem/cashback/creator/**quote_mint** depends on provenance
+  (see "Verifying the listener-to-buy path" above): CreateEvent-sourced tokens
+  (`state_from_event`) trade on the event data with zero RPC calls, while
+  pumpportal/incomplete-event tokens refresh from chain — the wrong quote mint
+  means spending the wrong balance entirely. Event parsers populate
   `quote_mint` from `CreateEvent` (which gained `quote_mint` and
   `virtual_quote_reserves` as trailing fields).
 
