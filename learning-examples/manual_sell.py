@@ -5,6 +5,7 @@ import sys
 import base58
 import pump_v2
 import tx_status
+from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
 from solana.rpc.types import TxOpts
@@ -44,6 +45,8 @@ SOL = Pubkey.from_string("So11111111111111111111111111111111111111112")
 LAMPORTS_PER_SOL = 1_000_000_000
 UNIT_PRICE = 10_000_000
 UNIT_BUDGET = 100_000
+
+load_dotenv()
 
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 

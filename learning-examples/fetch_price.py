@@ -4,6 +4,7 @@ import struct
 from typing import Final
 
 from construct import Bytes, Flag, Int64ul, Struct
+from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solders.pubkey import Pubkey
 
@@ -13,6 +14,8 @@ CURVE_ADDRESS: Final[str] = "..."  # Replace with actual bonding curve address
 
 # Here and later all the discriminators are precalculated. See learning-examples/calculate_discriminator.py
 EXPECTED_DISCRIMINATOR: Final[bytes] = struct.pack("<Q", 6966180631402821399)
+
+load_dotenv()
 
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 

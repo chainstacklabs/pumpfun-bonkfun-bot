@@ -1,4 +1,6 @@
 trades/*
+# written by learning-examples/blockSubscribe_extract_transactions.py
+blockSubscribe-transactions/
 
 .vscode
 .pylintrc

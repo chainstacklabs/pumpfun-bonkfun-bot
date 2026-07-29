@@ -21,6 +21,11 @@ load_dotenv()
 
 # Configuration
 WSS_ENDPOINT = os.environ.get("SOLANA_NODE_WSS_ENDPOINT")
+
+# Solana's blockSubscribe (and a busy logsSubscribe) sends frames well past
+# websockets' 1 MiB default, which kills the connection with a 1009 close
+# instead of delivering the message. Same value the bot's own listeners use.
+WEBSOCKET_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
 WALLET_TO_TRACK = sys.argv[1] if len(sys.argv) > 1 else "..."  # Pass wallet as argv[1] or hardcode
 
 # Pump.fun program constants
@@ -399,7 +404,9 @@ async def listen_for_transactions():
 
     while True:
         try:
-            async with websockets.connect(WSS_ENDPOINT) as websocket:
+            async with websockets.connect(
+                WSS_ENDPOINT, max_size=WEBSOCKET_MAX_MESSAGE_BYTES
+            ) as websocket:
                 await subscribe_to_wallet_logs(websocket)
                 ping_task = asyncio.create_task(keep_connection_alive(websocket))
 

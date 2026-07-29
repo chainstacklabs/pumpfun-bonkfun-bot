@@ -9,6 +9,7 @@ import base58
 import pump_v2
 import tx_status
 import websockets
+from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
 from solana.rpc.types import TxOpts
@@ -44,6 +45,8 @@ LAMPORTS_PER_SOL = 1_000_000_000
 
 
 # RPC ENDPOINTS
+load_dotenv()
+
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 RPC_WEBSOCKET = os.environ.get("SOLANA_NODE_WSS_ENDPOINT")
 

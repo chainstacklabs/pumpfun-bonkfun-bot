@@ -31,6 +31,11 @@ from solders.pubkey import Pubkey
 
 load_dotenv()
 
+# Solana's blockSubscribe (and a busy logsSubscribe) sends frames well past
+# websockets' 1 MiB default, which kills the connection with a 1009 close
+# instead of delivering the message. Same value the bot's own listeners use.
+WEBSOCKET_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
+
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 MIGRATION_PROGRAM_ID = Pubkey.from_string(
     "39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg"
@@ -462,7 +467,9 @@ async def listen_for_migrations(wss_url, provider_name, tracker, known_events=No
     while True:
         try:
             print(f"[INFO] Connecting migration listener to {provider_name}...")
-            async with websockets.connect(wss_url) as websocket:
+            async with websockets.connect(
+                wss_url, max_size=WEBSOCKET_MAX_MESSAGE_BYTES
+            ) as websocket:
                 # Subscribe to logs mentioning the migration program
                 subscription_message = json.dumps(
                     {
@@ -555,7 +562,9 @@ async def listen_for_markets(wss_url, provider_name, tracker, known_markets):
     while True:
         try:
             print(f"[INFO] Connecting market listener to {provider_name}...")
-            async with websockets.connect(wss_url) as websocket:
+            async with websockets.connect(
+                wss_url, max_size=WEBSOCKET_MAX_MESSAGE_BYTES
+            ) as websocket:
                 # Subscribe to program account changes
                 sub_msg = json.dumps(
                     {

@@ -8,6 +8,7 @@ import base58
 import grpc
 import pump_v2
 import tx_status
+from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
 from solana.rpc.types import TxOpts
@@ -64,6 +65,8 @@ SOL = Pubkey.from_string("So11111111111111111111111111111111111111112")
 LAMPORTS_PER_SOL = 1_000_000_000
 
 # RPC ENDPOINTS
+load_dotenv()
+
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 # Geyser endpoints
 GEYSER_ENDPOINT = os.environ.get("GEYSER_ENDPOINT")

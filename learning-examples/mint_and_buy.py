@@ -326,7 +326,6 @@ async def main():
     # Initial virtual reserves (from pump.fun constants)
     initial_virtual_token_reserves = 1_073_000_000 * 10**TOKEN_DECIMALS
     initial_virtual_sol_reserves = 30 * LAMPORTS_PER_SOL
-    initial_real_token_reserves = 793_100_000 * 10**TOKEN_DECIMALS
 
     initial_price = initial_virtual_sol_reserves / initial_virtual_token_reserves
 

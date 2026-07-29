@@ -21,6 +21,7 @@ import asyncio
 import os
 import sys
 
+from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solders.pubkey import Pubkey
 from solders.signature import Signature
@@ -31,6 +32,8 @@ SELL_DISCRIMINATOR = bytes.fromhex("33e685a4017f83ad")
 
 # Pool layout: byte 244 = is_cashback_coin (per CLAUDE.md / PR #167 notes).
 POOL_IS_CASHBACK_OFFSET = 244
+
+load_dotenv()
 
 RPC = os.environ.get(
     "SOLANA_NODE_RPC_ENDPOINT", "https://api.mainnet-beta.solana.com"
