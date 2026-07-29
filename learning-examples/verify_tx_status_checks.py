@@ -164,6 +164,92 @@ async def check_examples_call_a_status_check() -> None:
     )
 
 
+async def check_helper_rejects_missing_meta() -> None:
+    """Absent execution metadata must fail closed, not read as success.
+
+    `meta=None` means the outcome is unknown. Folding that into "no error" is the
+    exact mistake this module exists to prevent.
+    """
+    client = _StubClient(_FakeResponse(_FakeValue(_FakeTransaction(None))))
+    try:
+        await tx_status.assert_transaction_succeeded(client, "SIG")
+    except RuntimeError as exc:
+        assert "metadata" in str(exc), f"unclear reason: {exc}"
+        return
+    raise AssertionError("a transaction with no execution metadata was accepted")
+
+
+async def check_revert_is_a_distinct_terminal_error() -> None:
+    """A landed revert must be distinguishable from a transient failure.
+
+    The retry loops in the manual buy/sell examples resubmit identical signed
+    bytes, so a revert can never be repaired by retrying — they need to tell it
+    apart from a fetch error.
+    """
+    client = _StubClient(_reverted_response())
+    try:
+        await tx_status.assert_transaction_succeeded(client, "SIG")
+    except tx_status.TransactionRevertedError:
+        pass
+    else:
+        raise AssertionError("revert did not raise TransactionRevertedError")
+
+    assert issubclass(tx_status.TransactionRevertedError, RuntimeError), (
+        "TransactionRevertedError must stay a RuntimeError so existing "
+        "except RuntimeError handlers keep working"
+    )
+
+    # not-found is transient, so it must NOT be the terminal type
+    missing = _StubClient(_FakeResponse(None))
+    try:
+        await tx_status.assert_transaction_succeeded(missing, "SIG")
+    except tx_status.TransactionRevertedError:
+        raise AssertionError("not-found was reported as a terminal revert") from None
+    except RuntimeError:
+        pass
+
+
+async def check_commitment_is_propagated() -> None:
+    """The status read must use the commitment the caller asked for.
+
+    Confirming at "finalized" but reading status at "confirmed" reports success
+    before the finalization the caller requested.
+    """
+    seen: dict[str, Any] = {}
+
+    class _Recorder(_StubClient):
+        async def get_transaction(self, *_args: Any, **kwargs: Any) -> _FakeResponse:
+            seen["commitment"] = kwargs.get("commitment")
+            return self._response
+
+        async def confirm_transaction(self, *_args: Any, **_kwargs: Any) -> None:
+            return None
+
+    client = _Recorder(_FakeResponse(_FakeValue(_FakeTransaction(_FakeMeta(None)))))
+    await tx_status.confirm_and_assert(client, "SIG", commitment="finalized")
+    assert seen["commitment"] == "finalized", (
+        f"status read at {seen['commitment']!r}, not the requested 'finalized'"
+    )
+
+
+async def check_endpoint_logging_hides_userinfo() -> None:
+    """Endpoint logging must use hostname, not netloc.
+
+    netloc keeps any `user:pass@` userinfo, so redacting with it still prints the
+    credential for providers that put the key there.
+    """
+    offenders = []
+    for path in sorted((PROJECT_ROOT / "learning-examples").rglob("*.py")):
+        if "__pycache__" in path.parts or path.name == Path(__file__).name:
+            continue
+        for n, line in enumerate(path.read_text().splitlines(), 1):
+            if "urlsplit" in line and ".netloc" in line:
+                offenders.append(f"{path.relative_to(PROJECT_ROOT)}:{n}")
+    assert not offenders, "urlsplit(...).netloc leaks userinfo at: " + ", ".join(
+        offenders
+    )
+
+
 async def check_bot_reads_the_confirmation_result() -> None:
     """No caller in `src/` may throw away `confirm_transaction`'s boolean.
 
@@ -343,6 +429,10 @@ CHECKS = (
     ("helper rejects a missing transaction", check_helper_rejects_missing),
     ("helper accepts a successful transaction", check_helper_accepts_success),
     ("confirm_and_assert surfaces a revert", check_confirm_wrapper_rejects_revert),
+    ("helper rejects missing execution metadata", check_helper_rejects_missing_meta),
+    ("revert is a distinct terminal error", check_revert_is_a_distinct_terminal_error),
+    ("requested commitment is propagated", check_commitment_is_propagated),
+    ("endpoint logging hides userinfo", check_endpoint_logging_hides_userinfo),
     (
         "SolanaClient accepts str and Signature",
         check_client_accepts_both_signature_types,

@@ -180,6 +180,12 @@ async def buy_token(
                 await tx_status.confirm_and_assert(client, tx_hash)
                 print("Transaction confirmed")
                 return  # Success, exit the function
+            except tx_status.TransactionRevertedError as e:
+                # The signature is already on chain and reverted. The message and
+                # blockhash below are fixed, so a retry would resubmit identical
+                # bytes and revert identically — stop instead of burning attempts.
+                print(f"Transaction reverted on-chain, not retrying: {e}")
+                return
             except Exception as e:
                 print(f"Attempt {attempt + 1} failed: {str(e)[:50]}")
                 if attempt < max_retries - 1:

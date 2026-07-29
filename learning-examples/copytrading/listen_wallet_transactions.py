@@ -399,8 +399,9 @@ async def process_websocket_message(websocket):
 async def listen_for_transactions():
     """Main function to listen for wallet transactions."""
     print(f"Starting to monitor wallet: {WALLET_TO_TRACK}")
-    # Endpoint carries an API key — show only the host.
-    print(f"Connecting to: {urlsplit(WSS_ENDPOINT).netloc}")
+    # Endpoint carries an API key. hostname, not netloc: netloc keeps any
+        # user:pass@ userinfo, which would leak the credential anyway.
+    print(f"Connecting to: {urlsplit(WSS_ENDPOINT).hostname or '<unset>'}")
     print("Looking for pump.fun bonding curve buy/sell transactions only...")
     print("=" * 80)
 

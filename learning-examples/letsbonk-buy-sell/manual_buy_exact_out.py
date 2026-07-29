@@ -725,8 +725,9 @@ async def main():
         print(f"Starting buy_exact_out for token: {TOKEN_MINT_ADDRESS}")
         print(f"Amount to receive: {TOKEN_AMOUNT_TO_RECEIVE:,} tokens")
         print(f"Slippage tolerance: {SLIPPAGE_TOLERANCE * 100}%")
-        # Endpoint carries an API key — show only the host.
-        print(f"Using RPC endpoint: {urlsplit(RPC_ENDPOINT).netloc}")
+        # Endpoint carries an API key. hostname, not netloc: netloc keeps any
+        # user:pass@ userinfo, which would leak the credential anyway.
+        print(f"Using RPC endpoint: {urlsplit(RPC_ENDPOINT).hostname or '<unset>'}")
         print()
 
         async with AsyncClient(RPC_ENDPOINT) as client:

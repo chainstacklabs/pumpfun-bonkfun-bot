@@ -32,18 +32,43 @@ MINT_ADDRESS = Pubkey.from_string(
     sys.argv[1] if len(sys.argv) > 1 else "9WHpYbqG6LJvfCYfMjvGbyo1wHXgroCrixPb33s2pump"
 )
 
-# Token program for the mint - use TOKEN_PROGRAM for legacy SPL tokens, TOKEN_2022_PROGRAM for Token-2022
-# This must match the actual token's program to derive the correct ATA address
-# Pass "2022" as argv[2] for a Token-2022 mint (every pump.fun coin is).
-TOKEN_PROGRAM = (
-    SystemAddresses.TOKEN_2022_PROGRAM
-    if len(sys.argv) > 2 and sys.argv[2] == "2022"
-    else SystemAddresses.TOKEN_PROGRAM
-)
+# The mint's token program is read from the mint account itself (see
+# resolve_token_program). Guessing it derives the wrong ATA address, and the
+# script then reports "already closed" for an account that was never looked at.
+
+
+async def resolve_token_program(client: SolanaClient, mint: Pubkey) -> Pubkey:
+    """Return the token program that owns this mint.
+
+    A mint account is owned by whichever token program created it, so the mint
+    itself is the authoritative source. Every pump.fun coin is Token-2022 while
+    letsbonk coins and USDC are legacy SPL, and the ATA address differs between
+    them — deriving with the wrong one silently points at an address that does
+    not exist.
+
+    Args:
+        client: Solana RPC client
+        mint: Mint address
+
+    Returns:
+        TOKEN_PROGRAM or TOKEN_2022_PROGRAM
+
+    Raises:
+        ValueError: If the mint is missing or owned by something else
+    """
+    info = await client.get_account_info(mint)
+    owner = info.owner
+    if owner not in (SystemAddresses.TOKEN_PROGRAM, SystemAddresses.TOKEN_2022_PROGRAM):
+        raise ValueError(f"Mint {mint} is not owned by a token program (owner {owner})")
+    return owner
 
 
 async def close_account_if_exists(
-    client: SolanaClient, wallet: Wallet, account: Pubkey, mint: Pubkey
+    client: SolanaClient,
+    wallet: Wallet,
+    account: Pubkey,
+    mint: Pubkey,
+    token_program: Pubkey,
 ):
     """Safely close a token account if it exists and reclaim rent."""
     try:
@@ -76,7 +101,7 @@ async def close_account_if_exists(
                     mint=mint,
                     owner=wallet.pubkey,
                     amount=balance,
-                    program_id=TOKEN_PROGRAM,
+                    program_id=token_program,
                 )
             )
             instructions.append(burn_ix)
@@ -87,7 +112,7 @@ async def close_account_if_exists(
             account=account,
             dest=wallet.pubkey,
             owner=wallet.pubkey,
-            program_id=TOKEN_PROGRAM,
+            program_id=token_program,
         )
         instructions.append(close_account(close_params))
 
@@ -120,9 +145,12 @@ async def main():
         client = SolanaClient(RPC_ENDPOINT)
         wallet = Wallet(PRIVATE_KEY)
 
+        token_program = await resolve_token_program(client, MINT_ADDRESS)
+        logger.info(f"Mint {MINT_ADDRESS} uses token program {token_program}")
+
         # Get user's ATA for the token
-        ata = wallet.get_associated_token_address(MINT_ADDRESS, TOKEN_PROGRAM)
-        await close_account_if_exists(client, wallet, ata, MINT_ADDRESS)
+        ata = wallet.get_associated_token_address(MINT_ADDRESS, token_program)
+        await close_account_if_exists(client, wallet, ata, MINT_ADDRESS, token_program)
 
     except Exception as e:
         logger.error(f"Unexpected error: {e}")

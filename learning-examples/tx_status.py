@@ -18,6 +18,15 @@ Deliberately standalone: imports nothing from `src/`, so every example under
 from typing import Any, Protocol
 
 
+class TransactionRevertedError(RuntimeError):
+    """The transaction landed in a block but reverted.
+
+    Terminal: the signature is already on chain, so resubmitting the same signed
+    bytes cannot change the outcome. Callers with a retry loop should stop rather
+    than spend attempts on it.
+    """
+
+
 class _TransactionFetcher(Protocol):
     """The slice of `AsyncClient` these helpers need."""
 
@@ -25,7 +34,7 @@ class _TransactionFetcher(Protocol):
 
 
 async def assert_transaction_succeeded(
-    client: _TransactionFetcher, signature: Any
+    client: _TransactionFetcher, signature: Any, commitment: str = "confirmed"
 ) -> None:
     """Raise if a landed transaction actually reverted on-chain.
 
@@ -34,19 +43,33 @@ async def assert_transaction_succeeded(
     Args:
         client: Solana RPC client
         signature: Transaction signature to inspect
+        commitment: Commitment to read the transaction at. Must be at least as
+            strong as the one it was confirmed at, or this can pass before the
+            confirmation the caller asked for.
 
     Raises:
-        RuntimeError: If the transaction reverted or cannot be found
+        TransactionRevertedError: If the transaction landed but reverted
+        RuntimeError: If it cannot be found or carries no execution metadata
     """
     result = await client.get_transaction(
-        signature, commitment="confirmed", max_supported_transaction_version=0
+        signature, commitment=commitment, max_supported_transaction_version=0
     )
     value = result.value
     if value is None:
         raise RuntimeError(f"Transaction {signature} not found after confirmation")
-    err = value.transaction.meta.err if value.transaction.meta else None
-    if err:
-        raise RuntimeError(f"Transaction {signature} landed but failed on-chain: {err}")
+    # No metadata means the outcome is unknown, not that it succeeded. Treating a
+    # missing meta as "no error" is the exact mistake this module exists to
+    # prevent, so fail closed.
+    meta = value.transaction.meta
+    if meta is None:
+        raise RuntimeError(
+            f"Transaction {signature} returned without execution metadata; "
+            f"cannot tell whether it succeeded"
+        )
+    if meta.err is not None:
+        raise TransactionRevertedError(
+            f"Transaction {signature} landed but failed on-chain: {meta.err}"
+        )
 
 
 async def confirm_and_assert(
@@ -68,9 +91,10 @@ async def confirm_and_assert(
         sleep_seconds: Poll interval while waiting for the signature to land
 
     Raises:
-        RuntimeError: If the transaction reverted or cannot be found
+        TransactionRevertedError: If the transaction landed but reverted
+        RuntimeError: If it cannot be found or carries no execution metadata
     """
     await client.confirm_transaction(
         signature, commitment=commitment, sleep_seconds=sleep_seconds
     )
-    await assert_transaction_succeeded(client, signature)
+    await assert_transaction_succeeded(client, signature, commitment=commitment)
