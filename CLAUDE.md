@@ -1,56 +1,77 @@
-# Pump Bot Development Guide
+# Agent guide
 
-This is a trading bot for pump.fun and letsbonk.fun platforms that snipes new tokens and implements various trading strategies.
+Solana trading bot for pump.fun and letsbonk.fun. Snipes newly created tokens and exits on a configured strategy. See [README.md](README.md) for setup and configuration; this file covers what an agent needs that the code doesn't make obvious.
 
-## Project Structure
+`AGENTS.md` is a symlink to this file, so Claude Code, Codex, Cursor, and Windsurf all read the same guide.
 
-- `src/` - Main source code
-- `learning-examples/` - Educational scripts and examples
-- `bots/` - Bot configuration files (YAML)
-- `logs/` - Log files from bot executions
-- `idl/` - Interface definition files for Solana programs
+## Ground rules
 
-## Bash Commands & Development
+- **Never run a bot with real funds** to test a change. Use `learning-examples/`, or the simulation scripts below, which move no funds.
+- **Never** touch `.env` or print its contents. `SOLANA_PRIVATE_KEY` is a live key.
+- Don't commit anything from `logs/`.
+- Test with a learning example before touching `src/`.
 
-### Setup Commands
-```bash
-# Install dependencies
-uv sync
+## Layout
 
-# Activate virtual environment (Unix/macOS)
-source .venv/bin/activate
-
-# Install as editable package
-uv pip install -e .
+```
+src/            bot source — this dir is the import root (see below)
+learning-examples/   standalone scripts; each runs on its own, no bot config
+bots/           one YAML per bot instance
+idl/            vendored Anchor IDLs
+logs/           {bot_name}_{timestamp}.log
 ```
 
-### Running the Bot
-```bash
-# Run as installed package
-pump_bot
+**Imports are rooted at `src/`, not at the repo.** `uv pip install -e .` puts
+`src/` itself on `sys.path`, so it is `from core.client import SolanaClient` and
+`from utils.logger import get_logger` — **not** `from src.core...`. Learning
+examples are deliberately self-contained: they import siblings like `pump_v2`
+and `tx_status` as top-level modules and mostly don't import from `src` at all.
+Don't "fix" an example by rewiring it to import the bot.
 
-# Run directly
-uv run src/bot_runner.py
+Dependency layers, low to high — don't introduce an upward import:
+
+`utils` → `interfaces` → `core` → `platforms` → `trading` / `monitoring` → `bot_runner`
+
+Platform differences are resolved through `interfaces/core.py` abstractions
+(`AddressProvider`, curve manager, event parser, instruction builder) and a
+registry in `platforms/__init__.py`. Listeners and the trader are
+platform-agnostic (`Universal*`); anything platform-shaped belongs under
+`platforms/<name>/`.
+
+## Commands
+
+```bash
+uv sync                      # install runtime deps + the dev group (ruff)
+uv pip install -e .          # editable install (required for the imports above)
+pump_bot                     # run all enabled bots
+uv run src/bot_runner.py     # same, without the console script
 ```
 
-### Learning Examples
+Lint and format **the files you touched**, not the whole tree:
+
 ```bash
-# Bonding curve status
-uv run learning-examples/bonding-curve-progress/get_bonding_curve_status.py TOKEN_ADDRESS
-
-# Listen to migrations
-uv run learning-examples/listen-migrations/listen_logsubscribe.py
-uv run learning-examples/listen-migrations/listen_blocksubscribe_old_raydium.py
-
-# Compute associated bonding curve
-uv run learning-examples/compute_associated_bonding_curve.py
-
-# Listen to new tokens
-uv run learning-examples/listen-new-tokens/listen_logsubscribe_abc.py
-uv run learning-examples/listen-new-tokens/compare_listeners.py
+uv run ruff check --fix <paths> && uv run ruff format <paths>
 ```
+
+A bare `uv run ruff check` reports ~2400 pre-existing errors across the repo.
+That is the known baseline, not something your change caused — don't try to fix
+it wholesale, and don't read it as a failing build. Just don't add new ones in
+the files you edit.
+
+Ruff config lives in `pyproject.toml`: line length 88, double quotes, target
+py311, `E501` ignored. Selected rule families include `ANN` (type annotations),
+`S` (security), `BLE`/`TRY` (exceptions), `C90`/`PL` (complexity), `ERA` (no
+commented-out code). Type-hint public functions, Google-style docstrings, and
+`get_logger(__name__)` for logging.
+
+Python 3.11+ (`requires-python = ">=3.11"`, matching ruff's target). Runtime
+deps are declared in `[project.dependencies]`; `ruff` and `grpcio-tools` live in
+`[dependency-groups] dev`, which `uv sync` installs by default. `grpcio-tools`
+is protoc — needed only to regenerate the `geyser_pb2` stubs from `proto/`, never
+at runtime.
 
 ### Verifying pump.fun v2 trade instructions
+
 ```bash
 # Offline: cross-check buy_v2/sell_v2 account layouts, PDA/ATA derivations,
 # instruction encoding and quote-asset config against idl/pump_fun_idl.json
@@ -63,11 +84,13 @@ uv run learning-examples/simulate_v2_trades.py <MINT>
 uv run learning-examples/simulate_bot_buy_path.py
 uv run learning-examples/simulate_bot_buy_path.py --no-extreme-fast
 ```
+
 Run all three after any pump.fun program upgrade. The simulations report
 `unitsConsumed`; use it to retune `get_buy_compute_unit_limit` /
 `get_sell_compute_unit_limit` in `platforms/pumpfun/instruction_builder.py`.
 
 ### Verifying transaction-status handling
+
 ```bash
 # Offline: stub checks plus a scan that every example verifies meta.err
 uv run learning-examples/verify_tx_status_checks.py
@@ -98,18 +121,6 @@ with `BuybackFeeRecipientMissing` (6062) printed as confirmed buys.
   and `str()` on it is empty, so the caller logs a blank reason. A slow
   `getAccountInfo` is enough to take down a whole listener run this way.
 
-### Code Quality
-```bash
-# Format code
-ruff format
-
-# Lint code
-ruff check
-
-# Fix linting issues
-ruff check --fix
-```
-
 ## Pump.fun protocol notes (gotchas)
 
 The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-public-docs`
@@ -138,7 +149,8 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   user's WSOL ATA, it would burn ~0.002 SOL of rent for nothing.
 - Fee recipients: 24 total, in three sets of 8 (`NORMAL_FEE_RECIPIENTS`,
   `RESERVED_FEE_RECIPIENTS` for mayhem coins, `BUYBACK_FEE_RECIPIENTS`). Every
-  v2 buy/sell needs a `fee_recipient` **and** a `buyback_fee_recipient`.
+  v2 buy/sell needs a `fee_recipient` **and** a `buyback_fee_recipient`. The set
+  is randomized per tx, per pump.fun's guidance on spreading program throughput.
 - `sharing_config` (PDA `["sharing-config", base_mint]`) lives under the **pump
   fees program**, not the pump program. Easy to derive against the wrong program.
 
@@ -164,6 +176,8 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   reserves against a 148.455 SOL vault, so quoting off the raw vault balance
   under-prices by ~10.6%. It is `i128`, not `u64` — reading 8 bytes happens to
   work only while the high half is zero.
+- pump-amm has **no** `buy_v2`/`sell_v2`. The AMM instruction names are
+  unchanged; only the pool layout and quoting moved.
 
 ### Coin creation
 
@@ -189,99 +203,20 @@ The IDL under-reports these: `buy` is **18 accounts** on-chain (IDL lists 16) an
 `sell` is **16 non-cashback / 17 cashback** (IDL lists 14). The extras are
 `bonding-curve-v2` (PDA `["bonding-curve-v2", mint]`) followed by a buyback fee
 recipient (mutable); the cashback sell path also inserts
-`user_volume_accumulator` before `bonding-curve-v2`. Prefer v2 — it is the
+`user_volume_accumulator` before `bonding-curve-v2`. On the PumpSwap side the
+legacy path needs `pool-v2` (PDA `["pool-v2", base_mint]` under pump-amm) —
+without it pump-amm throws `AnchorError 6023 (Overflow)` after the transfers
+complete, a misleading code for a missing account. Prefer v2 — it is the
 interface pump.fun maintains.
 
-## Code Style & Conventions
+## Config notes
 
-### Python Style (Ruff Configuration)
-- **Line length**: 88 characters
-- **Indentation**: 4 spaces
-- **Target Python**: 3.11+
-- **Quote style**: Double quotes
-- **Import sorting**: Enabled
-
-### Linting Rules
-- Security best practices (S)
-- Type annotations (ANN)
-- Exception handling (BLE, TRY)
-- Code complexity (C90)
-- Pylint conventions (PL)
-- No commented-out code (ERA)
-
-### Code Organization
-- **Imports**: Standard library, third-party, local imports
-- **Docstrings**: Google-style for functions and classes
-- **Type hints**: Required for all public functions
-- **Logging**: Use `get_logger(__name__)` pattern
-- **Error handling**: Comprehensive try-catch with proper logging
-
-### File Structure Patterns
-- `__init__.py` files for all packages
-- Separate concerns: client, trading, monitoring, platforms
-- Abstract base classes in `interfaces/`
-- Platform-specific implementations in `platforms/`
-
-## Workflow & Development Practices
-
-### Configuration Management
-- Environment variables in `.env` file
-- Bot configurations in YAML files under `bots/`
-- Platform detection from config files
-- Validation of platform-listener combinations
-
-### Logging
-- Timestamped log files in `logs/` directory
-- Format: `{bot_name}_{timestamp}.log`
-- Different log levels for development vs production
-- Centralized logger utility in `utils/logger.py`
-
-### Trading Architecture
-- Universal trader pattern for platform abstraction
-- Platform-specific implementations (pumpfun, letsbonk)
-- Position tracking and management
-- Priority fee management (dynamic/fixed)
-
-### Monitoring Systems
-- Multiple listener types: logs, blocks, geyser, pumpportal
-- Universal listeners with platform abstraction
-- Event parsing and processing
-- Real-time data stream handling
-
-### Development Workflow
-1. Make changes to source code
-2. Run `ruff check --fix` for linting
-3. Run `ruff format` for formatting
-4. Test with learning examples (standalone scripts) before deploying bots
-5. Use separate processes for production bot instances
-
-### Bot Configuration
-- YAML-based configuration files
-- Environment variable interpolation
-- Platform-specific settings
-- Trading parameters (slippage, amounts, timeouts)
-- Filter configurations for token selection
-- Cleanup and account management settings
-
-### Testing Strategy
-- Learning examples serve as integration tests
-- Manual testing with learning scripts
-- Configuration validation before bot startup
-- Logging verification for debugging
-
-## Key Features
-
-- **Multi-platform support**: pump.fun and letsbonk.fun
-- **Multiple listening methods**: WebSocket logs, block subscription, Geyser
-- **Trading strategies**: Time-based, take profit/stop loss, manual
-- **Priority fee management**: Dynamic and fixed fee strategies
-- **Account cleanup**: Automated token account management
-- **Extreme fast mode**: Skip validation for faster execution
-
-## Security Considerations
-
-- Private keys stored in environment variables
-- No sensitive data in configuration files
-- Comprehensive input validation
-- Error handling to prevent crashes
-- Rate limiting and retry mechanisms
+- Bot YAML supports `${VAR}` interpolation from the file named by `env_file`.
+  Actual variable names are `SOLANA_NODE_RPC_ENDPOINT`,
+  `SOLANA_NODE_WSS_ENDPOINT`, `SOLANA_PRIVATE_KEY`, `GEYSER_*`.
+- `config_loader.py` validates the platform/listener pairing before startup:
+  pump.fun supports `logs`, `blocks`, `geyser`, `pumpportal`; letsbonk.fun
+  supports `blocks`, `geyser`, `pumpportal` — **not `logs`**. Adding a listener
+  means updating `PLATFORM_LISTENER_COMPATIBILITY` there too.
+- Bots with `separate_process: true` run in their own process. One log file per
+  bot instance.

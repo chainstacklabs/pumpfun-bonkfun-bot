@@ -3,29 +3,28 @@ name = "pump_bot"
 version = "2.0"
 description = "Trade tokens on pump.fun"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 
 dependencies = [
     "base58>=2.1.1",
-    "borsh-construct>=0.1.0",
     "construct>=2.10.67",
-    "construct-typing>=0.5.2",
     "solana==0.36.6",
     "solders>=0.26.0",
     "websockets>=15.0",
     "python-dotenv>=1.2.1",
     "aiohttp>=3.11.13",
     "grpcio>=1.71.0",
-    "grpcio-tools>=1.71.0",
     "protobuf>=5.29.4",
     "pyyaml>=6.0.2",
     "uvloop>=0.21.0; sys_platform != 'win32'",
     "winloop>=0.1.0; sys_platform == 'win32'",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
-    "ruff>=0.10.0"
+    "ruff>=0.10.0",
+    # protoc; only needed to regenerate the geyser_pb2 stubs from proto/
+    "grpcio-tools>=1.71.0",
 ]
 
 [project.scripts]
