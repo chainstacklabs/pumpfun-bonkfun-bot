@@ -175,18 +175,30 @@ class SolanaClient:
             raise ValueError(f"Account {pubkey} not found")
         return response.value
 
-    async def get_token_account_balance(self, token_account: Pubkey) -> int:
+    async def get_token_account_balance(
+        self, token_account: Pubkey, commitment: str = "confirmed"
+    ) -> int:
         """Get token balance for an account.
+
+        Defaults to "confirmed" rather than solana-py's "finalized": trades are
+        confirmed at "confirmed", and finalization lags it. Reading the finalized
+        balance right after a sell returns the pre-sell amount, and cleanup then
+        builds a burn for tokens the account no longer holds — the whole burn +
+        close transaction reverts with InsufficientFunds and the rent stays
+        locked.
 
         Args:
             token_account: Token account address
+            commitment: Commitment level for the balance read
 
         Returns:
             Token balance as integer
         """
         await self._rate_limiter.acquire()
         client = await self.get_client()
-        response = await client.get_token_account_balance(token_account)
+        response = await client.get_token_account_balance(
+            token_account, commitment=commitment
+        )
         if response.value:
             return int(response.value.amount)
         return 0

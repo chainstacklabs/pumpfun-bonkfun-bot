@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import sys
 
 from dotenv import load_dotenv
 from solders.pubkey import Pubkey
@@ -26,11 +27,19 @@ RPC_ENDPOINT = os.getenv("SOLANA_NODE_RPC_ENDPOINT")
 PRIVATE_KEY = os.getenv("SOLANA_PRIVATE_KEY")
 
 # Update this address to MINT address of a token you want to close
-MINT_ADDRESS = Pubkey.from_string("9WHpYbqG6LJvfCYfMjvGbyo1wHXgroCrixPb33s2pump")
+# Mint of the token account to close: pass as argv[1], or hardcode here.
+MINT_ADDRESS = Pubkey.from_string(
+    sys.argv[1] if len(sys.argv) > 1 else "9WHpYbqG6LJvfCYfMjvGbyo1wHXgroCrixPb33s2pump"
+)
 
 # Token program for the mint - use TOKEN_PROGRAM for legacy SPL tokens, TOKEN_2022_PROGRAM for Token-2022
 # This must match the actual token's program to derive the correct ATA address
-TOKEN_PROGRAM = SystemAddresses.TOKEN_PROGRAM
+# Pass "2022" as argv[2] for a Token-2022 mint (every pump.fun coin is).
+TOKEN_PROGRAM = (
+    SystemAddresses.TOKEN_2022_PROGRAM
+    if len(sys.argv) > 2 and sys.argv[2] == "2022"
+    else SystemAddresses.TOKEN_PROGRAM
+)
 
 
 async def close_account_if_exists(

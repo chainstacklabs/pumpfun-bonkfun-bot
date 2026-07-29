@@ -12,6 +12,7 @@ import os
 import struct
 import sys
 from datetime import datetime
+from urllib.parse import urlsplit
 
 import base58
 import websockets
@@ -398,7 +399,8 @@ async def process_websocket_message(websocket):
 async def listen_for_transactions():
     """Main function to listen for wallet transactions."""
     print(f"Starting to monitor wallet: {WALLET_TO_TRACK}")
-    print(f"Connecting to: {WSS_ENDPOINT}")
+    # Endpoint carries an API key — show only the host.
+    print(f"Connecting to: {urlsplit(WSS_ENDPOINT).netloc}")
     print("Looking for pump.fun bonding curve buy/sell transactions only...")
     print("=" * 80)
 

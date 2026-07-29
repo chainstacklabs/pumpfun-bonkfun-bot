@@ -390,7 +390,9 @@ async def calculate_token_pool_price(
     Returns:
         Price in quote asset per token
     """
-    base_balance_resp = await client.get_token_account_balance(pool_base_token_account)
+    base_balance_resp = await client.get_token_account_balance(
+        pool_base_token_account, commitment=Confirmed
+    )
     quote_balance_resp = await client.get_token_account_balance(
         pool_quote_token_account
     )
@@ -503,8 +505,16 @@ async def sell_pump_swap(
     Returns:
         Transaction signature if successful, None otherwise
     """
+    # Read at "confirmed", not solana-py's "finalized" default: an ATA created
+    # by a buy moments earlier does not exist at finalized yet ("could not find
+    # account"), and a post-sell balance still reads pre-sell, so the next
+    # transfer reverts with insufficient funds.
     token_balance = int(
-        (await client.get_token_account_balance(user_base_token_account)).value.amount
+        (
+            await client.get_token_account_balance(
+                user_base_token_account, commitment=Confirmed
+            )
+        ).value.amount
     )
     token_balance_decimal = token_balance / 10**TOKEN_DECIMALS
 

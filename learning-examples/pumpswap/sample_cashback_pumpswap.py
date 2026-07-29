@@ -20,6 +20,7 @@ Env: SOLANA_NODE_RPC_ENDPOINT (defaults to public mainnet)
 import asyncio
 import os
 import sys
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
@@ -105,7 +106,10 @@ async def inspect_tx(client: AsyncClient, sig: Signature) -> dict | None:
 
 async def main(limit: int = 200) -> None:
     async with AsyncClient(RPC) as client:
-        print(f"Sampling up to {limit} recent pAMM signatures from {RPC}")
+        # The endpoint carries an API key in its path or query — print only the
+        # host so a pasted log or screenshot does not leak the credential.
+        host = urlsplit(RPC).netloc or RPC
+        print(f"Sampling up to {limit} recent pAMM signatures from {host}")
         sigs_resp = await client.get_signatures_for_address(
             PUMP_AMM_PROGRAM_ID, limit=limit
         )

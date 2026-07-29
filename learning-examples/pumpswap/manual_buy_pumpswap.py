@@ -426,7 +426,9 @@ async def calculate_token_pool_price(
     Returns:
         Price in quote asset per token
     """
-    base_balance_resp = await client.get_token_account_balance(pool_base_token_account)
+    base_balance_resp = await client.get_token_account_balance(
+        pool_base_token_account, commitment=Confirmed
+    )
     quote_balance_resp = await client.get_token_account_balance(
         pool_quote_token_account
     )
