@@ -190,11 +190,11 @@ offline and only visible after a couple of minutes against mainnet.
   subscription instead; see the two `get_graduating_tokens*.py` examples.
 - **Filtered `programSubscribe` on the pump program is the portable way to find
   curves by state.** `dataSize` + `memcmp` are applied server-side, and it is
-  accepted even by the public `api.mainnet-beta.solana.com`. Because `memcmp`
-  matches exact bytes, the only inequality it can express on a little-endian u64
-  is "the top N bytes are zero" (`value < 2**(8*(8-N))`), so thresholds land on
-  coarse power-of-2 gates and the exact comparison has to happen client-side.
-  Geyser's account filters have the same shape and add the slot and signature.
+  accepted even by the public `api.mainnet-beta.solana.com`. `memcmp` only matches
+  exact bytes, so it cannot express "reserves below X" — only a handful of fixed
+  cutoffs. Treat it as a bandwidth saver and do the real comparison client-side;
+  don't assume a threshold is being enforced upstream. Geyser's account filters
+  have the same shape and add the slot and signature.
 - **Resolve a curve's mint under Token-2022, not SPL Token.** The curve account
   has no mint field and `["bonding-curve", mint]` is not reversible, so the mint
   comes from the associated bonding curve ATA — which is Token-2022 for every

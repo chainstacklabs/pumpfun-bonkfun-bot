@@ -121,7 +121,7 @@ Standalone scripts, runnable with `uv run <path>`. No bot config needed — they
 |---|---|
 | `listen-new-tokens/` | One listener per method (`logs`, `blocks`, `geyser`, `pumpportal`) plus `compare_listeners.py` to race them |
 | `listen-migrations/` | Detect a token graduating from the bonding curve to PumpSwap, via the migration wrapper program or new pool accounts |
-| `bonding-curve-progress/` | Curve state, progress polling, and tokens close to graduating |
+| `bonding-curve-progress/` | Curve state, progress polling, and a live watch for coins close to graduating — over WebSocket (`get_graduating_tokens.py`) or Geyser (`get_graduating_tokens_geyser.py`), both taking `--min-progress` |
 | `pumpswap/` | Manual buy/sell against the PumpSwap AMM, and pool discovery |
 | `letsbonk-buy-sell/` | Manual exact-in / exact-out buys and sells on letsbonk.fun |
 | `copy-trading/` | Watch another wallet's transactions |
@@ -148,6 +148,8 @@ Related docs: [Listening to pump.fun migrations](https://docs.chainstack.com/doc
 ## Throughput and rate limits
 
 Every node provider has its own limits — method availability, requests per second, plan-specific caps. Consult your provider's docs before running the bot, and don't expect public RPC nodes to hold up.
+
+One case worth knowing about: `getProgramAccounts` over the whole pump.fun program is no longer served by anyone. That program owns more than 10 million accounts, so providers reject the request or time out no matter which filters you pass. Use a filtered subscription instead — `bonding-curve-progress/get_graduating_tokens.py` shows the pattern.
 
 For Chainstack, the numbers you need are in the [throughput guidelines](https://docs.chainstack.com/docs/limits), kept up to date.
 

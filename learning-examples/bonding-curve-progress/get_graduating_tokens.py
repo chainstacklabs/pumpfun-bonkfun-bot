@@ -27,21 +27,27 @@ Progress is measured against `Global.initial_real_token_reserves` (~793.1M token
 read from chain, not a hardcoded constant, because a mayhem coin can launch with
 different virtual params and would otherwise show the wrong percentage.
 
-`memcmp` compares exact bytes, so the only inequality it can express on a
-little-endian u64 is "the top N bytes are zero", i.e. `value < 2**(8*(8-N))`.
-`real_token_reserves` spans offsets 24..31, so the top N bytes sit at offset 32-N.
-That gives these server-side gates, against a 793.1M baseline:
+The pre-filter the server applies can only match exact bytes, so it cannot do
+"anything above 90%". It can only do a few fixed cutoffs. `--min-progress` uses the
+closest cutoff that is still wide enough, then makes the exact comparison here:
 
-    offset  zero bytes  admits reserves below      ≈ progress above
-    31      1           2**56  (72,057,594M tok)   0%      (no real filtering)
-    30      2           2**48  (281.47M tok)       64.51%
-    29      3           2**40  (1.0995M tok)       99.86%
-    28      4           2**32  (4,294.97 tok)      99.9995%
+    filter               cutoff                 ≈ graduated past
+    2 zero bytes @ 30    281.5M tokens left     64.5%
+    3 zero bytes @ 29    1.1M tokens left       99.86%
+    4 zero bytes @ 28    4,295 tokens left      99.9995%
 
-The steps are coarse — 64.51% jumps straight to 99.86% — so `--min-progress`
-picks the tightest gate that still admits every qualifying curve and the exact
-threshold is applied client-side. To hand-tune, change the gate: watching for the
-last moments before migration wants offset 29, a wider funnel wants offset 30.
+    --min-progress       pre-filtered by the server?
+    below 64.5%          no, every curve arrives and is filtered here
+    64.5% to 99.86%      yes, at the 64.5% cutoff
+    99.86% and up        yes, at the 99.86% cutoff
+
+So the pre-filter saves traffic, it does not decide the answer — whatever percentage
+you ask for is honoured either way. Low thresholds just cost more bandwidth. If you
+want to hand-tune, pick a different cutoff from the table: the last moments before
+migration want the 3-byte one, a wider funnel the 2-byte one.
+
+Checked against mainnet by running the filtered and unfiltered subscriptions side by
+side for a minute: same curves, nothing dropped, nothing extra.
 
 `dataSize: 151` restricts this to the current curve layout. The original 49-byte
 layout (no `creator` field) still has accounts with `complete = false`, but none of
@@ -120,19 +126,22 @@ RECONNECT_DELAY: Final[int] = 5
 
 
 def zero_prefix_gate(bound_raw: int) -> tuple[int, bytes] | None:
-    """Pick the tightest `memcmp` gate that still admits `real_token_reserves`.
+    """Pick the tightest server-side cutoff that still lets every match through.
 
-    See the module docstring for the derivation.
+    See the module docstring for the cutoffs on offer. Returns None when none of
+    them is wide enough to be safe, in which case there is no pre-filtering and
+    every curve is checked here instead.
 
     Args:
-        bound_raw: Highest `real_token_reserves` value, in raw units, that should
-            still qualify
+        bound_raw: Highest reserves value, in raw units, that should still qualify
 
     Returns:
-        An (offset, zero bytes) pair for a memcmp filter, or None if not even the
-        widest gate would constrain anything
+        An (offset, zero bytes) pair for a memcmp filter, or None for no filter
     """
-    for zero_bytes in (4, 3, 2, 1):
+    # Only 2, 3 and 4 zero bytes are offered. One zero byte would be a cutoff so
+    # high that no coin could ever fail it, which filters nothing while looking
+    # like it does.
+    for zero_bytes in (4, 3, 2):
         if 2 ** (8 * (8 - zero_bytes)) > bound_raw:
             return 32 - zero_bytes, bytes(zero_bytes)
     return None
@@ -274,14 +283,14 @@ def print_banner(baseline: float, min_progress: float) -> None:
 
     gate = zero_prefix_gate(progress_to_bound(baseline, min_progress))
     if gate:
-        offset, zeros = gate
-        admits = 2 ** (8 * (8 - len(zeros))) / 10**TOKEN_DECIMALS
+        cutoff_tokens = 2 ** (8 * (8 - len(gate[1]))) / 10**TOKEN_DECIMALS
+        cutoff_pct = max(100 - cutoff_tokens * 100 / baseline, 0.0)
         print(
-            f"Server-side gate: memcmp {len(zeros)} zero byte(s) at offset {offset}, "
-            f"admitting reserves below {admits:,.0f} tokens"
+            f"Pre-filter: the server sends only curves past ~{cutoff_pct:.2f}% "
+            f"({cutoff_tokens:,.0f} tokens left); the rest is checked here"
         )
     else:
-        print("Server-side gate: none (threshold too low to constrain)")
+        print("Pre-filter: none, so every curve arrives and is checked here")
     print("Waiting for trades on qualifying curves...\n")
 
 
