@@ -14,7 +14,11 @@
 
 A Solana trading bot for **pump.fun** and **letsbonk.fun**. Its core feature is sniping new tokens: it watches for token creation, buys, and exits on a strategy you configure. `learning-examples/` contains standalone scripts covering every piece of the flow — listeners, price math, manual buys and sells — useful on their own even if you never run the bot.
 
-For the full walkthrough, see [Solana: Creating a trading and sniping pump.fun bot](https://docs.chainstack.com/docs/solana-creating-a-pumpfun-bot).
+For the full walkthrough, see [Solana: Creating a trading and sniping pump.fun bot](https://docs.chainstack.com/docs/solana-creating-a-pumpfun-bot). It explains the concepts well but lags behind the code, so treat this README as the source of truth for setup and configuration.
+
+> **Also by Chainstack** — if you prefer a terminal interface or want to give an AI agent trading capabilities:
+> - [**pumpfun-cli**](https://github.com/chainstacklabs/pumpfun-cli) — CLI for trading, launching, and managing tokens on pump.fun; buy, sell, wallet management, and smart routing between the bonding curve and PumpSwap AMM.
+> - [**pumpclaw**](https://github.com/chainstacklabs/pumpclaw) — agent skill that equips AI assistants (OpenClaw, Claude Code, Cursor, Codex) with the ability to operate pumpfun-cli.
 
 ---
 
@@ -169,10 +173,3 @@ Running `ruff check` over the whole repo reports a large backlog of pre-existing
 errors — that's a known baseline, so scope it to your own files.
 
 Then test your change with a learning example rather than by running a bot with real funds.
-
----
-
-**Also by Chainstack** — if you prefer a terminal interface or want to give an AI agent trading capabilities:
-
-- [**pumpfun-cli**](https://github.com/chainstacklabs/pumpfun-cli) — CLI for trading, launching, and managing tokens on pump.fun; buy, sell, wallet management, and smart routing between the bonding curve and PumpSwap AMM.
-- [**pumpclaw**](https://github.com/chainstacklabs/pumpclaw) — agent skill that equips AI assistants (OpenClaw, Claude Code, Cursor, Codex) with the ability to operate pumpfun-cli.
