@@ -5,6 +5,7 @@ from typing import Final
 
 import base58
 import pump_v2
+import tx_status
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
@@ -283,32 +284,6 @@ def create_extend_account_instruction(
     return Instruction(PUMP_PROGRAM, data, accounts)
 
 
-async def assert_transaction_succeeded(client: AsyncClient, signature) -> None:
-    """Raise if a confirmed transaction actually failed on-chain.
-
-    `confirm_transaction` only waits for the transaction to land — a landed
-    transaction can still have reverted. Without this check a failed buy prints
-    as a success, which is exactly how a wrong fee recipient (NotAuthorized,
-    6000) can look like a passing test.
-
-    Args:
-        client: Solana RPC client
-        signature: Transaction signature to inspect
-
-    Raises:
-        RuntimeError: If the transaction reverted
-    """
-    result = await client.get_transaction(
-        signature, commitment="confirmed", max_supported_transaction_version=0
-    )
-    value = result.value
-    if value is None:
-        raise RuntimeError(f"Transaction {signature} not found after confirmation")
-    err = value.transaction.meta.err if value.transaction.meta else None
-    if err:
-        raise RuntimeError(f"Transaction {signature} landed but failed on-chain: {err}")
-
-
 def create_buy_instruction(
     global_state: Pubkey,
     fee_recipient: Pubkey,
@@ -525,7 +500,7 @@ async def main():
             print(f"Create sent: https://solscan.io/tx/{tx_hash}")
             print("Waiting for confirmation...")
             await client.confirm_transaction(tx_hash, commitment="confirmed")
-            await assert_transaction_succeeded(client, tx_hash)
+            await tx_status.assert_transaction_succeeded(client, tx_hash)
             print("Create confirmed!")
 
             buy_blockhash = await client.get_latest_blockhash()
@@ -539,7 +514,7 @@ async def main():
             buy_hash = buy_response.value
             print(f"Buy sent: https://solscan.io/tx/{buy_hash}")
             await client.confirm_transaction(buy_hash, commitment="confirmed")
-            await assert_transaction_succeeded(client, buy_hash)
+            await tx_status.assert_transaction_succeeded(client, buy_hash)
             print("Buy confirmed!")
 
             return tx_hash

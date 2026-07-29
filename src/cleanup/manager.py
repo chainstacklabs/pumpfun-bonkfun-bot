@@ -120,8 +120,13 @@ class AccountCleanupManager:
                     skip_preflight=True,
                     priority_fee=priority_fee,
                 )
-                await self.client.confirm_transaction(tx_sig)
-                logger.info(f"Closed successfully: {ata}")
+                # confirm_transaction returns False when the transaction landed
+                # but reverted. Logging success on that would report rent as
+                # reclaimed while the account is still open.
+                if await self.client.confirm_transaction(tx_sig):
+                    logger.info(f"Closed successfully: {ata}")
+                else:
+                    logger.error(f"Failed to close ATA {ata}: {tx_sig}")
 
         except Exception as e:
             logger.warning(f"Cleanup failed for ATA {ata}: {e!s}")

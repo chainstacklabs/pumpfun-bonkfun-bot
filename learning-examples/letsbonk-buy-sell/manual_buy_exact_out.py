@@ -34,6 +34,9 @@ from solders.system_program import CreateAccountWithSeedParams, create_account_w
 from solders.transaction import VersionedTransaction
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import tx_status  # noqa: E402
+
 # Initialize IDL parser for Raydium LaunchLab with verbose mode for debugging
 IDL_PARSER = load_idl_parser("idl/raydium_launchlab_idl.json", verbose=True)
 
@@ -683,7 +686,7 @@ async def buy_exact_out(
         print(f"Transaction sent: https://solscan.io/tx/{tx_signature}")
 
         print("Waiting for confirmation...")
-        await client.confirm_transaction(tx_signature, commitment="confirmed")
+        await tx_status.confirm_and_assert(client, tx_signature)
         print("Transaction confirmed!")
 
         return tx_signature

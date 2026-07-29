@@ -7,6 +7,7 @@ import struct
 
 import base58
 import pump_v2
+import tx_status
 import websockets
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
@@ -173,9 +174,7 @@ async def buy_token(
                 )
                 tx_hash = tx_buy.value
                 print(f"Transaction sent: https://explorer.solana.com/tx/{tx_hash}")
-                await client.confirm_transaction(
-                    tx_hash, commitment="confirmed", sleep_seconds=1
-                )
+                await tx_status.confirm_and_assert(client, tx_hash)
                 print("Transaction confirmed")
                 return  # Success, exit the function
             except Exception as e:

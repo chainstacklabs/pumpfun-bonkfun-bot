@@ -17,6 +17,7 @@ from solders.instruction import Instruction
 from solders.keypair import Keypair
 from solders.message import Message
 from solders.pubkey import Pubkey
+from solders.signature import Signature
 from solders.transaction import Transaction
 
 from core.pubkeys import is_sol_paired
@@ -210,7 +211,7 @@ class SolanaClient:
         priority_fee: int | None = None,
         compute_unit_limit: int | None = None,
         account_data_size_limit: int | None = None,
-    ) -> str:
+    ) -> Signature:
         """
         Send a transaction with optional priority fee and compute unit limit.
 
@@ -284,7 +285,7 @@ class SolanaClient:
                 await asyncio.sleep(wait_time)
 
     async def confirm_transaction(
-        self, signature: str, commitment: str = "confirmed"
+        self, signature: str | Signature, commitment: str = "confirmed"
     ) -> bool:
         """Wait for transaction confirmation and verify execution success.
 
@@ -293,12 +294,22 @@ class SolanaClient:
         can be "confirmed" (included in a block) but still fail execution.
 
         Args:
-            signature: Transaction signature
+            signature: Transaction signature, base58 string or Signature
             commitment: Confirmation commitment level
 
         Returns:
             Whether transaction was confirmed AND executed successfully
         """
+        # The RPC client rejects a base58 string, and the resulting TypeError
+        # would be swallowed by the handler below — reporting "not confirmed"
+        # for a transaction that was never actually looked up.
+        if isinstance(signature, str):
+            try:
+                signature = Signature.from_string(signature)
+            except ValueError:
+                logger.exception(f"Malformed transaction signature: {signature}")
+                return False
+
         await self._rate_limiter.acquire()
         client = await self.get_client()
         try:
@@ -309,11 +320,29 @@ class SolanaClient:
             logger.exception(f"Failed to confirm transaction {signature}")
             return False
 
-        # Verify the transaction actually succeeded (no program errors)
-        result = await self._get_transaction_result(str(signature))
+        return await self.verify_transaction_succeeded(signature)
+
+    async def verify_transaction_succeeded(self, signature: str | Signature) -> bool:
+        """Check whether a landed transaction actually executed successfully.
+
+        Landing in a block and succeeding are different things: RPC reports a
+        revert in `meta.err`, so a transaction can be "confirmed" and still have
+        done nothing. Split out from :meth:`confirm_transaction` so the check can
+        be run against a transaction that landed some time ago — signature
+        statuses fall out of the RPC's recent history, but `getTransaction` does
+        not.
+
+        Args:
+            signature: Transaction signature, base58 string or Signature
+
+        Returns:
+            Whether the transaction executed without a program error
+        """
+        signature = str(signature)
+        result = await self._get_transaction_result(signature)
         if not result:
             logger.warning(
-                f"Could not fetch transaction {str(signature)[:16]}... "
+                f"Could not fetch transaction {signature[:16]}... "
                 f"to verify execution — treating as unconfirmed"
             )
             return False
@@ -321,19 +350,19 @@ class SolanaClient:
         tx_err = result.get("meta", {}).get("err")
         if tx_err:
             logger.error(
-                f"Transaction {str(signature)[:16]}... confirmed but failed: {tx_err}"
+                f"Transaction {signature[:16]}... confirmed but failed: {tx_err}"
             )
             return False
 
         return True
 
     async def get_transaction_token_balance(
-        self, signature: str, user_pubkey: Pubkey, mint: Pubkey
+        self, signature: str | Signature, user_pubkey: Pubkey, mint: Pubkey
     ) -> int | None:
         """Get the user's token balance after a transaction from postTokenBalances.
 
         Args:
-            signature: Transaction signature
+            signature: Transaction signature, base58 string or Signature
             user_pubkey: User's wallet public key
             mint: Token mint address
 
@@ -361,7 +390,7 @@ class SolanaClient:
 
     async def get_buy_transaction_details(
         self,
-        signature: str,
+        signature: str | Signature,
         mint: Pubkey,
         sol_destination: Pubkey,
         quote_mint: Pubkey | None = None,
@@ -375,7 +404,7 @@ class SolanaClient:
         mint's token balance deltas instead.
 
         Args:
-            signature: Transaction signature
+            signature: Transaction signature, base58 string or Signature
             mint: Token mint address
             sol_destination: Address where SOL is sent (bonding curve for pump.fun,
                            quote_vault for letsbonk)
@@ -385,6 +414,9 @@ class SolanaClient:
         Returns:
             Tuple of (tokens_received_raw, quote_spent_raw), or (None, None)
         """
+        # Normalized up front: the log lines below slice it, which a Signature
+        # does not support.
+        signature = str(signature)
         result = await self._get_transaction_result(signature)
         if not result:
             return None, None
@@ -482,22 +514,34 @@ class SolanaClient:
 
         return best
 
-    async def _get_transaction_result(self, signature: str) -> dict | None:
+    async def _get_transaction_result(
+        self, signature: str | Signature
+    ) -> dict | None:
         """Fetch transaction result from RPC.
 
         Args:
-            signature: Transaction signature
+            signature: Transaction signature, base58 string or Signature
 
         Returns:
             Transaction result dict or None
         """
+        # A Signature is not JSON serializable, so it has to be stringified here
+        # rather than relying on every caller to remember.
+        signature = str(signature)
         body = {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "getTransaction",
             "params": [
                 signature,
-                {"encoding": "jsonParsed", "commitment": "confirmed"},
+                {
+                    "encoding": "jsonParsed",
+                    "commitment": "confirmed",
+                    # Without this the RPC rejects every versioned (v0)
+                    # transaction with -32015, so meta.err cannot be read and a
+                    # perfectly good trade reads back as unconfirmed.
+                    "maxSupportedTransactionVersion": 0,
+                },
             ],
         }
 

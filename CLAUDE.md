@@ -67,6 +67,32 @@ Run all three after any pump.fun program upgrade. The simulations report
 `unitsConsumed`; use it to retune `get_buy_compute_unit_limit` /
 `get_sell_compute_unit_limit` in `platforms/pumpfun/instruction_builder.py`.
 
+### Verifying transaction-status handling
+```bash
+# Offline: stub checks plus a scan that every example verifies meta.err
+uv run learning-examples/verify_tx_status_checks.py
+
+# Adds a mainnet replay of the reverted signatures from issue #175
+uv run learning-examples/verify_tx_status_checks.py --live
+```
+
+`confirm_transaction` answers "did this land in a block?", never "did it
+succeed". A landed transaction can have reverted, and RPC reports that only in
+`meta.err`. Reporting success without reading it is issue #175: buys reverting
+with `BuybackFeeRecipientMissing` (6062) printed as confirmed buys.
+
+- Examples use `learning-examples/tx_status.py` — `confirm_and_assert` in place
+  of a bare `confirm_transaction`, or `assert_transaction_succeeded` after one.
+  The verifier above fails the build if a new example skips it.
+- The bot uses `SolanaClient.confirm_transaction`, which folds `meta.err` into
+  its return value. **Read the boolean** — discarding it is the same bug.
+- `_get_transaction_result` must send `maxSupportedTransactionVersion: 0` or the
+  RPC rejects every versioned (v0) transaction with `-32015`, and a good trade
+  reads back as unconfirmed.
+- `build_and_send_transaction` returns a solders `Signature`, not a `str`. A
+  `Signature` is not JSON serializable and does not support slicing; a `str` is
+  rejected by solana-py's `confirm_transaction`. Normalize at the boundary.
+
 ### Code Quality
 ```bash
 # Format code

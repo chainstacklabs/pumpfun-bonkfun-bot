@@ -17,6 +17,7 @@ import asyncio
 import os
 import random
 import struct
+import sys
 
 import base58
 from dotenv import load_dotenv
@@ -37,6 +38,10 @@ from spl.token.instructions import (
     sync_native,
 )
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import tx_status  # noqa: E402
+
 load_dotenv()
 
 # ============================================================================
@@ -44,7 +49,6 @@ load_dotenv()
 # ============================================================================
 
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
-import sys
 
 TOKEN_MINT = Pubkey.from_string(sys.argv[1] if len(sys.argv) > 1 else "...")  # Pass mint as argv[1]
 PRIVATE_KEY = base58.b58decode(os.environ.get("SOLANA_PRIVATE_KEY"))
@@ -697,7 +701,7 @@ async def buy_pump_swap(
         tx_hash = tx_sig.value
         print(f"Transaction sent: https://explorer.solana.com/tx/{tx_hash}")
 
-        await client.confirm_transaction(tx_hash, commitment="confirmed")
+        await tx_status.confirm_and_assert(client, tx_hash)
         print("Transaction confirmed")
         return tx_hash
     except Exception as e:

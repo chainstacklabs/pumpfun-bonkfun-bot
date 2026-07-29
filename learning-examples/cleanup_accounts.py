@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -11,6 +12,14 @@ from core.wallet import Wallet
 from utils.logger import get_logger
 
 load_dotenv()
+# get_logger attaches no handler — the bot installs one at startup, but a
+# standalone example has to do it itself or every line below goes nowhere. This
+# script ran completely silently, success or failure, without it.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+# httpx logs each request at INFO, and the RPC endpoint carries an API key in
+# its path — keep it out of the console.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = get_logger(__name__)
 
 RPC_ENDPOINT = os.getenv("SOLANA_NODE_RPC_ENDPOINT")
@@ -68,9 +77,13 @@ async def close_account_if_exists(
             wallet.keypair,
             skip_preflight=True,
         )
-        await client.confirm_transaction(tx_sig)
+        # confirm_transaction returns False when the transaction landed but
+        # reverted — reporting success on that would hide a failed cleanup.
         action = "Burned and closed" if balance > 0 else "Closed"
-        logger.info(f"{action} successfully: {account}")
+        if await client.confirm_transaction(tx_sig):
+            logger.info(f"{action} successfully: {account}")
+        else:
+            logger.error(f"Failed to {action.lower()} account {account}: {tx_sig}")
 
     except Exception as e:
         logger.error(f"Error while processing account {account}: {e}")
