@@ -1,18 +1,23 @@
 import asyncio
 import os
 import struct
+import sys
 from typing import Final
 
 from construct import Bytes, Flag, Int64ul, Struct
+from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solders.pubkey import Pubkey
 
 LAMPORTS_PER_SOL: Final[int] = 1_000_000_000
 TOKEN_DECIMALS: Final[int] = 6
-CURVE_ADDRESS: Final[str] = "..."  # Replace with actual bonding curve address
+# Bonding curve address: pass as argv[1], or hardcode here.
+CURVE_ADDRESS: Final[str] = sys.argv[1] if len(sys.argv) > 1 else "..."
 
 # Here and later all the discriminators are precalculated. See learning-examples/calculate_discriminator.py
 EXPECTED_DISCRIMINATOR: Final[bytes] = struct.pack("<Q", 6966180631402821399)
+
+load_dotenv()
 
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 

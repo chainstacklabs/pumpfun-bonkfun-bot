@@ -49,6 +49,11 @@ from solders.transaction import VersionedTransaction
 
 load_dotenv(override=True)
 
+# Solana's blockSubscribe (and a busy logsSubscribe) sends frames well past
+# websockets' 1 MiB default, which kills the connection with a 1009 close
+# instead of delivering the message. Same value the bot's own listeners use.
+WEBSOCKET_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
+
 # ============ CONSTANTS ============
 
 # Pump.fun program ID
@@ -494,7 +499,9 @@ async def listen_block_subscription(wss_url, provider_name, tracker, known_token
     while True:
         try:
             print(f"[INFO] Connecting block listener to {provider_name}...")
-            async with websockets.connect(wss_url) as websocket:
+            async with websockets.connect(
+                wss_url, max_size=WEBSOCKET_MAX_MESSAGE_BYTES
+            ) as websocket:
                 subscription_message = json.dumps(
                     {
                         "jsonrpc": "2.0",
@@ -631,7 +638,9 @@ async def listen_logs_subscription(wss_url, provider_name, tracker, known_tokens
     while True:
         try:
             print(f"[INFO] Connecting logs listener to {provider_name}...")
-            async with websockets.connect(wss_url) as websocket:
+            async with websockets.connect(
+                wss_url, max_size=WEBSOCKET_MAX_MESSAGE_BYTES
+            ) as websocket:
                 subscription_message = json.dumps(
                     {
                         "jsonrpc": "2.0",

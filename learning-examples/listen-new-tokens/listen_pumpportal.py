@@ -16,7 +16,6 @@ For trustless monitoring, use the direct blockchain listeners (logs, block, geys
 
 import asyncio
 import json
-from datetime import datetime
 
 import websockets
 

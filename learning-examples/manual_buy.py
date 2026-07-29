@@ -7,7 +7,9 @@ import struct
 
 import base58
 import pump_v2
+import tx_status
 import websockets
+from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
 from solana.rpc.types import TxOpts
@@ -43,6 +45,8 @@ LAMPORTS_PER_SOL = 1_000_000_000
 
 
 # RPC ENDPOINTS
+load_dotenv()
+
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 RPC_WEBSOCKET = os.environ.get("SOLANA_NODE_WSS_ENDPOINT")
 
@@ -173,11 +177,15 @@ async def buy_token(
                 )
                 tx_hash = tx_buy.value
                 print(f"Transaction sent: https://explorer.solana.com/tx/{tx_hash}")
-                await client.confirm_transaction(
-                    tx_hash, commitment="confirmed", sleep_seconds=1
-                )
+                await tx_status.confirm_and_assert(client, tx_hash)
                 print("Transaction confirmed")
                 return  # Success, exit the function
+            except tx_status.TransactionRevertedError as e:
+                # The signature is already on chain and reverted. The message and
+                # blockhash below are fixed, so a retry would resubmit identical
+                # bytes and revert identically — stop instead of burning attempts.
+                print(f"Transaction reverted on-chain, not retrying: {e}")
+                return
             except Exception as e:
                 print(f"Attempt {attempt + 1} failed: {str(e)[:50]}")
                 if attempt < max_retries - 1:

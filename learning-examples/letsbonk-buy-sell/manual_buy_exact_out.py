@@ -18,6 +18,7 @@ import asyncio
 import os
 import struct
 import sys
+from urllib.parse import urlsplit
 
 import base58
 from dotenv import load_dotenv
@@ -34,14 +35,18 @@ from solders.system_program import CreateAccountWithSeedParams, create_account_w
 from solders.transaction import VersionedTransaction
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import tx_status  # noqa: E402
+
 # Initialize IDL parser for Raydium LaunchLab with verbose mode for debugging
 IDL_PARSER = load_idl_parser("idl/raydium_launchlab_idl.json", verbose=True)
 
 load_dotenv()
 
+# Token mint: pass as argv[1], or hardcode here.
 TOKEN_MINT_ADDRESS = Pubkey.from_string(
-    "YOUR_TOKEN_MINT_ADDRESS_HERE"
-)  # Replace with actual token mint address
+    sys.argv[1] if len(sys.argv) > 1 else "YOUR_TOKEN_MINT_ADDRESS_HERE"
+)
 
 # Configuration constants
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
@@ -62,6 +67,10 @@ RAYDIUM_LAUNCHLAB_PROGRAM_ID = Pubkey.from_string(
     "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj"
 )
 GLOBAL_CONFIG = Pubkey.from_string("6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX")
+# Fallback only. platform_config is NOT the same for every LaunchLab pool:
+# partner launches use their own, and passing the wrong one fails the buy/sell
+# with ConstraintAddress (2012). The live value is read from the pool state
+# below; this constant is only used if the pool omits it.
 LETSBONK_PLATFORM_CONFIG = Pubkey.from_string(
     "5thqcDwKp5QQ8US4XRMoseGeGbmLKMmoKZmS6zHrQAsA"
 )
@@ -510,9 +519,15 @@ async def buy_exact_out(
         # Derive necessary PDAs
         authority = derive_authority_pda()
         event_authority = derive_event_authority_pda()
+        # platform_config varies per pool — take the pool's own value.
+        platform_config = (
+            Pubkey.from_string(pool_state_data["platform_config"])
+            if pool_state_data.get("platform_config")
+            else LETSBONK_PLATFORM_CONFIG
+        )
         creator_fee_vault = derive_creator_fee_vault(creator, WSOL_MINT)
         platform_fee_vault = derive_platform_fee_vault(
-            LETSBONK_PLATFORM_CONFIG, WSOL_MINT
+            platform_config, WSOL_MINT
         )
 
         print(f"Creator fee vault: {creator_fee_vault}")
@@ -569,7 +584,7 @@ async def buy_exact_out(
                 pubkey=GLOBAL_CONFIG, is_signer=False, is_writable=False
             ),  # global_config
             AccountMeta(
-                pubkey=LETSBONK_PLATFORM_CONFIG, is_signer=False, is_writable=False
+                pubkey=platform_config, is_signer=False, is_writable=False
             ),  # platform_config
             AccountMeta(
                 pubkey=pool_state, is_signer=False, is_writable=True
@@ -667,6 +682,10 @@ async def buy_exact_out(
 
         if simulation.value.err:
             print(f"Simulation failed: {simulation.value.err}")
+            # The error code alone does not say which account or
+            # constraint failed; the program logs do.
+            for line in simulation.value.logs or []:
+                print(f"  {line}")
             return None
 
         print(
@@ -683,7 +702,7 @@ async def buy_exact_out(
         print(f"Transaction sent: https://solscan.io/tx/{tx_signature}")
 
         print("Waiting for confirmation...")
-        await client.confirm_transaction(tx_signature, commitment="confirmed")
+        await tx_status.confirm_and_assert(client, tx_signature)
         print("Transaction confirmed!")
 
         return tx_signature
@@ -706,7 +725,9 @@ async def main():
         print(f"Starting buy_exact_out for token: {TOKEN_MINT_ADDRESS}")
         print(f"Amount to receive: {TOKEN_AMOUNT_TO_RECEIVE:,} tokens")
         print(f"Slippage tolerance: {SLIPPAGE_TOLERANCE * 100}%")
-        print(f"Using RPC endpoint: {RPC_ENDPOINT}")
+        # Endpoint carries an API key. hostname, not netloc: netloc keeps any
+        # user:pass@ userinfo, which would leak the credential anyway.
+        print(f"Using RPC endpoint: {urlsplit(RPC_ENDPOINT).hostname or '<unset>'}")
         print()
 
         async with AsyncClient(RPC_ENDPOINT) as client:

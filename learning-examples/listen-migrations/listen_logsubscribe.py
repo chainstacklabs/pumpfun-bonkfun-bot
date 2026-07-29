@@ -23,6 +23,11 @@ from solders.pubkey import Pubkey
 load_dotenv()
 
 WSS_ENDPOINT = os.environ.get("SOLANA_NODE_WSS_ENDPOINT")
+
+# Solana's blockSubscribe (and a busy logsSubscribe) sends frames well past
+# websockets' 1 MiB default, which kills the connection with a 1009 close
+# instead of delivering the message. Same value the bot's own listeners use.
+WEBSOCKET_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
 MIGRATION_PROGRAM_ID = Pubkey.from_string(
     "39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg"
 )
@@ -126,7 +131,9 @@ async def listen_for_migrations():
     while True:
         try:
             print("\n[INFO] Connecting to WebSocket ...")
-            async with websockets.connect(WSS_ENDPOINT) as websocket:
+            async with websockets.connect(
+                WSS_ENDPOINT, max_size=WEBSOCKET_MAX_MESSAGE_BYTES
+            ) as websocket:
                 subscription_message = json.dumps(
                     {
                         "jsonrpc": "2.0",

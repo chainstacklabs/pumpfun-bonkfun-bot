@@ -98,7 +98,13 @@ async def main() -> int:
     )
 
     try:
-        start_lamports = (await client.get_account_info(wallet.pubkey)).lamports
+        # Both balance reads must use the same commitment the trades are
+        # confirmed at. solana-py defaults to finalized, which lags behind
+        # "confirmed" by enough that the end read still sees pre-trade state and
+        # the reported net change comes out as exactly zero.
+        start_lamports = (
+            await client.get_account_info(wallet.pubkey, commitment="confirmed")
+        ).lamports
         print(f"wallet:        {wallet.pubkey}")
         print(f"start balance: {start_lamports / LAMPORTS_PER_SOL:.9f} SOL\n")
 
@@ -142,7 +148,9 @@ async def main() -> int:
         if not sell.success:
             print(f"error: {sell.error_message}")
 
-        end_lamports = (await client.get_account_info(wallet.pubkey)).lamports
+        end_lamports = (
+            await client.get_account_info(wallet.pubkey, commitment="confirmed")
+        ).lamports
         delta = (end_lamports - start_lamports) / LAMPORTS_PER_SOL
         print(f"\nend balance:   {end_lamports / LAMPORTS_PER_SOL:.9f} SOL")
         print(f"net change:    {delta:+.9f} SOL")

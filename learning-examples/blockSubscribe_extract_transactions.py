@@ -4,10 +4,18 @@ import json
 import os
 
 import websockets
+from dotenv import load_dotenv
 from solders.pubkey import Pubkey
 
 PUMP_PROGRAM = Pubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")
+load_dotenv()
+
 WSS_ENDPOINT = os.environ.get("SOLANA_NODE_WSS_ENDPOINT")
+
+# Solana's blockSubscribe (and a busy logsSubscribe) sends frames well past
+# websockets' 1 MiB default, which kills the connection with a 1009 close
+# instead of delivering the message. Same value the bot's own listeners use.
+WEBSOCKET_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
 
 
 async def save_transaction(tx_data, tx_signature):
@@ -20,7 +28,9 @@ async def save_transaction(tx_data, tx_signature):
 
 
 async def listen_for_transactions():
-    async with websockets.connect(WSS_ENDPOINT) as websocket:
+    async with websockets.connect(
+        WSS_ENDPOINT, max_size=WEBSOCKET_MAX_MESSAGE_BYTES
+    ) as websocket:
         subscription_message = json.dumps(
             {
                 "jsonrpc": "2.0",
