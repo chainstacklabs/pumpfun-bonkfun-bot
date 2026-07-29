@@ -58,7 +58,17 @@ async def close_account_if_exists(
         # Burn + close are combined into a single transaction to avoid race conditions
         instructions = []
         balance = await client.get_token_account_balance(account)
-        if balance > 0:
+        if balance > 0 and mint == SystemAddresses.WSOL_MINT:
+            # Wrapped SOL cannot be burned — the token program rejects it with
+            # NativeNotSupported (error 10) and the whole transaction reverts, so
+            # the account can never be closed. Closing a WSOL account already
+            # returns both the wrapped lamports and the rent to the owner, so
+            # there is nothing to burn first. Matches AccountCleanupManager.
+            logger.info(
+                f"Unwrapping {balance} lamports of wrapped SOL from {account} "
+                f"by closing it (burn skipped)"
+            )
+        elif balance > 0:
             logger.info(f"Burning {balance} tokens from account {account}...")
             burn_ix = burn(
                 BurnParams(
@@ -88,7 +98,14 @@ async def close_account_if_exists(
         )
         # confirm_transaction returns False when the transaction landed but
         # reverted — reporting success on that would hide a failed cleanup.
-        action = "Burned and closed" if balance > 0 else "Closed"
+        # The label reflects what was actually built: wrapped SOL is unwrapped by
+        # the close, never burned, so it must not claim a burn.
+        if balance > 0 and mint == SystemAddresses.WSOL_MINT:
+            action = "Unwrapped and closed"
+        elif balance > 0:
+            action = "Burned and closed"
+        else:
+            action = "Closed"
         if await client.confirm_transaction(tx_sig):
             logger.info(f"{action} successfully: {account}")
         else:
