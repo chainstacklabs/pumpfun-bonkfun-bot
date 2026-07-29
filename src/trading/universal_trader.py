@@ -102,6 +102,9 @@ class UniversalTrader:
         # Trading configuration
         extreme_fast_mode: bool = False,
         extreme_fast_token_amount: int = 30,
+        curve_refresh_budget: float = 2.0,
+        *,
+        trust_create_event: bool = True,
         # Quote asset configuration (pump.fun non-SOL pairs)
         quote_amounts: dict[str, float] | None = None,
         allowed_quote_mints: list[str] | None = None,
@@ -193,6 +196,8 @@ class UniversalTrader:
                 extreme_fast_mode,
                 compute_units=self.compute_units,
                 quote_amounts=self.quote_amounts,
+                curve_refresh_budget=curve_refresh_budget,
+                trust_create_event=trust_create_event,
             ),
             PlatformAwareSeller(
                 self.solana_client,

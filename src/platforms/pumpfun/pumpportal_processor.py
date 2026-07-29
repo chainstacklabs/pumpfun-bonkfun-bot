@@ -74,8 +74,19 @@ class PumpFunPumpPortalProcessor:
 
             # Convert string addresses to Pubkey objects
             mint = Pubkey.from_string(mint_str)
-            bonding_curve = Pubkey.from_string(bonding_curve_str)
             user = Pubkey.from_string(creator_str)
+
+            # Derive the bonding curve from the mint rather than trusting the
+            # payload: PumpPortal's bondingCurveKey was observed pointing at a
+            # different mint's curve (issue #170), and the PDA derivation is
+            # free. A mismatch is logged as a data-quality signal only.
+            bonding_curve = self.address_provider.derive_pool_address(mint)
+            if str(bonding_curve) != bonding_curve_str:
+                logger.warning(
+                    f"PumpPortal bondingCurveKey {bonding_curve_str} does not "
+                    f"match curve {bonding_curve} derived from mint {mint}; "
+                    f"using the derived address"
+                )
 
             # For PumpPortal, we assume the creator is the same as the user
             # since PumpPortal doesn't distinguish between them

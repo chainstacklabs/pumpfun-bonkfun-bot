@@ -4,6 +4,7 @@ Final cleanup removing all platform-specific hardcoding.
 """
 
 import asyncio
+from time import monotonic
 
 from solders.pubkey import Pubkey
 
@@ -12,6 +13,7 @@ from core.priority_fee.manager import PriorityFeeManager
 from core.pubkeys import (
     TOKEN_DECIMALS,
     WSOL_MINT,
+    SystemAddresses,
     is_sol_paired,
     normalize_quote_mint,
     quote_units_per_token,
@@ -43,37 +45,60 @@ def _quote_symbol(quote_mint: Pubkey) -> str:
 async def _read_pool_state_with_retry(
     curve_manager: object,
     pool_address: Pubkey,
-    attempts: int = 4,
+    mint: Pubkey | None = None,
+    budget_seconds: float = 2.0,
     delay_seconds: float = 0.15,
-) -> dict:
-    """Read bonding curve state, retrying briefly on a lagging RPC node.
+) -> tuple[dict, Pubkey | None]:
+    """Read bonding curve state, retrying within a time budget on a lagging node.
 
     A freshly created curve may not be visible at `confirmed` yet, and a node
     can momentarily serve a slot that predates it — both surface as "account
-    not found". Reading at `processed` and retrying a few times costs a handful
-    of RPC calls, which is far cheaper than trading on stale account data.
+    not found". Reading at `processed` and retrying costs a handful of RPC
+    calls, which is far cheaper than trading on stale account data. Issue #170
+    measured individual reads on a load-balanced endpoint lagging several
+    seconds behind a fast listener, hence a time budget rather than a fixed
+    attempt count.
+
+    When `mint` is given and the curve manager supports it, the curve and the
+    mint are read in one slot-consistent batch so the mint's owning token
+    program comes back for free (pumpportal listeners can only guess it).
 
     Args:
         curve_manager: Platform curve manager
         pool_address: Bonding curve / pool address
-        attempts: How many reads to try before giving up
+        mint: Optional token mint to read alongside the curve
+        budget_seconds: Total time to keep retrying before giving up
         delay_seconds: Pause between attempts
 
     Returns:
-        Decoded pool state
+        Tuple of (decoded pool state, token program id or None if unknown)
 
     Raises:
         Exception: The last read error if every attempt fails
     """
+    batch_read = mint is not None and hasattr(
+        curve_manager, "get_pool_state_and_token_program"
+    )
+    deadline = monotonic() + budget_seconds
     last_error: Exception | None = None
-    for _ in range(attempts):
+    while True:
         try:
-            return await curve_manager.get_pool_state(
-                pool_address, commitment="processed"
-            )
+            if batch_read:
+                result = await curve_manager.get_pool_state_and_token_program(
+                    pool_address, mint, commitment="processed"
+                )
+            else:
+                state = await curve_manager.get_pool_state(
+                    pool_address, commitment="processed"
+                )
+                result = (state, None)
         except Exception as error:  # noqa: BLE001
             last_error = error
+            if monotonic() + delay_seconds > deadline:
+                break
             await asyncio.sleep(delay_seconds)
+        else:
+            return result
 
     raise last_error or RuntimeError("pool_state unavailable after retries")
 
@@ -113,6 +138,9 @@ class PlatformAwareBuyer(Trader):
         extreme_fast_mode: bool = False,
         compute_units: dict | None = None,
         quote_amounts: dict[Pubkey, float] | None = None,
+        curve_refresh_budget: float = 2.0,
+        *,
+        trust_create_event: bool = True,
     ):
         """Initialize platform-aware token buyer.
 
@@ -130,6 +158,15 @@ class PlatformAwareBuyer(Trader):
                 for coins paired against something other than SOL. A coin whose
                 quote mint is absent from this map is skipped rather than
                 traded with a SOL-denominated amount.
+            curve_refresh_budget: Seconds to keep retrying the pre-buy curve
+                read before skipping the token. A buy built without fresh curve
+                state guesses fee_recipient/creator_vault and tends to revert
+                on-chain (issue #170), so skipping beats racing.
+            trust_create_event: Skip the pre-buy curve read entirely for
+                TokenInfo marked state_from_event (creator/flags/quote_mint
+                read from the on-chain CreateEvent) — extreme_fast_mode then
+                makes zero RPC calls between detection and submission. Set
+                False to force the refresh for every listener.
         """
         self.client = client
         self.wallet = wallet
@@ -140,6 +177,8 @@ class PlatformAwareBuyer(Trader):
         self.extreme_fast_mode = extreme_fast_mode
         self.extreme_fast_token_amount = extreme_fast_token_amount
         self.compute_units = compute_units or {}
+        self.curve_refresh_budget = curve_refresh_budget
+        self.trust_create_event = trust_create_event
         # SOL-paired coins always use `amount`; other quotes need an explicit
         # per-mint amount because 0.0001 USDC and 0.0001 SOL are not comparable.
         self.quote_amounts: dict[Pubkey, float] = {
@@ -174,53 +213,22 @@ class PlatformAwareBuyer(Trader):
             quote_mint = normalize_quote_mint(token_info.quote_mint)
 
             if self.extreme_fast_mode:
-                # Skip the price check; the token count is fixed by config and
-                # sizing is finished once the quote amount is resolved below.
-                # Even in extreme_fast_mode, refresh mayhem/cashback/creator from
-                # chain — listeners (especially pumpportal) often don't carry
-                # these, and the program rejects with NotAuthorized (0x1770) /
-                # ConstraintSeeds (0x7d6) when fee_recipient or creator_vault
-                # is wrong. PumpPortal often notifies before the BC account is
-                # readable, so retry briefly. One handful of RPC calls is cheap
-                # relative to a failed buy.
-                try:
-                    pool_address = self._get_pool_address(token_info, address_provider)
-                    # Geyser/logs fire on processed, so the BC is typically
-                    # readable in the same slot; pumpportal occasionally races
-                    # the on-chain commit, hence the retries.
-                    pool_state = await _read_pool_state_with_retry(
-                        curve_manager, pool_address
+                # Zero-RPC hot path — the point of extreme_fast_mode. When the
+                # CreateEvent already carried the canonical creator, the
+                # mayhem/cashback flags and quote_mint, nothing sits between
+                # detection and submission. Otherwise (pumpportal, old-format
+                # events) refresh from chain or skip.
+                if not self._can_skip_refresh(token_info):
+                    skip_reason = await self._refresh_curve_state(
+                        token_info, address_provider, curve_manager
                     )
-                    token_info.is_mayhem_mode = pool_state.get(
-                        "is_mayhem_mode", token_info.is_mayhem_mode
-                    )
-                    token_info.is_cashback_coin = pool_state.get(
-                        "is_cashback_coin", token_info.is_cashback_coin
-                    )
-                    # The quote asset decides which balance we spend and how
-                    # amounts are scaled, so it must come from the curve rather
-                    # than a listener guess.
-                    quote_mint = _refresh_quote_mint(token_info, pool_state)
-                    fresh_creator = pool_state.get("creator")
-                    if fresh_creator and hasattr(
-                        address_provider, "derive_creator_vault"
-                    ):
-                        from solders.pubkey import Pubkey as _Pubkey
-
-                        new_creator = (
-                            _Pubkey.from_string(fresh_creator)
-                            if isinstance(fresh_creator, str)
-                            else fresh_creator
+                    if skip_reason is not None:
+                        return TradeResult(
+                            success=False,
+                            platform=token_info.platform,
+                            error_message=skip_reason,
                         )
-                        token_info.creator = new_creator
-                        token_info.creator_vault = (
-                            address_provider.derive_creator_vault(new_creator)
-                        )
-                except Exception as e:  # noqa: BLE001
-                    logger.warning(
-                        f"extreme_fast_mode buy: could not refresh curve flags "
-                        f"({e}); proceeding with token_info defaults"
-                    )
+                    quote_mint = normalize_quote_mint(token_info.quote_mint)
             else:
                 # Get pool address based on platform using platform-agnostic method
                 pool_address = self._get_pool_address(token_info, address_provider)
@@ -396,6 +404,130 @@ class PlatformAwareBuyer(Trader):
         # Fallback to deriving the address using platform provider
         return address_provider.derive_pool_address(token_info.mint)
 
+    def _can_skip_refresh(self, token_info: TokenInfo) -> bool:
+        """Whether the pre-buy curve read can be skipped entirely.
+
+        True when the listener read creator, mayhem/cashback and quote_mint
+        from the on-chain CreateEvent (canonical at create time), keeping
+        extreme_fast_mode at zero RPC calls between detection and submission.
+
+        Args:
+            token_info: Token information from the listener
+
+        Returns:
+            True if the buy can be built from token_info as-is
+        """
+        return (
+            self.trust_create_event
+            and token_info.state_from_event
+            and token_info.quote_mint is not None
+        )
+
+    async def _refresh_curve_state(
+        self,
+        token_info: TokenInfo,
+        address_provider: AddressProvider,
+        curve_manager: object,
+    ) -> str | None:
+        """Refresh mayhem/cashback/creator/quote_mint/token program from chain.
+
+        Listeners that guess these (pumpportal carries none of them) produce
+        buys the program rejects with NotAuthorized (0x1770) / ConstraintSeeds
+        (0x7d6) when fee_recipient or creator_vault is wrong. PumpPortal also
+        notifies before the BC account is readable on a lagging node, so the
+        read retries within curve_refresh_budget.
+
+        Args:
+            token_info: Token information, mutated in place on success
+            address_provider: Platform address provider
+            curve_manager: Platform curve manager
+
+        Returns:
+            None on success; on failure a reason to skip the buy — a buy built
+            from listener-guessed defaults tends to revert on-chain
+            (issue #170: 0x1770 / 0x7d6 / pool 3012), which still costs the fee
+        """
+        try:
+            pool_address = self._get_pool_address(token_info, address_provider)
+            # Geyser/logs fire on processed, so the BC is typically readable in
+            # the same slot; pumpportal occasionally races the on-chain commit,
+            # hence the retries.
+            pool_state, fresh_token_program = await _read_pool_state_with_retry(
+                curve_manager,
+                pool_address,
+                mint=token_info.mint,
+                budget_seconds=self.curve_refresh_budget,
+            )
+        except Exception as e:  # noqa: BLE001
+            return (
+                f"Curve state unreadable within {self.curve_refresh_budget:.1f}s "
+                f"({e}); skipping buy rather than submitting with guessed accounts"
+            )
+
+        token_info.is_mayhem_mode = pool_state.get(
+            "is_mayhem_mode", token_info.is_mayhem_mode
+        )
+        token_info.is_cashback_coin = pool_state.get(
+            "is_cashback_coin", token_info.is_cashback_coin
+        )
+        # The quote asset decides which balance we spend and how amounts are
+        # scaled, so it must come from the curve rather than a listener guess.
+        _refresh_quote_mint(token_info, pool_state)
+        fresh_creator = pool_state.get("creator")
+        if fresh_creator and hasattr(address_provider, "derive_creator_vault"):
+            new_creator = (
+                Pubkey.from_string(fresh_creator)
+                if isinstance(fresh_creator, str)
+                else fresh_creator
+            )
+            token_info.creator = new_creator
+            token_info.creator_vault = address_provider.derive_creator_vault(
+                new_creator
+            )
+        self._apply_token_program(token_info, fresh_token_program, address_provider)
+        return None
+
+    def _apply_token_program(
+        self,
+        token_info: TokenInfo,
+        token_program: Pubkey | None,
+        address_provider: AddressProvider,
+    ) -> None:
+        """Correct a listener-guessed token program from the mint's real owner.
+
+        PumpPortal payloads carry no token program, so the processor defaults
+        to Token-2022; a legacy-`create` coin is SPL Token and the ATA-create
+        instruction then fails with IncorrectProgramId. The associated bonding
+        curve is an ordinary ATA, so it must be re-derived under the corrected
+        program too.
+
+        Args:
+            token_info: Token information, mutated in place
+            token_program: Owner of the mint account, or None if unknown
+            address_provider: Platform address provider for ATA derivation
+        """
+        known_programs = (
+            SystemAddresses.TOKEN_PROGRAM,
+            SystemAddresses.TOKEN_2022_PROGRAM,
+        )
+        if token_program is None or token_program not in known_programs:
+            return
+        if token_info.token_program_id == token_program:
+            return
+        logger.info(
+            f"Correcting token program for {token_info.mint}: "
+            f"{token_info.token_program_id} -> {token_program}"
+        )
+        token_info.token_program_id = token_program
+        if token_info.bonding_curve and hasattr(
+            address_provider, "derive_associated_bonding_curve"
+        ):
+            token_info.associated_bonding_curve = (
+                address_provider.derive_associated_bonding_curve(
+                    token_info.mint, token_info.bonding_curve, token_program
+                )
+            )
+
     def _get_sol_destination(
         self, token_info: TokenInfo, address_provider: AddressProvider
     ) -> Pubkey:
@@ -521,7 +653,7 @@ class PlatformAwareSeller(Trader):
                 # slightly stale slot reports the curve as missing, and silently
                 # falling back to create-time values risks a wrong creator_vault
                 # (ConstraintSeeds 0x7d6) or wrong mayhem fee_recipient.
-                pool_state = await _read_pool_state_with_retry(
+                pool_state, _ = await _read_pool_state_with_retry(
                     curve_manager, pool_address
                 )
                 token_info.is_mayhem_mode = pool_state.get(

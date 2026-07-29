@@ -166,6 +166,7 @@ async def main() -> int:
     print(f"quote_mint (from CreateEvent): {token_info.quote_mint}")
     print(f"token program: {token_info.token_program_id}")
     print(f"mayhem={token_info.is_mayhem_mode} cashback={token_info.is_cashback_coin}")
+    print(f"state_from_event={token_info.state_from_event} (True = zero-RPC buy path)")
     print(f"extreme_fast_mode={extreme_fast}\n")
 
     client = SolanaClient(os.environ["SOLANA_NODE_RPC_ENDPOINT"])

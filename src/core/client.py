@@ -175,6 +175,30 @@ class SolanaClient:
             raise ValueError(f"Account {pubkey} not found")
         return response.value
 
+    async def get_multiple_accounts(
+        self, pubkeys: list[Pubkey], commitment: str | None = None
+    ) -> list[Any]:
+        """Get several accounts in one slot-consistent RPC round trip.
+
+        A single getMultipleAccounts response is served by one node at one
+        slot, unlike back-to-back get_account_info calls which a load-balanced
+        endpoint may serve from nodes seconds apart (issue #170).
+
+        Args:
+            pubkeys: Public keys of the accounts
+            commitment: Optional commitment override (default "confirmed")
+
+        Returns:
+            One entry per pubkey, in order; None for accounts that don't exist
+        """
+        await self._rate_limiter.acquire()
+        client = await self.get_client()
+        kwargs: dict[str, Any] = {"encoding": "base64"}
+        if commitment is not None:
+            kwargs["commitment"] = commitment
+        response = await client.get_multiple_accounts(pubkeys, **kwargs)
+        return list(response.value)
+
     async def get_token_account_balance(
         self, token_account: Pubkey, commitment: str = "confirmed"
     ) -> int:
@@ -630,7 +654,7 @@ class SolanaClient:
             # timeout fires, and it is not an aiohttp.ClientError — without it
             # here every RPC timeout propagated out of post_rpc unretried and
             # crashed the caller with an exception whose str() is empty.
-            except (aiohttp.ClientError, asyncio.TimeoutError):
+            except (TimeoutError, aiohttp.ClientError):
                 error_attempts += 1
                 if error_attempts >= max_retries:
                     logger.exception(

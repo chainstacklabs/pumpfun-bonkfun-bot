@@ -74,6 +74,43 @@ class PumpFunCurveManager(CurveManager):
             logger.exception("Failed to get curve state")
             raise ValueError(f"Invalid bonding curve state: {e!s}")
 
+    async def get_pool_state_and_token_program(
+        self, pool_address: Pubkey, mint: Pubkey, commitment: str | None = None
+    ) -> tuple[dict[str, Any], Pubkey | None]:
+        """Read curve state and the mint's owning token program together.
+
+        One getMultipleAccounts round trip, so both values come from the same
+        node and slot. Listeners that don't carry the token program (pumpportal
+        guesses Token-2022) can be corrected from the mint account's owner
+        without a second, possibly inconsistent read (issue #170).
+
+        Args:
+            pool_address: Address of the bonding curve
+            mint: Token mint whose owner identifies the token program
+            commitment: Optional commitment override (see get_pool_state)
+
+        Returns:
+            Tuple of (decoded curve state, token program id or None if the
+            mint account was not readable)
+
+        Raises:
+            ValueError: If the bonding curve account is missing or undecodable
+        """
+        try:
+            curve_account, mint_account = await self.client.get_multiple_accounts(
+                [pool_address, mint], commitment=commitment
+            )
+        except Exception as e:
+            logger.exception("Failed to read curve and mint accounts")
+            raise ValueError(f"Invalid bonding curve state: {e!s}") from e  # noqa: TRY003
+
+        if curve_account is None or not curve_account.data:
+            raise ValueError(f"No data in bonding curve account {pool_address}")  # noqa: TRY003
+
+        curve_state_data = self._decode_curve_state_with_idl(curve_account.data)
+        token_program = mint_account.owner if mint_account is not None else None
+        return curve_state_data, token_program
+
     async def calculate_price(self, pool_address: Pubkey) -> float:
         """Calculate current token price from bonding curve state.
 
