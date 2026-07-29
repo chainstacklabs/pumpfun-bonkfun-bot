@@ -30,7 +30,12 @@ Don't "fix" an example by rewiring it to import the bot.
 
 Dependency layers, low to high — don't introduce an upward import:
 
-`utils` → `interfaces` → `core` → `platforms` → `trading` / `monitoring` → `bot_runner`
+`interfaces` → `utils` → `core` → `platforms` → `monitoring` → `trading` → `bot_runner`
+
+`interfaces` is the leaf — it imports nothing internal, and `utils/idl_manager.py`
+imports `interfaces.core`. `geyser` holds only generated stubs and likewise
+imports nothing internal; `cleanup` sits on `core`/`utils` and is pulled in by
+`trading`.
 
 Platform differences are resolved through `interfaces/core.py` abstractions
 (`AddressProvider`, curve manager, event parser, instruction builder) and a
@@ -52,8 +57,12 @@ platform-agnostic (`Universal*`); anything platform-shaped belongs under
   `decode_from_getTransaction.py`.
 - Fixtures are `raw_<what>_from_<method>.json` next to the script that reads
   them, under the same rules.
-- `live_*` marks a script that spends real funds; `simulate_*` and `verify_*`
-  never do.
+- `simulate_*` and `verify_*` never move funds — that half of the naming is
+  load-bearing and machine-checked. The inverse is **not** true: `live_*` is not
+  the only prefix that spends. `manual_*` (including the `pumpswap/` and
+  `letsbonk-buy-sell/` ones), `mint_and_buy*` and `cleanup_accounts.py` all
+  submit real transactions. Read the module docstring before running anything
+  that is not `simulate_*` or `verify_*`.
 
 ## Commands
 
@@ -70,7 +79,7 @@ Lint and format **the files you touched**, not the whole tree:
 uv run ruff check --fix <paths> && uv run ruff format <paths>
 ```
 
-A bare `uv run ruff check` reports ~2400 pre-existing errors across the repo.
+A bare `uv run ruff check` reports ~1700 pre-existing errors across the repo.
 That is the known baseline, not something your change caused — don't try to fix
 it wholesale, and don't read it as a failing build. Just don't add new ones in
 the files you edit.
@@ -148,7 +157,7 @@ offline and only visible after a couple of minutes against mainnet.
 
 - **A `while True: recv()` loop must break out on `websockets.ConnectionClosed`.**
   Catching it in a broad `except Exception` that only logs makes the next `recv()`
-  raise immediately, forever: `compare_listeners.py` produced **13,090,862 error
+  raise immediately, forever: `listen-new-tokens/compare_listeners.py` produced **13,090,862 error
   lines / 888 MB in 150 s** and never reached its own 30-second report. The outer
   reconnect handler with its `sleep` is unreachable in that shape. A narrow
   `except TimeoutError` or `except json.JSONDecodeError` is fine to swallow —
