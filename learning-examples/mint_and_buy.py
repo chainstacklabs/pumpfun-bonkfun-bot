@@ -49,19 +49,6 @@ PUMP_FEE_PROGRAM: Final[Pubkey] = Pubkey.from_string(
     "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
 )
 
-# 8 breaking-upgrade fee recipients (pump.fun program upgrade 2026-04-28).
-# One must be appended (mutable) AFTER bonding-curve-v2 on every buy/sell.
-# Doc: github.com/pump-fun/pump-public-docs/blob/main/docs/BREAKING_FEE_RECIPIENT.md
-BREAKING_FEE_RECIPIENTS: Final[list[Pubkey]] = [
-    Pubkey.from_string("5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD"),
-    Pubkey.from_string("9M4giFFMxmFGXtc3feFzRai56WbBqehoSeRE5GK7gf7"),
-    Pubkey.from_string("GXPFM2caqTtQYC2cJ5yJRi9VDkpsYZXzYdwYpGnLmtDL"),
-    Pubkey.from_string("3BpXnfJaUTiwXnJNe7Ej1rcbzqTTQUvLShZaWazebsVR"),
-    Pubkey.from_string("5cjcW9wExnJJiqgLjq7DEG75Pm6JBgE1hNv4B2vHXUW6"),
-    Pubkey.from_string("EHAAiTxcdDwQ3U4bU6YcMsQGaekdzLS3B5SmYo46kJtL"),
-    Pubkey.from_string("5eHhjP8JaYkz83CWwvGU2uMUXefd3AazWGx4gpcuEEYD"),
-    Pubkey.from_string("A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW"),
-]
 PUMP_MINT_AUTHORITY: Final[Pubkey] = Pubkey.from_string(
     "TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM"
 )
@@ -85,7 +72,6 @@ TOKEN_DECIMALS: Final[int] = 6
 
 # Discriminators
 CREATE_DISCRIMINATOR: Final[bytes] = struct.pack("<Q", 8576854823835016728)
-BUY_DISCRIMINATOR: Final[bytes] = struct.pack("<Q", 16927863322537952870)
 EXTEND_ACCOUNT_DISCRIMINATOR: Final[bytes] = bytes(
     [234, 102, 194, 203, 150, 72, 62, 229]
 )
@@ -130,38 +116,6 @@ def find_creator_vault(creator: Pubkey) -> Pubkey:
     """Find the creator vault PDA."""
     derived_address, _ = Pubkey.find_program_address(
         [b"creator-vault", bytes(creator)],
-        PUMP_PROGRAM,
-    )
-    return derived_address
-
-
-def _find_global_volume_accumulator() -> Pubkey:
-    derived_address, _ = Pubkey.find_program_address(
-        [b"global_volume_accumulator"],
-        PUMP_PROGRAM,
-    )
-    return derived_address
-
-
-def _find_user_volume_accumulator(user: Pubkey) -> Pubkey:
-    derived_address, _ = Pubkey.find_program_address(
-        [b"user_volume_accumulator", bytes(user)],
-        PUMP_PROGRAM,
-    )
-    return derived_address
-
-
-def _find_fee_config() -> Pubkey:
-    derived_address, _ = Pubkey.find_program_address(
-        [b"fee_config", bytes(PUMP_PROGRAM)],
-        PUMP_FEE_PROGRAM,
-    )
-    return derived_address
-
-
-def _find_bonding_curve_v2(mint: Pubkey) -> Pubkey:
-    derived_address, _ = Pubkey.find_program_address(
-        [b"bonding-curve-v2", bytes(mint)],
         PUMP_PROGRAM,
     )
     return derived_address

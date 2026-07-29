@@ -38,6 +38,23 @@ registry in `platforms/__init__.py`. Listeners and the trader are
 platform-agnostic (`Universal*`); anything platform-shaped belongs under
 `platforms/<name>/`.
 
+### Naming inside `learning-examples/`
+
+- **Directories are kebab-case** (`bonding-curve-progress`, `listen-new-tokens`,
+  `copy-trading`). A single-token product name stays one word (`pumpswap`).
+- **Files are snake_case, verb first** — `fetch_price.py`, `decode_from_*.py`,
+  `extract_blocksubscribe_transactions.py`, `verify_*.py`, `simulate_*.py`.
+  Exceptions are the shared helper modules `pump_v2.py` and `tx_status.py`, which
+  are libraries rather than runnable scripts.
+- **RPC and service names are lowercased into one token**, never camelCase:
+  `blocksubscribe`, `logsubscribe`, `programsubscribe`, `getaccountinfo`,
+  `gettransaction`, `pumpportal`. So `decode_from_gettransaction.py`, not
+  `decode_from_getTransaction.py`.
+- Fixtures are `raw_<what>_from_<method>.json` next to the script that reads
+  them, under the same rules.
+- `live_*` marks a script that spends real funds; `simulate_*` and `verify_*`
+  never do.
+
 ## Commands
 
 ```bash
@@ -67,8 +84,11 @@ commented-out code). Type-hint public functions, Google-style docstrings, and
 Python 3.11+ (`requires-python = ">=3.11"`, matching ruff's target). Runtime
 deps are declared in `[project.dependencies]`; `ruff` and `grpcio-tools` live in
 `[dependency-groups] dev`, which `uv sync` installs by default. `grpcio-tools`
-is protoc — needed only to regenerate the `geyser_pb2` stubs from `proto/`, never
-at runtime.
+is protoc — needed only to regenerate the `geyser_pb2` stubs in
+`src/geyser/generated/` from `src/geyser/proto/`, never at runtime. That is the
+**only** copy: the geyser examples reach it by putting the repo root on
+`sys.path` and importing `src.geyser.generated`. Don't add a second copy under
+`learning-examples/` — the last one drifted out of sync with the protos.
 
 ### Verifying pump.fun v2 trade instructions
 
@@ -120,6 +140,47 @@ with `BuybackFeeRecipientMissing` (6062) printed as confirmed buys.
   `ClientError`, so leaving it out lets every RPC timeout escape unretried —
   and `str()` on it is empty, so the caller logs a blank reason. A slow
   `getAccountInfo` is enough to take down a whole listener run this way.
+
+### Listener and decoder pitfalls
+
+Each of these was a live bug in `learning-examples/`, all of them invisible
+offline and only visible after a couple of minutes against mainnet.
+
+- **A `while True: recv()` loop must break out on `websockets.ConnectionClosed`.**
+  Catching it in a broad `except Exception` that only logs makes the next `recv()`
+  raise immediately, forever: `compare_listeners.py` produced **13,090,862 error
+  lines / 888 MB in 150 s** and never reached its own 30-second report. The outer
+  reconnect handler with its `sleep` is unreachable in that shape. A narrow
+  `except TimeoutError` or `except json.JSONDecodeError` is fine to swallow —
+  those are per-message, not per-connection.
+- **Resolve v0 lookup-table accounts before indexing them.** An instruction's
+  account indices can point past `message.account_keys` into the address lookup
+  table, which geyser reports in `meta.loaded_writable_addresses` then
+  `loaded_readonly_addresses` (that order). Ignoring them crashed the geyser
+  example with `IndexError` after ~11 coins in 150 s; resolving them removed the
+  crash and brought its detection count level with the WebSocket listeners
+  (35 coins each over the same window).
+- **Identify an instruction by its 8-byte discriminator, never by account count.**
+  Several pump.fun instructions share a count, so counting mislabels them and
+  then prints every account under the wrong name — a real 19-account `create_v2`
+  was reported as `claim_cashback`. Note `buy_exact_sol_in` is also 18 accounts
+  on chain, same as legacy `buy`.
+- **Walk `meta.innerInstructions`, not just `message.instructions`.** Most trades
+  reach the program as a CPI from a router or aggregator: in 40 consecutive
+  pump.fun transactions there was **1 top-level** pump instruction against
+  **8 inner** ones. Anchor's event-CPI prefix (`e445a52e51cb9a1d`) accounts for a
+  good share of the inner instructions; the event's own discriminator follows it.
+- **`getProgramAccounts` over the whole pump program is rejected** by current
+  providers: *"Too many accounts requested (10000001 pubkeys) … use
+  getProgramAccountsV2 with pagination"*. It still works against pump-amm, which
+  is small enough. `bonding-curve-progress/get_graduating_tokens.py` is knowingly
+  broken on this and needs the V2 pagination rewrite.
+- **`SetLoadedAccountsDataSizeLimit` must stay generous: 16 MB, not 512 KB.**
+  Verified by simulation on a Token-2022 mint with extensions — 512 KB and 4 MB
+  both fail `MaxLoadedAccountsDataSizeExceeded` with `unitsConsumed=0` (never
+  executed), while 16 MB reaches the buy instruction and is still 4x under the
+  64 MB default. solders has no builder for it; encode `struct.pack("<BI", 4, n)`
+  against the compute-budget program.
 
 ## Pump.fun protocol notes (gotchas)
 
@@ -185,11 +246,24 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   symbol (str), uri (str), creator (pubkey), is_mayhem_mode (bool),
   is_cashback_enabled (OptionBool 1B)`. `OptionBool` is a struct wrapping a single
   bool — serialized as 1 byte, not 2.
+- **`is_cashback_enabled` can be absent from the wire entirely.** Two mainnet
+  `create_v2` instructions carry `0001` and `00` after `creator`: one sends both
+  trailing args, the other omits the last. A decoder that reads a fixed number of
+  trailing bytes raises `IndexError` on roughly half of all coins. Decode
+  trailing args defensively and report a missing one as unset.
 - `create_v2` accounts 1-16 are in the IDL; accounts **17-19 are optional
   remaining accounts** (`quote_mint`, `associated_quote_bonding_curve`,
-  `quote_token_program`) appended only for a non-SOL quote mint. All three or
-  none. This is the only way to read a new coin's quote asset from the
-  instruction rather than the event.
+  `quote_token_program`). All three or none. This is the only way to read a new
+  coin's quote asset from the instruction rather than the event. In practice they
+  are appended for **SOL-paired coins too**, carrying wrapped SOL — a live
+  SOL-paired `create_v2` was observed with 19 accounts and account 17 = WSOL — so
+  do not treat a 19-account `create_v2` as proof of a non-SOL quote asset. Read
+  `quote_mint` off the curve instead.
+- The **associated bonding curve is an ordinary ATA**, so its address depends on
+  which token program owns the mint: Token2022 for `create_v2` coins, SPL Token
+  for legacy `create`. Deriving with the wrong program returns a valid-looking
+  address that does not exist on chain. Verified: curve `3jJ83ND…` derives to
+  `Cd4iC3Jn…` under Token2022 (matches chain) and `AhNzZsBp…` under SPL Token.
 - `extreme_fast_mode` skips the curve-state price fetch but still refreshes
   mayhem/cashback/creator/**quote_mint** from chain, because the wrong quote mint
   means spending the wrong balance entirely. Event parsers also populate

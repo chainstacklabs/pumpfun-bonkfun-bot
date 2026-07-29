@@ -23,7 +23,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "ruff>=0.10.0",
-    # protoc; only needed to regenerate the geyser_pb2 stubs from proto/
+    # protoc; only needed to regenerate src/geyser/generated from src/geyser/proto
     "grpcio-tools>=1.71.0",
 ]
 

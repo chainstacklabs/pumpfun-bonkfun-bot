@@ -40,19 +40,6 @@ PUMP_EVENT_AUTHORITY = Pubkey.from_string(
 PUMP_FEE = Pubkey.from_string("CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM")
 PUMP_FEE_PROGRAM = Pubkey.from_string("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ")
 
-# 8 breaking-upgrade fee recipients (pump.fun program upgrade 2026-04-28).
-# One must be appended (mutable) AFTER bonding-curve-v2 on every buy/sell.
-# Doc: github.com/pump-fun/pump-public-docs/blob/main/docs/BREAKING_FEE_RECIPIENT.md
-BREAKING_FEE_RECIPIENTS = [
-    Pubkey.from_string("5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD"),
-    Pubkey.from_string("9M4giFFMxmFGXtc3feFzRai56WbBqehoSeRE5GK7gf7"),
-    Pubkey.from_string("GXPFM2caqTtQYC2cJ5yJRi9VDkpsYZXzYdwYpGnLmtDL"),
-    Pubkey.from_string("3BpXnfJaUTiwXnJNe7Ej1rcbzqTTQUvLShZaWazebsVR"),
-    Pubkey.from_string("5cjcW9wExnJJiqgLjq7DEG75Pm6JBgE1hNv4B2vHXUW6"),
-    Pubkey.from_string("EHAAiTxcdDwQ3U4bU6YcMsQGaekdzLS3B5SmYo46kJtL"),
-    Pubkey.from_string("5eHhjP8JaYkz83CWwvGU2uMUXefd3AazWGx4gpcuEEYD"),
-    Pubkey.from_string("A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW"),
-]
 SYSTEM_PROGRAM = Pubkey.from_string("11111111111111111111111111111111")
 SYSTEM_TOKEN_PROGRAM = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
 SYSTEM_TOKEN_2022_PROGRAM = Pubkey.from_string(
@@ -110,93 +97,6 @@ def calculate_pump_curve_price(curve_state: pump_v2.BondingCurveState) -> float:
     if price <= 0:
         raise ValueError("Invalid reserve state")
     return price
-
-
-def _find_creator_vault(creator: Pubkey) -> Pubkey:
-    derived_address, _ = Pubkey.find_program_address(
-        [b"creator-vault", bytes(creator)],
-        PUMP_PROGRAM,
-    )
-    return derived_address
-
-
-def _find_global_volume_accumulator() -> Pubkey:
-    derived_address, _ = Pubkey.find_program_address(
-        [b"global_volume_accumulator"],
-        PUMP_PROGRAM,
-    )
-    return derived_address
-
-
-def _find_user_volume_accumulator(user: Pubkey) -> Pubkey:
-    derived_address, _ = Pubkey.find_program_address(
-        [b"user_volume_accumulator", bytes(user)],
-        PUMP_PROGRAM,
-    )
-    return derived_address
-
-
-def _find_fee_config() -> Pubkey:
-    derived_address, _ = Pubkey.find_program_address(
-        [b"fee_config", bytes(PUMP_PROGRAM)],
-        PUMP_FEE_PROGRAM,
-    )
-    return derived_address
-
-
-def _find_bonding_curve_v2(mint: Pubkey) -> Pubkey:
-    derived_address, _ = Pubkey.find_program_address(
-        [b"bonding-curve-v2", bytes(mint)],
-        PUMP_PROGRAM,
-    )
-    return derived_address
-
-
-async def get_fee_recipient(
-    client: AsyncClient, curve_state: BondingCurveState
-) -> Pubkey:
-    """Determine the correct fee recipient based on mayhem mode.
-
-    Mayhem mode tokens use a different fee recipient (reserved_fee_recipient from Global account)
-    instead of the standard fee recipient. This function checks the bonding curve state
-    and returns the appropriate fee recipient.
-
-    Args:
-        client: Solana RPC client to fetch Global account data
-        curve_state: Parsed bonding curve state containing is_mayhem_mode flag
-
-    Returns:
-        Appropriate fee recipient pubkey (mayhem or standard)
-    """
-    if not curve_state.is_mayhem_mode:
-        return PUMP_FEE
-
-    # Fetch Global account to get reserved_fee_recipient for mayhem mode tokens
-    response = await client.get_account_info(PUMP_GLOBAL, encoding="base64")
-    if not response.value or not response.value.data:
-        # Fallback to standard fee if Global account cannot be fetched
-        return PUMP_FEE
-
-    data = response.value.data
-
-    # Parse reserved_fee_recipient from Global account
-    # Offset calculation based on pump_fun_idl.json Global struct:
-    # discriminator(8) + initialized(1) + authority(32) + fee_recipient(32) +
-    # initial_virtual_token_reserves(8) + initial_virtual_sol_reserves(8) +
-    # initial_real_token_reserves(8) + token_total_supply(8) + fee_basis_points(8) +
-    # withdraw_authority(32) + enable_migrate(1) + pool_migration_fee(8) +
-    # creator_fee_basis_points(8) + fee_recipients[7](224) + set_creator_authority(32) +
-    # admin_set_creator_authority(32) + create_v2_enabled(1) + whitelist_pda(32) = 483
-    RESERVED_FEE_RECIPIENT_OFFSET = 483
-
-    if len(data) < RESERVED_FEE_RECIPIENT_OFFSET + 32:
-        # Fallback if account data is too short
-        return PUMP_FEE
-
-    reserved_fee_recipient_bytes = data[
-        RESERVED_FEE_RECIPIENT_OFFSET : RESERVED_FEE_RECIPIENT_OFFSET + 32
-    ]
-    return Pubkey.from_bytes(reserved_fee_recipient_bytes)
 
 
 async def create_geyser_connection():

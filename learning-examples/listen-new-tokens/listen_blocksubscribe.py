@@ -382,6 +382,11 @@ async def listen_and_decode_create():
                     print(
                         f"Received unexpected message type: {data.get('method', 'Unknown')}"
                     )
+            except websockets.ConnectionClosed:
+                # Leave the recv loop so main() can reconnect. Swallowing this here
+                # would make the next recv() raise immediately, spinning the loop.
+                print("WebSocket connection closed.")
+                break
             except Exception as e:
                 print(f"An error occurred: {e!s}")
                 print(f"Error details: {type(e).__name__}")
@@ -389,8 +394,17 @@ async def listen_and_decode_create():
 
                 traceback.print_exc()
 
-    print("WebSocket connection closed.")
+
+async def main() -> None:
+    """Reconnect for as long as the script runs."""
+    while True:
+        try:
+            await listen_and_decode_create()
+        except (websockets.WebSocketException, OSError) as e:
+            print(f"Connection error: {e!s}")
+        print("Reconnecting in 5 seconds...")
+        await asyncio.sleep(5)
 
 
 if __name__ == "__main__":
-    asyncio.run(listen_and_decode_create())
+    asyncio.run(main())

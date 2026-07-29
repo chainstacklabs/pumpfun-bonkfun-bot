@@ -120,15 +120,20 @@ Standalone scripts, runnable with `uv run <path>`. No bot config needed — they
 | Path | What it covers |
 |---|---|
 | `listen-new-tokens/` | One listener per method (`logs`, `blocks`, `geyser`, `pumpportal`) plus `compare_listeners.py` to race them |
-| `listen-migrations/` | Detect a token graduating from the bonding curve to PumpSwap |
+| `listen-migrations/` | Detect a token graduating from the bonding curve to PumpSwap, via the migration wrapper program or new pool accounts |
 | `bonding-curve-progress/` | Curve state, progress polling, and tokens close to graduating |
 | `pumpswap/` | Manual buy/sell against the PumpSwap AMM, and pool discovery |
 | `letsbonk-buy-sell/` | Manual exact-in / exact-out buys and sells on letsbonk.fun |
-| `copytrading/` | Watch another wallet's transactions |
-| `manual_buy.py`, `manual_sell.py`, `fetch_price.py` | The minimal pump.fun trade and price path |
+| `copy-trading/` | Watch another wallet's transactions |
+| `manual_buy.py`, `manual_sell.py`, `fetch_price.py` | The minimal pump.fun trade and price path. `manual_buy.py --cu-optimized` adds a `SetLoadedAccountsDataSizeLimit` instruction |
 | `mint_and_buy_v2.py` | Create a coin and buy it in one go |
 | `decode_from_*.py`, `calculate_discriminator.py` | Decoding account data, transactions, and Anchor discriminators |
 | `cleanup_accounts.py` | Close leftover empty token accounts |
+
+Most of these take the mint or curve address as the first argument, and print usage if
+you leave it off. The `decode_from_*.py` scripts fall back to the saved fixtures beside
+them (`raw_*.json`), which are recaptured from mainnet rather than hand-edited — a
+stale fixture makes a working decoder look broken and a broken one look fine.
 
 Two examples double as verification scripts to run after any pump.fun program upgrade:
 

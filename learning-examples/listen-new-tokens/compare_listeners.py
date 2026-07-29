@@ -38,7 +38,9 @@ import base64
 import json
 import os
 import struct
+import sys
 import time
+from pathlib import Path
 
 import base58
 import grpc
@@ -46,6 +48,9 @@ import websockets
 from dotenv import load_dotenv
 from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
+
+# Reach the shared geyser stubs in src/geyser/generated (imported lazily below).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 load_dotenv(override=True)
 
@@ -617,6 +622,15 @@ async def listen_block_subscription(wss_url, provider_name, tracker, known_token
                             except Exception as e:
                                 print(f"[ERROR] Failed to process transaction: {e}")
 
+                    except websockets.ConnectionClosed:
+                        # Break out so the outer loop reconnects. Without this the
+                        # broad handler below swallows the disconnect and recv()
+                        # raises again immediately, spinning at millions of
+                        # iterations per minute.
+                        print(
+                            f"[WARN] Block listener for {provider_name}: connection closed"
+                        )
+                        break
                     except Exception as e:
                         print(f"[ERROR] Block listener for {provider_name}: {e}")
 
@@ -743,11 +757,12 @@ async def listen_geyser_grpc(
     Listen for new tokens via Geyser gRPC API
     """
     try:
-        # Import the generated protobuf modules
-        from generated import geyser_pb2, geyser_pb2_grpc
+        # Generated once into src/geyser/generated; see CLAUDE.md for regenerating them.
+        from src.geyser.generated import geyser_pb2, geyser_pb2_grpc
     except ImportError:
         print(
-            "[ERROR] Could not import geyser_pb2 or geyser_pb2_grpc. Make sure to generate from .proto files"
+            "[ERROR] Could not import geyser_pb2 or geyser_pb2_grpc. "
+            "Regenerate them into src/geyser/generated from src/geyser/proto"
         )
         return
 

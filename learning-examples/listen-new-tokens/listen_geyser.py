@@ -18,12 +18,18 @@ Configure via GEYSER_ENDPOINT, GEYSER_API_TOKEN, and AUTH_TYPE variables.
 import asyncio
 import os
 import struct
+import sys
+from pathlib import Path
 
 import base58
 import grpc
 from dotenv import load_dotenv
-from generated import geyser_pb2, geyser_pb2_grpc
 from solders.pubkey import Pubkey
+
+# The geyser stubs are generated once, into src/geyser/generated. Reuse them rather
+# than keeping a second copy here that drifts out of sync with proto/.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from src.geyser.generated import geyser_pb2, geyser_pb2_grpc
 
 load_dotenv()
 
@@ -106,6 +112,31 @@ def create_subscription_request():
     return request
 
 
+def resolve_account_keys(
+    tx: geyser_pb2.SubscribeUpdateTransactionInfo,
+) -> list[bytes]:
+    """Build the full account-key table for one transaction.
+
+    A v0 transaction indexes accounts past the end of `message.account_keys` when it
+    uses an address lookup table; geyser reports those in the transaction meta, in
+    this exact order: static keys, then writable loaded, then read-only loaded.
+    Coins minted through a router (most of them) arrive this way, so a listener that
+    only reads `message.account_keys` mislabels or drops them.
+
+    Args:
+        tx: A geyser `SubscribeUpdateTransactionInfo`
+
+    Returns:
+        Account keys as raw 32-byte values, indexable by an instruction's account list
+    """
+    keys = list(tx.transaction.message.account_keys)
+    meta = getattr(tx, "meta", None)
+    if meta is not None:
+        keys.extend(meta.loaded_writable_addresses)
+        keys.extend(meta.loaded_readonly_addresses)
+    return keys
+
+
 def decode_create_instruction(ix_data: bytes, keys, accounts) -> dict:
     """Decode a legacy create instruction (Metaplex) from transaction data."""
     # Skip past the 8-byte discriminator prefix
@@ -116,6 +147,12 @@ def decode_create_instruction(ix_data: bytes, keys, accounts) -> dict:
         if index >= len(accounts):
             return "N/A"
         account_index = accounts[index]
+        # A v0 transaction can index accounts that live in an address lookup table,
+        # which geyser reports under meta.loaded_*_addresses rather than
+        # message.account_keys. Without this guard those coins raise IndexError and
+        # kill the listener.
+        if account_index >= len(keys):
+            return "N/A"
         return base58.b58encode(keys[account_index]).decode()
 
     # Read string fields (prefixed with length)
@@ -170,6 +207,12 @@ def decode_create_v2_instruction(ix_data: bytes, keys, accounts) -> dict:
         if index >= len(accounts):
             return "N/A"
         account_index = accounts[index]
+        # A v0 transaction can index accounts that live in an address lookup table,
+        # which geyser reports under meta.loaded_*_addresses rather than
+        # message.account_keys. Without this guard those coins raise IndexError and
+        # kill the listener.
+        if account_index >= len(keys):
+            return "N/A"
         return base58.b58encode(keys[account_index]).decode()
 
     # Read string fields (prefixed with length)
@@ -238,6 +281,8 @@ async def monitor_pump():
         if msg is None:
             continue
 
+        keys = resolve_account_keys(update.transaction.transaction)
+
         # Check each instruction in the transaction
         for ix in msg.instructions:
             # Check for both Create and CreateV2 instructions
@@ -249,11 +294,9 @@ async def monitor_pump():
 
             # Decode based on instruction type
             if is_create_v2:
-                info = decode_create_v2_instruction(
-                    ix.data, msg.account_keys, ix.accounts
-                )
+                info = decode_create_v2_instruction(ix.data, keys, ix.accounts)
             else:
-                info = decode_create_instruction(ix.data, msg.account_keys, ix.accounts)
+                info = decode_create_instruction(ix.data, keys, ix.accounts)
 
             # Extract transaction signature
             signature = base58.b58encode(

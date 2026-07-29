@@ -24,12 +24,36 @@ def decode_instruction(ix_data, ix_def):
     Supports the primitive scalar types and the `OptionBool` defined type
     (added in the late-Feb 2026 cashback upgrade — `OptionBool` is a struct
     wrapping a single bool, so it serializes as 1 byte on the wire).
+
+    Trailing args can be absent from the wire entirely: two real mainnet
+    `create_v2` instructions carry `0001` and `00` respectively after `creator`,
+    so `is_cashback_enabled` is there in one and omitted in the other. Anything
+    the data runs out for is reported as None rather than raising.
     """
     args = {}
     offset = 8  # Skip 8-byte discriminator
 
+    # Width each type needs before it can be read at all; strings carry their own
+    # 4-byte length prefix.
+    widths = {
+        "u64": 8,
+        "i64": 8,
+        "u32": 4,
+        "u16": 2,
+        "u8": 1,
+        "bool": 1,
+        "pubkey": 32,
+        "string": 4,
+    }
+
     for arg in ix_def["args"]:
         t = arg["type"]
+        needed = widths.get(t, 1) if isinstance(t, str) else 1
+        if offset + needed > len(ix_data):
+            # Truncated trailing arg: the sender omitted it.
+            args[arg["name"]] = None
+            continue
+
         if t == "u64":
             value = struct.unpack_from("<Q", ix_data, offset)[0]
             offset += 8
@@ -116,9 +140,6 @@ def decode_transaction(tx_data, idl):
 
             for idl_ix in idl["instructions"]:
                 idl_discriminator = calculate_discriminator(f"global:{idl_ix['name']}")
-                print(
-                    f"Checking against IDL instruction: {idl_ix['name']} with discriminator {idl_discriminator:016x}"
-                )
 
                 if discriminator == idl_discriminator:
                     decoded_args = decode_instruction(ix_data, idl_ix)
@@ -168,7 +189,7 @@ def decode_transaction(tx_data, idl):
 tx_file_path = ""
 
 if len(sys.argv) != 2:
-    tx_file_path = "learning-examples/blockSubscribe-transactions/raw_create_tx_from_blockSubscribe.json"
+    tx_file_path = "learning-examples/blocksubscribe-transactions/raw_create_tx_from_blocksubscribe.json"
     print(f"No path provided, using the path: {tx_file_path}")
 else:
     tx_file_path = sys.argv[1]
