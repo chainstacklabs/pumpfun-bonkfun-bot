@@ -182,8 +182,25 @@ offline and only visible after a couple of minutes against mainnet.
 - **`getProgramAccounts` over the whole pump program is rejected** by current
   providers: *"Too many accounts requested (10000001 pubkeys) … use
   getProgramAccountsV2 with pagination"*. It still works against pump-amm, which
-  is small enough. `bonding-curve-progress/get_graduating_tokens.py` is knowingly
-  broken on this and needs the V2 pagination rewrite.
+  is small enough. Don't take that error message as a fix: `getProgramAccountsV2`
+  is a provider extension (Helius, Solana Tracker), **not core Agave**, and its
+  `limit` is a *scan* budget rather than a result count — a page can legally
+  return zero accounts and a non-null `paginationKey`, so one filtered answer over
+  the pump program costs ~1000 sequential pages. Reach for a filtered
+  subscription instead; see the two `get_graduating_tokens*.py` examples.
+- **Filtered `programSubscribe` on the pump program is the portable way to find
+  curves by state.** `dataSize` + `memcmp` are applied server-side, and it is
+  accepted even by the public `api.mainnet-beta.solana.com`. Because `memcmp`
+  matches exact bytes, the only inequality it can express on a little-endian u64
+  is "the top N bytes are zero" (`value < 2**(8*(8-N))`), so thresholds land on
+  coarse power-of-2 gates and the exact comparison has to happen client-side.
+  Geyser's account filters have the same shape and add the slot and signature.
+- **Resolve a curve's mint under Token-2022, not SPL Token.** The curve account
+  has no mint field and `["bonding-curve", mint]` is not reversible, so the mint
+  comes from the associated bonding curve ATA — which is Token-2022 for every
+  `create_v2` coin. `get_token_accounts_by_owner` with the SPL Token program
+  returns an empty list for all of them, silently. Verified four for four on live
+  curves, each confirmed by re-deriving the curve PDA from the recovered mint.
 - **`SetLoadedAccountsDataSizeLimit` must stay generous: 16 MB, not 512 KB.**
   Verified by simulation on a Token-2022 mint with extensions — 512 KB and 4 MB
   both fail `MaxLoadedAccountsDataSizeExceeded` with `unitsConsumed=0` (never
