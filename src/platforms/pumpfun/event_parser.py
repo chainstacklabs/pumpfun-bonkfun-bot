@@ -306,6 +306,15 @@ class PumpFunEventParser(EventParser):
                         _coerce_pubkey(fields.get("quote_mint"))
                     )
 
+                    # The event's creator is canonical (unlike instruction
+                    # args.creator) and the flags/quote_mint are authoritative
+                    # at create time, so extreme_fast_mode can trade on them
+                    # without a curve read. Old-format events missing the
+                    # trailing fields stay conservative.
+                    state_from_event = (
+                        "quote_mint" in fields and "is_mayhem_mode" in fields
+                    )
+
                     return TokenInfo(
                         name=fields["name"],
                         symbol=fields["symbol"],
@@ -323,6 +332,7 @@ class PumpFunEventParser(EventParser):
                         quote_mint=quote_mint,
                         quote_token_program_id=quote_token_program(quote_mint),
                         virtual_quote_reserves=fields.get("virtual_quote_reserves"),
+                        state_from_event=state_from_event,
                         creation_timestamp=monotonic(),
                     )
 
@@ -466,7 +476,23 @@ class PumpFunEventParser(EventParser):
             if not hasattr(transaction_info, "transaction"):
                 return None
 
-            tx = transaction_info.transaction.transaction.transaction
+            # Prefer the CreateEvent from meta.log_messages, same as the block
+            # parser: the event carries the canonical creator (instruction
+            # args.creator is user-supplied and may differ post-2026-04-28)
+            # plus mayhem/cashback/quote_mint, which marks the TokenInfo
+            # state_from_event so extreme_fast_mode can buy with zero RPC
+            # calls. Fall back to instruction decoding when logs are absent.
+            tx_info = transaction_info.transaction.transaction
+            meta = getattr(tx_info, "meta", None)
+            log_messages = list(getattr(meta, "log_messages", []) or [])
+            if log_messages:
+                token_info = self.parse_token_creation_from_logs(
+                    log_messages, signature=""
+                )
+                if token_info:
+                    return token_info
+
+            tx = tx_info.transaction
             msg = getattr(tx, "message", None)
             if msg is None:
                 return None

@@ -47,8 +47,26 @@ trade:
   # EXTREME FAST mode configuration
   # When enabled, skips waiting for the bonding curve to stabilize and RPC price check.
   # The bot buys the specified number of tokens directly, making the process faster but less precise.
+  # For geyser/logs/blocks listeners the buy is built entirely from the on-chain
+  # CreateEvent — ZERO RPC calls between detection and submission (see
+  # trust_create_event below). pumpportal payloads lack the needed fields, so
+  # that listener does one batched read first (see curve_refresh_budget).
   extreme_fast_mode: true
   extreme_fast_token_amount: 20 # Amount of tokens to buy
+
+  # Pre-buy curve refresh (issue #170). The buyer re-reads the bonding curve /
+  # pool at `processed` before building the buy so fee_recipient, creator_vault,
+  # quote_mint and the token program are current. If the account is not readable
+  # within this budget (seconds), the token is SKIPPED instead of submitting a
+  # buy built from listener-guessed defaults, which tends to revert on-chain.
+  curve_refresh_budget: 2.0
+
+  # When the create event carried the canonical creator, mayhem/cashback flags
+  # and quote_mint (geyser/logs/blocks listeners), skip the pre-buy read
+  # entirely: extreme_fast_mode then submits with ZERO RPC calls after
+  # detection. pumpportal events never carry these, so they always refresh.
+  # Set false to force the refresh for every listener.
+  trust_create_event: true
 
 # Priority fee configuration
 # Manage transaction speed and cost on the Solana network.

@@ -98,6 +98,8 @@ async def start_bot(config_path: str):
             # Extreme fast mode settings
             extreme_fast_mode=cfg["trade"].get("extreme_fast_mode", False),
             extreme_fast_token_amount=cfg["trade"].get("extreme_fast_token_amount", 30),
+            curve_refresh_budget=cfg["trade"].get("curve_refresh_budget", 2.0),
+            trust_create_event=cfg["trade"].get("trust_create_event", True),
             # Quote asset configuration (pump.fun non-SOL pairs)
             quote_amounts=cfg["trade"].get("quote_amounts"),
             allowed_quote_mints=cfg["filters"].get("allowed_quote_mints"),

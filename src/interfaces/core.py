@@ -56,6 +56,14 @@ class TokenInfo:
     quote_token_program_id: Pubkey | None = None
     virtual_quote_reserves: int | None = None
 
+    # True when creator, mayhem/cashback flags and quote_mint were read from
+    # the on-chain CreateEvent (canonical at create time), letting
+    # extreme_fast_mode skip the pre-buy curve refresh entirely — zero RPC
+    # calls between detection and submission. Listeners that guess any of
+    # these (pumpportal) or read them from user-supplied instruction args
+    # must leave it False.
+    state_from_event: bool = False
+
     # Metadata
     creation_timestamp: float | None = None
     additional_data: dict[str, Any] | None = None

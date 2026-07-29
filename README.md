@@ -90,12 +90,40 @@ Logs land in `logs/{bot_name}_{timestamp}.log`.
 
 The YAML files are commented inline. The sections that matter most:
 
-- **`trade`** — `buy_amount` (in SOL), slippage, `exit_strategy` (`time_based`, `tp_sl`, `manual`), and `extreme_fast_mode`, which skips the bonding-curve price check and buys a fixed token amount instead. Faster, less precise.
+- **`trade`** — `buy_amount` (in SOL), slippage, `exit_strategy` (`time_based`, `tp_sl`, `manual`), and `extreme_fast_mode`, which skips the bonding-curve price check and buys a fixed token amount instead. Faster, less precise. See [Extreme fast mode](#extreme-fast-mode-zero-rpc-buys) for the zero-RPC behavior and its two knobs, `trust_create_event` and `curve_refresh_budget`.
 - **`priority_fees`** — fixed or dynamic. Dynamic costs an extra RPC call, which slows the buy.
 - **`filters`** — `listener_type`, `max_token_age`, name/creator matching, `marry_mode` (buy only, never sell), `yolo_mode` (trade continuously).
 - **`retries`** — attempts and the wait windows around creation, buy, and the next token.
 - **`cleanup`** — when to close leftover token accounts: `disabled`, `on_fail`, `after_sell`, `post_session`.
 - **`node.max_rps`** — cap requests per second to match your provider's plan.
+
+### Extreme fast mode: zero-RPC buys
+
+With `extreme_fast_mode: true` the bot buys a fixed token amount
+(`extreme_fast_token_amount`) instead of fetching the curve price first. For
+tokens detected through the on-chain **CreateEvent** — the `geyser`, `logs`
+and `blocks` listeners — the buy is built entirely from the event: the
+canonical creator, mayhem/cashback flags and quote mint are all in it, so
+**no RPC call happens between detecting the token and submitting the buy**.
+That is the point of the mode; a single account read costs ~40–50 ms even on
+a good endpoint, a tenth of a slot.
+
+The `pumpportal` listener can't do this — its payload carries none of those
+fields — so it performs one batched account read (bonding curve + mint in a
+single slot-consistent `getMultipleAccounts`) before buying. If the curve
+isn't readable within `trade.curve_refresh_budget` seconds (default 2.0),
+the token is **skipped**: a buy built from guessed accounts reverts on-chain
+with `NotAuthorized` (6000) or `ConstraintSeeds` (2006) and still costs the
+fee. The same skip applies to any token whose event data was incomplete.
+
+`trade.trust_create_event: false` turns the zero-RPC path off and forces the
+pre-buy read for every listener — the safe fallback if pump.fun changes what
+the CreateEvent carries.
+
+Machine checks: `learning-examples/verify_extreme_fast_zero_rpc.py` (the
+zero-RPC contract per listener) and
+`learning-examples/verify_pumpportal_buy_path.py` (the refresh/skip path).
+Neither moves funds.
 
 ### Non-SOL quote assets
 

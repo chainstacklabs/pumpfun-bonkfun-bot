@@ -181,35 +181,23 @@ class UniversalGeyserListener(BaseTokenListener):
                 await asyncio.sleep(10)
 
     async def _process_update(self, update) -> TokenInfo | None:
-        """Process a Geyser update and extract token creation info."""
+        """Process a Geyser update and extract token creation info.
+
+        Delegates to each platform parser's geyser method rather than decoding
+        instructions here: the parser prefers the CreateEvent from
+        meta.log_messages, which carries the canonical creator (instruction
+        args.creator is user-supplied) and marks the TokenInfo
+        state_from_event so extreme_fast_mode can buy with zero RPC calls.
+        Each parser filters on its own program id internally.
+        """
         try:
             if not update.HasField("transaction"):
                 return None
 
-            tx = update.transaction.transaction.transaction
-            msg = getattr(tx, "message", None)
-            if msg is None:
-                return None
-
-            from solders.pubkey import Pubkey
-
-            for ix in msg.instructions:
-                # Check which platform this instruction belongs to
-                program_idx = ix.program_id_index
-                if program_idx >= len(msg.account_keys):
-                    continue
-
-                program_id = Pubkey.from_bytes(msg.account_keys[program_idx])
-
-                # Find the matching platform parser
-                for platform, parser in self.platform_parsers.items():
-                    if program_id == parser.get_program_id():
-                        # Use the platform's event parser
-                        token_info = parser.parse_token_creation_from_instruction(
-                            ix.data, ix.accounts, msg.account_keys
-                        )
-                        if token_info:
-                            return token_info
+            for parser in self.platform_parsers.values():
+                token_info = parser.parse_token_creation_from_geyser(update)
+                if token_info:
+                    return token_info
 
             return None
 

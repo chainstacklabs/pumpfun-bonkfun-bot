@@ -118,6 +118,45 @@ Run all three after any pump.fun program upgrade. The simulations report
 `unitsConsumed`; use it to retune `get_buy_compute_unit_limit` /
 `get_sell_compute_unit_limit` in `platforms/pumpfun/instruction_builder.py`.
 
+### Verifying the listener-to-buy path (issue #170)
+
+```bash
+# Offline: bonding curve derived from the mint (payload bondingCurveKey not
+# trusted), unreadable curve skips the buy instead of submitting with guessed
+# accounts, curve+mint read in one slot-consistent batch
+uv run learning-examples/verify_pumpportal_buy_path.py
+
+# Offline: extreme_fast_mode stays at ZERO RPC calls between detection and
+# submission for CreateEvent-sourced tokens; pumpportal still refreshes
+uv run learning-examples/verify_extreme_fast_zero_rpc.py
+```
+
+Fast listeners (pumpportal especially, but geyser too) can announce a token
+seconds before every node behind a load-balanced RPC endpoint can read its
+accounts — two back-to-back reads on the same endpoint may be served from
+nodes at different slots. `trade.curve_refresh_budget` (seconds, default 2.0)
+bounds the pre-buy curve read in `extreme_fast_mode`; when it expires the token
+is skipped, because a buy built from listener-guessed defaults reverts on-chain
+with `NotAuthorized` (6000), `ConstraintSeeds` (2006) or, on letsbonk,
+`AccountNotInitialized` (3012). The sell path deliberately keeps the opposite
+fallback — proceed with cached values — since skipping a sell strands the
+position.
+
+The refresh is skipped entirely — extreme_fast_mode's zero-RPC contract —
+when `TokenInfo.state_from_event` is set, i.e. the listener parsed the
+**CreateEvent** (geyser/logs/blocks), which carries the canonical creator,
+mayhem/cashback flags and quote_mint. Instruction `args.creator` is
+user-supplied and post-2026-04-28 may differ from the canonical `BC.creator`
+(PFEE PDA delegation), so instruction-parsed TokenInfo deliberately does
+**not** set the flag; the geyser parser prefers `meta.log_messages` over
+instruction decoding for exactly this reason. `trade.trust_create_event:
+false` is the escape hatch back to always-refresh. PumpPortal payloads carry
+none of these fields and always refresh. Related pitfall: the strict IDL
+instruction decoder rejects `create_v2` transactions that omit the trailing
+`is_cashback_enabled` OptionBool (a legal wire form), so the instruction path
+alone silently misses those coins — one more reason the log/event path is
+preferred everywhere.
+
 ### Verifying transaction-status handling
 
 ```bash

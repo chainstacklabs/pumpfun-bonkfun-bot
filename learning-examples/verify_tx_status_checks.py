@@ -144,6 +144,9 @@ async def check_examples_call_a_status_check() -> None:
         Path(__file__).name,
         # stubs confirm_transaction out; never sends a transaction
         "simulate_bot_buy_path.py",
+        # offline checks with a stub client; never sends a transaction
+        "verify_pumpportal_buy_path.py",
+        "verify_extreme_fast_zero_rpc.py",
         # uses the bot's SolanaClient wrapper, which folds meta.err into its
         # return value; the boolean is read at the call site
         "cleanup_accounts.py",
