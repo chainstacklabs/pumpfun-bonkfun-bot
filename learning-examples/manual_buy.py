@@ -1,9 +1,31 @@
+"""Buy the next pump.fun coin to be created, using buy_v2.
+
+WARNING: this submits a real transaction and spends real funds.
+
+Usage:
+    uv run learning-examples/manual_buy.py
+    uv run learning-examples/manual_buy.py --cu-optimized
+
+`--cu-optimized` adds a SetLoadedAccountsDataSizeLimit instruction. A transaction
+may load up to 64 MB of account data by default, which is billed at 16k CU toward
+the fee and priority calculation. Declaring a smaller ceiling lowers that share.
+The saving does not show up in a transaction's reported `unitsConsumed`, which
+only covers execution, so it is hard to measure directly from a receipt.
+
+Do not lower the limit too far: 16 MB is still 4x smaller than the default and
+leaves room for Token-2022 mints with extensions, while 512 KB is rejected with
+MaxLoadedAccountsDataSizeExceeded on exactly those coins.
+
+Reference: https://www.anza.xyz/blog/cu-optimization-with-setloadedaccountsdatasizelimit
+"""
+
 import asyncio
 import base64
 import hashlib
 import json
 import os
 import struct
+import sys
 
 import base58
 import pump_v2
@@ -14,6 +36,7 @@ from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
 from solana.rpc.types import TxOpts
 from solders.compute_budget import set_compute_unit_price
+from solders.instruction import Instruction
 from solders.keypair import Keypair
 from solders.message import Message
 from solders.pubkey import Pubkey
@@ -25,6 +48,13 @@ from spl.token.instructions import (
 # Here and later all the discriminators are precalculated. See learning-examples/calculate_discriminator.py
 EXPECTED_DISCRIMINATOR = pump_v2.BONDING_CURVE_DISCRIMINATOR
 TOKEN_DECIMALS = 6
+
+COMPUTE_BUDGET_PROGRAM = Pubkey.from_string(
+    "ComputeBudget111111111111111111111111111111"
+)
+# 16 MB. Enough for Token-2022 mints carrying extensions, and still 4x below the
+# 64 MB default; 4-8 MB is rejected with MaxLoadedAccountsDataSizeExceeded.
+LOADED_ACCOUNTS_DATA_SIZE_LIMIT = 16_384_000
 
 # Global constants
 PUMP_PROGRAM = Pubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")
@@ -100,6 +130,22 @@ def calculate_pump_curve_price(curve_state: pump_v2.BondingCurveState) -> float:
     return price
 
 
+def set_loaded_accounts_data_size_limit(bytes_limit: int) -> Instruction:
+    """Build a SetLoadedAccountsDataSizeLimit compute-budget instruction.
+
+    solders does not ship a helper for this one, so encode it by hand: the
+    compute-budget program takes a 1-byte discriminator (4) and a u32 limit.
+
+    Args:
+        bytes_limit: Max account data the transaction may load, in bytes
+
+    Returns:
+        The compute-budget instruction
+    """
+    data = struct.pack("<BI", 4, bytes_limit)
+    return Instruction(COMPUTE_BUDGET_PROGRAM, data, [])
+
+
 async def buy_token(
     mint: Pubkey,
     bonding_curve: Pubkey,
@@ -109,6 +155,8 @@ async def buy_token(
     amount: float,
     slippage: float = 0.25,
     max_retries=5,
+    *,
+    cu_optimized: bool = False,
 ):
     private_key = base58.b58decode(os.environ.get("SOLANA_PRIVATE_KEY"))
     payer = Keypair.from_bytes(private_key)
@@ -142,7 +190,13 @@ async def buy_token(
             is_mayhem_mode=curve_state.is_mayhem_mode,
         )
 
-        instructions = [
+        instructions = []
+        if cu_optimized:
+            # Must come first, before the instructions it applies to.
+            instructions.append(
+                set_loaded_accounts_data_size_limit(LOADED_ACCOUNTS_DATA_SIZE_LIMIT)
+            )
+        instructions += [
             set_compute_unit_price(1_000),
             create_idempotent_associated_token_account(
                 payer.pubkey(), payer.pubkey(), mint, token_program_id=token_program
@@ -350,7 +404,9 @@ async def listen_for_create_transaction():
                                                 return decoded_args
 
 
-async def main():
+async def main(*, cu_optimized: bool = False):
+    if cu_optimized:
+        print("Compute-unit optimization enabled (SetLoadedAccountsDataSizeLimit)")
     print("Waiting for a new token creation...")
     token_data = await listen_for_create_transaction()
     print("New token created:")
@@ -393,8 +449,9 @@ async def main():
         token_program,
         amount,
         slippage,
+        cu_optimized=cu_optimized,
     )
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main(cu_optimized="--cu-optimized" in sys.argv))

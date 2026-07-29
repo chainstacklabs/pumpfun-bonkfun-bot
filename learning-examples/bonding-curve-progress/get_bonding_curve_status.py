@@ -27,6 +27,36 @@ PUMP_PROGRAM_ID: Final[Pubkey] = Pubkey.from_string(
 )
 EXPECTED_DISCRIMINATOR: Final[bytes] = struct.pack("<Q", 6966180631402821399)
 
+# Shortest account that still reaches quote_mint: 8 discriminator + 41 base fields
+# + 32 creator + 1 mayhem + 1 cashback + 32 quote_mint.
+_V5_MIN_LENGTH: Final[int] = 115
+
+# Quote assets. `quote_mint` is all zeros on SOL-paired coins; the quote-side reserves
+# are always in the quote mint's raw units (1e9 for SOL, 1e6 for USDC).
+DEFAULT_QUOTE_MINT: Final[Pubkey] = Pubkey.from_bytes(bytes(32))
+WSOL_MINT: Final[Pubkey] = Pubkey.from_string(
+    "So11111111111111111111111111111111111111112"
+)
+USDC_MINT: Final[Pubkey] = Pubkey.from_string(
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+)
+QUOTE_DECIMALS: Final[dict[Pubkey, int]] = {WSOL_MINT: 9, USDC_MINT: 6}
+QUOTE_SYMBOLS: Final[dict[Pubkey, str]] = {WSOL_MINT: "SOL", USDC_MINT: "USDC"}
+
+
+def resolve_quote_asset(quote_mint: Pubkey) -> tuple[Pubkey, str, int]:
+    """Resolve a curve's quote mint to its symbol and raw-unit scale.
+
+    Args:
+        quote_mint: The curve's raw quote_mint field
+
+    Returns:
+        (effective mint, display symbol, raw units per whole token)
+    """
+    mint = WSOL_MINT if quote_mint == DEFAULT_QUOTE_MINT else quote_mint
+    decimals = QUOTE_DECIMALS.get(mint, 9)
+    return mint, QUOTE_SYMBOLS.get(mint, str(mint)), 10**decimals
+
 
 class BondingCurveState:
     """
@@ -78,12 +108,29 @@ class BondingCurveState:
         "is_cashback_coin" / Flag,
     )
 
+    # V5: V4 + quote_mint. Live accounts are 151 bytes — this struct covers 107 of the
+    # 143 data bytes and the remaining 36 are reserved padding. The quote-side reserves
+    # are in the quote mint's raw units, so a non-SOL coin must not be scaled by 1e9.
+    _STRUCT_V5 = Struct(
+        "virtual_token_reserves" / Int64ul,
+        "virtual_sol_reserves" / Int64ul,
+        "real_token_reserves" / Int64ul,
+        "real_sol_reserves" / Int64ul,
+        "token_total_supply" / Int64ul,
+        "complete" / Flag,
+        "creator" / Bytes(32),
+        "is_mayhem_mode" / Flag,
+        "is_cashback_coin" / Flag,
+        "quote_mint" / Bytes(32),
+    )
+
     def __init__(self, data: bytes) -> None:
         """Parse bonding curve data."""
         if data[:8] != EXPECTED_DISCRIMINATOR:
             raise ValueError("Invalid curve state discriminator")
 
         total_length = len(data)
+        self.quote_mint = DEFAULT_QUOTE_MINT
 
         if total_length == 81:  # V2: Creator only
             parsed = self._STRUCT_V2.parse(data[8:])
@@ -98,10 +145,16 @@ class BondingCurveState:
             self.creator = Pubkey.from_bytes(self.creator)
             self.is_cashback_coin = False
 
-        elif total_length >= 83:  # V4: Creator + mayhem + cashback
+        elif total_length < _V5_MIN_LENGTH:  # V4: Creator + mayhem + cashback
             parsed = self._STRUCT_V4.parse(data[8:])
             self.__dict__.update(parsed)
             self.creator = Pubkey.from_bytes(self.creator)
+
+        elif total_length >= _V5_MIN_LENGTH:  # V5: + quote_mint
+            parsed = self._STRUCT_V5.parse(data[8:])
+            self.__dict__.update(parsed)
+            self.creator = Pubkey.from_bytes(self.creator)
+            self.quote_mint = Pubkey.from_bytes(self.quote_mint)
 
         else:
             raise ValueError(f"Unexpected bonding curve size: {total_length} bytes")
@@ -174,9 +227,14 @@ async def check_token_status(mint_address: str) -> None:
                     client, bonding_curve_address
                 )
 
+                quote_mint, quote_symbol, quote_unit = resolve_quote_asset(
+                    curve_state.quote_mint
+                )
+
                 print("\nBonding curve status:")
                 print("-" * 50)
                 print(f"Creator:             {curve_state.creator}")
+                print(f"Quote asset:         {quote_symbol} ({quote_mint})")
                 print(
                     f"Mayhem Mode:         {'✅ Enabled' if curve_state.is_mayhem_mode else '❌ Disabled'}"
                 )
@@ -190,11 +248,13 @@ async def check_token_status(mint_address: str) -> None:
                 print("\nBonding curve reserves:")
                 print(f"Virtual Token:       {curve_state.virtual_token_reserves:,}")
                 print(
-                    f"Virtual SOL:         {curve_state.virtual_sol_reserves:,} lamports"
+                    f"Virtual quote:       {curve_state.virtual_sol_reserves:,} raw "
+                    f"({curve_state.virtual_sol_reserves / quote_unit:,.6f} {quote_symbol})"
                 )
                 print(f"Real Token:          {curve_state.real_token_reserves:,}")
                 print(
-                    f"Real SOL:            {curve_state.real_sol_reserves:,} lamports"
+                    f"Real quote:          {curve_state.real_sol_reserves:,} raw "
+                    f"({curve_state.real_sol_reserves / quote_unit:,.6f} {quote_symbol})"
                 )
                 print(f"Total Supply:        {curve_state.token_total_supply:,}")
 

@@ -6,13 +6,17 @@ Performance: Usually faster than blockSubscribe, but slower than Geyser.
 
 This script uses logsSubscribe which receives program logs containing event data.
 Event logs include all token fields directly, making parsing simpler and faster than
-decoding full transactions.
+decoding full transactions. It also derives each coin's associated bonding curve,
+which is the token account the curve holds its supply in.
 
 WebSocket API Reference:
 https://solana.com/docs/rpc/websocket/logssubscribe
 
 Program Logs and Events:
 https://solana.com/docs/programs/debugging#logging
+
+Program Derived Addresses:
+https://solana.com/docs/core/pda
 """
 
 import asyncio
@@ -36,19 +40,32 @@ WSS_ENDPOINT = os.environ.get("SOLANA_NODE_WSS_ENDPOINT")
 WEBSOCKET_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
 PUMP_PROGRAM_ID = Pubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")
 
+# Coins created with `create_v2` are Token2022; legacy `create` coins are SPL Token.
+# The associated bonding curve is an ATA, and an ATA's address depends on which token
+# program owns the mint — deriving a Token2022 coin's ATA against the legacy program
+# yields a valid-looking address that does not exist on chain.
+TOKEN_PROGRAM_ID = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+TOKEN_2022_PROGRAM_ID = Pubkey.from_string("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
+ASSOCIATED_TOKEN_PROGRAM_ID = Pubkey.from_string(
+    "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+)
+
 # Event discriminator for CreateEvent (8-byte identifier)
 # This is emitted by both Create and CreateV2 instructions
 # Calculated using the first 8 bytes of sha256("event:CreateEvent")
 CREATE_EVENT_DISCRIMINATOR = bytes([27, 114, 169, 77, 222, 235, 99, 118])
 
 
-def print_token_info(token_data, signature=None):
+def print_token_info(
+    token_data, signature=None, associated_bonding_curve: str | None = None
+):
     """
     Print token information in a consistent, user-friendly format.
 
     Args:
         token_data: Dictionary containing token fields
         signature: Optional transaction signature
+        associated_bonding_curve: Optional derived associated bonding curve address
     """
     print("\n" + "=" * 80)
     print("🎯 NEW TOKEN DETECTED")
@@ -59,6 +76,8 @@ def print_token_info(token_data, signature=None):
 
     if "bondingCurve" in token_data:
         print(f"Bonding Curve:    {token_data['bondingCurve']}")
+    if associated_bonding_curve:
+        print(f"Associated BC:    {associated_bonding_curve}")
     if "user" in token_data:
         print(f"User:             {token_data['user']}")
     if "creator" in token_data:
@@ -74,6 +93,36 @@ def print_token_info(token_data, signature=None):
 
     print("=" * 80 + "\n")
 
+
+
+def find_associated_bonding_curve(
+    mint: Pubkey, bonding_curve: Pubkey, token_standard: str
+) -> Pubkey:
+    """
+    Derive the associated token account the bonding curve holds its supply in.
+
+    ATA derivation: find_program_address(
+        [bonding_curve, token_program_id, mint], associated_token_program_id
+    )
+
+    Args:
+        mint: The token mint pubkey
+        bonding_curve: The bonding curve pubkey
+        token_standard: "token2022" for create_v2 coins, anything else for legacy
+
+    Returns:
+        The derived associated bonding curve address
+    """
+    token_program = (
+        TOKEN_2022_PROGRAM_ID
+        if token_standard == "token2022"  # noqa: S105 - a token standard, not a secret
+        else TOKEN_PROGRAM_ID
+    )
+    derived_address, _ = Pubkey.find_program_address(
+        [bytes(bonding_curve), bytes(token_program), bytes(mint)],
+        ASSOCIATED_TOKEN_PROGRAM_ID,
+    )
+    return derived_address
 
 
 def parse_create_instruction(data):
@@ -236,22 +285,30 @@ async def listen_for_new_tokens():
                                             # Both create and create_v2 emit the same CreateEvent
                                             # The difference is in the optional is_mayhem_mode field
                                             if is_create_v2:
+                                                print("📝 Instruction: CreateV2 (Token2022)")
                                                 parsed_data = parse_create_v2_instruction(
                                                     decoded_data
                                                 )
                                             else:
+                                                print("📝 Instruction: Create (Legacy/Metaplex)")
                                                 parsed_data = parse_create_instruction(
                                                     decoded_data
                                                 )
 
                                             if parsed_data and "name" in parsed_data:
+                                                associated_curve = find_associated_bonding_curve(
+                                                    Pubkey.from_string(parsed_data["mint"]),
+                                                    Pubkey.from_string(parsed_data["bondingCurve"]),
+                                                    parsed_data.get("token_standard", ""),
+                                                )
                                                 # Print token information in consistent format
                                                 print_token_info(
                                                     parsed_data,
-                                                    signature=log_data.get("signature")
+                                                    signature=log_data.get("signature"),
+                                                    associated_bonding_curve=str(associated_curve),
                                                 )
                                             else:
-                                                print(f"⚠️  Parsing failed for CreateEvent")
+                                                print("⚠️  Parsing failed for CreateEvent")
                                         except Exception as e:
                                             print(f"❌ Error processing log: {e!s}")
 

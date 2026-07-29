@@ -18,10 +18,32 @@ WSS_ENDPOINT = os.environ.get("SOLANA_NODE_WSS_ENDPOINT")
 WEBSOCKET_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
 
 
+def extract_signature(tx: dict) -> str | None:
+    """Pull the first signature out of a blockSubscribe transaction entry.
+
+    The encoding decides the shape: base64 gives `transaction` as a list whose
+    first element is the signature, jsonParsed gives a dict with `signatures`.
+
+    Args:
+        tx: One entry from `block["transactions"]`
+
+    Returns:
+        The signature string, or None if this entry carries no transaction
+    """
+    if not isinstance(tx, dict):
+        return None
+    raw = tx.get("transaction")
+    if isinstance(raw, list) and raw:
+        return raw[0]
+    if isinstance(raw, dict) and raw.get("signatures"):
+        return raw["signatures"][0]
+    return None
+
+
 async def save_transaction(tx_data, tx_signature):
-    os.makedirs("blockSubscribe-transactions", exist_ok=True)
+    os.makedirs("blocksubscribe-transactions", exist_ok=True)
     hashed_signature = hashlib.sha256(tx_signature.encode()).hexdigest()
-    file_path = os.path.join("blockSubscribe-transactions", f"{hashed_signature}.json")
+    file_path = os.path.join("blocksubscribe-transactions", f"{hashed_signature}.json")
     with open(file_path, "w") as f:
         json.dump(tx_data, f, indent=2)
     print(f"Saved transaction: {hashed_signature[:8]}...")
@@ -64,27 +86,30 @@ async def listen_for_transactions():
                             if "transactions" in block:
                                 transactions = block["transactions"]
                                 for tx in transactions:
-                                    if isinstance(tx, dict) and "transaction" in tx:
-                                        if (
-                                            isinstance(tx["transaction"], list)
-                                            and len(tx["transaction"]) > 0
-                                        ):
-                                            tx_signature = tx["transaction"][0]
-                                        elif (
-                                            isinstance(tx["transaction"], dict)
-                                            and "signatures" in tx["transaction"]
-                                        ):
-                                            tx_signature = tx["transaction"][
-                                                "signatures"
-                                            ][0]
-                                        else:
-                                            continue
+                                    tx_signature = extract_signature(tx)
+                                    if tx_signature:
                                         await save_transaction(tx, tx_signature)
                 elif "result" in data:
                     print("Subscription confirmed")
+            except websockets.ConnectionClosed:
+                # Leave the recv loop so main() can reconnect. Swallowing this here
+                # would make the next recv() raise immediately, spinning the loop.
+                print("WebSocket connection closed.")
+                break
             except Exception as e:
                 print(f"An error occurred: {e!s}")
 
 
+async def main() -> None:
+    """Reconnect for as long as the script runs."""
+    while True:
+        try:
+            await listen_for_transactions()
+        except (websockets.WebSocketException, OSError) as e:
+            print(f"Connection error: {e!s}")
+        print("Reconnecting in 5 seconds...")
+        await asyncio.sleep(5)
+
+
 if __name__ == "__main__":
-    asyncio.run(listen_for_transactions())
+    asyncio.run(main())

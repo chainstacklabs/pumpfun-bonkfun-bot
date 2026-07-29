@@ -538,6 +538,14 @@ async def listen_for_migrations(wss_url, provider_name, tracker, known_events=No
                                 except Exception as e:
                                     print(f"[ERROR] Failed to decode Program data: {e}")
 
+                    except websockets.ConnectionClosed:
+                        # Break out so the outer loop reconnects. Swallowing the
+                        # disconnect here makes every following recv() raise
+                        # immediately, spinning the loop instead of retrying.
+                        print(
+                            f"[WARN] Migration listener for {provider_name}: connection closed"
+                        )
+                        break
                     except Exception as e:
                         print(f"[ERROR] Migration listener for {provider_name}: {e}")
 
@@ -651,6 +659,13 @@ async def listen_for_markets(wss_url, provider_name, tracker, known_markets):
                         except Exception as e:
                             print(f"[ERROR] Failed to decode account: {e}")
 
+                    except websockets.ConnectionClosed:
+                        # Same reason as the migration listener above: break so the
+                        # outer loop can reconnect instead of spinning on recv().
+                        print(
+                            f"[WARN] Market listener for {provider_name}: connection closed"
+                        )
+                        break
                     except Exception as e:
                         print(f"[ERROR] Market listener for {provider_name}: {e}")
 
