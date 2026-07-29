@@ -1,25 +1,22 @@
-"""Watch for pump.fun coins approaching graduation, over plain WebSocket RPC.
+"""Watch for pump.fun coins approaching graduation, over Geyser gRPC.
 
 Usage:
-    uv run learning-examples/bonding-curve-progress/get_graduating_tokens.py
-    uv run learning-examples/bonding-curve-progress/get_graduating_tokens.py --min-progress 95
+    uv run learning-examples/bonding-curve-progress/get_graduating_tokens_geyser.py
+    uv run learning-examples/bonding-curve-progress/get_graduating_tokens_geyser.py --min-progress 95
 
-Why a subscription and not `getProgramAccounts`: the pump.fun program now owns
-over 10 million accounts, and every provider refuses to scan it. Helius, Alchemy
-and dRPC reject with `Too many accounts requested (10000001 pubkeys)`; QuickNode
-and Chainstack time out. No filter set fixes that — the rejection is on program
-size, before filters apply. `getProgramAccountsV2` is a provider extension (Helius,
-Solana Tracker), not core Agave, and its `limit` is a *scan* budget rather than a
-result count, so answering this question with it means ~1000 sequential pages.
+Needs GEYSER_ENDPOINT, GEYSER_API_TOKEN and GEYSER_AUTH_TYPE in .env, plus
+SOLANA_NODE_RPC_ENDPOINT for the two things the stream cannot answer: the Global
+baseline and each coin's mint. Geyser is a paid add-on, so `get_graduating_tokens.py`
+is the portable version of this report — it runs on any endpoint, including the public
+one. This variant exists because Geyser is common among traders and gives you the slot
+and transaction signature behind every update, which the WebSocket feed does not.
 
-`programSubscribe` sidesteps the scan entirely. A curve can only approach
-graduation by being traded, and every write to it pushes the full 151-byte account,
-so each notification carries everything needed to compute progress — there is no
-state to accumulate and no cold start beyond the next trade. Verified accepted on
-both a paid endpoint and the public `api.mainnet-beta.solana.com`.
-
-See `get_graduating_tokens_geyser.py` for the same report over Geyser gRPC, which
-also gives you the transaction signature behind each update.
+Why a subscription and not `getProgramAccounts`: the pump.fun program now owns over
+10 million accounts, and every provider refuses to scan it — the rejection is on
+program size, before filters apply. A curve can only approach graduation by being
+traded, and every write pushes the full 151-byte account, so each update carries
+everything needed to compute progress: no accumulated state, no cold start beyond the
+next trade.
 
 Selecting a graduation threshold
 --------------------------------
@@ -49,32 +46,41 @@ migration want the 3-byte one, a wider funnel the 2-byte one.
 Checked against mainnet by running the filtered and unfiltered subscriptions side by
 side for a minute: same curves, nothing dropped, nothing extra.
 
-`dataSize: 151` restricts this to the current curve layout. The original 49-byte
-layout (no `creator` field) still has accounts with `complete = false`, but none of
-them are written to any more — verified over a 45s window in which all 205 updates
-across 24 curves were 151-byte accounts.
+`datasize = 151` restricts this to the current curve layout. The original 49-byte
+layout still has accounts with `complete = false`, but none of them are written to any
+more — verified over a 45s window in which all 205 updates across 24 curves were
+151-byte accounts.
 """
 
 import argparse
 import asyncio
-import base64
-import json
 import os
 import struct
 import sys
+from pathlib import Path
 from typing import Any, Final
 
-import websockets
+import grpc
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.types import TokenAccountOpts
 from solders.pubkey import Pubkey
+from solders.signature import Signature
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from src.geyser.generated import (
+    geyser_pb2,
+    geyser_pb2_grpc,
+)
 
 load_dotenv()
 
 # Constants
 RPC_ENDPOINT: Final[str] = os.environ.get("SOLANA_NODE_RPC_ENDPOINT", "")
-WSS_ENDPOINT: Final[str] = os.environ.get("SOLANA_NODE_WSS_ENDPOINT", "")
+GEYSER_ENDPOINT: Final[str] = os.environ.get("GEYSER_ENDPOINT", "")
+GEYSER_API_TOKEN: Final[str] = os.environ.get("GEYSER_API_TOKEN", "")
+GEYSER_AUTH_TYPE: Final[str] = os.environ.get("GEYSER_AUTH_TYPE", "x-token").lower()
+
 PUMP_PROGRAM_ID: Final[Pubkey] = Pubkey.from_string(
     "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 )
@@ -82,8 +88,8 @@ PUMP_GLOBAL: Final[Pubkey] = Pubkey.from_string(
     "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"
 )
 
-# Coins created by `create_v2` are Token-2022, so that is tried first. Querying
-# under the wrong token program returns nothing at all.
+# Coins created by `create_v2` are Token-2022, so that is tried first. Querying under
+# the wrong token program returns nothing at all.
 TOKEN_2022_PROGRAM_ID: Final[Pubkey] = Pubkey.from_string(
     "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
 )
@@ -102,6 +108,7 @@ _QUOTE_MINT_OFFSET: Final[int] = 83
 _GLOBAL_INITIAL_REAL_TOKEN_RESERVES_OFFSET: Final[int] = 89
 
 _BAD_DISCRIMINATOR_MSG: Final[str] = "Invalid discriminator for bonding curve"
+_BAD_AUTH_TYPE_MSG: Final[str] = "GEYSER_AUTH_TYPE must be 'x-token' or 'basic'"
 
 # Quote assets. `quote_mint` is all zeros on SOL-paired coins, and the quote-side
 # reserves are in that mint's raw units — 1e9 for SOL, 1e6 for USDC.
@@ -147,35 +154,66 @@ def zero_prefix_gate(bound_raw: int) -> tuple[int, bytes] | None:
     return None
 
 
-def build_filters(bound_raw: int) -> list[dict[str, Any]]:
-    """Assemble the server-side `programSubscribe` filters.
+def build_subscribe_request(bound_raw: int) -> geyser_pb2.SubscribeRequest:
+    """Build the Geyser account subscription for near-graduation curves.
 
     Args:
         bound_raw: Highest qualifying `real_token_reserves`, in raw units
 
     Returns:
-        Filter dicts in the shape the RPC expects
+        The subscription request
     """
+    request = geyser_pb2.SubscribeRequest()
+    accounts = request.accounts["graduating_curves"]
+    accounts.owner.append(str(PUMP_PROGRAM_ID))
 
-    def memcmp(offset: int, raw: bytes) -> dict[str, Any]:
-        return {
-            "memcmp": {
-                "offset": offset,
-                "bytes": base64.b64encode(raw).decode(),
-                "encoding": "base64",
-            }
-        }
+    accounts.filters.add().datasize = CURVE_ACCOUNT_LEN
 
-    filters: list[dict[str, Any]] = [
-        {"dataSize": CURVE_ACCOUNT_LEN},
-        memcmp(0, BONDING_CURVE_DISCRIMINATOR),
-        memcmp(_COMPLETE_OFFSET, b"\x00"),  # Not graduated yet
-    ]
+    discriminator = accounts.filters.add().memcmp
+    discriminator.offset = 0
+    discriminator.bytes = BONDING_CURVE_DISCRIMINATOR
+
+    not_complete = accounts.filters.add().memcmp
+    not_complete.offset = _COMPLETE_OFFSET
+    not_complete.bytes = b"\x00"  # Not graduated yet
 
     gate = zero_prefix_gate(bound_raw)
     if gate:
-        filters.append(memcmp(*gate))
-    return filters
+        reserves = accounts.filters.add().memcmp
+        reserves.offset, reserves.bytes = gate
+
+    request.commitment = geyser_pb2.CommitmentLevel.PROCESSED
+    return request
+
+
+def create_geyser_connection() -> tuple[Any, grpc.aio.Channel]:
+    """Open an authenticated gRPC channel to the Geyser endpoint.
+
+    Returns:
+        The Geyser stub and the channel backing it
+
+    Raises:
+        ValueError: If GEYSER_AUTH_TYPE is not a supported scheme
+    """
+    if GEYSER_AUTH_TYPE == "x-token":
+        auth = grpc.metadata_call_credentials(
+            lambda _, callback: callback((("x-token", GEYSER_API_TOKEN),), None)
+        )
+    elif GEYSER_AUTH_TYPE == "basic":
+        auth = grpc.metadata_call_credentials(
+            lambda _, callback: callback(
+                (("authorization", f"Basic {GEYSER_API_TOKEN}"),), None
+            )
+        )
+    else:
+        raise ValueError(_BAD_AUTH_TYPE_MSG)
+
+    creds = grpc.composite_channel_credentials(grpc.ssl_channel_credentials(), auth)
+    endpoint = (
+        GEYSER_ENDPOINT.replace("https://", "").replace("http://", "").rstrip("/")
+    )
+    channel = grpc.aio.secure_channel(endpoint, creds)
+    return geyser_pb2_grpc.GeyserStub(channel), channel
 
 
 def parse_curve(data: bytes) -> dict[str, Any]:
@@ -238,9 +276,9 @@ async def resolve_mint(client: AsyncClient, curve: Pubkey) -> Pubkey | None:
 
     The curve account carries no mint field and `["bonding-curve", mint]` is not
     reversible, so this goes through the associated bonding curve — an ordinary ATA
-    owned by the curve. That ATA belongs to Token-2022 for `create_v2` coins, which
-    is every coin now being launched, so Token-2022 is tried first. The answer is
-    checked by re-deriving the curve PDA from the mint.
+    owned by the curve. That ATA belongs to Token-2022 for `create_v2` coins, which is
+    every coin now being launched, so Token-2022 is tried first. The answer is checked
+    by re-deriving the curve PDA from the mint.
 
     Args:
         client: Connected RPC client
@@ -271,6 +309,19 @@ async def resolve_mint(client: AsyncClient, curve: Pubkey) -> Pubkey | None:
     return None
 
 
+def progress_to_bound(baseline: float, min_progress: float) -> int:
+    """Convert a progress threshold into a raw `real_token_reserves` ceiling.
+
+    Args:
+        baseline: Launch-time real token reserves, in whole tokens
+        min_progress: Graduation progress threshold, as a percentage
+
+    Returns:
+        The highest raw reserves value that still qualifies
+    """
+    return int(baseline * (1 - min_progress / 100) * 10**TOKEN_DECIMALS)
+
+
 def print_banner(baseline: float, min_progress: float) -> None:
     """Describe the baseline and the filter that will be installed.
 
@@ -292,19 +343,6 @@ def print_banner(baseline: float, min_progress: float) -> None:
     else:
         print("Pre-filter: none, so every curve arrives and is checked here")
     print("Waiting for trades on qualifying curves...\n")
-
-
-def progress_to_bound(baseline: float, min_progress: float) -> int:
-    """Convert a progress threshold into a raw `real_token_reserves` ceiling.
-
-    Args:
-        baseline: Launch-time real token reserves, in whole tokens
-        min_progress: Graduation progress threshold, as a percentage
-
-    Returns:
-        The highest raw reserves value that still qualifies
-    """
-    return int(baseline * (1 - min_progress / 100) * 10**TOKEN_DECIMALS)
 
 
 class GraduationReporter:
@@ -336,7 +374,7 @@ class GraduationReporter:
         Args:
             curve: The bonding curve address
             data: Raw bonding curve account data
-            suffix: Extra provenance to append to the line, if the transport has any
+            suffix: Extra provenance to append to the line
         """
         try:
             state = parse_curve(data)
@@ -369,84 +407,67 @@ class GraduationReporter:
         )
 
 
-async def stream_once(
-    reporter: GraduationReporter, filters: list[dict[str, Any]]
-) -> None:
-    """Subscribe and consume notifications until the connection drops.
+async def stream_once(reporter: GraduationReporter, bound_raw: int) -> None:
+    """Subscribe over Geyser and consume account updates until the stream ends.
 
     Args:
         reporter: Sink for decoded curve updates
-        filters: Server-side filters for the subscription
-
-    Raises:
-        ConnectionRefusedError: If the endpoint rejects the subscription outright
+        bound_raw: Highest qualifying `real_token_reserves`, in raw units
     """
-    async with websockets.connect(WSS_ENDPOINT, max_size=None) as ws:
-        await ws.send(
-            json.dumps(
-                {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "programSubscribe",
-                    "params": [
-                        str(PUMP_PROGRAM_ID),
-                        {
-                            "encoding": "base64",
-                            "commitment": "processed",
-                            "filters": filters,
-                        },
-                    ],
-                }
+    stub, channel = create_geyser_connection()
+    try:
+        request = build_subscribe_request(bound_raw)
+        async for update in stub.Subscribe(iter([request])):
+            if not update.HasField("account"):
+                continue
+
+            account = update.account.account
+            signature = (
+                str(Signature(bytes(account.txn_signature)))
+                if account.txn_signature
+                else "<none>"
             )
-        )
-
-        ack = json.loads(await ws.recv())
-        if "error" in ack:
-            raise ConnectionRefusedError(str(ack["error"]))
-
-        while True:
-            # ConnectionClosed deliberately propagates to the reconnect handler in
-            # watch(). Swallowing it here would make every further recv() raise
-            # instantly, forever. A JSONDecodeError is per-message rather than
-            # per-connection, so that one is safe to skip.
-            try:
-                message = json.loads(await ws.recv())
-            except json.JSONDecodeError:
-                continue
-
-            if message.get("method") != "programNotification":
-                continue
-
-            value = message["params"]["result"]["value"]
             await reporter.handle(
-                Pubkey.from_string(value["pubkey"]),
-                base64.b64decode(value["account"]["data"][0]),
+                Pubkey.from_bytes(bytes(account.pubkey)),
+                bytes(account.data),
+                suffix=f"  slot={update.account.slot}  sig={signature}",
             )
+    finally:
+        await channel.close()
 
 
 async def watch(min_progress: float) -> None:
-    """Stream curve updates and report coins at or above `min_progress`.
+    """Stream curve updates over Geyser and report coins at or above `min_progress`.
 
     Args:
         min_progress: Graduation progress threshold, as a percentage
     """
-    if not WSS_ENDPOINT or not RPC_ENDPOINT:
-        print("❌ Set SOLANA_NODE_RPC_ENDPOINT and SOLANA_NODE_WSS_ENDPOINT in .env")
+    if not GEYSER_ENDPOINT or not GEYSER_API_TOKEN:
+        print("❌ Set GEYSER_ENDPOINT and GEYSER_API_TOKEN in .env")
+        return
+    if not RPC_ENDPOINT:
+        print("❌ Set SOLANA_NODE_RPC_ENDPOINT in .env (needed for Global and mints)")
         return
 
     async with AsyncClient(RPC_ENDPOINT) as client:
         baseline = await fetch_initial_real_token_reserves(client)
         print_banner(baseline, min_progress)
 
-        filters = build_filters(progress_to_bound(baseline, min_progress))
+        bound_raw = progress_to_bound(baseline, min_progress)
         reporter = GraduationReporter(client, baseline, min_progress)
 
         while True:
             try:
-                await stream_once(reporter, filters)
-            except ConnectionRefusedError as e:
-                print(f"❌ Subscription rejected: {e}")
+                await stream_once(reporter, bound_raw)
+            except ValueError as e:
+                print(f"❌ {e}")
                 return
+            except grpc.aio.AioRpcError as e:
+                print(
+                    f"⚠️ gRPC error ({e.code()}): {e.details()}; "
+                    f"reconnecting in {RECONNECT_DELAY}s"
+                )
+                await asyncio.sleep(RECONNECT_DELAY)
             except Exception as e:  # noqa: BLE001 - keep watching across hiccups
                 print(f"⚠️ {type(e).__name__}: {e}; reconnecting in {RECONNECT_DELAY}s")
                 await asyncio.sleep(RECONNECT_DELAY)
@@ -459,7 +480,7 @@ def main() -> None:
     sys.stdout.reconfigure(line_buffering=True)
 
     parser = argparse.ArgumentParser(
-        description="Report pump.fun coins approaching graduation, over WebSocket RPC"
+        description="Report pump.fun coins approaching graduation, over Geyser gRPC"
     )
     parser.add_argument(
         "--min-progress",
