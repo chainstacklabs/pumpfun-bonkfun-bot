@@ -92,6 +92,11 @@ jobs:
               
               // Trigger on either multiple patterns or high spam score
               if (foundPatterns.length > 2 || spamScore >= 3) {
+                const warningMessage =
+                  `⚠️ Potential scam detected in comment by ${author}:\n` +
+                  `- Suspicious patterns found: ${foundPatterns.join(', ')}\n` +
+                  `${suspiciousLinks ? '- Contains external links\n' : ''}` +
+                  `\n@${context.repo.owner} Please review this comment.`;
                 try {
                   // Create a warning comment
                   await github.rest.issues.createComment({
