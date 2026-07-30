@@ -151,11 +151,13 @@ user-supplied and post-2026-04-28 may differ from the canonical `BC.creator`
 **not** set the flag; the geyser parser prefers `meta.log_messages` over
 instruction decoding for exactly this reason. `trade.trust_create_event:
 false` is the escape hatch back to always-refresh. PumpPortal payloads carry
-none of these fields and always refresh. Related pitfall: the strict IDL
-instruction decoder rejects `create_v2` transactions that omit the trailing
-`is_cashback_enabled` OptionBool (a legal wire form), so the instruction path
-alone silently misses those coins — one more reason the log/event path is
-preferred everywhere.
+none of these fields and always refresh. Related pitfall (fixed in #184): the
+IDL instruction decoder used to reject `create_v2` transactions that omit the
+trailing `is_cashback_enabled` OptionBool (a legal wire form), silently
+dropping those coins from the instruction path. It now reports omitted
+trailing option-typed args as unset — `verify_create_v2_optional_args.py`
+machine-checks that, and that mandatory args still fail the decode. The
+log/event path stays preferred for the canonical-creator reason above.
 
 ### Verifying transaction-status handling
 
@@ -315,7 +317,9 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   `create_v2` instructions carry `0001` and `00` after `creator`: one sends both
   trailing args, the other omits the last. A decoder that reads a fixed number of
   trailing bytes raises `IndexError` on roughly half of all coins. Decode
-  trailing args defensively and report a missing one as unset.
+  trailing args defensively and report a missing one as unset —
+  `utils/idl_parser.py` does this for trailing option-typed args since #184
+  (`uv run learning-examples/verify_create_v2_optional_args.py` checks it).
 - `create_v2` accounts 1-16 are in the IDL; accounts **17-19 are optional
   remaining accounts** (`quote_mint`, `associated_quote_bonding_curve`,
   `quote_token_program`). All three or none. This is the only way to read a new

@@ -212,15 +212,11 @@ def check_instruction_parser_stays_conservative() -> bool:
     account_keys = [bytes(k) for k in msg.account_keys]
     parser = _event_parser()
     for ix in msg.instructions:
-        data = bytes(ix.data)
         # The fixture's create_v2 omits the trailing is_cashback_enabled
-        # OptionBool (a legal wire form the strict IDL decoder rejects — see
-        # the "decode trailing args defensively" gotcha in CLAUDE.md), so
-        # append the byte to exercise the parser's flag behaviour.
-        if data.startswith(bytes.fromhex("d6904cec5f8b31b4")):
-            data += b"\x00"
+        # OptionBool — a legal wire form the decoder accepts since #184
+        # (verify_create_v2_optional_args.py covers the decode itself).
         token_info = parser.parse_token_creation_from_instruction(
-            data, list(ix.accounts), account_keys
+            bytes(ix.data), list(ix.accounts), account_keys
         )
         if token_info is not None:
             ok = getattr(token_info, "state_from_event", False) is False

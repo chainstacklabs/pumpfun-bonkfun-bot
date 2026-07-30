@@ -15,6 +15,7 @@ DISCRIMINATOR_SIZE = 8
 PUBLIC_KEY_SIZE = 32
 STRING_LENGTH_PREFIX_SIZE = 4
 ENUM_DISCRIMINATOR_SIZE = 1
+OPTION_PREFIX_SIZE = 1
 
 
 class IDLParser:
@@ -110,19 +111,9 @@ class IDLParser:
         instruction = self.instructions[discriminator]
         data_args = ix_data[DISCRIMINATOR_SIZE:]
 
-        # Decode instruction arguments
-        args = {}
-        decode_offset = 0
-        for arg in instruction.get("args", []):
-            try:
-                value, decode_offset = self._decode_type(
-                    data_args, decode_offset, arg["type"]
-                )
-                args[arg["name"]] = value
-            except Exception as e:
-                if self.verbose:
-                    print(f"❌ Decode error in argument '{arg['name']}': {e}")
-                return None
+        args = self._decode_instruction_args(instruction, data_args)
+        if args is None:
+            return None
 
         # Helper to safely retrieve account public keys
         def get_account_key(index: int) -> str | None:
@@ -143,6 +134,37 @@ class IDLParser:
             "args": args,
             "accounts": account_info,
         }
+
+    def _decode_instruction_args(
+        self, instruction: dict[str, Any], data_args: bytes
+    ) -> dict[str, Any] | None:
+        """Decode instruction arguments, or None if the data is malformed.
+
+        Trailing option-typed args can legally be absent from the wire
+        (create_v2's is_cashback_enabled, issue #184): when the buffer is
+        exhausted and every remaining arg is optional, they are reported
+        as unset instead of failing the whole decode.
+        """
+        args: dict[str, Any] = {}
+        decode_offset = 0
+        arg_defs = instruction.get("args", [])
+        for i, arg in enumerate(arg_defs):
+            if decode_offset >= len(data_args) and all(
+                self._is_optional_type(remaining["type"]) for remaining in arg_defs[i:]
+            ):
+                for remaining in arg_defs[i:]:
+                    args[remaining["name"]] = None
+                break
+            try:
+                value, decode_offset = self._decode_type(
+                    data_args, decode_offset, arg["type"]
+                )
+                args[arg["name"]] = value
+            except Exception as e:
+                if self.verbose:
+                    print(f"❌ Decode error in argument '{arg['name']}': {e}")
+                return None
+        return args
 
     # --------------------------------------------------------------------------
     # Public Methods (External API) - Events
@@ -361,8 +383,15 @@ class IDLParser:
         """Calculate minimum data sizes for each instruction."""
         for discriminator, instruction in self.instructions.items():
             try:
+                required_args = list(instruction.get("args", []))
+                # Trailing option-typed args may be omitted from the wire
+                # entirely, so they contribute nothing to the minimum size.
+                while required_args and self._is_optional_type(
+                    required_args[-1]["type"]
+                ):
+                    required_args.pop()
                 min_size = DISCRIMINATOR_SIZE
-                for arg in instruction.get("args", []):
+                for arg in required_args:
                     min_size += self._calculate_type_min_size(arg["type"])
                 self.instruction_min_sizes[discriminator] = min_size
                 if self.verbose and instruction["name"] == "initialize":
@@ -385,10 +414,27 @@ class IDLParser:
                 element_type, array_length = type_def["array"]
                 element_size = self._calculate_type_min_size(element_type)
                 return element_size * array_length
+            if "option" in type_def:
+                # The None form is just the tag byte.
+                return OPTION_PREFIX_SIZE
 
         raise ValueError(
             f"Invalid or unknown type definition for size calculation: {type_def}"
         )
+
+    def _is_optional_type(self, type_def: str | dict) -> bool:
+        """Whether a type may legally be absent when it trails instruction data.
+
+        Covers Anchor's native ``option`` wrapper and pump.fun's ``OptionBool``
+        defined type — both are observed omitted from the wire when trailing.
+        """
+        if not isinstance(type_def, dict):
+            return False
+        if "option" in type_def:
+            return True
+        if "defined" in type_def:
+            return self._get_defined_type_name(type_def) == "OptionBool"
+        return False
 
     def _get_primitive_size(self, type_name: str) -> int:
         """Get size in bytes for primitive types from the central map."""
@@ -449,8 +495,22 @@ class IDLParser:
                 return self._decode_defined_type(data, offset, type_name)
             if "array" in type_def:
                 return self._decode_array(data, offset, type_def["array"])
+            if "option" in type_def:
+                return self._decode_option(data, offset, type_def["option"])
 
         raise ValueError(f"Invalid or unknown type definition for decoding: {type_def}")
+
+    def _decode_option(
+        self, data: bytes, offset: int, inner_type: str | dict
+    ) -> tuple[Any, int]:
+        """Decode Anchor's native option type: a 1-byte tag, then the value if Some."""
+        tag = struct.unpack_from("<B", data, offset)[0]
+        offset += OPTION_PREFIX_SIZE
+        if tag == 0:
+            return None, offset
+        if tag != 1:
+            raise ValueError(f"Invalid option tag {tag}")  # noqa: TRY003
+        return self._decode_type(data, offset, inner_type)
 
     def _decode_array(
         self, data: bytes, offset: int, array_def: list
