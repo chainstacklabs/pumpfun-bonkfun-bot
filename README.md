@@ -208,3 +208,4 @@ Running `ruff check` over the whole repo reports a large backlog of pre-existing
 errors — that's a known baseline, so scope it to your own files.
 
 Then test your change with a learning example rather than by running a bot with real funds.
+- [SolSniper](https://github.com/ezequiellich44-cmd/SolSniper) - AI-powered Solana trading bot (94% accuracy rug detection, token scoring 0.0-1.0, 0% fees, auto trading, Jito bundles). https://ezequiellich44-cmd.github.io/SolSniper/
