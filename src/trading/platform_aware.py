@@ -610,8 +610,12 @@ class PlatformAwareSeller(Trader):
             token_info: Token information for the sell operation
             token_amount: Token amount to sell (from buy result). Required to avoid
                          RPC balance query delays.
-            token_price: Token price in SOL (from buy result). Required to avoid
-                        RPC pool state query delays.
+            token_price: Reference price in the quote asset that the slippage
+                        floor is computed from. Required rather than read here,
+                        to avoid RPC pool state query delays — pass the freshest
+                        price the caller has. A stale price that is above the
+                        market sets a floor the pool cannot pay and the sell
+                        reverts (pump.fun 6003 TooLittleSolReceived).
 
         Returns:
             TradeResult with operation outcome
@@ -698,7 +702,7 @@ class PlatformAwareSeller(Trader):
 
             logger.info(f"Token balance: {token_balance_decimal:.6f}")
             logger.info(
-                f"Price per Token (from buy): {token_price_sol:.8f} {quote_label}"
+                f"Reference price per token: {token_price_sol:.8f} {quote_label}"
             )
 
             if token_balance == 0:

@@ -29,7 +29,10 @@ from config_loader import (
     print_config_summary,
     validate_platform_listener_combination,
 )
-from trading.universal_trader import UniversalTrader
+from trading.universal_trader import (
+    DEFAULT_MAX_EXIT_SELL_ATTEMPTS,
+    UniversalTrader,
+)
 from utils.logger import setup_file_logging
 
 
@@ -109,6 +112,9 @@ async def start_bot(config_path: str):
             stop_loss_percentage=cfg["trade"].get("stop_loss_percentage"),
             max_hold_time=cfg["trade"].get("max_hold_time"),
             price_check_interval=cfg["trade"].get("price_check_interval", 10),
+            max_exit_sell_attempts=cfg["trade"].get(
+                "max_exit_sell_attempts", DEFAULT_MAX_EXIT_SELL_ATTEMPTS
+            ),
             # Listener configuration
             listener_type=cfg["filters"]["listener_type"],
             # Geyser configuration (if applicable)

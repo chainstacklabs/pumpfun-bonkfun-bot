@@ -35,6 +35,13 @@ CONFIG_VALIDATION_RULES = [
     ("trade.buy_slippage", float, 0, 1, "trade.buy_slippage must be between 0 and 1"),
     ("trade.sell_slippage", float, 0, 1, "trade.sell_slippage must be between 0 and 1"),
     (
+        "trade.max_exit_sell_attempts",
+        int,
+        1,
+        100,
+        "trade.max_exit_sell_attempts must be between 1 and 100",
+    ),
+    (
         "priority_fees.fixed_amount",
         int,
         0,

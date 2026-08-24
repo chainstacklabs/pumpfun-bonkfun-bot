@@ -33,6 +33,11 @@ trade:
   #stop_loss_percentage: 0.1 # Stop loss at 10% loss (0.1 = 10%)
   max_hold_time: 15 # Maximum hold time in seconds for TP/SL strategy, for time_based - see wait_after_buy
   #price_check_interval: 2 # Check price every 2 seconds
+  # A tp/sl exit sell that reverts on-chain (slippage, curve moved under it) is
+  # retried on the next price check, re-reading the price first so the slippage
+  # floor matches the market. After this many attempts the bot gives up and
+  # leaves the position open - tokens are still held.
+  #max_exit_sell_attempts: 3
 
   # EXTREME FAST mode configuration
   # When enabled, skips waiting for the bonding curve to stabilize and RPC price check.

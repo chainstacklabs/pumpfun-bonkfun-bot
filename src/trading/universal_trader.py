@@ -51,6 +51,14 @@ except ImportError:
 
 logger = get_logger(__name__)
 
+# Default for trade.max_exit_sell_attempts: how many times a tp/sl exit sell is
+# re-attempted before the position is left open. A revert (slippage, curve
+# moved) is not retried by the seller itself — its max_retries only covers
+# transaction submission — so the retry has to happen in the monitor loop,
+# where the price is re-read first. Bounded so a token that keeps reverting
+# cannot pin the bot on one position forever.
+DEFAULT_MAX_EXIT_SELL_ATTEMPTS = 3
+
 
 def _resolve_quote_config(
     buy_amount: float,
@@ -114,6 +122,7 @@ class UniversalTrader:
         stop_loss_percentage: float | None = None,
         max_hold_time: int | None = None,
         price_check_interval: int = 10,
+        max_exit_sell_attempts: int = DEFAULT_MAX_EXIT_SELL_ATTEMPTS,
         # Priority fee configuration
         enable_dynamic_priority_fee: bool = False,
         enable_fixed_priority_fee: bool = True,
@@ -233,7 +242,12 @@ class UniversalTrader:
         self.take_profit_percentage = take_profit_percentage
         self.stop_loss_percentage = stop_loss_percentage
         self.max_hold_time = max_hold_time
-        self.price_check_interval = price_check_interval
+        # Both govern the position monitor loop. The attempt cap is clamped
+        # because a value below 1 would mean "never even try to sell".
+        self.price_check_interval, self.max_exit_sell_attempts = (
+            price_check_interval,
+            max(1, max_exit_sell_attempts),
+        )
 
         # Timing parameters
         self.wait_time_after_creation = wait_time_after_creation
@@ -286,6 +300,7 @@ class UniversalTrader:
             logger.info(
                 f"Max hold time: {self.max_hold_time if self.max_hold_time else 'None'} seconds"
             )
+            logger.info(f"Max exit sell attempts: {self.max_exit_sell_attempts}")
 
         logger.info(f"Max token age: {self.max_token_age} seconds")
 
@@ -650,6 +665,7 @@ class UniversalTrader:
         # Get pool address for price monitoring using platform-agnostic method
         pool_address = self._get_pool_address(token_info)
         curve_manager = self.platform_implementations.curve_manager
+        exit_sell_attempts = 0
 
         while position.is_active:
             try:
@@ -669,11 +685,16 @@ class UniversalTrader:
                         f"Position PnL: {pnl['price_change_pct']:.2f}% ({pnl['unrealized_pnl_sol']:.6f} SOL)"
                     )
 
-                    # Execute sell with position quantity and entry price to avoid RPC delays
+                    # Sell against the price that just triggered the exit, not
+                    # the entry price: the seller turns this into the slippage
+                    # floor, and by definition an exit fires once the price has
+                    # moved away from entry. current_price cost no extra RPC
+                    # call — it was fetched at the top of this iteration.
+                    exit_sell_attempts += 1
                     sell_result = await self.seller.execute(
                         token_info,
                         token_amount=position.quantity,
-                        token_price=position.entry_price,
+                        token_price=current_price,
                     )
 
                     if sell_result.success:
@@ -708,15 +729,25 @@ class UniversalTrader:
                             self.cleanup_with_priority_fee,
                             self.cleanup_force_close_with_burn,
                         )
-                    else:
-                        logger.error(
-                            f"Failed to exit position: {sell_result.error_message}"
-                        )
-                        # Keep monitoring in case sell can be retried
+                        break
 
-                    break
+                    logger.error(
+                        f"Failed to exit position (attempt "
+                        f"{exit_sell_attempts}/{self.max_exit_sell_attempts}): "
+                        f"{sell_result.error_message}"
+                    )
+                    if exit_sell_attempts >= self.max_exit_sell_attempts:
+                        logger.error(
+                            f"Giving up on exiting {token_info.symbol} after "
+                            f"{exit_sell_attempts} attempts. Position stays open "
+                            f"and is no longer monitored - tokens are still held."
+                        )
+                        break
+                    # Keep monitoring: the next iteration re-reads the price and
+                    # retries the sell with a floor that matches the market.
                 else:
                     # Log current status
+                    exit_sell_attempts = 0
                     pnl = position.get_pnl(current_price)
                     logger.debug(
                         f"Position status: {current_price:.8f} SOL ({pnl['price_change_pct']:+.2f}%)"
