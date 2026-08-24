@@ -191,6 +191,36 @@ with `BuybackFeeRecipientMissing` (6062) printed as confirmed buys.
   and `str()` on it is empty, so the caller logs a blank reason. A slow
   `getAccountInfo` is enough to take down a whole listener run this way.
 
+### Verifying the tp/sl exit path (issue #189)
+
+```bash
+# Offline: the exit sell prices off the price that triggered it, a reverted
+# exit sell is retried, and the retry is bounded
+uv run learning-examples/verify_tp_sl_exit_price.py
+```
+
+`PlatformAwareSeller.execute` does not read a price — the `token_price` it is
+handed **is** the slippage floor (`min_quote_output = amount * price *
+(1 - slippage)`). So the caller owns the floor's correctness. A tp/sl exit fires
+precisely because price left `entry_price`, so pricing the sell off the entry
+sets a floor the pool cannot pay on a stop-loss and the sell reverts with 6003
+`TooLittleSolReceived` — during the drop the stop-loss exists to escape. On a
+take-profit the same mistake runs the other way and the floor protects nothing.
+`_monitor_position_until_exit` already fetches `current_price` at the top of
+each iteration, so passing it costs no extra RPC call; `_handle_time_based_exit`
+genuinely has nothing fresher and keeps passing the buy price.
+
+The seller's `max_retries` covers **transaction submission only**. An on-chain
+revert comes back as `success=False` and is not retried there, so the retry has
+to happen in the monitor loop, where the price is re-read first.
+`trade.max_exit_sell_attempts` (default 3, validated to 1..100) bounds it so a
+token that keeps reverting cannot pin the bot on one position, and the counter
+resets if the price recovers out of the exit band. After the last attempt the
+position is left open and unmonitored — logged loudly, since the tokens are
+still held. Watch the `break`: before #189 it sat outside both branches of
+`if sell_result.success:`, so a failed sell abandoned the position after a
+single try while leaving `is_active=True`.
+
 ### Listener and decoder pitfalls
 
 Each of these was a live bug in `learning-examples/`, all of them invisible
