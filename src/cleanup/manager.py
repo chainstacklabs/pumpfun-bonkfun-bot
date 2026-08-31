@@ -123,7 +123,12 @@ class AccountCleanupManager:
         acquired_raw: int,
         ownership_id: str | None = None,
     ) -> None:
-        """Record the pre-buy baseline and confirmed bot acquisition."""
+        """Record the pre-buy baseline and confirmed bot acquisition.
+
+        Args:
+            ownership_id: Stable position identifier. Reusing it preserves the
+                existing ownership generation and confirmed sell accounting.
+        """
         if (
             isinstance(baseline_raw, bool)
             or not isinstance(baseline_raw, int)
