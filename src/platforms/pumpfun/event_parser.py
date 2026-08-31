@@ -7,6 +7,7 @@ by implementing the EventParser interface with IDL-based event parsing.
 
 import base64
 import struct
+from binascii import Error as BinasciiError
 from time import monotonic
 from typing import Any
 
@@ -337,8 +338,24 @@ class PumpFunEventParser(EventParser):
                 f"🔍 Found {len(program_data_entries)} Program data entries to check"
             )
 
+            matching_event_count = 0
+            for _, encoded_data in program_data_entries:
+                try:
+                    candidate = base64.b64decode(encoded_data, validate=True)
+                except (BinasciiError, TypeError, ValueError):
+                    continue
+                if (
+                    len(candidate) >= 8
+                    and candidate[:8] == self._create_event_discriminator_bytes
+                ):
+                    matching_event_count += 1
+            if matching_event_count > 1:
+                logger.warning(
+                    "Rejecting ambiguous transaction with multiple CreateEvent payloads"
+                )
+                return None
+
             # Every entry was observed in an active pump.fun invocation frame.
-            valid_event_count = 0
             for entry_idx, (log_idx, encoded_data) in enumerate(program_data_entries):
                 try:
                     logger.info(
@@ -366,13 +383,6 @@ class PumpFunEventParser(EventParser):
 
                     if discriminator != self._create_event_discriminator_bytes:
                         continue
-                    valid_event_count += 1
-                    if valid_event_count > 1:
-                        logger.warning(
-                            "Rejecting ambiguous transaction with multiple "
-                            "CreateEvent payloads"
-                        )
-                        return None
 
                     # Try to decode as CreateEvent using IDL parser
                     decoded_event = self._idl_parser.decode_event_data(
@@ -418,9 +428,19 @@ class PumpFunEventParser(EventParser):
                         logger.info(f"❌ Missing required fields: {missing_fields}")
                         continue
 
-                    if not _has_complete_event_state(fields):
-                        logger.info("❌ CreateEvent is missing canonical state fields")
+                    if not isinstance(fields["uri"], str) or any(
+                        not isinstance(fields[name], str) or not fields[name].strip()
+                        for name in ("name", "symbol")
+                    ):
+                        logger.info("❌ CreateEvent contains invalid token metadata")
                         continue
+
+                    complete_event_state = _has_complete_event_state(fields)
+                    if not complete_event_state:
+                        logger.info(
+                            "CreateEvent is missing canonical state fields; "
+                            "retaining it for an authoritative pre-buy refresh"
+                        )
 
                     logger.info(
                         f"🎯 Token found: {fields.get('symbol', 'Unknown')} ({fields.get('name', 'Unknown')})"
@@ -441,23 +461,25 @@ class PumpFunEventParser(EventParser):
                         )
                         continue
 
-                    token_program_id = _coerce_pubkey(fields["token_program"])
+                    token_program_id = _coerce_pubkey(fields.get("token_program"))
                     if token_program_id not in _SUPPORTED_TOKEN_PROGRAMS:
-                        logger.info(
-                            "❌ CreateEvent contains an unsupported token program"
-                        )
-                        continue
+                        complete_event_state = False
+                        token_program_id = None
 
-                    quote_metadata = _resolve_quote_metadata(fields["quote_mint"])
+                    quote_metadata = _resolve_quote_metadata(fields.get("quote_mint"))
                     if quote_metadata is None:
-                        logger.info("❌ CreateEvent contains an unsupported quote mint")
-                        continue
-                    quote_mint, quote_program = quote_metadata
+                        complete_event_state = False
+                        quote_mint = None
+                        quote_program = None
+                    else:
+                        quote_mint, quote_program = quote_metadata
 
                     associated_bonding_curve = (
                         _ADDRESS_PROVIDER.derive_associated_bonding_curve(
                             mint, bonding_curve, token_program_id
                         )
+                        if token_program_id is not None
+                        else None
                     )
                     creator_vault = _ADDRESS_PROVIDER.derive_creator_vault(creator)
 
@@ -465,7 +487,7 @@ class PumpFunEventParser(EventParser):
                         f"✅ Successfully parsed CreateEvent for token: {fields.get('symbol', 'Unknown')}"
                     )
 
-                    state_from_event = True
+                    state_from_event = complete_event_state
                     virtual_quote_reserves = fields.get("virtual_quote_reserves")
                     if not _is_u64(virtual_quote_reserves, positive=True):
                         virtual_quote_reserves = None

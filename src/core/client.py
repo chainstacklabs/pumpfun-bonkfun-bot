@@ -1255,41 +1255,14 @@ class SolanaClient:
         last_valid_height: int,
         requested_commitment: str,
     ) -> bool:
-        """Check finalized evidence, but never infer expiry from prunable absence."""
-        del requested_commitment
-        if not await self._current_block_height_exceeds(
-            last_valid_height,
-            commitment="finalized",
-        ):
-            return False
-        status_available, status = await self._read_signature_status(signature)
-        if not status_available or status is not None:
-            return False
-        history_available, exists = await self._read_transaction_presence(
-            str(signature),
-            "finalized",
-        )
-        if not history_available or exists:
-            return False
-        # Re-check both height and status after the first absence observation.
-        if not await self._current_block_height_exceeds(
-            last_valid_height,
-            commitment="finalized",
-        ):
-            return False
-        status_available, status = await self._read_signature_status(signature)
-        if not status_available or status is not None:
-            return False
-        history_available, exists = await self._read_transaction_presence(
-            str(signature),
-            "finalized",
-        )
-        if not history_available or exists:
-            return False
-        logger.warning(
-            "Finalized RPC history absence cannot prove expiry without "
-            "durable ledger-range coverage"
-        )
+        """Fail closed until durable ledger-range coverage can prove expiry.
+
+        Finalized RPC history is prunable, so block-height advancement plus an
+        absent status or transaction cannot prove that a signed transaction
+        never landed. Avoid spending RPC reads on evidence that can only produce
+        the same unresolved result.
+        """
+        del signature, last_valid_height, requested_commitment
         return False
 
     async def verify_transaction_succeeded(self, signature: str | Signature) -> bool:
@@ -1740,15 +1713,7 @@ class SolanaClient:
         *,
         commitment: str = "confirmed",
     ) -> dict[str, Any] | None:
-        """Fetch transaction result from RPC.
-
-        Args:
-            signature: Transaction signature, base58 string or Signature
-
-
-        Returns:
-            Transaction result dict or None
-        """
+        """Fetch a canonical transaction result, or None when unavailable."""
         # A Signature is not JSON serializable, so it has to be stringified here
         # rather than relying on every caller to remember.
         signature = str(signature)
@@ -1769,7 +1734,15 @@ class SolanaClient:
             ],
         }
 
-        response = await self.post_rpc(body)
+        try:
+            response = await self.post_rpc(body)
+        except JsonRpcError as exc:
+            logger.warning(
+                "Could not read transaction %s...: %s",
+                signature[:16],
+                exc,
+            )
+            return None
         if not response or "result" not in response:
             logger.warning(f"Failed to get transaction {signature}")
             return None

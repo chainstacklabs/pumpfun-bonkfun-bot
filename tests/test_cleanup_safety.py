@@ -40,26 +40,87 @@ class _FakeFees:
         return 0
 
 
+def test_repeated_position_ownership_preserves_sell_accounting() -> None:
+    wallet = Pubkey.new_unique()
+    mint = Pubkey.new_unique()
+    token_program = SystemAddresses.TOKEN_PROGRAM
+    key = (str(wallet), str(mint), str(token_program))
+
+    AccountCleanupManager.record_bot_owned_balance(
+        wallet,
+        mint,
+        token_program,
+        baseline_raw=5,
+        acquired_raw=100,
+        ownership_id="buy-signature-one",
+    )
+    AccountCleanupManager.record_confirmed_sell_delta(
+        wallet,
+        mint,
+        token_program,
+        sold_raw=40,
+    )
+    first = AccountCleanupManager._ownership_records[key]
+
+    AccountCleanupManager.record_bot_owned_balance(
+        wallet,
+        mint,
+        token_program,
+        baseline_raw=5,
+        acquired_raw=100,
+        ownership_id="buy-signature-one",
+    )
+    repeated = AccountCleanupManager._ownership_records[key]
+
+    assert repeated.generation == first.generation
+    assert repeated.confirmed_sold_raw == 40
+
+    AccountCleanupManager.record_bot_owned_balance(
+        wallet,
+        mint,
+        token_program,
+        baseline_raw=5,
+        acquired_raw=100,
+        ownership_id="buy-signature-two",
+    )
+    replacement = AccountCleanupManager._ownership_records[key]
+
+    assert replacement.generation != first.generation
+    assert replacement.confirmed_sold_raw == 0
+
+
 @pytest.mark.asyncio
-async def test_cleanup_does_not_close_unowned_zero_balance_ata(monkeypatch) -> None:
+async def test_cleanup_does_not_close_unowned_zero_balance_ata(
+    monkeypatch,
+    tmp_path,
+) -> None:
     monkeypatch.setattr("cleanup.manager.asyncio.sleep", _no_sleep)
     wallet = _FakeWallet()
     mint = Pubkey.new_unique()
     result = await AccountCleanupManager(
-        _FakeClient(), wallet, _FakeFees()
+        _FakeClient(),
+        wallet,
+        _FakeFees(),
+        journal_path=tmp_path / "cleanup.json",
     ).cleanup_ata(mint, SystemAddresses.TOKEN_PROGRAM)
     assert result.status is CleanupStatus.OWNERSHIP_UNPROVEN
 
 
 @pytest.mark.asyncio
-async def test_cleanup_does_not_unwrap_unowned_positive_wsol(monkeypatch) -> None:
+async def test_cleanup_does_not_unwrap_unowned_positive_wsol(
+    monkeypatch,
+    tmp_path,
+) -> None:
     monkeypatch.setattr("cleanup.manager.asyncio.sleep", _no_sleep)
     wallet = _FakeWallet()
     client = _FakeClient()
     client.get_token_account_balance = _positive_balance
-    result = await AccountCleanupManager(client, wallet, _FakeFees()).cleanup_ata(
-        SystemAddresses.WSOL_MINT, SystemAddresses.TOKEN_PROGRAM
-    )
+    result = await AccountCleanupManager(
+        client,
+        wallet,
+        _FakeFees(),
+        journal_path=tmp_path / "cleanup.json",
+    ).cleanup_ata(SystemAddresses.WSOL_MINT, SystemAddresses.TOKEN_PROGRAM)
     assert result.status is CleanupStatus.OWNERSHIP_UNPROVEN
 
 

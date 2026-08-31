@@ -20,6 +20,21 @@ class _Discriminators:
         }
 
 
+def test_letsbonk_raw_amounts_allow_zero_minimum_but_not_zero_input() -> None:
+    LetsBonkInstructionBuilder._validate_raw_amount(
+        0,
+        "minimum_amount_out",
+        positive=False,
+    )
+
+    with pytest.raises(ValueError, match="amount_in"):
+        LetsBonkInstructionBuilder._validate_raw_amount(
+            0,
+            "amount_in",
+            positive=True,
+        )
+
+
 def _authoritative_token(provider: LetsBonkAddressProvider) -> TokenInfo:
     mint = Pubkey.new_unique()
     quote_mint = SystemAddresses.SOL_MINT

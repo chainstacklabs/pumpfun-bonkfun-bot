@@ -259,17 +259,40 @@ def test_create_event_under_foreign_program_invocation_is_rejected() -> None:
     assert token is None
 
 
-def test_incomplete_pump_create_event_is_rejected() -> None:
+@pytest.mark.parametrize(
+    "missing_field",
+    ("is_cashback_enabled", "quote_mint", "virtual_quote_reserves"),
+)
+def test_incomplete_optional_create_event_is_retained_but_untrusted(
+    missing_field: str,
+) -> None:
     mint = Pubkey.new_unique()
     fields = _canonical_event_fields(mint)
-    fields.pop("quote_mint")
+    fields.pop(missing_field)
     parser = PumpFunEventParser(_StaticEventIDLParser(fields))  # type: ignore[arg-type]
 
     token = parser.parse_token_creation_from_logs(
         _pump_event_logs(), signature="incomplete-event"
     )
 
-    assert token is None
+    assert token is not None
+    assert token.state_from_event is False
+    if missing_field == "quote_mint":
+        assert token.quote_mint is None
+
+
+def test_multiple_create_events_in_one_transaction_are_rejected() -> None:
+    mint = Pubkey.new_unique()
+    parser = PumpFunEventParser(  # type: ignore[arg-type]
+        _StaticEventIDLParser(_canonical_event_fields(mint))
+    )
+    logs = _pump_event_logs()
+    logs.insert(-1, logs[2])
+
+    assert (
+        parser.parse_token_creation_from_logs(logs, signature="ambiguous-events")
+        is None
+    )
 
 
 def test_create_event_with_noncanonical_bonding_curve_is_rejected() -> None:

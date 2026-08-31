@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import json
 from time import monotonic
 from types import SimpleNamespace
@@ -10,7 +11,7 @@ import pytest
 from solders.pubkey import Pubkey
 
 from core.client import TransactionStatus, TransactionSubmissionUnknown
-from core.execution_policy import ExecutionBlocked, ExecutionPolicy
+from core.execution_policy import ExecutionBlocked, ExecutionMode, ExecutionPolicy
 from core.pubkeys import SystemAddresses
 from interfaces.core import Platform, TokenInfo
 from trading.base import TradeResult
@@ -47,6 +48,27 @@ def test_recovery_token_round_trip_preserves_creation_timestamp() -> None:
 
     assert payload["creation_timestamp"] == 123.5
     assert recovered.creation_timestamp == 123.5
+
+
+def test_pumpfun_fast_path_requires_consistent_quote_program_metadata() -> None:
+    token = _token(Platform.PUMP_FUN)
+    token.state_from_event = True
+    token.curve_complete = False
+    buyer = object.__new__(PlatformAwareBuyer)
+    buyer.trust_create_event = True
+
+    token.quote_token_program_id = None
+    assert buyer._can_skip_refresh(token) is False
+
+    token.quote_token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
+    assert buyer._can_skip_refresh(token) is False
+
+    token.quote_token_program_id = SystemAddresses.TOKEN_PROGRAM
+    token.quote_mint = None
+    assert buyer._can_skip_refresh(token) is False
+
+    token.quote_mint = SystemAddresses.WSOL_MINT
+    assert buyer._can_skip_refresh(token) is True
 
 
 @pytest.mark.parametrize(
@@ -405,6 +427,84 @@ async def test_letsbonk_sell_does_not_require_creator_vault_capability(
     assert result.success is True
     assert token.creator is not None
     assert token.creator_vault is None
+
+
+@pytest.mark.parametrize(
+    "failing_method",
+    ["_load_recovery_journal", "_hydrate_submission_recovery"],
+)
+def test_constructor_releases_persistence_resources_after_recovery_failure(
+    monkeypatch,
+    tmp_path,
+    failing_method: str,
+) -> None:
+    wallet = Pubkey.new_unique()
+
+    class LedgerSpy:
+        instances: list[LedgerSpy] = []
+
+        def __init__(self, path) -> None:
+            self.path = path
+            self.closed = False
+            self.instances.append(self)
+
+        def close(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr(
+        "trading.universal_trader.Wallet",
+        lambda private_key: SimpleNamespace(pubkey=wallet),
+    )
+    monkeypatch.setattr("trading.universal_trader.TransactionLedger", LedgerSpy)
+    monkeypatch.setattr(
+        "trading.universal_trader.SolanaClient",
+        lambda *args, **kwargs: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "trading.universal_trader.PriorityFeeManager",
+        lambda *args, **kwargs: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "trading.universal_trader.get_platform_implementations",
+        lambda *args, **kwargs: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "trading.universal_trader.ListenerFactory.create_listener",
+        lambda *args, **kwargs: SimpleNamespace(),
+    )
+
+    def fail_recovery(_trader: UniversalTrader) -> None:
+        raise RuntimeError("recovery failed")
+
+    monkeypatch.setattr(UniversalTrader, failing_method, fail_recovery)
+
+    journal_path = tmp_path / "positions.json"
+    ledger_path = tmp_path / "ledger.sqlite3"
+    policy = ExecutionPolicy(
+        mode=ExecutionMode.LIVE,
+        expected_wallet=str(wallet),
+        max_trade_quote_raw=1,
+        max_total_fee_lamports=1,
+    )
+
+    with pytest.raises(RuntimeError, match="recovery failed"):
+        UniversalTrader(
+            rpc_endpoint="offline",
+            wss_endpoint="offline",
+            private_key="unused",
+            buy_amount=0.1,
+            buy_slippage=0.1,
+            sell_slippage=0.1,
+            execution_policy=policy,
+            position_journal_path=journal_path,
+            transaction_ledger_path=ledger_path,
+        )
+
+    assert LedgerSpy.instances[-1].closed is True
+    lock_path = journal_path.with_suffix(".json.lock")
+    with lock_path.open("a+b") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
 
 @pytest.mark.asyncio

@@ -888,9 +888,10 @@ class PlatformAwareBuyer(Trader):
     def _can_skip_refresh(self, token_info: TokenInfo) -> bool:
         """Whether the pre-buy curve read can be skipped entirely.
 
-        True when the listener read creator, mayhem/cashback and quote_mint
-        from the on-chain CreateEvent (canonical at create time), keeping
-        extreme_fast_mode at zero RPC calls between detection and submission.
+        True when the listener read creator, mayhem/cashback, quote mint, and
+        quote token program from the on-chain CreateEvent (canonical at create
+        time), keeping extreme_fast_mode at zero RPC calls between detection
+        and submission.
 
         Args:
             token_info: Token information from the listener
@@ -898,12 +899,20 @@ class PlatformAwareBuyer(Trader):
         Returns:
             True if the buy can be built from token_info as-is
         """
+        if token_info.quote_mint is None:
+            return False
+        try:
+            expected_quote_program = get_quote_asset(
+                token_info.quote_mint
+            ).token_program
+        except ValueError:
+            return False
         return (
             token_info.platform is Platform.PUMP_FUN
             and self.trust_create_event
             and token_info.state_from_event
             and token_info.curve_complete is False
-            and token_info.quote_mint is not None
+            and token_info.quote_token_program_id == expected_quote_program
             and token_info.token_program_id
             in {
                 SystemAddresses.TOKEN_PROGRAM,

@@ -27,7 +27,10 @@ _SENSITIVE_FIELD_NAMES = {
 }
 _SENSITIVE_LABEL_RE = re.compile(
     r"(?i)\b(private[\s_-]*key|secret[\s_-]*key|seed(?:[\s_-]*phrase)?|mnemonic)"
-    r"([\"']?\s*[:=]\s*[\"']?)([^\s,\"'}]+)"
+    r"([\"']?\s*[:=]\s*)"
+    r"(\"(?:\\.|[^\"\\\n\r])*(?:\"|(?=\n|\r|$))"
+    r"|'(?:\\.|[^'\\\n\r])*(?:'|(?=\n|\r|$))"
+    r"|[^\s,\"'}]+)"
 )
 _BASE58_TOKEN_RE = re.compile(
     r"(?<![1-9A-HJ-NP-Za-km-z])[1-9A-HJ-NP-Za-km-z]{32,128}"

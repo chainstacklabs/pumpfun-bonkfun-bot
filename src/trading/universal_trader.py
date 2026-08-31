@@ -426,8 +426,45 @@ class UniversalTrader:
                 raise RuntimeError(
                     f"Another live trader owns recovery journal {self._journal_path}"
                 ) from exc
-        self._load_recovery_journal()
-        self._hydrate_submission_recovery()
+        try:
+            self._load_recovery_journal()
+            self._hydrate_submission_recovery()
+        except BaseException:
+            for stage, error in self._release_persistence_resources():
+                logger.error(
+                    "Failure during constructor cleanup: %s",
+                    stage,
+                    exc_info=(type(error), error, error.__traceback__),
+                )
+            raise
+
+    def _release_persistence_resources(
+        self,
+    ) -> list[tuple[str, BaseException]]:
+        """Release the ledger and journal lock, attempting both on failure."""
+        failures: list[tuple[str, BaseException]] = []
+
+        ledger = self.transaction_ledger
+        self.transaction_ledger = None
+        if ledger is not None:
+            try:
+                ledger.close()
+            except BaseException as exc:
+                failures.append(("transaction ledger close", exc))
+
+        lock_handle = self._journal_lock_handle
+        self._journal_lock_handle = None
+        if lock_handle is not None:
+            try:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+            except BaseException as exc:
+                failures.append(("recovery journal unlock", exc))
+            try:
+                lock_handle.close()
+            except BaseException as exc:
+                failures.append(("recovery journal lock close", exc))
+
+        return failures
 
     @staticmethod
     def _validate_creation_timestamp(value: object) -> float | None:
@@ -653,6 +690,7 @@ class UniversalTrader:
                     token_info.token_program_id,
                     baseline_raw=position.account_balance_baseline_raw,
                     acquired_raw=position.quantity_raw,
+                    ownership_id=position.position_id,
                 )
 
             self._active_positions = active_positions
@@ -820,6 +858,7 @@ class UniversalTrader:
                     token_info.token_program_id,
                     baseline_raw=position.account_balance_baseline_raw,
                     acquired_raw=position.quantity_raw,
+                    ownership_id=position.position_id,
                 )
         self._write_recovery_journal()
 
@@ -1240,23 +1279,7 @@ class UniversalTrader:
         except BaseException as exc:
             record_failure("Solana client close", exc)
 
-        if self.transaction_ledger is not None:
-            try:
-                self.transaction_ledger.close()
-            except BaseException as exc:
-                record_failure("transaction ledger close", exc)
-
-        if self._journal_lock_handle is not None:
-            lock_handle = self._journal_lock_handle
-            try:
-                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
-            except BaseException as exc:
-                record_failure("recovery journal unlock", exc)
-            try:
-                lock_handle.close()
-            except BaseException as exc:
-                record_failure("recovery journal lock close", exc)
-            self._journal_lock_handle = None
+        failures.extend(self._release_persistence_resources())
 
         if failures:
             _, first_error = failures[0]

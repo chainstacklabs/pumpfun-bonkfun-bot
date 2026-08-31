@@ -69,7 +69,7 @@ def _validate_token_envelope(token_data: dict[str, Any]) -> None:
         if not isinstance(token_data.get(field), str) or not token_data[field].strip()
     ]
     if invalid_fields:
-        raise SubscriptionRejected(
+        raise NormalizationError(
             "PumpPortal token object requires non-empty string fields: "
             f"{invalid_fields}"
         )
@@ -227,7 +227,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
                     or not params
                     or not isinstance(params[0], dict)
                 ):
-                    raise SubscriptionRejected(
+                    raise NormalizationError(
                         "PumpPortal newToken params must contain a token object"
                     )
                 token_data = params[0]

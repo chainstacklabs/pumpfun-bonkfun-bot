@@ -70,7 +70,11 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
             List of instructions needed for the buy operation
         """
         self._validate_raw_amount(amount_in, "amount_in")
-        self._validate_raw_amount(minimum_amount_out, "minimum_amount_out")
+        self._validate_raw_amount(
+            minimum_amount_out,
+            "minimum_amount_out",
+            positive=False,
+        )
         accounts_info = address_provider.get_buy_instruction_accounts(token_info, user)
         self._require_wsol_quote(accounts_info)
         token_program_id = accounts_info["base_token_program"]
@@ -245,7 +249,11 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
             List of instructions needed for the sell operation
         """
         self._validate_raw_amount(amount_in, "amount_in")
-        self._validate_raw_amount(minimum_amount_out, "minimum_amount_out")
+        self._validate_raw_amount(
+            minimum_amount_out,
+            "minimum_amount_out",
+            positive=False,
+        )
         accounts_info = address_provider.get_sell_instruction_accounts(token_info, user)
         self._require_wsol_quote(accounts_info)
         instructions: list[Instruction] = []
@@ -403,9 +411,20 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
         return self._priority_fee_accounts(accounts_info)
 
     @staticmethod
-    def _validate_raw_amount(amount: int, field: str) -> None:
-        if isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0:
-            raise ValueError(f"{field} must be a positive raw integer amount")
+    def _validate_raw_amount(
+        amount: int,
+        field: str,
+        *,
+        positive: bool = True,
+    ) -> None:
+        lower_bound = 1 if positive else 0
+        if (
+            isinstance(amount, bool)
+            or not isinstance(amount, int)
+            or amount < lower_bound
+        ):
+            qualifier = "positive " if positive else ""
+            raise ValueError(f"{field} must be a {qualifier}raw integer amount")
         if amount > 2**64 - 1:
             raise ValueError(f"{field} exceeds the u64 range")
 

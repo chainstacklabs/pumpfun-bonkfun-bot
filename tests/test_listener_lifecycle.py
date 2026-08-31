@@ -259,7 +259,7 @@ async def test_pumpportal_malformed_json_is_not_swallowed() -> None:
         [{"signature": "1" * 64, "mint": "test-mint", "pool": 1}],
     ],
 )
-async def test_pumpportal_malformed_token_envelope_is_not_swallowed(
+async def test_pumpportal_malformed_token_envelope_is_skipped(
     params: object,
 ) -> None:
     listener = _bare_pumpportal_listener()
@@ -268,8 +268,7 @@ async def test_pumpportal_malformed_token_envelope_is_not_swallowed(
         json.dumps({"method": "newToken", "params": params})
     )
 
-    with pytest.raises(SubscriptionRejected, match="token object"):
-        await listener._wait_for_token_creation(object())
+    assert await listener._wait_for_token_creation(object()) is None
 
 
 @pytest.mark.asyncio

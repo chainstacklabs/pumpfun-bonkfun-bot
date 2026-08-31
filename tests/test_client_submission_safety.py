@@ -786,31 +786,36 @@ async def test_transaction_result_requires_explicit_meta_error_field() -> None:
 
 
 @pytest.mark.asyncio
-async def test_prunable_history_absence_does_not_prove_expiry() -> None:
+async def test_transaction_result_treats_json_rpc_error_as_unavailable() -> None:
     client = SolanaClient("http://offline.invalid")
-    height_commitments: list[str] = []
-    history_commitments: list[str] = []
 
-    async def height(_last_valid_height: int, *, commitment: str) -> bool:
-        height_commitments.append(commitment)
-        return True
+    async def rpc_error(_body, **_kwargs) -> dict:
+        raise client_module.JsonRpcError("getTransaction", {"code": -32000})
 
-    async def status(_signature: Signature) -> tuple[bool, None]:
-        return True, None
+    client.post_rpc = rpc_error
 
-    async def history(_signature: str, commitment: str) -> tuple[bool, bool]:
-        history_commitments.append(commitment)
-        return True, False
+    assert await client._get_transaction_result(Signature.default()) is None
 
-    client._current_block_height_exceeds = height
-    client._read_signature_status = status
-    client._read_transaction_presence = history
+
+@pytest.mark.asyncio
+async def test_prunable_history_absence_does_not_trigger_expiry_rpc_reads() -> None:
+    client = SolanaClient("http://offline.invalid")
+    client._current_block_height_exceeds = AsyncMock(
+        side_effect=AssertionError("expiry proof must not spend RPC reads")
+    )
+    client._read_signature_status = AsyncMock(
+        side_effect=AssertionError("expiry proof must not spend RPC reads")
+    )
+    client._read_transaction_presence = AsyncMock(
+        side_effect=AssertionError("expiry proof must not spend RPC reads")
+    )
 
     assert not await client._prove_transaction_expired(
         Signature.default(), 10, "confirmed"
     )
-    assert height_commitments == ["finalized", "finalized"]
-    assert history_commitments == ["finalized", "finalized"]
+    client._current_block_height_exceeds.assert_not_awaited()
+    client._read_signature_status.assert_not_awaited()
+    client._read_transaction_presence.assert_not_awaited()
 
 
 @pytest.mark.asyncio

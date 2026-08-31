@@ -584,7 +584,14 @@ class PumpFunAddressProvider(AddressProvider):
         self, token_info: TokenInfo, user: Pubkey
     ) -> dict[str, Pubkey]:
         """Get all accounts needed for the legacy buy instruction."""
-        token_program_id = token_info.token_program_id or SystemAddresses.TOKEN_PROGRAM
+        token_program_id = token_info.token_program_id
+        if token_program_id not in {
+            SystemAddresses.TOKEN_PROGRAM,
+            SystemAddresses.TOKEN_2022_PROGRAM,
+        }:
+            raise ValueError(
+                "Supported base token program metadata is required for legacy execution"
+            )
         bonding_curve, associated_bonding_curve, creator_vault = (
             self._resolve_mint_bound_accounts(
                 token_info,
@@ -621,7 +628,14 @@ class PumpFunAddressProvider(AddressProvider):
         self, token_info: TokenInfo, user: Pubkey
     ) -> dict[str, Pubkey]:
         """Get all accounts needed for the legacy sell instruction."""
-        token_program_id = token_info.token_program_id or SystemAddresses.TOKEN_PROGRAM
+        token_program_id = token_info.token_program_id
+        if token_program_id not in {
+            SystemAddresses.TOKEN_PROGRAM,
+            SystemAddresses.TOKEN_2022_PROGRAM,
+        }:
+            raise ValueError(
+                "Supported base token program metadata is required for legacy execution"
+            )
         bonding_curve, associated_bonding_curve, creator_vault = (
             self._resolve_mint_bound_accounts(
                 token_info,

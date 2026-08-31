@@ -141,7 +141,7 @@ class PumpFunInstructionBuilder(InstructionBuilder):
 
     @staticmethod
     def _validate_raw_amounts(amount_in: int, minimum_amount_out: int) -> None:
-        """Reject non-integer or zero execution amounts before account resolution."""
+        """Require positive input and a nonnegative raw u64 output floor."""
         for name, value in (
             ("amount_in", amount_in),
             ("minimum_amount_out", minimum_amount_out),
@@ -149,9 +149,11 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             if (
                 isinstance(value, bool)
                 or not isinstance(value, int)
-                or not 0 < value <= 0xFFFF_FFFF_FFFF_FFFF
+                or not 0 <= value <= 0xFFFF_FFFF_FFFF_FFFF
             ):
-                raise ValueError(f"{name} must be a positive raw u64 integer")
+                raise ValueError(f"{name} must be a raw u64 integer")
+        if amount_in == 0:
+            raise ValueError("amount_in must be a positive raw u64 integer")
 
     @staticmethod
     def _validate_v2_metadata(token_info: TokenInfo) -> tuple[Pubkey, Pubkey]:

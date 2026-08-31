@@ -82,7 +82,7 @@ trade:
   curve_refresh_budget: 2.0
 
   # When the create event carried the canonical creator, mayhem/cashback flags
-  # and quote_mint (geyser/logs/blocks listeners), skip the pre-buy read.
+  # and quote_mint (geyser/blocks listeners), skip the pre-buy read.
   # In an explicitly live-authorized extreme-fast run, this allows a
   # submission attempt with zero RPC calls after detection.
   # Set false to force the refresh for every listener.

@@ -8,6 +8,7 @@ from solders.pubkey import Pubkey
 
 from core.pubkeys import TOKEN_2022_PROGRAM, TOKEN_PROGRAM, WSOL_MINT
 from interfaces.core import Platform, TokenInfo
+from platforms.pumpfun.address_provider import PumpFunAddressProvider
 from platforms.pumpfun.instruction_builder import (
     _BUY_V2_ACCOUNTS,
     PumpFunInstructionBuilder,
@@ -37,6 +38,28 @@ def _token() -> TokenInfo:
         quote_mint=WSOL_MINT,
         quote_token_program_id=TOKEN_PROGRAM,
     )
+
+
+@pytest.mark.parametrize(
+    "account_method",
+    ["get_buy_instruction_accounts", "get_sell_instruction_accounts"],
+)
+def test_legacy_account_resolution_requires_explicit_token_program(
+    account_method: str,
+) -> None:
+    token = _token()
+    token.token_program_id = None
+    provider = PumpFunAddressProvider()
+
+    with pytest.raises(ValueError, match="token program metadata is required"):
+        getattr(provider, account_method)(token, Pubkey.new_unique())
+
+
+def test_pump_raw_amounts_allow_zero_minimum_but_not_zero_input() -> None:
+    PumpFunInstructionBuilder._validate_raw_amounts(1, 0)
+
+    with pytest.raises(ValueError, match="amount_in"):
+        PumpFunInstructionBuilder._validate_raw_amounts(0, 0)
 
 
 @pytest.mark.asyncio

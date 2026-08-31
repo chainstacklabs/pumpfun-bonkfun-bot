@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 import fcntl
 import json
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Iterator
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from solders.pubkey import Pubkey
@@ -121,6 +121,7 @@ class AccountCleanupManager:
         *,
         baseline_raw: int,
         acquired_raw: int,
+        ownership_id: str | None = None,
     ) -> None:
         """Record the pre-buy baseline and confirmed bot acquisition."""
         if (
@@ -130,13 +131,42 @@ class AccountCleanupManager:
             or isinstance(acquired_raw, bool)
             or not isinstance(acquired_raw, int)
             or acquired_raw <= 0
+            or (
+                ownership_id is not None
+                and (not isinstance(ownership_id, str) or not ownership_id)
+            )
         ):
-            raise ValueError("cleanup ownership amounts are invalid")
+            raise ValueError("cleanup ownership metadata is invalid")
         key = (str(wallet), str(mint), str(token_program_id))
+        current = cls._ownership_records.get(key)
+        if ownership_id is not None:
+            generation = uuid5(
+                NAMESPACE_URL,
+                f"cleanup-ownership:{':'.join(key)}:{ownership_id}",
+            ).hex
+        elif (
+            current is not None
+            and current.baseline_raw == baseline_raw
+            and current.acquired_raw == acquired_raw
+        ):
+            generation = current.generation
+        else:
+            generation = uuid4().hex
+
+        if current is not None and current.generation == generation:
+            if (
+                current.baseline_raw != baseline_raw
+                or current.acquired_raw != acquired_raw
+            ):
+                raise ValueError("cleanup ownership lifecycle amounts changed")
+            confirmed_sold_raw = current.confirmed_sold_raw
+        else:
+            confirmed_sold_raw = 0
         cls._ownership_records[key] = _OwnershipRecord(
             baseline_raw=baseline_raw,
             acquired_raw=acquired_raw,
-            generation=uuid4().hex,
+            generation=generation,
+            confirmed_sold_raw=confirmed_sold_raw,
         )
 
     @classmethod
