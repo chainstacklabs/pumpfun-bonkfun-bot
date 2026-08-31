@@ -3,16 +3,27 @@ Universal block listener that works with any platform through the interface syst
 """
 
 import asyncio
-import base64
-import json
+from collections import deque
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 import websockets
-from solders.transaction import VersionedTransaction
+from websockets.exceptions import ConnectionClosed
 
 from core.client import SolanaClient
 from interfaces.core import Platform, TokenInfo
 from monitoring.base_listener import BaseTokenListener
+from monitoring.event_normalization import (
+    NormalizationError,
+    normalize_block_notification,
+    normalize_block_transaction,
+)
+from monitoring.parser_dispatch import parse_normalized_event
+from monitoring.subscription import (
+    SubscriptionCorrelationError,
+    decode_json_frame,
+    subscribe_json_rpc,
+)
 from platforms import get_platform_implementations, platform_factory
 from utils.logger import get_logger
 
@@ -23,6 +34,9 @@ logger = get_logger(__name__)
 # ("message too big"). Reconnecting recovers, but every dropped frame is a
 # missed token, so raise the ceiling instead of eating the disconnects.
 WEBSOCKET_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
+
+MAX_RECENT_CREATIONS = 4096
+CreationKey = tuple[str, int | None, int | None, str]
 
 
 class UniversalBlockListener(BaseTokenListener):
@@ -42,19 +56,23 @@ class UniversalBlockListener(BaseTokenListener):
         super().__init__()
         self.wss_endpoint = wss_endpoint
         self.ping_interval = 20  # seconds
+        self._pending_frames: deque[str | bytes] = deque()
+        self._subscription_platforms: dict[int, Platform] = {}
+        self._recent_creation_order: deque[CreationKey] = deque()
+        self._recent_creation_keys: set[CreationKey] = set()
 
-        # Get supported platforms
-        if platforms is None:
-            # Monitor all supported platforms
-            self.platforms = platform_factory.get_supported_platforms()
-        else:
-            self.platforms = platforms
+        # Get supported platforms, preserving configuration order while ensuring
+        # one subscription per platform.
+        configured_platforms = (
+            platform_factory.get_supported_platforms()
+            if platforms is None
+            else platforms
+        )
+        self.platforms = list(dict.fromkeys(configured_platforms))
 
-        # Get event parsers for all platforms
-        self.platform_parsers = {}
-        self.platform_program_ids = []
-        # Map program IDs to their parsers for faster lookup
-        self.program_id_to_parser = {}
+        # Get event parsers for all platforms.
+        self.platform_parsers: dict[Platform, Any] = {}
+        self.platform_program_ids: dict[Platform, str] = {}
 
         for platform in self.platforms:
             try:
@@ -72,10 +90,9 @@ class UniversalBlockListener(BaseTokenListener):
 
                 implementations = get_platform_implementations(platform, dummy_client)
                 parser = implementations.event_parser
-                self.platform_parsers[platform] = parser
                 program_id_str = str(parser.get_program_id())
-                self.platform_program_ids.append(program_id_str)
-                self.program_id_to_parser[program_id_str] = (platform, parser)
+                self.platform_parsers[platform] = parser
+                self.platform_program_ids[platform] = program_id_str
 
                 logger.info(
                     f"Registered platform {platform.value} with program ID {parser.get_program_id()}"
@@ -90,98 +107,96 @@ class UniversalBlockListener(BaseTokenListener):
         match_string: str | None = None,
         creator_address: str | None = None,
     ) -> None:
-        """Listen for new token creations using blockSubscribe.
-
-        Args:
-            token_callback: Callback function for new tokens
-            match_string: Optional string to match in token name/symbol
-            creator_address: Optional creator address to filter by
-        """
+        """Listen for every successful creation in correlated block updates."""
         if not self.platform_parsers:
             logger.error("No platform parsers available. Cannot listen for tokens.")
             return
 
+        reconnect_attempt = 0
         while True:
+            ping_task: asyncio.Task[object] | None = None
             try:
                 async with websockets.connect(
-                    self.wss_endpoint, max_size=WEBSOCKET_MAX_MESSAGE_BYTES
+                    self.wss_endpoint,
+                    max_size=WEBSOCKET_MAX_MESSAGE_BYTES,
                 ) as websocket:
+                    self._pending_frames.clear()
                     await self._subscribe_to_programs(websocket)
+                    reconnect_attempt = 0
                     ping_task = asyncio.create_task(self._ping_loop(websocket))
-
                     try:
                         while True:
-                            token_info = await self._wait_for_token_creation(websocket)
-                            if not token_info:
-                                continue
-
-                            logger.info(
-                                f"New token detected: {token_info.name} ({token_info.symbol}) on {token_info.platform.value}"
-                            )
-
-                            # Apply filters
-                            if match_string and not (
-                                match_string.lower() in token_info.name.lower()
-                                or match_string.lower() in token_info.symbol.lower()
-                            ):
+                            token_infos = await self._wait_for_token_creation(websocket)
+                            for token_info in token_infos:
                                 logger.info(
-                                    f"Token does not match filter '{match_string}'. Skipping..."
+                                    "New token detected: %s (%s) on %s",
+                                    token_info.name,
+                                    token_info.symbol,
+                                    token_info.platform.value,
                                 )
-                                continue
-
-                            if (
-                                creator_address
-                                and str(token_info.user) != creator_address
-                            ):
-                                logger.info(
-                                    f"Token not created by {creator_address}. Skipping..."
+                                await self.dispatch_token(
+                                    token_info,
+                                    token_callback,
+                                    match_string=match_string,
+                                    creator_address=creator_address,
                                 )
-                                continue
+                    finally:
+                        await self.cancel_task(ping_task)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                reconnect_attempt += 1
+                await self.wait_before_reconnect(reconnect_attempt, exc)
 
-                            await token_callback(token_info)
-
-                    except websockets.exceptions.ConnectionClosed:
-                        logger.warning("WebSocket connection closed. Reconnecting...")
-                        ping_task.cancel()
-
-            except Exception:
-                logger.exception("WebSocket connection error")
-                logger.info("Reconnecting in 5 seconds...")
-                await asyncio.sleep(5)
-
-    async def _subscribe_to_programs(
-        self, websocket: websockets.WebSocketServerProtocol
-    ) -> None:
-        """Subscribe to blocks mentioning any of the monitored program IDs.
-
-        Args:
-            websocket: Active WebSocket connection
-        """
-        # For block subscriptions, we can use mentionsAccountOrProgram to monitor multiple programs
-        # We'll create separate subscriptions for each program to be more specific
-        for i, program_id in enumerate(self.platform_program_ids):
-            subscription_message = json.dumps(
-                {
-                    "jsonrpc": "2.0",
-                    "id": i + 1,
-                    "method": "blockSubscribe",
-                    "params": [
-                        {"mentionsAccountOrProgram": program_id},
-                        {
-                            "commitment": "confirmed",
-                            "encoding": "base64",
-                            "showRewards": False,
-                            "transactionDetails": "full",
-                            "maxSupportedTransactionVersion": 0,
-                        },
-                    ],
-                }
+    async def _subscribe_to_programs(self, websocket: Any) -> None:
+        """Subscribe once per platform and retain acknowledgement correlation."""
+        subscription_platforms: dict[int, Platform] = {}
+        pending_frames: list[str | bytes] = []
+        for request_id, (platform, program_id) in enumerate(
+            self.platform_program_ids.items(),
+            start=1,
+        ):
+            request = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "blockSubscribe",
+                "params": [
+                    {"mentionsAccountOrProgram": program_id},
+                    {
+                        "commitment": "confirmed",
+                        "encoding": "base64",
+                        "showRewards": False,
+                        "transactionDetails": "full",
+                        "maxSupportedTransactionVersion": 0,
+                    },
+                ],
+            }
+            result = await subscribe_json_rpc(
+                websocket,
+                [request],
+                timeout=self.subscription_timeout,
             )
+            if len(result.subscription_ids) != 1:
+                raise SubscriptionCorrelationError(
+                    f"blockSubscribe request {request_id} was not uniquely acknowledged"
+                )
+            subscription_id = next(iter(result.subscription_ids))
+            if subscription_id in subscription_platforms:
+                raise SubscriptionCorrelationError(
+                    f"blockSubscribe returned duplicate subscription ID {subscription_id}"
+                )
+            subscription_platforms[subscription_id] = platform
+            pending_frames.extend(result.pending_frames)
 
-            await websocket.send(subscription_message)
-            logger.info(f"Subscribed to blocks mentioning program: {program_id}")
+        self._subscription_platforms = subscription_platforms
+        self._pending_frames.extend(pending_frames)
+        logger.info(
+            "Confirmed %d correlated block subscriptions: %s",
+            len(subscription_platforms),
+            sorted(subscription_platforms),
+        )
 
-    async def _ping_loop(self, websocket: websockets.WebSocketServerProtocol) -> None:
+    async def _ping_loop(self, websocket: Any) -> None:
         """Keep connection alive with pings.
 
         Args:
@@ -202,173 +217,132 @@ class UniversalBlockListener(BaseTokenListener):
             pass
         except Exception:
             logger.exception("Ping error")
+            await websocket.close()
 
-    async def _wait_for_token_creation(
-        self, websocket: websockets.WebSocketServerProtocol
-    ) -> TokenInfo | None:
-        """Wait for token creation event from any platform.
+    async def _next_frame(self, websocket: Any) -> str | bytes:
+        if self._pending_frames:
+            return self._pending_frames.popleft()
+        return await asyncio.wait_for(websocket.recv(), timeout=self.receive_timeout)
 
-        Args:
-            websocket: Active WebSocket connection
-
-        Returns:
-            TokenInfo if a token creation is found, None otherwise
-        """
+    async def _wait_for_token_creation(self, websocket: Any) -> list[TokenInfo]:
+        """Wait for a block and return every valid token creation it contains."""
         try:
-            response = await asyncio.wait_for(websocket.recv(), timeout=30)
-            data = json.loads(response)
-
-            # Handle subscription errors
-            if "error" in data:
-                logger.error(f"Block subscription error: {data['error']}")
-                return None
-            elif "result" in data:
-                # Subscription confirmation - continue waiting for notifications
-                return None
-
-            if "method" not in data or data["method"] != "blockNotification":
-                return None
-
-            if "params" not in data or "result" not in data["params"]:
-                return None
-
-            block_data = data["params"]["result"]
-            if "value" not in block_data or "block" not in block_data["value"]:
-                return None
-
-            block = block_data["value"]["block"]
-            if "transactions" not in block:
-                return None
-
-            # Process all transactions in the block for token creations
-            return self._process_block_transactions(block["transactions"])
-
-        except TimeoutError:
-            logger.debug("No data received for 30 seconds")
-        except websockets.exceptions.ConnectionClosed:
-            logger.warning("WebSocket connection closed")
-            raise
-        except Exception:
-            logger.exception("Error processing WebSocket message")
-
-        return None
-
-    def _process_block_transactions(self, transactions: list) -> TokenInfo | None:
-        """Process all transactions in a block looking for token creations.
-
-        Args:
-            transactions: List of transaction data from block
-
-        Returns:
-            TokenInfo if a token creation is found, None otherwise
-        """
-        for tx in transactions:
-            if not isinstance(tx, dict) or "transaction" not in tx:
-                continue
-
-            # Skip failed txs — sniping a failed create yields a non-existent
-            # mint and the buy-side tx then fails with InvalidMint.
-            meta = tx.get("meta")
-            if isinstance(meta, dict) and meta.get("err") is not None:
-                continue
-
-            tx_data = tx["transaction"]
-
-            # Handle base64 encoded transaction data
-            if isinstance(tx_data, list) and len(tx_data) > 0:
-                token_info = self._parse_encoded_transaction(tx, tx_data[0])
-                if token_info:
-                    return token_info
-
-            # Handle already decoded transaction data (shouldn't happen in blockSubscribe)
-            elif isinstance(tx_data, dict) and "message" in tx_data:
-                token_info = self._parse_decoded_transaction(tx, tx_data)
-                if token_info:
-                    return token_info
-
-        return None
-
-    def _parse_encoded_transaction(
-        self, tx: dict, encoded_data: str
-    ) -> TokenInfo | None:
-        """Parse base64 encoded transaction data.
-
-        Args:
-            tx: Transaction wrapper from block
-            encoded_data: Base64 encoded transaction data
-
-        Returns:
-            TokenInfo if token creation found, None otherwise
-        """
-        try:
-            tx_bytes = base64.b64decode(encoded_data)
-            transaction = VersionedTransaction.from_bytes(tx_bytes)
-
-            # Check if any of the instructions use our monitored programs
-            for instruction in transaction.message.instructions:
-                program_id = str(
-                    transaction.message.account_keys[instruction.program_id_index]
+            frame = await self._next_frame(websocket)
+            data = decode_json_frame(frame)
+            notification = normalize_block_notification(
+                data,
+                subscription_ids=frozenset(self._subscription_platforms),
+            )
+            if notification is None:
+                return []
+            params = data.get("params")
+            subscription_id = (
+                params.get("subscription") if isinstance(params, dict) else None
+            )
+            platform = self._subscription_platforms.get(subscription_id)
+            if platform is None:
+                raise NormalizationError(
+                    f"Block notification has unknown subscription {subscription_id!r}"
                 )
-
-                # Check if this program ID is one we're monitoring
-                if program_id in self.program_id_to_parser:
-                    platform, parser = self.program_id_to_parser[program_id]
-
-                    # Try to parse with the appropriate parser
-                    try:
-                        if hasattr(parser, "parse_token_creation_from_block"):
-                            token_info = parser.parse_token_creation_from_block(
-                                {"transactions": [tx]}
-                            )
-                            if token_info:
-                                return token_info
-                    except Exception:
-                        # Expected for non-creation transactions
-                        continue
-
+            slot, transactions = notification
+            return self._process_block_transactions(
+                transactions,
+                platform=platform,
+                slot=slot,
+                commitment="confirmed",
+            )
+        except TimeoutError:
+            logger.debug("No data received for %.0f seconds", self.receive_timeout)
+        except ConnectionClosed:
+            raise
+        except NormalizationError as exc:
+            logger.warning("Rejected block notification: %s", exc)
         except Exception:
-            # Failed to decode transaction - skip it
-            pass
+            logger.exception("Error processing block WebSocket message")
+        return []
 
-        return None
+    def _process_block_transactions(
+        self,
+        transactions: list[dict[str, Any]],
+        *,
+        platform: Platform,
+        slot: int | None = None,
+        commitment: str = "confirmed",
+    ) -> list[TokenInfo]:
+        """Parse a block only with the parser correlated to its subscription."""
+        parser = self.platform_parsers.get(platform)
+        if parser is None:
+            logger.error(
+                "No parser registered for correlated platform %s",
+                platform.value,
+            )
+            return []
 
-    def _parse_decoded_transaction(self, tx: dict, tx_data: dict) -> TokenInfo | None:
-        """Parse already decoded transaction data.
+        tokens: list[TokenInfo] = []
+        for transaction_index, tx_wrapper in enumerate(transactions):
+            try:
+                event = normalize_block_transaction(
+                    tx_wrapper,
+                    slot=slot,
+                    commitment=commitment,
+                    transaction_index=transaction_index,
+                )
+            except NormalizationError as exc:
+                logger.warning(
+                    "Rejected block transaction tx=%d slot=%s: %s",
+                    transaction_index,
+                    slot,
+                    exc,
+                )
+                continue
+            try:
+                tokens.extend(parse_normalized_event(event, {platform: parser}))
+            except Exception:
+                logger.exception(
+                    "Parser dispatch failed for block transaction tx=%d slot=%s",
+                    transaction_index,
+                    slot,
+                )
+        return self._deduplicate_creations(tokens)
 
-        Args:
-            tx: Transaction wrapper from block
-            tx_data: Decoded transaction data
-
-        Returns:
-            TokenInfo if token creation found, None otherwise
-        """
-        message = tx_data["message"]
-        if "instructions" not in message or "accountKeys" not in message:
+    @staticmethod
+    def _creation_key(token: TokenInfo) -> CreationKey | None:
+        monitoring = (
+            token.additional_data.get("monitoring")
+            if isinstance(token.additional_data, dict)
+            else None
+        )
+        if not isinstance(monitoring, dict):
             return None
+        signature = token.signature
+        instruction_index = monitoring.get("instruction_index")
+        inner_index = monitoring.get("inner_index")
+        mint = str(token.mint)
+        if not isinstance(signature, str) or not signature or not mint:
+            return None
+        if instruction_index is not None and type(instruction_index) is not int:
+            return None
+        if inner_index is not None and type(inner_index) is not int:
+            return None
+        return signature, instruction_index, inner_index, mint
 
-        for ix in message["instructions"]:
-            if "programIdIndex" not in ix:
+    def _deduplicate_creations(self, tokens: list[TokenInfo]) -> list[TokenInfo]:
+        unique: list[TokenInfo] = []
+        for token in tokens:
+            key = self._creation_key(token)
+            if key is None:
+                logger.warning(
+                    "Rejected block creation without stable coordinates for mint %s",
+                    token.mint,
+                )
                 continue
-
-            program_idx = ix["programIdIndex"]
-            if program_idx >= len(message["accountKeys"]):
+            if key in self._recent_creation_keys:
+                logger.debug("Suppressed duplicate block creation %s", key)
                 continue
-
-            program_id = message["accountKeys"][program_idx]
-
-            # Check if this program ID is one we're monitoring
-            if program_id in self.program_id_to_parser:
-                platform, parser = self.program_id_to_parser[program_id]
-
-                try:
-                    if hasattr(parser, "parse_token_creation_from_block"):
-                        token_info = parser.parse_token_creation_from_block(
-                            {"transactions": [tx]}
-                        )
-                        if token_info:
-                            return token_info
-                except Exception:
-                    # Expected for non-creation transactions
-                    continue
-
-        return None
+            if len(self._recent_creation_order) >= MAX_RECENT_CREATIONS:
+                expired = self._recent_creation_order.popleft()
+                self._recent_creation_keys.remove(expired)
+            self._recent_creation_order.append(key)
+            self._recent_creation_keys.add(key)
+            unique.append(token)
+        return unique

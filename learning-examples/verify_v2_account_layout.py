@@ -1,11 +1,12 @@
 """Cross-check the hardcoded buy_v2/sell_v2 account layouts against the IDL.
 
 The v2 instructions take 27 and 26 mandatory accounts in a fixed order. Getting
-one position or writability flag wrong produces an on-chain failure that is
-awkward to debug, so this script diffs the layouts in
-`platforms.pumpfun.instruction_builder` against `idl/pump_fun_idl.json` and also
-recomputes every PDA/ATA the address provider derives, comparing each against
-the seeds declared in the IDL.
+one position, signer, PDA seed, or writability flag wrong produces an on-chain
+failure that is awkward to debug, so this script derives expected PDAs from the
+vendored `idl/pump_fun_idl.json` metadata, diffs both concrete buy and sell
+instructions against the IDL account order and flags, and independently
+recomputes the address-provider results. Deliberate wrong-seed and missing sell
+signer mutations must be rejected by the same checks.
 
 Runs entirely offline — no RPC, no keys, no transactions.
 
@@ -21,6 +22,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "learning-examples"))
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from solders.instruction import AccountMeta  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 from spl.token.instructions import get_associated_token_address  # noqa: E402
 
@@ -38,6 +40,15 @@ from platforms.pumpfun.instruction_builder import (  # noqa: E402
 IDL_PATH = PROJECT_ROOT / "idl" / "pump_fun_idl.json"
 
 
+def load_idl_instruction(name: str) -> dict:
+    """Get one instruction definition from the vendored IDL."""
+    idl = json.loads(IDL_PATH.read_text())
+    for instruction in idl["instructions"]:
+        if instruction["name"] == name:
+            return instruction
+    raise KeyError(f"Instruction {name} not present in {IDL_PATH}")
+
+
 def load_idl_accounts(name: str) -> list[dict]:
     """Get the IDL account list for an instruction.
 
@@ -47,11 +58,7 @@ def load_idl_accounts(name: str) -> list[dict]:
     Returns:
         List of IDL account definitions
     """
-    idl = json.loads(IDL_PATH.read_text())
-    for instruction in idl["instructions"]:
-        if instruction["name"] == name:
-            return instruction["accounts"]
-    raise KeyError(f"Instruction {name} not present in {IDL_PATH}")
+    return load_idl_instruction(name)["accounts"]
 
 
 def check_layout(name: str, layout: list[tuple[str, bool]]) -> list[str]:
@@ -72,7 +79,9 @@ def check_layout(name: str, layout: list[tuple[str, bool]]) -> list[str]:
             f"{name}: account count {len(layout)} != IDL {len(idl_accounts)}"
         )
 
-    for index, (idl_account, ours) in enumerate(zip(idl_accounts, layout), start=1):
+    for index, (idl_account, ours) in enumerate(
+        zip(idl_accounts, layout, strict=False), start=1
+    ):
         our_name, our_writable = ours
         if idl_account["name"] != our_name:
             problems.append(
@@ -88,6 +97,117 @@ def check_layout(name: str, layout: list[tuple[str, bool]]) -> list[str]:
             problems.append(
                 f"{name}[{index}] {our_name}: IDL marks this a signer but only "
                 f"`user` is expected to sign"
+            )
+
+    return problems
+
+
+def derive_idl_expected_accounts(
+    name: str,
+    token_info: TokenInfo,
+    user: Pubkey,
+    provider_accounts: dict[str, Pubkey],
+) -> dict[str, Pubkey]:
+    """Derive instruction accounts from the vendored IDL seed metadata."""
+    idl_accounts = load_idl_accounts(name)
+    resolved: dict[str, Pubkey] = {
+        key: provider_accounts[key]
+        for key in (
+            "base_mint",
+            "quote_mint",
+            "base_token_program",
+            "quote_token_program",
+            "fee_recipient",
+            "buyback_fee_recipient",
+            "user",
+        )
+    }
+    resolved["bonding_curve.creator"] = token_info.creator
+    resolved["associated_base_user"] = get_associated_token_address(
+        user,
+        token_info.mint,
+        token_info.token_program_id,
+    )
+
+    # Resolve static program addresses first because fee_config names fee_program
+    # as its PDA program even though fee_program appears later in the account list.
+    for account in idl_accounts:
+        if "address" in account:
+            resolved[account["name"]] = Pubkey.from_string(account["address"])
+
+    for account in idl_accounts:
+        account_name = account["name"]
+        if account_name in resolved:
+            continue
+        pda = account.get("pda")
+        if pda is None:
+            raise KeyError(
+                f"{name}.{account_name} has no IDL derivation and no direct value"
+            )
+
+        seeds = []
+        for seed in pda["seeds"]:
+            if seed["kind"] == "const":
+                seeds.append(bytes(seed["value"]))
+            elif seed["kind"] == "account":
+                seeds.append(bytes(resolved[seed["path"]]))
+            else:
+                raise ValueError(
+                    f"{name}.{account_name} has unsupported IDL seed kind "
+                    f"{seed['kind']!r}"
+                )
+
+        program_metadata = pda.get("program")
+        if program_metadata is None:
+            program = PumpFunAddresses.PROGRAM
+        elif program_metadata["kind"] == "const":
+            program = Pubkey.from_bytes(bytes(program_metadata["value"]))
+        elif program_metadata["kind"] == "account":
+            program = resolved[program_metadata["path"]]
+        else:
+            raise ValueError(
+                f"{name}.{account_name} has unsupported IDL program kind "
+                f"{program_metadata['kind']!r}"
+            )
+        resolved[account_name] = Pubkey.find_program_address(seeds, program)[0]
+
+    return {account["name"]: resolved[account["name"]] for account in idl_accounts}
+
+
+def check_instruction_accounts(
+    name: str,
+    metas: list[AccountMeta],
+    expected: dict[str, Pubkey],
+) -> list[str]:
+    """Check concrete account address, order, flags, and signers against the IDL."""
+    idl_accounts = load_idl_accounts(name)
+    problems = []
+    if len(metas) != len(idl_accounts):
+        problems.append(
+            f"{name}: concrete account count {len(metas)} != IDL {len(idl_accounts)}"
+        )
+
+    for index, (meta, idl_account) in enumerate(
+        zip(metas, idl_accounts, strict=False), start=1
+    ):
+        account_name = idl_account["name"]
+        expected_pubkey = expected[account_name]
+        if meta.pubkey != expected_pubkey:
+            problems.append(
+                f"{name}[{index}] {account_name}: pubkey={meta.pubkey} "
+                f"!= IDL-derived {expected_pubkey}"
+            )
+        expected_writable = bool(idl_account.get("writable"))
+        if meta.is_writable != expected_writable:
+            problems.append(
+                f"{name}[{index}] {account_name}: writable={meta.is_writable} "
+                f"!= IDL writable={expected_writable}"
+            )
+        expected_signer = bool(idl_account.get("signer"))
+        if meta.is_signer != expected_signer:
+            problems.append(
+                f"{name}[{index}] {account_name}: signer={meta.is_signer} "
+                f"!= IDL signer={expected_signer}"
             )
 
     return problems
@@ -124,6 +244,7 @@ def build_token_info(quote_mint: Pubkey, *, mayhem: bool) -> TokenInfo:
         token_program_id=SystemAddresses.TOKEN_2022_PROGRAM,
         is_mayhem_mode=mayhem,
         quote_mint=quote_mint,
+        quote_token_program_id=SystemAddresses.TOKEN_PROGRAM,
     )
 
 
@@ -141,6 +262,7 @@ def check_derivations(quote_mint: Pubkey, *, mayhem: bool) -> list[str]:
     token_info = build_token_info(quote_mint, mayhem=mayhem)
     user = Pubkey.from_string("Ba99j1dYxidfQZvuNGMaXGxJsUeWXu6VNW8damkrdLVd")
     accounts = provider.get_buy_v2_instruction_accounts(token_info, user)
+    sell_accounts = provider.get_sell_v2_instruction_accounts(token_info, user)
 
     pump = PumpFunAddresses.PROGRAM
     fee_program = PumpFunAddresses.FEE_PROGRAM
@@ -211,31 +333,62 @@ def check_derivations(quote_mint: Pubkey, *, mayhem: bool) -> list[str]:
         if accounts[key] != value
     ]
 
-    # The fee recipient must come from the right documented set.
+    # Independently derive every PDA described by the vendored IDL for both
+    # instruction variants. Accounts without IDL seed metadata (notably the
+    # user's base ATA) are recomputed with the canonical ATA derivation above.
+    for instruction_name, resolved_accounts in (
+        ("buy_v2", accounts),
+        ("sell_v2", sell_accounts),
+    ):
+        idl_expected = derive_idl_expected_accounts(
+            instruction_name,
+            token_info,
+            user,
+            resolved_accounts,
+        )
+        problems.extend(
+            f"{instruction_name}.{key}: provider={resolved_accounts[key]} "
+            f"!= IDL-derived={value}"
+            for key, value in idl_expected.items()
+            if resolved_accounts[key] != value
+        )
+
+    # Fee recipients must come from the documented sets, and every account
+    # must remain distinct except where the program explicitly reuses one.
     recipient_set = (
         PumpFunAddresses.RESERVED_FEE_RECIPIENTS
         if mayhem
         else PumpFunAddresses.NORMAL_FEE_RECIPIENTS
     )
-    if accounts["fee_recipient"] not in recipient_set:
-        problems.append(
-            f"fee_recipient {accounts['fee_recipient']} not in "
-            f"{'reserved' if mayhem else 'normal'} fee recipient set"
-        )
-    if accounts["buyback_fee_recipient"] not in PumpFunAddresses.BUYBACK_FEE_RECIPIENTS:
-        problems.append(
-            f"buyback_fee_recipient {accounts['buyback_fee_recipient']} not in "
-            f"buyback fee recipient set"
-        )
-
-    # Every account must be distinct except where the program expects reuse.
-    if len(set(accounts.values())) != len(accounts):
-        duplicates = [
-            key
-            for key, value in accounts.items()
-            if list(accounts.values()).count(value) > 1
-        ]
-        problems.append(f"duplicate account addresses for: {sorted(duplicates)}")
+    for instruction_name, resolved_accounts in (
+        ("buy_v2", accounts),
+        ("sell_v2", sell_accounts),
+    ):
+        if resolved_accounts["fee_recipient"] not in recipient_set:
+            problems.append(
+                f"{instruction_name} fee_recipient "
+                f"{resolved_accounts['fee_recipient']} not in "
+                f"{'reserved' if mayhem else 'normal'} fee recipient set"
+            )
+        if (
+            resolved_accounts["buyback_fee_recipient"]
+            not in PumpFunAddresses.BUYBACK_FEE_RECIPIENTS
+        ):
+            problems.append(
+                f"{instruction_name} buyback_fee_recipient "
+                f"{resolved_accounts['buyback_fee_recipient']} not in "
+                "buyback fee recipient set"
+            )
+        if len(set(resolved_accounts.values())) != len(resolved_accounts):
+            duplicates = [
+                key
+                for key, value in resolved_accounts.items()
+                if list(resolved_accounts.values()).count(value) > 1
+            ]
+            problems.append(
+                f"{instruction_name} duplicate account addresses for: "
+                f"{sorted(duplicates)}"
+            )
 
     return problems
 
@@ -330,10 +483,98 @@ def check_instruction_encoding() -> list[str]:
                     f"min_sol_output={min_out}; expected 20000000 and 900000"
                 )
 
-        # Exactly one signer, and it must be the user.
-        signers = [meta.pubkey for meta in buy[-1].accounts if meta.is_signer]
-        if signers != [user]:
-            problems.append(f"{label}: buy_v2 signers {signers} != [{user}]")
+        # Exactly one signer, and it must be the user, on both trade directions.
+        for instruction_name, instruction in (("buy_v2", buy), ("sell_v2", sell)):
+            signers = [
+                meta.pubkey for meta in instruction[-1].accounts if meta.is_signer
+            ]
+            if signers != [user]:
+                problems.append(
+                    f"{label}: {instruction_name} signers {signers} != [{user}]"
+                )
+
+        expected_by_instruction: dict[str, dict[str, Pubkey]] = {}
+        for instruction_name, instruction in (("buy_v2", buy), ("sell_v2", sell)):
+            idl_accounts = load_idl_accounts(instruction_name)
+            idl_index = {
+                account["name"]: index for index, account in enumerate(idl_accounts)
+            }
+            metas = list(instruction[-1].accounts)
+            direct_accounts = {
+                "base_mint": token_info.mint,
+                "quote_mint": quote_mint,
+                "base_token_program": token_info.token_program_id,
+                "quote_token_program": token_info.quote_token_program_id,
+                "fee_recipient": metas[idl_index["fee_recipient"]].pubkey,
+                "buyback_fee_recipient": metas[
+                    idl_index["buyback_fee_recipient"]
+                ].pubkey,
+                "user": user,
+            }
+            expected_accounts = derive_idl_expected_accounts(
+                instruction_name,
+                token_info,
+                user,
+                direct_accounts,
+            )
+            expected_by_instruction[instruction_name] = expected_accounts
+            problems.extend(
+                f"{label}: {problem}"
+                for problem in check_instruction_accounts(
+                    instruction_name,
+                    metas,
+                    expected_accounts,
+                )
+            )
+
+        # Mutation guards prove the verifier detects a wrong PDA seed and a
+        # missing sell signer rather than merely accepting the current output.
+        buy_metas = list(buy[-1].accounts)
+        buy_bonding_curve_index = next(
+            index
+            for index, account in enumerate(load_idl_accounts("buy_v2"))
+            if account["name"] == "bonding_curve"
+        )
+        original_curve_meta = buy_metas[buy_bonding_curve_index]
+        wrong_seed_curve = Pubkey.find_program_address(
+            [b"wrong-bonding-curve", bytes(token_info.mint)],
+            PumpFunAddresses.PROGRAM,
+        )[0]
+        buy_metas[buy_bonding_curve_index] = AccountMeta(
+            pubkey=wrong_seed_curve,
+            is_signer=original_curve_meta.is_signer,
+            is_writable=original_curve_meta.is_writable,
+        )
+        wrong_seed_problems = check_instruction_accounts(
+            "buy_v2",
+            buy_metas,
+            expected_by_instruction["buy_v2"],
+        )
+        if not any("bonding_curve" in problem for problem in wrong_seed_problems):
+            problems.append(f"{label}: wrong bonding-curve seed mutation was accepted")
+
+        sell_metas = list(sell[-1].accounts)
+        sell_user_index = next(
+            index
+            for index, account in enumerate(load_idl_accounts("sell_v2"))
+            if account["name"] == "user"
+        )
+        original_sell_user = sell_metas[sell_user_index]
+        sell_metas[sell_user_index] = AccountMeta(
+            pubkey=original_sell_user.pubkey,
+            is_signer=False,
+            is_writable=original_sell_user.is_writable,
+        )
+        wrong_signer_problems = check_instruction_accounts(
+            "sell_v2",
+            sell_metas,
+            expected_by_instruction["sell_v2"],
+        )
+        if not any(
+            "user" in problem and "signer" in problem
+            for problem in wrong_signer_problems
+        ):
+            problems.append(f"{label}: missing sell signer mutation was accepted")
 
     return problems
 
@@ -475,7 +716,7 @@ def check_examples_toolkit() -> list[str]:
                     )
                     continue
                 for index, (meta, idl_account) in enumerate(
-                    zip(instruction.accounts, idl_accounts), start=1
+                    zip(instruction.accounts, idl_accounts, strict=False), start=1
                 ):
                     if meta.is_writable != bool(idl_account.get("writable")):
                         problems.append(
@@ -495,7 +736,9 @@ def check_examples_toolkit() -> list[str]:
                     else provider.get_sell_v2_instruction_accounts(token_info, user)
                 )
                 layout = _BUY_V2_ACCOUNTS if name == "buy_v2" else _SELL_V2_ACCOUNTS
-                for (account_name, _), meta in zip(layout, instruction.accounts):
+                for (account_name, _), meta in zip(
+                    layout, instruction.accounts, strict=False
+                ):
                     # Fee recipients are picked at random from a set, so compare
                     # membership rather than identity.
                     if "fee_recipient" in account_name:
@@ -533,7 +776,10 @@ def main() -> int:
             all_problems.extend(problems)
 
     for name, check in (
-        ("instruction encoding", check_instruction_encoding),
+        (
+            "instruction order/signers/encoding + mutation guards",
+            check_instruction_encoding,
+        ),
         ("quote config resolution", check_quote_config),
         ("learning-examples pump_v2 toolkit", check_examples_toolkit),
     ):

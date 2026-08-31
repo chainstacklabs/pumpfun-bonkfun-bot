@@ -1,7 +1,13 @@
+import argparse
 import asyncio
 import logging
 import multiprocessing
+import os
+import signal
 import sys
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -29,14 +35,20 @@ from config_loader import (
     print_config_summary,
     validate_platform_listener_combination,
 )
-from trading.universal_trader import (
-    DEFAULT_MAX_EXIT_SELL_ATTEMPTS,
-    UniversalTrader,
+from core.execution_policy import (
+    ExecutionBlocked,
+    ExecutionMode,
+    ExecutionPolicy,
 )
 from utils.logger import setup_file_logging
 
+PROCESS_POLL_INTERVAL_SECONDS = 0.2
+PROCESS_SHUTDOWN_GRACE_SECONDS = 5.0
+PROCESS_TERMINATE_GRACE_SECONDS = 2.0
+PROCESS_KILL_GRACE_SECONDS = 1.0
 
-def setup_logging(bot_name: str):
+
+def setup_logging(bot_name: str) -> None:
     """Set up logging to file for a specific bot instance."""
     log_dir = Path("logs")
     log_dir.mkdir(exist_ok=True)
@@ -47,45 +59,63 @@ def setup_logging(bot_name: str):
     setup_file_logging(str(log_filename))
 
 
-async def start_bot(config_path: str):
-    """Start a trading bot with the configuration from the specified path."""
+def build_execution_policy(
+    config: dict,
+    *,
+    authorize_live: bool = False,
+) -> ExecutionPolicy:
+    """Build a policy and require an explicit runtime grant for live mode."""
+    policy = ExecutionPolicy.from_config(config)
+    if policy.mode is ExecutionMode.LIVE and not authorize_live:
+        raise ExecutionBlocked(
+            "Live execution requires explicit runtime authorization "
+            "with --authorize-live"
+        )
+    if authorize_live:
+        policy = policy.authorize_live()
+    return policy
+
+
+async def start_bot(
+    config_path: str | Path,
+    *,
+    authorize_live: bool = False,
+) -> None:
+    """Start one validated bot, failing before signer creation when unauthorized."""
     cfg = load_bot_config(config_path)
+    if not cfg["enabled"]:
+        raise RuntimeError(f"Bot '{cfg['name']}' is disabled")
+    policy = build_execution_policy(cfg, authorize_live=authorize_live)
     setup_logging(cfg["name"])
     print_config_summary(cfg)
 
-    # Get and validate platform from configuration
-    try:
-        platform = get_platform_from_config(cfg)
-        logging.info(f"Detected platform: {platform.value}")
-    except ValueError as e:
-        logging.exception(f"Platform configuration error: {e}")
-        return
+    platform = get_platform_from_config(cfg)
+    logging.info("Detected platform: %s", platform.value)
 
-    # Validate platform support
-    try:
-        from platforms import platform_factory
+    from platforms import platform_factory
 
-        if not platform_factory.registry.is_platform_supported(platform):
-            logging.error(
-                f"Platform {platform.value} is not supported. Available platforms: {[p.value for p in platform_factory.get_supported_platforms()]}"
-            )
-            return
-    except Exception as e:
-        logging.exception(f"Could not validate platform support: {e}")
-        return
+    if not platform_factory.registry.is_platform_supported(platform):
+        raise ValueError(
+            f"Platform {platform.value} is not supported. Available platforms: "
+            f"{[p.value for p in platform_factory.get_supported_platforms()]}"
+        )
 
-    # Validate listener compatibility
     listener_type = cfg["filters"]["listener_type"]
     if not validate_platform_listener_combination(platform, listener_type):
         from config_loader import get_supported_listeners_for_platform
 
         supported = get_supported_listeners_for_platform(platform)
-        logging.error(
-            f"Listener '{listener_type}' is not compatible with platform '{platform.value}'. Supported listeners: {supported}"
+        raise ValueError(
+            f"Listener '{listener_type}' is not compatible with platform "
+            f"'{platform.value}'. Supported listeners: {supported}"
         )
-        return
 
     # Initialize universal trader with platform-specific configuration
+    from trading.universal_trader import (
+        DEFAULT_MAX_EXIT_SELL_ATTEMPTS,
+        UniversalTrader,
+    )
+
     try:
         trader = UniversalTrader(
             # Connection settings
@@ -138,7 +168,7 @@ async def start_bot(config_path: str):
             ),
             hard_cap_prior_fee=cfg.get("priority_fees", {}).get("hard_cap", 500000),
             # Retry and timeout settings
-            max_retries=cfg.get("retries", {}).get("max_attempts", 10),
+            max_retries=cfg.get("retries", {}).get("max_attempts", 1),
             wait_time_after_creation=cfg.get("retries", {}).get(
                 "wait_after_creation", 15
             ),
@@ -165,6 +195,7 @@ async def start_bot(config_path: str):
             compute_units=cfg.get("compute_units", {}),
             # Node provider configuration
             max_rps=cfg.get("node", {}).get("max_rps", 25),
+            execution_policy=policy,
         )
 
         await trader.start()
@@ -174,126 +205,329 @@ async def start_bot(config_path: str):
         raise
 
 
-def run_bot_process(config_path):
-    asyncio.run(start_bot(config_path))
+async def _run_bot_process(
+    config_path: str | Path,
+    *,
+    authorize_live: bool = False,
+) -> int | None:
+    """Run one bot and translate child signals into cancellable shutdown."""
+    shutdown_signal: list[int | None] = [None]
+    loop = asyncio.get_running_loop()
+    task = asyncio.current_task()
+    if task is None:
+        raise RuntimeError("Bot process has no active asyncio task")
+    previous_handlers: dict[int, object] = {}
+
+    def request_shutdown(signum: int, _frame: object) -> None:
+        if shutdown_signal[0] is None:
+            shutdown_signal[0] = signum
+        loop.call_soon_threadsafe(task.cancel)
+
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        previous_handlers[signum] = signal.getsignal(signum)
+        signal.signal(signum, request_shutdown)
+
+    try:
+        await start_bot(config_path, authorize_live=authorize_live)
+    except asyncio.CancelledError:
+        if shutdown_signal[0] is None:
+            raise
+    finally:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
+    return shutdown_signal[0]
 
 
-def run_all_bots():
-    """Run all bots defined in YAML files in the 'bots' directory."""
+def run_bot_process(config_path: str | Path) -> None:
+    """Run a bot in a child process with nonzero signal termination status."""
+    shutdown_signal = asyncio.run(_run_bot_process(config_path))
+    if shutdown_signal is not None:
+        raise SystemExit(128 + shutdown_signal)
+
+
+def _alive_processes(
+    processes: list[tuple[multiprocessing.Process, str]],
+) -> list[tuple[multiprocessing.Process, str]]:
+    return [(process, name) for process, name in processes if process.is_alive()]
+
+
+def _join_processes(
+    processes: list[tuple[multiprocessing.Process, str]],
+    timeout: float,
+) -> list[tuple[multiprocessing.Process, str]]:
+    """Join children only in bounded increments and return any survivors."""
+    deadline = time.monotonic() + max(timeout, 0.0)
+    alive = _alive_processes(processes)
+    while alive:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        for process, _ in alive:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            process.join(timeout=min(PROCESS_POLL_INTERVAL_SECONDS, remaining))
+        alive = _alive_processes(processes)
+
+    for process, _ in processes:
+        if not process.is_alive():
+            process.join(timeout=0)
+    return _alive_processes(processes)
+
+
+def _forward_signal(
+    processes: list[tuple[multiprocessing.Process, str]],
+    signum: int,
+) -> None:
+    for process, bot_name in _alive_processes(processes):
+        pid = process.pid
+        if pid is None:
+            continue
+        try:
+            os.kill(pid, signum)
+        except ProcessLookupError:
+            continue
+        except OSError:
+            logging.exception(
+                "Failed to propagate signal %s to process %s for bot '%s'",
+                signum,
+                process.name,
+                bot_name,
+            )
+
+
+def _stop_processes(
+    processes: list[tuple[multiprocessing.Process, str]],
+    signum: int,
+) -> list[tuple[multiprocessing.Process, str]]:
+    """Request shutdown, then terminate and kill any stubborn children."""
+    _forward_signal(processes, signum)
+    alive = _join_processes(processes, PROCESS_SHUTDOWN_GRACE_SECONDS)
+    for process, bot_name in alive:
+        logging.warning(
+            "Terminating unresponsive process %s for bot '%s'",
+            process.name,
+            bot_name,
+        )
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            continue
+
+    alive = _join_processes(processes, PROCESS_TERMINATE_GRACE_SECONDS)
+    for process, bot_name in alive:
+        logging.error(
+            "Killing unresponsive process %s for bot '%s'",
+            process.name,
+            bot_name,
+        )
+        try:
+            process.kill()
+        except ProcessLookupError:
+            continue
+
+    return _join_processes(processes, PROCESS_KILL_GRACE_SECONDS)
+
+
+@contextmanager
+def _supervisor_signal_handlers(
+    processes: list[tuple[multiprocessing.Process, str]],
+) -> Iterator[list[int | None]]:
+    shutdown_signal: list[int | None] = [None]
+    previous_handlers: dict[int, object] = {}
+
+    def request_shutdown(signum: int, _frame: object) -> None:
+        if shutdown_signal[0] is None:
+            shutdown_signal[0] = signum
+
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        previous_handlers[signum] = signal.getsignal(signum)
+        signal.signal(signum, request_shutdown)
+
+    try:
+        yield shutdown_signal
+    finally:
+        alive = _alive_processes(processes)
+        if alive:
+            cleanup_signal = shutdown_signal[0] or signal.SIGTERM
+            survivors = _stop_processes(processes, cleanup_signal)
+            for process, bot_name in survivors:
+                logging.critical(
+                    "Process %s for bot '%s' survived kill escalation",
+                    process.name,
+                    bot_name,
+                )
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
+
+
+def _supervise_processes(
+    processes: list[tuple[multiprocessing.Process, str]],
+    shutdown_signal: list[int | None],
+) -> int:
+    """Watch children and fail closed on signals or any child failure."""
+    observed: set[int] = set()
+    child_failed = False
+
+    while True:
+        for process, bot_name in processes:
+            if process.exitcode is None or id(process) in observed:
+                continue
+            observed.add(id(process))
+            logging.info(
+                "Process %s for bot '%s' exited with status %s",
+                process.name,
+                bot_name,
+                process.exitcode,
+            )
+            if process.exitcode != 0:
+                child_failed = True
+
+        alive = _alive_processes(processes)
+        if shutdown_signal[0] is not None or child_failed:
+            signum = shutdown_signal[0] or signal.SIGTERM
+            survivors = _stop_processes(processes, signum)
+            for process, bot_name in survivors:
+                logging.critical(
+                    "Process %s for bot '%s' survived kill escalation",
+                    process.name,
+                    bot_name,
+                )
+            break
+        if not alive:
+            break
+
+        _join_processes(processes, PROCESS_POLL_INTERVAL_SECONDS)
+
+    if shutdown_signal[0] is not None:
+        return 128 + shutdown_signal[0]
+    return 1 if child_failed else 0
+
+
+def run_all_bots() -> int:
+    """Run enabled non-live bots and return a process-style exit status."""
     bot_dir = Path("bots")
     if not bot_dir.exists():
-        logging.error(f"Bot directory '{bot_dir}' not found")
-        return
+        logging.error("Bot directory '%s' not found", bot_dir)
+        return 1
 
-    bot_files = list(bot_dir.glob("*.yaml"))
+    bot_files = sorted(bot_dir.glob("*.yaml"))
     if not bot_files:
-        logging.error(f"No bot configuration files found in '{bot_dir}'")
-        return
+        logging.error("No bot configuration files found in '%s'", bot_dir)
+        return 1
 
-    logging.info(f"Found {len(bot_files)} bot configuration files")
+    logging.info("Found %d bot configuration files", len(bot_files))
+    processes: list[tuple[multiprocessing.Process, str]] = []
+    disabled_count = 0
+    started_count = 0
+    failure_count = 0
+    supervisor_status = 0
 
-    processes = []
-    skipped_bots = 0
-
-    for file in bot_files:
-        try:
-            cfg = load_bot_config(str(file))
-            bot_name = cfg.get("name", file.stem)
-
-            # Skip bots with enabled=False
-            if not cfg.get("enabled", True):
-                logging.info(f"Skipping disabled bot '{bot_name}'")
-                skipped_bots += 1
-                continue
-
-            # Validate platform configuration
+    with _supervisor_signal_handlers(processes) as shutdown_signal:
+        for config_file in bot_files:
+            if shutdown_signal[0] is not None:
+                break
             try:
+                cfg = load_bot_config(config_file)
+                bot_name = cfg["name"]
+                if not cfg["enabled"]:
+                    logging.info("Skipping disabled bot '%s'", bot_name)
+                    disabled_count += 1
+                    continue
+
+                # Bulk startup intentionally has no live-authorization path. A live
+                # bot must be selected explicitly with --config --authorize-live.
+                build_execution_policy(cfg, authorize_live=False)
                 platform = get_platform_from_config(cfg)
 
-                # Check platform support
-                from platforms import platform_factory
-
-                if not platform_factory.registry.is_platform_supported(platform):
-                    logging.error(
-                        f"Platform {platform.value} is not supported for bot '{bot_name}'. Available platforms: {[p.value for p in platform_factory.get_supported_platforms()]}"
+                if cfg.get("separate_process", False):
+                    process = multiprocessing.Process(
+                        target=run_bot_process,
+                        args=(config_file,),
+                        name=f"bot-{bot_name}",
                     )
-                    skipped_bots += 1
-                    continue
-
-                # Validate listener compatibility
-                listener_type = cfg["filters"]["listener_type"]
-                if not validate_platform_listener_combination(platform, listener_type):
-                    from config_loader import get_supported_listeners_for_platform
-
-                    supported = get_supported_listeners_for_platform(platform)
-                    logging.error(
-                        f"Listener '{listener_type}' is not compatible with platform '{platform.value}' for bot '{bot_name}'. Supported listeners: {supported}"
+                    process.start()
+                    processes.append((process, bot_name))
+                    started_count += 1
+                    logging.info(
+                        "Started bot '%s' (%s) in process %s",
+                        bot_name,
+                        platform.value,
+                        process.name,
                     )
-                    skipped_bots += 1
-                    continue
+                else:
+                    logging.info(
+                        "Starting bot '%s' (%s) in the main process",
+                        bot_name,
+                        platform.value,
+                    )
+                    main_signal = asyncio.run(_run_bot_process(config_file))
+                    if main_signal is not None:
+                        shutdown_signal[0] = main_signal
+                        break
+                    started_count += 1
+            except Exception:
+                failure_count += 1
+                logging.exception("Failed to start bot from %s", config_file)
 
-            except Exception as e:
-                logging.exception(
-                    f"Invalid platform configuration for bot '{bot_name}': {e}. Skipping..."
-                )
-                skipped_bots += 1
-                continue
-
-            # Start bot in separate process or main process
-            if cfg.get("separate_process", False):
-                logging.info(
-                    f"Starting bot '{bot_name}' ({platform.value}) in separate process"
-                )
-                p = multiprocessing.Process(
-                    target=run_bot_process, args=(str(file),), name=f"bot-{bot_name}"
-                )
-                p.start()
-                processes.append(p)
-            else:
-                logging.info(
-                    f"Starting bot '{bot_name}' ({platform.value}) in main process"
-                )
-                asyncio.run(start_bot(str(file)))
-
-        except Exception as e:
-            logging.exception(f"Failed to start bot from {file}: {e}")
-            skipped_bots += 1
+        supervisor_status = _supervise_processes(processes, shutdown_signal)
+        if supervisor_status != 0:
+            failure_count += 1
 
     logging.info(
-        f"Started {len(bot_files) - skipped_bots} bots, skipped {skipped_bots} disabled/invalid bots"
+        "Bot run summary: started=%d disabled=%d failed=%d",
+        started_count,
+        disabled_count,
+        failure_count,
     )
-
-    # Wait for all processes to complete
-    for p in processes:
-        p.join()
-        logging.info(f"Process {p.name} completed")
+    if supervisor_status >= 128:
+        return supervisor_status
+    return 1 if failure_count else 0
 
 
-def main() -> None:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse the safe runner command line."""
+    parser = argparse.ArgumentParser(description="Run configured trading bots")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        help="Run exactly one bot configuration instead of scanning bots/",
+    )
+    parser.add_argument(
+        "--authorize-live",
+        action="store_true",
+        help=(
+            "Explicitly authorize live transaction submission for the single "
+            "configuration selected with --config"
+        ),
+    )
+    args = parser.parse_args(argv)
+    if args.authorize_live and args.config is None:
+        parser.error("--authorize-live requires an explicit --config path")
+    return args
+
+
+def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
+    args = parse_args(argv)
 
-    # Log supported platforms and listeners
     try:
-        from platforms import platform_factory
-
-        supported_platforms = platform_factory.get_supported_platforms()
-        logging.info(f"Supported platforms: {[p.value for p in supported_platforms]}")
-
-        # Log listener compatibility for each platform
-        from config_loader import get_supported_listeners_for_platform
-
-        for platform in supported_platforms:
-            listeners = get_supported_listeners_for_platform(platform)
-            logging.info(f"Platform {platform.value} supports listeners: {listeners}")
-
-    except Exception as e:
-        logging.warning(f"Could not load platform information: {e}")
-
-    run_all_bots()
+        if args.config is not None:
+            shutdown_signal = asyncio.run(
+                _run_bot_process(
+                    args.config,
+                    authorize_live=args.authorize_live,
+                )
+            )
+            return 128 + shutdown_signal if shutdown_signal is not None else 0
+        return run_all_bots()
+    except Exception:
+        logging.exception("Bot runner stopped before successful startup")
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

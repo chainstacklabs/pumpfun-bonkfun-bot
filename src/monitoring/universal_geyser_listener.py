@@ -10,6 +10,8 @@ import grpc
 from geyser.generated import geyser_pb2, geyser_pb2_grpc
 from interfaces.core import Platform, TokenInfo
 from monitoring.base_listener import BaseTokenListener
+from monitoring.event_normalization import NormalizationError, normalize_geyser_update
+from monitoring.parser_dispatch import parse_normalized_event
 from platforms import platform_factory
 from utils.logger import get_logger
 
@@ -119,88 +121,86 @@ class UniversalGeyserListener(BaseTokenListener):
         match_string: str | None = None,
         creator_address: str | None = None,
     ) -> None:
-        """Listen for new token creations using Geyser subscription."""
+        """Listen for successful creations on an acknowledged Geyser stream."""
         if not self.platform_parsers:
             logger.error("No platform parsers available. Cannot listen for tokens.")
             return
 
+        reconnect_attempt = 0
         while True:
+            channel = None
+            call = None
+            failure: Exception | None = None
             try:
                 stub, channel = await self._create_geyser_connection()
                 request = self._create_subscription_request()
-
-                logger.info(f"Connected to Geyser endpoint: {self.geyser_endpoint}")
-                logger.info(
-                    f"Monitoring platforms: {[p.value for p in self.platforms]}"
-                )
-                logger.info(
-                    f"Monitoring program IDs: {[str(pid) for pid in self.platform_program_ids]}"
-                )
-
+                call = stub.Subscribe(iter([request]))
                 try:
-                    async for update in stub.Subscribe(iter([request])):
-                        token_info = await self._process_update(update)
-                        if not token_info:
-                            continue
+                    await asyncio.wait_for(
+                        call.initial_metadata(),
+                        timeout=self.subscription_timeout,
+                    )
+                except TimeoutError as exc:
+                    raise TimeoutError(
+                        "Geyser subscription acknowledgement timed out"
+                    ) from exc
 
+                reconnect_attempt = 0
+                logger.info("Connected to Geyser endpoint: %s", self.geyser_endpoint)
+                logger.info(
+                    "Monitoring platforms: %s",
+                    [platform.value for platform in self.platforms],
+                )
+                logger.info(
+                    "Monitoring program IDs: %s",
+                    [str(program_id) for program_id in self.platform_program_ids],
+                )
+
+                async for update in call:
+                    token_infos = self._process_update_events(update)
+                    for token_info in token_infos:
                         logger.info(
-                            f"New token detected: {token_info.name} ({token_info.symbol}) on {token_info.platform.value}"
+                            "New token detected: %s (%s) on %s",
+                            token_info.name,
+                            token_info.symbol,
+                            token_info.platform.value,
                         )
-
-                        # Apply filters
-                        if match_string and not (
-                            match_string.lower() in token_info.name.lower()
-                            or match_string.lower() in token_info.symbol.lower()
-                        ):
-                            logger.info(
-                                f"Token does not match filter '{match_string}'. Skipping..."
-                            )
-                            continue
-
-                        if creator_address and str(token_info.user) != creator_address:
-                            logger.info(
-                                f"Token not created by {creator_address}. Skipping..."
-                            )
-                            continue
-
-                        await token_callback(token_info)
-
-                except Exception as e:
-                    if isinstance(e, grpc.aio.AioRpcError):
-                        logger.exception(f"gRPC error: {e.details()}")
-                    else:
-                        logger.exception("Geyser error occurred")
-                    await asyncio.sleep(5)
-
-                finally:
+                        await self.dispatch_token(
+                            token_info,
+                            token_callback,
+                            match_string=match_string,
+                            creator_address=creator_address,
+                        )
+                raise ConnectionError("Geyser subscription stream ended")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                failure = exc
+                if isinstance(exc, grpc.aio.AioRpcError):
+                    logger.error("Geyser RPC error: %s", exc.details())
+                reconnect_attempt += 1
+            finally:
+                if call is not None:
+                    call.cancel()
+                if channel is not None:
                     await channel.close()
+            if failure is not None:
+                await self.wait_before_reconnect(reconnect_attempt, failure)
 
-            except Exception:
-                logger.exception("Geyser connection error")
-                logger.info("Reconnecting in 10 seconds...")
-                await asyncio.sleep(10)
-
-    async def _process_update(self, update) -> TokenInfo | None:
-        """Process a Geyser update and extract token creation info.
-
-        Delegates to each platform parser's geyser method rather than decoding
-        instructions here: the parser prefers the CreateEvent from
-        meta.log_messages, which carries the canonical creator (instruction
-        args.creator is user-supplied) and marks the TokenInfo
-        state_from_event so extreme_fast_mode can buy with zero RPC calls.
-        Each parser filters on its own program id internally.
-        """
+    def _process_update_events(self, update: object) -> list[TokenInfo]:
+        """Normalize one Geyser transaction and return all valid creations."""
         try:
-            if not update.HasField("transaction"):
-                return None
-
-            for parser in self.platform_parsers.values():
-                token_info = parser.parse_token_creation_from_geyser(update)
-                if token_info:
-                    return token_info
-
-            return None
-
+            event = normalize_geyser_update(update, commitment="processed")
+            if event is None:
+                return []
+            return parse_normalized_event(event, self.platform_parsers)
+        except NormalizationError as exc:
+            logger.warning("Rejected Geyser update: %s", exc)
         except Exception:
             logger.exception("Error processing Geyser update")
-            return None
+        return []
+
+    async def _process_update(self, update: object) -> TokenInfo | None:
+        """Compatibility wrapper returning the first normalized creation."""
+        token_infos = self._process_update_events(update)
+        return token_infos[0] if token_infos else None

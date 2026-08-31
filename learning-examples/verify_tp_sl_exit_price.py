@@ -26,7 +26,8 @@ seller that records the price it is handed:
   3. The floor built from the entry price is unpayable on a stop-loss, while
      the floor from the triggering price is payable (why check 1 matters).
   4. A failed sell is retried, and a retry that succeeds closes the position.
-  5. Retries are bounded, so a token that keeps reverting cannot pin the bot.
+  5. Retries are bounded per burst; exhaustion keeps the position open,
+     journaled, and monitored after a cooldown instead of abandoning it.
   6. A price that recovers before the retry resets the attempt counter.
   7. A successful sell still closes the position on the first attempt.
   8. The cap comes from trade.max_exit_sell_attempts and is wired end to end.
@@ -88,8 +89,14 @@ class StubSeller:
     prices_seen: list[float] = field(default_factory=list)
 
     async def execute(
-        self, token_info: TokenInfo, token_amount: float, token_price: float
+        self,
+        token_info: TokenInfo,
+        token_amount: float,
+        token_price: float,
+        token_amount_raw: int | None = None,
+        intent_id: str | None = None,
     ) -> TradeResult:
+        del intent_id
         self.prices_seen.append(token_price)
         if len(self.prices_seen) <= self.fail_first:
             return TradeResult(
@@ -102,6 +109,7 @@ class StubSeller:
             platform=token_info.platform,
             tx_signature="stub-signature",
             amount=token_amount,
+            amount_raw=token_amount_raw,
             price=token_price,
         )
 
@@ -115,6 +123,16 @@ def _make_trader(
     trader = object.__new__(UniversalTrader)
     trader.price_check_interval = 0  # no real waiting between iterations
     trader.max_exit_sell_attempts = max_exit_sell_attempts
+    trader._shutdown_event = asyncio.Event()
+    trader.cooldown_delays = []
+
+    async def _sleep_until_shutdown(seconds: float) -> bool:
+        if seconds >= 30:
+            trader.cooldown_delays.append(seconds)
+            return True
+        return False
+
+    trader._sleep_until_shutdown = _sleep_until_shutdown  # noqa: SLF001
     trader.platform_implementations = SimpleNamespace(
         curve_manager=curve_manager, address_provider=None
     )
@@ -127,6 +145,8 @@ def _make_trader(
     trader.cleanup_force_close_with_burn = False
     # Keep a verification run from writing to ./trades.
     trader._log_trade = lambda *_args, **_kwargs: None  # noqa: SLF001
+    trader._persist_position = lambda *_args, **_kwargs: None  # noqa: SLF001
+    trader._remove_position = lambda *_args, **_kwargs: None  # noqa: SLF001
     return trader
 
 
@@ -186,10 +206,13 @@ async def _run_monitor(
     fail_first: int = 0,
     max_exit_sell_attempts: int = DEFAULT_MAX_EXIT_SELL_ATTEMPTS,
 ) -> tuple[Position, StubSeller, StubCurveManager]:
-    """Drive the real monitor loop to completion over a scripted price series.
+    """Drive the real monitor loop over a scripted price series.
+
+    The stub ends an exhausted retry burst when the production monitor enters
+    its cooldown; successful exits still end by closing the position.
 
     Raises:
-        TimeoutError: If the loop never exits, i.e. retries are unbounded.
+        TimeoutError: If the monitor reaches neither closure nor cooldown.
     """
     curve_manager = StubCurveManager(prices=list(prices))
     seller = StubSeller(fail_first=fail_first)
@@ -276,20 +299,10 @@ async def check_failed_sell_is_retried() -> bool:
 
 
 async def check_retries_are_bounded() -> bool:
-    print("\n5. Retries are bounded, so a reverting token cannot pin the bot")
-    # fail_first far above the cap: the loop must give up on its own, so the
-    # timeout firing is itself a failure - it means the retry never terminates
-    # and the bot would sit on this position forever.
-    try:
-        position, seller, _ = await _run_monitor(
-            [ENTRY_PRICE, SL_TRIGGER_PRICE], fail_first=99
-        )
-    except TimeoutError:
-        return _check(
-            "monitor loop terminates on repeated failures",
-            False,  # noqa: FBT003
-            f"still retrying after {MONITOR_TIMEOUT}s - retries are unbounded",
-        )
+    print("\n5. Retries are bounded per burst without abandoning the position")
+    position, seller, _ = await _run_monitor(
+        [ENTRY_PRICE, SL_TRIGGER_PRICE], fail_first=99
+    )
     ok = _check(
         "attempts capped at the configured maximum",
         len(seller.prices_seen) == DEFAULT_MAX_EXIT_SELL_ATTEMPTS,
@@ -297,7 +310,7 @@ async def check_retries_are_bounded() -> bool:
     )
     ok = (
         _check(
-            "position not falsely marked closed",
+            "position remains open for later monitoring",
             position.is_active and position.exit_price is None,
             f"is_active={position.is_active}, exit_price={position.exit_price}",
         )

@@ -8,7 +8,7 @@ by implementing the EventParser interface with IDL-based parsing.
 import base64
 import struct
 from time import monotonic
-from typing import Any
+from typing import Any, cast
 
 from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
@@ -94,20 +94,18 @@ class LetsBonkEventParser(EventParser):
             return None
 
         try:
-            # Helper to get account key
-            def get_account_key(index):
+
+            def get_account_key(index: int) -> Pubkey | None:
                 if index >= len(accounts):
                     return None
                 account_index = accounts[index]
                 if account_index >= len(account_keys):
                     return None
-                return Pubkey.from_bytes(account_keys[account_index])
+                return Pubkey.from_bytes(bytes(account_keys[account_index]))
 
-            # Parse instruction data using injected IDL parser
             decoded = self._idl_parser.decode_instruction(
                 instruction_data, account_keys, accounts
             )
-            # Accept any of the initialize instruction variants
             if not decoded or decoded["instruction_name"] not in {
                 "initialize",
                 "initialize_v2",
@@ -115,80 +113,135 @@ class LetsBonkEventParser(EventParser):
             }:
                 return None
 
-            # Determine token program based on instruction variant
             instruction_name = decoded["instruction_name"]
-            is_token_2022 = instruction_name == "initialize_with_token_2022"
-            token_program_id = (
-                SystemAddresses.TOKEN_2022_PROGRAM
-                if is_token_2022
-                else SystemAddresses.TOKEN_PROGRAM
-            )
+            decoded_accounts = decoded.get("accounts", {})
+
+            def get_named_account(name: str, fallback_index: int) -> Pubkey | None:
+                value = decoded_accounts.get(name)
+                if value:
+                    return Pubkey.from_string(value)
+                return get_account_key(fallback_index)
 
             args = decoded.get("args", {})
-
-            # Extract MintParams from the decoded arguments
             base_mint_param = args.get("base_mint_param", {})
-            if not base_mint_param:
+            if not isinstance(base_mint_param, dict):
+                return None
+            if any(
+                not isinstance(base_mint_param.get(name), str)
+                or not base_mint_param[name].strip()
+                for name in ("name", "symbol")
+            ):
                 return None
 
-            # Extract account information based on IDL account order for initialize instruction
-            # From the manual example, the account order is:
-            # 0: creator (signer)
-            # 1: creator_ata (not needed for TokenInfo)
-            # 2: global_config
-            # 3: platform_config
-            # 4: creator
-            # 5: pool_state
-            # 6: base_mint
-            # 7: quote_mint (WSOL)
-            # 8: base_vault
-            # 9: quote_vault
-            # ... other accounts
+            # All supported initialize variants use payer at index 0 and the
+            # authoritative pool creator at index 1. The payer may fund a pool
+            # on somebody else's behalf and must not be recorded as creator.
+            payer = get_named_account("payer", 0)
+            creator = get_named_account("creator", 1)
+            global_config = get_named_account("global_config", 2)
+            platform_config = get_named_account("platform_config", 3)
+            pool_state = get_named_account("pool_state", 5)
+            base_mint = get_named_account("base_mint", 6)
+            quote_mint = get_named_account("quote_mint", 7)
+            base_vault = get_named_account("base_vault", 8)
+            quote_vault = get_named_account("quote_vault", 9)
 
-            creator = get_account_key(0)  # First signer account (creator)
-            global_config = get_account_key(2)  # global_config account
-            platform_config = get_account_key(3)  # platform_config account
-            pool_state = get_account_key(5)  # pool_state account
-            base_mint = get_account_key(6)  # base_mint account
-            base_vault = get_account_key(8)  # base_vault account
-            quote_vault = get_account_key(9)  # quote_vault account
+            if instruction_name == "initialize_with_token_2022":
+                base_program_index, quote_program_index = 10, 11
+            else:
+                # initialize and initialize_v2 include metadata_account at 10.
+                base_program_index, quote_program_index = 11, 12
+            base_token_program = get_named_account(
+                "base_token_program", base_program_index
+            )
+            quote_token_program = get_named_account(
+                "quote_token_program", quote_program_index
+            )
 
-            if not all(
-                [
-                    creator,
-                    global_config,
-                    platform_config,
-                    pool_state,
-                    base_mint,
-                    base_vault,
-                    quote_vault,
-                ]
-            ):
+            required_accounts = {
+                "payer": payer,
+                "creator": creator,
+                "global_config": global_config,
+                "platform_config": platform_config,
+                "pool_state": pool_state,
+                "base_mint": base_mint,
+                "quote_mint": quote_mint,
+                "base_vault": base_vault,
+                "quote_vault": quote_vault,
+                "base_token_program": base_token_program,
+                "quote_token_program": quote_token_program,
+            }
+            missing = [
+                name for name, value in required_accounts.items() if value is None
+            ]
+            if missing:
                 logger.debug(
-                    f"Missing required accounts: creator={creator}, global_config={global_config}, "
-                    f"platform_config={platform_config}, pool_state={pool_state}, base_mint={base_mint}, "
-                    f"base_vault={base_vault}, quote_vault={quote_vault}"
+                    "Initialize instruction is missing authoritative accounts: "
+                    f"{', '.join(missing)}"
                 )
                 return None
+
+            known_token_programs = {
+                SystemAddresses.TOKEN_PROGRAM,
+                SystemAddresses.TOKEN_2022_PROGRAM,
+            }
+            if (
+                base_token_program not in known_token_programs
+                or quote_token_program not in known_token_programs
+            ):
+                logger.debug(
+                    "Initialize instruction uses unsupported token programs: "
+                    f"base={base_token_program}, quote={quote_token_program}"
+                )
+                return None
+
+            curve_param = args.get("curve_param")
+            curve_type = (
+                curve_param.get("variant") if isinstance(curve_param, dict) else None
+            )
+            transfer_fee_extension_param: dict[str, int] | None = None
+            if instruction_name == "initialize_with_token_2022":
+                transfer_fee_extension_param = (
+                    self._validated_transfer_fee_extension_param(
+                        args.get("transfer_fee_extension_param")
+                    )
+                )
+            additional_data = {
+                "source": "initialize_instruction",
+                "instruction_name": instruction_name,
+                "curve_type": curve_type,
+                "curve_param": curve_param,
+            }
+            if instruction_name == "initialize_with_token_2022":
+                additional_data["transfer_fee_extension_param"] = (
+                    transfer_fee_extension_param
+                )
+                additional_data["transfer_fee_metadata_scope"] = "initialization_only"
+            for field in ("source", "status"):
+                if field in decoded:
+                    additional_data[field] = decoded[field]
 
             return TokenInfo(
                 name=base_mint_param.get("name", ""),
                 symbol=base_mint_param.get("symbol", ""),
                 uri=base_mint_param.get("uri", ""),
-                mint=base_mint,
+                mint=cast("Pubkey", base_mint),
                 platform=Platform.LETS_BONK,
-                pool_state=pool_state,
-                base_vault=base_vault,
-                quote_vault=quote_vault,
-                global_config=global_config,
-                platform_config=platform_config,
-                user=creator,
-                creator=creator,
-                token_program_id=token_program_id,
+                pool_state=cast("Pubkey", pool_state),
+                base_vault=cast("Pubkey", base_vault),
+                quote_vault=cast("Pubkey", quote_vault),
+                global_config=cast("Pubkey", global_config),
+                platform_config=cast("Pubkey", platform_config),
+                user=cast("Pubkey", payer),
+                creator=cast("Pubkey", creator),
+                token_program_id=cast("Pubkey", base_token_program),
+                quote_mint=cast("Pubkey", quote_mint),
+                quote_token_program_id=cast("Pubkey", quote_token_program),
                 creation_timestamp=monotonic(),
+                additional_data=additional_data,
             )
 
-        except Exception as e:
+        except (IndexError, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Failed to parse initialize instruction: {e}")
             return None
 
@@ -222,27 +275,20 @@ class LetsBonkEventParser(EventParser):
                 if bytes(program_id) != bytes(self.get_program_id()):
                     continue
 
-                # Check if it's the LetsBonk platform config account
-                has_platform_config = False
-                for acc_idx in ix.accounts:
-                    if acc_idx < len(msg.account_keys):
-                        acc_key = msg.account_keys[acc_idx]
-                        if bytes(acc_key) == bytes(
-                            self.address_provider.get_system_addresses()[
-                                "platform_config"
-                            ]
-                        ):
-                            has_platform_config = True
-                            break
-
-                if not has_platform_config:
-                    continue
-
-                # Process instruction data
                 token_info = self.parse_token_creation_from_instruction(
                     ix.data, ix.accounts, msg.account_keys
                 )
                 if token_info:
+                    meta = getattr(
+                        transaction_info.transaction.transaction, "meta", None
+                    )
+                    if meta is not None and getattr(meta, "err", None) is not None:
+                        return None
+                    self._annotate_source(
+                        token_info,
+                        source="geyser",
+                        status="succeeded" if meta is not None else None,
+                    )
                     return token_info
 
             return None
@@ -267,6 +313,45 @@ class LetsBonkEventParser(EventParser):
         """
         return self._initialize_discriminator_bytes_list
 
+    @staticmethod
+    def _validated_transfer_fee_extension_param(
+        value: Any,
+    ) -> dict[str, int] | None:
+        """Validate initialization metadata without treating it as current state."""
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise ValueError("Transfer-fee extension metadata is not a mapping")
+        basis_points = value.get("transfer_fee_basis_points")
+        maximum_fee = value.get("maximum_fee")
+        if (
+            isinstance(basis_points, bool)
+            or not isinstance(basis_points, int)
+            or not 0 <= basis_points <= 10_000
+        ):
+            raise ValueError("Transfer-fee basis points are invalid")
+        if (
+            isinstance(maximum_fee, bool)
+            or not isinstance(maximum_fee, int)
+            or not 0 <= maximum_fee <= 2**64 - 1
+        ):
+            raise ValueError("Transfer-fee maximum is invalid")
+        return {
+            "transfer_fee_basis_points": basis_points,
+            "maximum_fee": maximum_fee,
+        }
+
+    @staticmethod
+    def _annotate_source(
+        token_info: TokenInfo, *, source: str, status: str | None = None
+    ) -> None:
+        """Preserve listener provenance without replacing initialize metadata."""
+        additional_data = dict(token_info.additional_data or {})
+        additional_data["source"] = source
+        if status is not None:
+            additional_data["status"] = status
+        token_info.additional_data = additional_data
+
     def parse_token_creation_from_block(self, block_data: dict) -> TokenInfo | None:
         """Parse token creation from block data (for block listener).
 
@@ -283,6 +368,10 @@ class LetsBonkEventParser(EventParser):
             for tx in block_data["transactions"]:
                 if not isinstance(tx, dict) or "transaction" not in tx:
                     continue
+                meta = tx.get("meta")
+                if isinstance(meta, dict) and meta.get("err") is not None:
+                    continue
+                status = "succeeded" if meta is not None else None
 
                 # Decode base64 transaction data if needed
                 tx_data = tx["transaction"]
@@ -324,6 +413,11 @@ class LetsBonkEventParser(EventParser):
                                         )
                                     )
                                     if token_info:
+                                        self._annotate_source(
+                                            token_info,
+                                            source="block",
+                                            status=status,
+                                        )
                                         return token_info
 
                     except Exception as e:
@@ -378,6 +472,11 @@ class LetsBonkEventParser(EventParser):
                                         )
                                     )
                                     if token_info:
+                                        self._annotate_source(
+                                            token_info,
+                                            source="block",
+                                            status=status,
+                                        )
                                         return token_info
 
                     except Exception as e:

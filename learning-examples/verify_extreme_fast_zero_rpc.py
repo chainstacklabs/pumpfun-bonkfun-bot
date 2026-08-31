@@ -1,24 +1,25 @@
-"""Verify extreme_fast_mode makes zero RPC calls for event-sourced tokens.
+"""Verify zero-RPC buys are limited to verified, correlated CreateEvents.
 
-extreme_fast_mode's contract is that nothing sits between detecting a token
-and submitting the buy — no reads, no price fetch. The pump.fun CreateEvent
-carries the canonical creator (instruction args.creator is user-supplied and
-may differ post-2026-04-28), mayhem/cashback flags and quote_mint, so a
-TokenInfo built from it needs no pre-buy curve refresh. PumpPortal payloads
-carry none of that, so they keep the refresh.
+The pump.fun CreateEvent carries the canonical creator (instruction
+args.creator is user-supplied and may differ post-2026-04-28),
+mayhem/cashback flags, and quote_mint. Normalized blocks and Geyser
+transactions can correlate that event with the create instruction and retain
+the verification needed to skip the pre-buy curve refresh. A logsSubscribe
+notification has no transaction instructions, so parser dispatch deliberately
+downgrades its event candidate and the buy must refresh.
 
 Offline machine checks, no network and no funds moved:
 
-  1. The logs parser marks CreateEvent-sourced TokenInfo as state_from_event.
+  1. The raw logs parser can decode a CreateEvent candidate.
   2. The instruction parser stays conservative (args.creator not canonical).
-  3. The geyser parser prefers the CreateEvent from meta.log_messages.
-  4. The geyser LISTENER delegates to that parser (it used to inline
-     instruction decoding, bypassing the event path).
-  5. The block parser rides the same CreateEvent logs.
-  6. The pumpportal processor never sets state_from_event.
-  7. An event-sourced buy submits with ZERO curve-manager/RPC calls.
+  3. The logs listener normalization/dispatch path downgrades the uncorrelated
+     candidate and the buyer refreshes curve state.
+  4. The geyser parser prefers the CreateEvent from meta.log_messages.
+  5. The geyser listener retains correlated verification and buys with zero RPC.
+  6. The block listener retains correlated verification and buys with zero RPC.
+  7. The pumpportal processor never sets state_from_event.
   8. A pumpportal-sourced buy still refreshes from chain.
-  9. trade.trust_create_event=false forces the refresh even for event data.
+  9. trade.trust_create_event=false forces a refresh for verified event data.
 
 Usage:
     uv run learning-examples/verify_extreme_fast_zero_rpc.py
@@ -28,15 +29,18 @@ import asyncio
 import base64
 import json
 import sys
+from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from solders.instruction import AccountMeta, Instruction  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 from solders.transaction import VersionedTransaction  # noqa: E402
 
+from core.client import TransactionStatus  # noqa: E402
 from core.pubkeys import WSOL_MINT, SystemAddresses  # noqa: E402
 from interfaces.core import Platform, TokenInfo  # noqa: E402
 from platforms.pumpfun.address_provider import PumpFunAddressProvider  # noqa: E402
@@ -78,6 +82,78 @@ def _event_sourced_token_info() -> TokenInfo:
     )
 
 
+class _SingleFrameWebSocket:
+    """Return one offline JSON-RPC frame without opening a connection."""
+
+    def __init__(self, frame: dict) -> None:
+        self.frame = json.dumps(frame)
+
+    async def recv(self) -> str:
+        return self.frame
+
+
+def _logs_notification(subscription_id: int = 1) -> dict:
+    fixture = _fixture()
+    transaction = VersionedTransaction.from_bytes(
+        base64.b64decode(fixture["transaction"][0])
+    )
+    return {
+        "jsonrpc": "2.0",
+        "method": "logsNotification",
+        "params": {
+            "subscription": subscription_id,
+            "result": {
+                "context": {"slot": 1},
+                "value": {
+                    "signature": str(transaction.signatures[0]),
+                    "err": None,
+                    "logs": fixture["meta"]["logMessages"],
+                },
+            },
+        },
+    }
+
+
+def _logs_listener_token_info() -> TokenInfo | None:
+    """Exercise the real logs listener normalization and parser dispatch."""
+    from monitoring.base_listener import BaseTokenListener  # noqa: PLC0415
+    from monitoring.universal_logs_listener import (  # noqa: PLC0415
+        UniversalLogsListener,
+    )
+
+    listener = object.__new__(UniversalLogsListener)
+    BaseTokenListener.__init__(listener)
+    listener.platform_parsers = {Platform.PUMP_FUN: _event_parser()}
+    listener._pending_frames = deque()  # noqa: SLF001
+    listener._subscription_ids = frozenset({1})  # noqa: SLF001
+    return asyncio.run(
+        listener._wait_for_token_creation(  # noqa: SLF001
+            _SingleFrameWebSocket(_logs_notification())
+        )
+    )
+
+
+def _block_listener_token_info() -> TokenInfo | None:
+    """Exercise the real block listener normalization and parser dispatch."""
+    from monitoring.base_listener import BaseTokenListener  # noqa: PLC0415
+    from monitoring.universal_block_listener import (  # noqa: PLC0415
+        UniversalBlockListener,
+    )
+
+    listener = object.__new__(UniversalBlockListener)
+    BaseTokenListener.__init__(listener)
+    listener.platform_parsers = {Platform.PUMP_FUN: _event_parser()}
+    listener._recent_creation_order = deque()  # noqa: SLF001
+    listener._recent_creation_keys = set()  # noqa: SLF001
+    tokens = listener._process_block_transactions(  # noqa: SLF001
+        [_fixture()],
+        slot=1,
+        commitment="confirmed",
+        platform=Platform.PUMP_FUN,
+    )
+    return tokens[0] if len(tokens) == 1 else None
+
+
 class _StubClient:
     """Records submissions and account reads; never touches the network."""
 
@@ -91,8 +167,14 @@ class _StubClient:
         self.sent.append(instructions)
         return "STUB_SIGNATURE"
 
-    async def confirm_transaction(self, _signature: str, **_kwargs: object) -> bool:
-        return False
+    async def confirm_transaction_outcome(
+        self, _signature: str, **_kwargs: object
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            status=TransactionStatus.UNKNOWN,
+            slot=None,
+            error="offline verifier",
+        )
 
     async def get_account_info(self, *_args: object, **_kwargs: object) -> None:
         self.reads += 1
@@ -120,6 +202,7 @@ class _CountingCurveManager:
             "creator": str(TRADER),
             "is_mayhem_mode": False,
             "is_cashback_coin": False,
+            "complete": False,
             "quote_mint": WSOL_MINT,
         }
         return state, SystemAddresses.TOKEN_2022_PROGRAM
@@ -134,13 +217,25 @@ class _CountingCurveManager:
             "creator": str(TRADER),
             "is_mayhem_mode": False,
             "is_cashback_coin": False,
+            "complete": False,
             "quote_mint": WSOL_MINT,
         }
 
 
 def _stub_implementations(curve_manager: object) -> SimpleNamespace:
-    async def build_buy_instruction(*_args: object, **_kwargs: object) -> list[str]:
-        return ["stub-instruction"]
+    async def build_buy_instruction(
+        token_info: TokenInfo, *_args: object, **_kwargs: object
+    ) -> list[Instruction]:
+        accounts = [
+            AccountMeta(Pubkey.new_unique(), is_signer=False, is_writable=True)
+            for _ in range(27)
+        ]
+        accounts[10] = AccountMeta(
+            token_info.bonding_curve,
+            is_signer=False,
+            is_writable=True,
+        )
+        return [Instruction(PROVIDER.program_id, b"", accounts)]
 
     instruction_builder = SimpleNamespace(
         build_buy_instruction=build_buy_instruction,
@@ -159,9 +254,17 @@ def _make_buyer(client: _StubClient, **kwargs: object) -> PlatformAwareBuyer:
         return None
 
     fee_manager = SimpleNamespace(calculate_priority_fee=no_fee)
+
+    wallet = SimpleNamespace(
+        pubkey=TRADER,
+        keypair=None,
+        get_associated_token_address=lambda mint, token_program: (
+            PROVIDER.derive_user_token_account(TRADER, mint, token_program)
+        ),
+    )
     return PlatformAwareBuyer(
         client,
-        SimpleNamespace(pubkey=TRADER, keypair=None),
+        wallet,
         fee_manager,
         amount=0.0001,
         slippage=0.3,
@@ -185,22 +288,51 @@ def _run_buy(
 
 
 def check_logs_parser_marks_event_state() -> bool:
-    """CreateEvent-sourced TokenInfo carries everything -> flag set."""
+    """The raw platform parser decodes event state before provenance dispatch."""
     token_info = _event_sourced_token_info()
     if token_info is None:
         print("    fixture logs did not parse into a TokenInfo")
         return False
     ok = (
         getattr(token_info, "state_from_event", False) is True
+        and token_info.metadata_verified is False
         and token_info.quote_mint is not None
         and token_info.creator is not None
     )
     if not ok:
         print(
             f"    state_from_event={getattr(token_info, 'state_from_event', None)} "
+            f"metadata_verified={token_info.metadata_verified} "
             f"quote_mint={token_info.quote_mint} creator={token_info.creator}"
         )
     return ok
+
+
+def check_logs_listener_downgrades_and_refreshes() -> bool:
+    """logsSubscribe lacks instruction correlation, so zero-RPC is forbidden."""
+    token_info = _logs_listener_token_info()
+    if token_info is None:
+        print("    logs listener did not return a TokenInfo")
+        return False
+    downgraded = (
+        token_info.source == "logs"
+        and token_info.state_from_event is False
+        and token_info.metadata_verified is False
+        and token_info.quote_mint is None
+    )
+    curve_manager = _CountingCurveManager()
+    client, _result = _run_buy(token_info, curve_manager)
+    refreshed = curve_manager.calls >= 1 and len(client.sent) == 1
+    if not (downgraded and refreshed):
+        print(
+            f"    source={token_info.source} "
+            f"state_from_event={token_info.state_from_event} "
+            f"metadata_verified={token_info.metadata_verified} "
+            f"quote_mint={token_info.quote_mint} "
+            f"curve_manager.calls={curve_manager.calls} "
+            f"submissions={len(client.sent)}"
+        )
+    return downgraded and refreshed
 
 
 def check_instruction_parser_stays_conservative() -> bool:
@@ -252,57 +384,93 @@ def check_geyser_parser_prefers_event_logs() -> bool:
 
 
 def check_geyser_listener_delegates_to_parser() -> bool:
-    """The listener must route updates through the event-first parser.
-
-    Live run showed state_from_event=False on a geyser token: the listener
-    inlined instruction parsing and never reached the parser's log-preferring
-    geyser method.
-    """
-    # Imported here: the listener module pulls in grpc, which the other
-    # checks don't need.
+    """Geyser normalization retains correlated event state for zero-RPC."""
+    from monitoring.base_listener import BaseTokenListener  # noqa: PLC0415
     from monitoring.universal_geyser_listener import (  # noqa: PLC0415
         UniversalGeyserListener,
     )
 
-    listener = UniversalGeyserListener(
-        geyser_endpoint="dummy:443",
-        geyser_api_token="dummy",  # noqa: S106 - offline stub, never connects
-        geyser_auth_type="x-token",
-        platforms=[Platform.PUMP_FUN],
+    listener = object.__new__(UniversalGeyserListener)
+    BaseTokenListener.__init__(listener)
+    listener.platform_parsers = {Platform.PUMP_FUN: _event_parser()}
+    fixture = _fixture()
+    raw_transaction = base64.b64decode(fixture["transaction"][0])
+    transaction = VersionedTransaction.from_bytes(raw_transaction)
+    message = SimpleNamespace(
+        account_keys=transaction.message.account_keys,
+        instructions=[
+            SimpleNamespace(
+                program_id_index=instruction.program_id_index,
+                accounts=instruction.accounts,
+                data=instruction.data,
+            )
+            for instruction in transaction.message.instructions
+        ],
     )
-    logs = _fixture()["meta"]["logMessages"]
     update = SimpleNamespace(
         HasField=lambda field: field == "transaction",
         transaction=SimpleNamespace(
+            slot=1,
             transaction=SimpleNamespace(
+                signature=transaction.signatures[0],
                 transaction=SimpleNamespace(
-                    message=SimpleNamespace(instructions=[], account_keys=[])
+                    signatures=transaction.signatures,
+                    message=message,
                 ),
-                meta=SimpleNamespace(log_messages=logs),
-            )
+                meta=SimpleNamespace(
+                    log_messages=fixture["meta"]["logMessages"],
+                    loaded_writable_addresses=[],
+                    loaded_readonly_addresses=[],
+                ),
+            ),
         ),
     )
     token_info = asyncio.run(listener._process_update(update))  # noqa: SLF001
-    ok = (
-        token_info is not None
-        and getattr(token_info, "state_from_event", False) is True
+    if token_info is None:
+        print("    listener _process_update returned no TokenInfo")
+        return False
+    verified = (
+        token_info.source == "geyser"
+        and token_info.state_from_event is True
+        and token_info.metadata_verified is True
     )
-    if not ok:
-        print(f"    listener _process_update returned {token_info}")
-    return ok
+    curve_manager = _CountingCurveManager()
+    client, _result = _run_buy(token_info, curve_manager)
+    zero_rpc = curve_manager.calls == 0 and client.reads == 0 and len(client.sent) == 1
+    if not (verified and zero_rpc):
+        print(
+            f"    source={token_info.source} "
+            f"state_from_event={token_info.state_from_event} "
+            f"metadata_verified={token_info.metadata_verified} "
+            f"curve_manager.calls={curve_manager.calls} "
+            f"client.reads={client.reads} submissions={len(client.sent)}"
+        )
+    return verified and zero_rpc
 
 
-def check_block_parser_marks_event_state() -> bool:
-    """The block listener's parse path also rides the CreateEvent logs."""
-    parser = _event_parser()
-    token_info = parser.parse_token_creation_from_block({"transactions": [_fixture()]})
-    ok = (
-        token_info is not None
-        and getattr(token_info, "state_from_event", False) is True
+def check_block_listener_retains_verified_event_state() -> bool:
+    """Block normalization retains correlated event state for zero-RPC."""
+    token_info = _block_listener_token_info()
+    if token_info is None:
+        print("    block listener did not return exactly one TokenInfo")
+        return False
+    verified = (
+        token_info.source == "blocks"
+        and token_info.state_from_event is True
+        and token_info.metadata_verified is True
     )
-    if not ok:
-        print(f"    block parse returned {token_info}")
-    return ok
+    curve_manager = _CountingCurveManager()
+    client, _result = _run_buy(token_info, curve_manager)
+    zero_rpc = curve_manager.calls == 0 and client.reads == 0 and len(client.sent) == 1
+    if not (verified and zero_rpc):
+        print(
+            f"    source={token_info.source} "
+            f"state_from_event={token_info.state_from_event} "
+            f"metadata_verified={token_info.metadata_verified} "
+            f"curve_manager.calls={curve_manager.calls} "
+            f"client.reads={client.reads} submissions={len(client.sent)}"
+        )
+    return verified and zero_rpc
 
 
 def check_pumpportal_never_sets_flag() -> bool:
@@ -325,23 +493,6 @@ def check_pumpportal_never_sets_flag() -> bool:
     )
     if not ok:
         print("    pumpportal TokenInfo must not set state_from_event")
-    return ok
-
-
-def check_event_sourced_buy_is_zero_rpc() -> bool:
-    """The killer feature: detection -> submission with no reads at all."""
-    token_info = _event_sourced_token_info()
-    if token_info is None:
-        print("    fixture logs did not parse into a TokenInfo")
-        return False
-    curve_manager = _CountingCurveManager()
-    client, _result = _run_buy(token_info, curve_manager)
-    ok = curve_manager.calls == 0 and client.reads == 0 and len(client.sent) == 1
-    if not ok:
-        print(
-            f"    curve_manager.calls={curve_manager.calls} "
-            f"client.reads={client.reads} submissions={len(client.sent)}"
-        )
     return ok
 
 
@@ -376,10 +527,10 @@ def check_pumpportal_buy_still_refreshes() -> bool:
 
 
 def check_trust_flag_forces_refresh() -> bool:
-    """trust_create_event=false is the escape hatch back to always-refresh."""
-    token_info = _event_sourced_token_info()
+    """trust_create_event=false refreshes even verified correlated event data."""
+    token_info = _block_listener_token_info()
     if token_info is None:
-        print("    fixture logs did not parse into a TokenInfo")
+        print("    block listener did not return exactly one TokenInfo")
         return False
     curve_manager = _CountingCurveManager()
     _client, _result = _run_buy(token_info, curve_manager, trust_create_event=False)
@@ -391,22 +542,31 @@ def check_trust_flag_forces_refresh() -> bool:
 
 def main() -> int:
     checks = [
-        ("logs parser marks CreateEvent state", check_logs_parser_marks_event_state),
+        (
+            "raw logs parser decodes CreateEvent candidate",
+            check_logs_parser_marks_event_state,
+        ),
         (
             "instruction parser stays conservative",
             check_instruction_parser_stays_conservative,
+        ),
+        (
+            "logs listener downgrades and refreshes",
+            check_logs_listener_downgrades_and_refreshes,
         ),
         (
             "geyser parser prefers CreateEvent logs",
             check_geyser_parser_prefers_event_logs,
         ),
         (
-            "geyser listener delegates to event-first parser",
+            "geyser listener retains verification and stays zero-RPC",
             check_geyser_listener_delegates_to_parser,
         ),
-        ("block parser marks CreateEvent state", check_block_parser_marks_event_state),
+        (
+            "block listener retains verification and stays zero-RPC",
+            check_block_listener_retains_verified_event_state,
+        ),
         ("pumpportal never sets state_from_event", check_pumpportal_never_sets_flag),
-        ("event-sourced buy makes zero RPC calls", check_event_sourced_buy_is_zero_rpc),
         ("pumpportal buy still refreshes", check_pumpportal_buy_still_refreshes),
         ("trust_create_event=false forces refresh", check_trust_flag_forces_refresh),
     ]

@@ -5,6 +5,8 @@ This module provides a centralized way to instantiate and access
 platform-specific implementations of the trading interfaces with IDL support.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,6 +24,35 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def _freeze_cache_value(value: Any) -> Any:
+    """Convert constructor options into a deterministic hashable value."""
+    if isinstance(value, dict):
+        return tuple(
+            sorted(
+                (
+                    str(key),
+                    _freeze_cache_value(item),
+                )
+                for key, item in value.items()
+            )
+        )
+    if isinstance(value, (list, tuple, set, frozenset)):
+        frozen = [_freeze_cache_value(item) for item in value]
+        return tuple(sorted(frozen, key=repr))
+    try:
+        hash(value)
+    except TypeError:
+        return repr(value)
+    return value
+
+
+def _implementation_cache_key(
+    platform: Platform, client: SolanaClient, options: dict[str, Any]
+) -> tuple[Platform, str, int, Any]:
+    """Key client-bound implementations by endpoint and object identity."""
+    return platform, str(client.rpc_endpoint), id(client), _freeze_cache_value(options)
+
+
 @dataclass
 class PlatformImplementations:
     """Container for all platform-specific implementations."""
@@ -37,7 +68,9 @@ class PlatformRegistry:
 
     def __init__(self):
         self._implementations: dict[Platform, dict[str, type]] = {}
-        self._instances: dict[tuple[Platform, str], PlatformImplementations] = {}
+        self._instances: dict[
+            tuple[Platform, str, int, Any], PlatformImplementations
+        ] = {}
 
     def register_platform(
         self,
@@ -82,10 +115,19 @@ class PlatformRegistry:
         if platform not in self._implementations:
             raise ValueError(f"Platform {platform} is not registered")
 
-        # Use client address as cache key to allow multiple clients
-        cache_key = (platform, str(client.rpc_endpoint))
-
-        # Check if we already have instances for this platform + client combo
+        supported_options = {"verbose_idl", "use_legacy_instructions"}
+        unknown_options = set(kwargs) - supported_options
+        if unknown_options:
+            raise ValueError(
+                "Unsupported platform implementation options: "
+                f"{sorted(unknown_options)}"
+            )
+        use_legacy_instructions = kwargs.get("use_legacy_instructions", False)
+        if isinstance(use_legacy_instructions, bool) is False:
+            raise TypeError("use_legacy_instructions must be a boolean")
+        if use_legacy_instructions and platform is not Platform.PUMP_FUN:
+            raise ValueError("use_legacy_instructions is supported only for pump.fun")
+        cache_key = _implementation_cache_key(platform, client, kwargs)
         if cache_key in self._instances:
             return self._instances[cache_key]
 
@@ -102,21 +144,26 @@ class PlatformRegistry:
                 logger.info(
                     f"IDL parser loaded for {platform.value} platform implementations"
                 )
-            except Exception as e:
-                logger.warning(f"Failed to load IDL parser for {platform.value}: {e}")
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to load IDL parser for {platform.value}"
+                ) from exc
 
-        # Create instances - pass IDL parser to classes that need it
-        address_provider = impl_classes["address_provider"]()
-
-        # For platforms with IDL support, pass the parser to relevant classes
-        if idl_parser and platform in [Platform.LETS_BONK, Platform.PUMP_FUN]:
-            instruction_builder = impl_classes["instruction_builder"](
-                idl_parser=idl_parser
-            )
+        if idl_parser is not None and platform in [
+            Platform.LETS_BONK,
+            Platform.PUMP_FUN,
+        ]:
+            address_provider = impl_classes["address_provider"]()
+            builder_kwargs: dict[str, Any] = {"idl_parser": idl_parser}
+            if platform is Platform.PUMP_FUN:
+                builder_kwargs["use_legacy_instructions"] = use_legacy_instructions
+            instruction_builder = impl_classes["instruction_builder"](**builder_kwargs)
             curve_manager = impl_classes["curve_manager"](client, idl_parser=idl_parser)
             event_parser = impl_classes["event_parser"](idl_parser=idl_parser)
         else:
-            # Fallback for platforms without IDL support
+            # Platforms without IDL support must expose constructors that do
+            # not require one; supported IDL platforms fail above instead.
+            address_provider = impl_classes["address_provider"]()
             instruction_builder = impl_classes["instruction_builder"]()
             curve_manager = impl_classes["curve_manager"](client)
             event_parser = impl_classes["event_parser"]()
@@ -134,19 +181,34 @@ class PlatformRegistry:
         return implementations
 
     def get_platform_implementations(
-        self, platform: Platform, client_endpoint: str
+        self,
+        platform: Platform,
+        client_endpoint: str,
+        *,
+        client: SolanaClient | None = None,
+        **kwargs: Any,
     ) -> PlatformImplementations | None:
-        """Get cached platform implementations.
+        """Get cached implementations without crossing client boundaries."""
+        frozen_options = _freeze_cache_value(kwargs)
+        if client is not None:
+            cache_key = _implementation_cache_key(platform, client, kwargs)
+            return self._instances.get(cache_key)
 
-        Args:
-            platform: Platform to get implementations for
-            client_endpoint: Client endpoint for cache lookup
-
-        Returns:
-            PlatformImplementations if available, None otherwise
-        """
-        cache_key = (platform, client_endpoint)
-        return self._instances.get(cache_key)
+        matches = [
+            implementation
+            for (cached_platform, endpoint, _client_id, options), implementation in (
+                self._instances.items()
+            )
+            if (
+                cached_platform is platform
+                and endpoint == client_endpoint
+                and options == frozen_options
+            )
+        ]
+        # Endpoint-only lookup is ambiguous once multiple clients share an RPC
+        # URL; returning no result is safer than handing back another client's
+        # bound curve manager.
+        return matches[0] if len(matches) == 1 else None
 
     def get_supported_platforms(self) -> list[Platform]:
         """Get list of supported platforms.

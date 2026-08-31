@@ -4,6 +4,8 @@ This module contains only system-level addresses that are shared across all plat
 Platform-specific addresses are handled by their respective AddressProvider implementations.
 """
 
+from dataclasses import dataclass
+from math import isfinite
 from typing import Final
 
 from solders.pubkey import Pubkey
@@ -63,40 +65,63 @@ QUOTE_TOKEN_PROGRAMS: Final[dict[Pubkey, Pubkey]] = {
 }
 
 
-def quote_decimals(quote_mint: Pubkey) -> int:
-    """Get the decimal count for a quote mint, defaulting to SOL's 9.
+class UnknownQuoteAsset(ValueError):
+    """Raised when a quote mint has no verified decimals or token program."""
 
-    Args:
-        quote_mint: Quote mint address
 
-    Returns:
-        Number of decimals used by the quote mint
+@dataclass(frozen=True, slots=True)
+class QuoteAsset:
+    """Verified metadata required to express and submit quote amounts."""
+
+    mint: Pubkey
+    decimals: int
+    token_program: Pubkey
+
+
+def get_quote_asset(quote_mint: Pubkey | None) -> QuoteAsset:
+    """Return verified metadata for a supported quote mint."""
+    normalized_mint = normalize_quote_mint(quote_mint)
+    decimals = QUOTE_DECIMALS.get(normalized_mint)
+    token_program = QUOTE_TOKEN_PROGRAMS.get(normalized_mint)
+    if decimals is None or token_program is None:
+        raise UnknownQuoteAsset(
+            f"Unsupported quote mint {normalized_mint}; metadata is unavailable"
+        )
+    return QuoteAsset(
+        mint=normalized_mint,
+        decimals=decimals,
+        token_program=token_program,
+    )
+
+
+def require_quote_decimals(quote_mint: Pubkey | None) -> int:
+    """Return quote decimals or fail closed for an unknown mint."""
+    return get_quote_asset(quote_mint).decimals
+
+
+def require_quote_token_program(quote_mint: Pubkey | None) -> Pubkey:
+    """Return the quote token program or fail closed for an unknown mint."""
+    return get_quote_asset(quote_mint).token_program
+
+
+def quote_decimals(quote_mint: Pubkey | None) -> int:
+    """Return verified decimals for a supported quote mint.
+
+    Native SOL encodings (``None`` and ``Pubkey::default()``) normalize to
+    wrapped SOL. Unknown token mints fail closed because amount conversion
+    without validated decimals can submit the wrong quantity.
     """
-    return QUOTE_DECIMALS.get(quote_mint, 9)
+    return require_quote_decimals(quote_mint)
 
 
-def quote_units_per_token(quote_mint: Pubkey) -> int:
-    """Get the raw-units-per-whole-unit factor for a quote mint.
-
-    Args:
-        quote_mint: Quote mint address
-
-    Returns:
-        10 ** decimals for the quote mint (1e9 for SOL, 1e6 for USDC)
-    """
-    return 10 ** quote_decimals(quote_mint)
+def quote_units_per_token(quote_mint: Pubkey | None) -> int:
+    """Return raw units per whole unit for a supported quote mint."""
+    return 10 ** require_quote_decimals(quote_mint)
 
 
-def quote_token_program(quote_mint: Pubkey) -> Pubkey:
-    """Get the token program owning a quote mint, defaulting to SPL Token.
-
-    Args:
-        quote_mint: Quote mint address
-
-    Returns:
-        Token program id for the quote mint
-    """
-    return QUOTE_TOKEN_PROGRAMS.get(quote_mint, TOKEN_PROGRAM)
+def quote_token_program(quote_mint: Pubkey | None) -> Pubkey:
+    """Return the verified token program owning a supported quote mint."""
+    return require_quote_token_program(quote_mint)
 
 
 def normalize_quote_mint(quote_mint: Pubkey | None) -> Pubkey:
@@ -174,9 +199,15 @@ def resolve_quote_amounts(
     resolved: dict[Pubkey, float] = {}
     for key, amount in amounts.items():
         mint = resolve_quote_mint(key)
-        if not isinstance(amount, int | float) or amount <= 0:
+        get_quote_asset(mint)
+        if (
+            isinstance(amount, bool)
+            or not isinstance(amount, int | float)
+            or not isfinite(float(amount))
+            or amount <= 0
+        ):
             raise ValueError(
-                f"quote_amounts[{key!r}] must be a positive number, got {amount!r}"
+                f"quote_amounts[{key!r}] must be a positive finite number, got {amount!r}"
             )
         resolved[mint] = float(amount)
     return resolved

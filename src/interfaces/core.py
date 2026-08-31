@@ -68,6 +68,25 @@ class TokenInfo:
     creation_timestamp: float | None = None
     additional_data: dict[str, Any] | None = None
 
+    # Detection and execution provenance. These fields remain optional for
+    # legacy callers, but live execution must require verified values.
+    source: str | None = None
+    signature: str | None = None
+    slot: int | None = None
+    commitment: str | None = None
+    transaction_index: int | None = None
+    inner_instruction_index: int | None = None
+    base_decimals: int | None = None
+    quote_decimals: int | None = None
+    metadata_verified: bool = False
+
+    # Last authoritative execution-state observation.  A creation event can
+    # prove that a Pump.fun curve started incomplete, while a fresh pool read
+    # is required to establish current tradeability for recovery and sells.
+    curve_complete: bool | None = None
+    pool_tradeable: bool | None = None
+    pool_status: str | None = None
+
 
 class AddressProvider(ABC):
     """Abstract interface for platform-specific address management."""
@@ -136,6 +155,11 @@ class AddressProvider(ABC):
 
 class InstructionBuilder(ABC):
     """Abstract interface for building platform-specific trading instructions."""
+
+    @property
+    def buy_uses_exact_output(self) -> bool:
+        """Whether the first buy builder argument is base tokens out."""
+        return False
 
     @property
     @abstractmethod
@@ -256,11 +280,14 @@ class CurveManager(ABC):
         pass
 
     @abstractmethod
-    async def get_pool_state(self, pool_address: Pubkey) -> dict[str, Any]:
+    async def get_pool_state(
+        self, pool_address: Pubkey, commitment: str | None = None
+    ) -> dict[str, Any]:
         """Get the current state of a trading pool/curve.
 
         Args:
             pool_address: Address of the pool/curve
+            commitment: Optional RPC commitment for fresh event-adjacent reads
 
         Returns:
             Dictionary containing pool state data

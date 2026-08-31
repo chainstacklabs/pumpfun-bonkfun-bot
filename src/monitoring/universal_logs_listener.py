@@ -3,13 +3,21 @@ Universal logs listener that works with any platform through the interface syste
 """
 
 import asyncio
-import json
+from collections import deque
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 import websockets
+from websockets.exceptions import ConnectionClosed
 
 from interfaces.core import Platform, TokenInfo
 from monitoring.base_listener import BaseTokenListener
+from monitoring.event_normalization import (
+    NormalizationError,
+    normalize_logs_notification,
+)
+from monitoring.parser_dispatch import parse_normalized_event
+from monitoring.subscription import decode_json_frame, subscribe_json_rpc
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -38,6 +46,8 @@ class UniversalLogsListener(BaseTokenListener):
         super().__init__()
         self.wss_endpoint = wss_endpoint
         self.ping_interval = 20  # seconds
+        self._pending_frames: deque[str | bytes] = deque()
+        self._subscription_ids: frozenset[int] = frozenset()
 
         # Import platform factory and get supported platforms
         from platforms import platform_factory
@@ -89,97 +99,74 @@ class UniversalLogsListener(BaseTokenListener):
         match_string: str | None = None,
         creator_address: str | None = None,
     ) -> None:
-        """Listen for new token creations using logsSubscribe.
-
-        Args:
-            token_callback: Callback function for new tokens
-            match_string: Optional string to match in token name/symbol
-            creator_address: Optional creator address to filter by
-        """
+        """Listen for successful token creations using correlated logs subscriptions."""
         if not self.platform_parsers:
             logger.error("No platform parsers available. Cannot listen for tokens.")
             return
 
+        reconnect_attempt = 0
         while True:
+            ping_task: asyncio.Task[object] | None = None
             try:
                 async with websockets.connect(
-                    self.wss_endpoint, max_size=WEBSOCKET_MAX_MESSAGE_BYTES
+                    self.wss_endpoint,
+                    max_size=WEBSOCKET_MAX_MESSAGE_BYTES,
                 ) as websocket:
+                    self._pending_frames.clear()
                     await self._subscribe_to_logs(websocket)
+                    reconnect_attempt = 0
                     ping_task = asyncio.create_task(self._ping_loop(websocket))
-
                     try:
                         while True:
                             token_info = await self._wait_for_token_creation(websocket)
-                            if not token_info:
+                            if token_info is None:
                                 continue
-
                             logger.info(
-                                f"New token detected: {token_info.name} ({token_info.symbol}) on {token_info.platform.value}"
+                                "New token detected: %s (%s) on %s",
+                                token_info.name,
+                                token_info.symbol,
+                                token_info.platform.value,
                             )
+                            await self.dispatch_token(
+                                token_info,
+                                token_callback,
+                                match_string=match_string,
+                                creator_address=creator_address,
+                            )
+                    finally:
+                        await self.cancel_task(ping_task)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                reconnect_attempt += 1
+                await self.wait_before_reconnect(reconnect_attempt, exc)
 
-                            # Apply filters
-                            if match_string and not (
-                                match_string.lower() in token_info.name.lower()
-                                or match_string.lower() in token_info.symbol.lower()
-                            ):
-                                logger.info(
-                                    f"Token does not match filter '{match_string}'. Skipping..."
-                                )
-                                continue
-
-                            if (
-                                creator_address
-                                and str(token_info.user) != creator_address
-                            ):
-                                logger.info(
-                                    f"Token not created by {creator_address}. Skipping..."
-                                )
-                                continue
-
-                            await token_callback(token_info)
-
-                    except websockets.exceptions.ConnectionClosed:
-                        logger.warning("WebSocket connection closed. Reconnecting...")
-                        ping_task.cancel()
-
-            except Exception:
-                logger.exception("WebSocket connection error")
-                logger.info("Reconnecting in 5 seconds...")
-                await asyncio.sleep(5)
-
-    async def _subscribe_to_logs(self, websocket) -> None:
-        """Subscribe to logs mentioning any of the monitored program IDs.
-
-        Args:
-            websocket: Active WebSocket connection
-        """
-        # Subscribe to logs for all monitored platforms
-        for i, program_id in enumerate(self.platform_program_ids):
-            subscription_message = json.dumps(
-                {
-                    "jsonrpc": "2.0",
-                    "id": i + 1,
-                    "method": "logsSubscribe",
-                    "params": [
-                        {"mentions": [program_id]},
-                        {"commitment": "processed"},
-                    ],
-                }
-            )
-
-            await websocket.send(subscription_message)
-            logger.info(f"Subscribed to logs mentioning program: {program_id}")
-
-            # Wait for subscription confirmation
-            response = await websocket.recv()
-            response_data = json.loads(response)
-            if "result" in response_data:
-                logger.info(
-                    f"Subscription confirmed with ID: {response_data['result']}"
-                )
-            else:
-                logger.warning(f"Unexpected subscription response: {response}")
+    async def _subscribe_to_logs(self, websocket: Any) -> None:
+        """Subscribe to every program and require correlated acknowledgements."""
+        requests = [
+            {
+                "jsonrpc": "2.0",
+                "id": index + 1,
+                "method": "logsSubscribe",
+                "params": [
+                    {"mentions": [program_id]},
+                    {"commitment": "processed"},
+                ],
+            }
+            for index, program_id in enumerate(self.platform_program_ids)
+        ]
+        result = await subscribe_json_rpc(
+            websocket,
+            requests,
+            timeout=self.subscription_timeout,
+        )
+        self._subscription_ids = result.subscription_ids
+        self._pending_frames.extend(result.pending_frames)
+        logger.info(
+            "Confirmed %d logs subscriptions: %s",
+            len(result.subscription_ids),
+            sorted(result.subscription_ids),
+        )
 
     async def _ping_loop(self, websocket) -> None:
         """Keep connection alive with pings."""
@@ -197,34 +184,40 @@ class UniversalLogsListener(BaseTokenListener):
             pass
         except Exception:
             logger.exception("Ping error")
+            await websocket.close()
 
-    async def _wait_for_token_creation(self, websocket) -> TokenInfo | None:
-        """Wait for token creation events from any platform."""
+    async def _next_frame(self, websocket: Any) -> str | bytes:
+        if self._pending_frames:
+            return self._pending_frames.popleft()
+        return await asyncio.wait_for(websocket.recv(), timeout=self.receive_timeout)
+
+    async def _wait_for_token_creation(self, websocket: Any) -> TokenInfo | None:
+        """Wait for one successful, correlated logs notification."""
         try:
-            response = await asyncio.wait_for(websocket.recv(), timeout=30)
-            data = json.loads(response)
-
-            if "method" not in data or data["method"] != "logsNotification":
+            frame = await self._next_frame(websocket)
+            data = decode_json_frame(frame)
+            event = normalize_logs_notification(
+                data,
+                subscription_ids=self._subscription_ids,
+                commitment="processed",
+            )
+            if event is None:
                 return None
-
-            log_data = data["params"]["result"]["value"]
-            logs = log_data.get("logs", [])
-            signature = log_data.get("signature", "unknown")
-
-            # Try each platform's event parser
-            for platform, parser in self.platform_parsers.items():
-                token_info = parser.parse_token_creation_from_logs(logs, signature)
-                if token_info:
-                    return token_info
-
-            return None
-
+            tokens = parse_normalized_event(event, self.platform_parsers)
+            if len(tokens) > 1:
+                logger.error(
+                    "Ambiguous logs notification %s matched %d creations; rejecting",
+                    event.signature,
+                    len(tokens),
+                )
+                return None
+            return tokens[0] if tokens else None
         except TimeoutError:
-            logger.debug("No data received for 30 seconds")
-        except websockets.exceptions.ConnectionClosed:
-            logger.warning("WebSocket connection closed")
+            logger.debug("No data received for %.0f seconds", self.receive_timeout)
+        except ConnectionClosed:
             raise
+        except NormalizationError as exc:
+            logger.warning("Rejected logs notification: %s", exc)
         except Exception:
-            logger.exception("Error processing WebSocket message")
-
+            logger.exception("Error processing logs WebSocket message")
         return None

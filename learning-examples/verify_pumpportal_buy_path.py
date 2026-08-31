@@ -7,9 +7,10 @@ Offline machine checks, no network and no funds moved:
   B. In extreme_fast_mode, a buy is SKIPPED when the curve state cannot be
      read within the refresh budget, instead of submitting a buy built from
      listener-guessed defaults (the "racing a doomed buy" failure).
-  C. The curve refresh reads curve + mint in one slot-consistent
-     getMultipleAccounts round trip and corrects token_program_id (pumpportal
-     cannot know it and guesses Token-2022; legacy coins are SPL Token).
+  C. The curve refresh requests the exact ordered batch [curve, mint] in one
+     slot-consistent getMultipleAccounts round trip, rejects a wrong-order
+     mutation, and corrects token_program_id (pumpportal cannot know it and
+     guesses Token-2022; legacy coins are SPL Token).
 
 Usage:
     uv run learning-examples/verify_pumpportal_buy_path.py
@@ -25,9 +26,12 @@ from types import SimpleNamespace
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from solders.instruction import AccountMeta, Instruction  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
+from spl.token.instructions import get_associated_token_address  # noqa: E402
 
 from core.pubkeys import WSOL_MINT, SystemAddresses  # noqa: E402
+from core.transaction_state import TransactionOutcome, TransactionStatus  # noqa: E402
 from interfaces.core import Platform, TokenInfo  # noqa: E402
 from platforms.pumpfun.address_provider import PumpFunAddressProvider  # noqa: E402
 from platforms.pumpfun.curve_manager import PumpFunCurveManager  # noqa: E402
@@ -107,13 +111,47 @@ class _StubClient:
         self.sent.append(instructions)
         return "STUB_SIGNATURE"
 
-    async def confirm_transaction(self, _signature: str, **_kwargs: object) -> bool:
-        return False
+    async def confirm_transaction_outcome(
+        self, _signature: str, **_kwargs: object
+    ) -> TransactionOutcome:
+        return TransactionOutcome(
+            status=TransactionStatus.SUCCESS,
+            signature="STUB_SIGNATURE",
+            slot=1,
+        )
+
+    async def get_account_info(self, _address: Pubkey) -> None:
+        raise ValueError("stub ATA does not exist")  # noqa: TRY003
+
+    async def get_token_account_balance(self, _address: Pubkey) -> int:
+        return 0
+
+    async def get_buy_transaction_details(
+        self,
+        _signature: str,
+        _mint: Pubkey,
+        _destination: Pubkey,
+        *,
+        quote_mint: Pubkey | None = None,  # noqa: ARG002
+        quote_destinations: list[Pubkey] | None = None,  # noqa: ARG002
+    ) -> tuple[int, int]:
+        return 20 * 1_000_000, 100_000
 
 
 def _stub_implementations(curve_manager: object) -> SimpleNamespace:
-    async def build_buy_instruction(*_args: object, **_kwargs: object) -> list[str]:
-        return ["stub-instruction"]
+    async def build_buy_instruction(
+        token_info: TokenInfo, *_args: object, **_kwargs: object
+    ) -> list[Instruction]:
+        accounts = [
+            AccountMeta(Pubkey.new_unique(), is_signer=False, is_writable=True)
+            for _ in range(27)
+        ]
+        accounts[10] = AccountMeta(
+            token_info.bonding_curve,
+            is_signer=False,
+            is_writable=True,
+        )
+        return [Instruction(PROVIDER.program_id, b"", accounts)]
 
     instruction_builder = SimpleNamespace(
         build_buy_instruction=build_buy_instruction,
@@ -131,10 +169,22 @@ def _make_buyer(client: _StubClient, **kwargs: float) -> PlatformAwareBuyer:
     async def no_fee(_accounts: list) -> None:
         return None
 
+    def derive_ata(mint: Pubkey, token_program_id: Pubkey | None = None) -> Pubkey:
+        return get_associated_token_address(
+            TRADER,
+            mint,
+            token_program_id or SystemAddresses.TOKEN_2022_PROGRAM,
+        )
+
     fee_manager = SimpleNamespace(calculate_priority_fee=no_fee)
+    wallet = SimpleNamespace(
+        pubkey=TRADER,
+        keypair=None,
+        get_associated_token_address=derive_ata,
+    )
     return PlatformAwareBuyer(
         client,
-        SimpleNamespace(pubkey=TRADER, keypair=None),
+        wallet,
         fee_manager,
         amount=0.0001,
         slippage=0.3,
@@ -202,6 +252,7 @@ def check_b_still_buys_when_curve_readable() -> bool:
                 "is_mayhem_mode": False,
                 "is_cashback_coin": False,
                 "quote_mint": WSOL_MINT,
+                "complete": False,
             }
 
     client = _StubClient()
@@ -217,26 +268,39 @@ def check_b_still_buys_when_curve_readable() -> bool:
 
 
 def check_c_curve_manager_batch_read() -> bool:
-    """C: curve manager reads curve + mint owner in one batch call."""
+    """C: curve manager requests exactly [curve, mint] in one batch call."""
     creator = TRADER
+    curve = PROVIDER.derive_pool_address(MINT)
+    expected_keys = [curve, MINT]
     curve_bytes = _fabricated_curve_bytes(creator, is_mayhem=True)
 
     class BatchClient:
         def __init__(self) -> None:
-            self.batch_calls = 0
+            self.requested_batches: list[list[Pubkey]] = []
 
         async def get_multiple_accounts(
             self,
             pubkeys: list[Pubkey],
             commitment: str | None = None,  # noqa: ARG002
         ) -> list[SimpleNamespace]:
-            self.batch_calls += 1
-            if len(pubkeys) != 2:  # noqa: PLR2004
-                raise ValueError("expected [curve, mint]")  # noqa: TRY003
+            requested = list(pubkeys)
+            self.requested_batches.append(requested)
+            if requested != expected_keys:
+                raise AssertionError(
+                    f"expected exact batch [curve, mint] {expected_keys}, got {requested}"
+                )
             return [
                 SimpleNamespace(data=curve_bytes, owner=PROVIDER.program_id),
                 SimpleNamespace(data=b"", owner=SystemAddresses.TOKEN_PROGRAM),
             ]
+
+    # Prove the recording stub rejects the same addresses in the wrong order.
+    mutation_client = BatchClient()
+    wrong_order_rejected = False
+    try:
+        asyncio.run(mutation_client.get_multiple_accounts([MINT, curve]))
+    except AssertionError:
+        wrong_order_rejected = True
 
     client = BatchClient()
     manager = PumpFunCurveManager(
@@ -246,19 +310,20 @@ def check_c_curve_manager_batch_read() -> bool:
         print("    PumpFunCurveManager.get_pool_state_and_token_program missing")
         return False
     state, token_program = asyncio.run(
-        manager.get_pool_state_and_token_program(
-            PROVIDER.derive_pool_address(MINT), MINT, commitment="processed"
-        )
+        manager.get_pool_state_and_token_program(curve, MINT, commitment="processed")
     )
     ok = (
-        client.batch_calls == 1
+        client.requested_batches == [expected_keys]
+        and wrong_order_rejected
         and token_program == SystemAddresses.TOKEN_PROGRAM
         and state.get("is_mayhem_mode") is True
         and str(state.get("creator")) == str(creator)
     )
     if not ok:
         print(
-            f"    batch_calls={client.batch_calls} token_program={token_program} state={state}"
+            f"    requested_batches={client.requested_batches} "
+            f"wrong_order_rejected={wrong_order_rejected} "
+            f"token_program={token_program} state={state}"
         )
     return ok
 
@@ -278,6 +343,7 @@ def check_c_buyer_corrects_token_program() -> bool:
                 "is_mayhem_mode": False,
                 "is_cashback_coin": False,
                 "quote_mint": WSOL_MINT,
+                "complete": False,
             }
             return state, SystemAddresses.TOKEN_PROGRAM
 
@@ -319,7 +385,7 @@ def main() -> int:
         ("B: unreadable curve -> buy skipped", check_b_skips_when_curve_unreadable),
         ("B: readable curve -> buy proceeds", check_b_still_buys_when_curve_readable),
         (
-            "C: curve manager batch-reads curve + mint owner",
+            "C: exact [curve, mint] batch; wrong order rejected",
             check_c_curve_manager_batch_read,
         ),
         (

@@ -5,9 +5,8 @@ This module builds LetsBonk (Raydium LaunchLab) specific buy and sell instructio
 by implementing the InstructionBuilder interface with IDL-based discriminators.
 """
 
-import hashlib
+import secrets
 import struct
-import time
 
 from solders.instruction import AccountMeta, Instruction
 from solders.pubkey import Pubkey
@@ -70,17 +69,12 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
         Returns:
             List of instructions needed for the buy operation
         """
-        instructions = []
-
-        # Get all required accounts
+        self._validate_raw_amount(amount_in, "amount_in")
+        self._validate_raw_amount(minimum_amount_out, "minimum_amount_out")
         accounts_info = address_provider.get_buy_instruction_accounts(token_info, user)
-
-        # Determine token program to use
-        token_program_id = (
-            token_info.token_program_id
-            if token_info.token_program_id
-            else SystemAddresses.TOKEN_2022_PROGRAM
-        )
+        self._require_wsol_quote(accounts_info)
+        token_program_id = accounts_info["base_token_program"]
+        instructions: list[Instruction] = []
 
         # 1. Create idempotent ATA for base token
         ata_instruction = create_idempotent_associated_token_account(
@@ -92,7 +86,7 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
         instructions.append(ata_instruction)
 
         # 2. Create WSOL account with seed (temporary account for the transaction)
-        wsol_seed = self._generate_wsol_seed(user)
+        wsol_seed = self._generate_wsol_seed()
         wsol_account = address_provider.create_wsol_account_with_seed(user, wsol_seed)
 
         # Account creation cost + amount to spend
@@ -152,16 +146,24 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
                 pubkey=accounts_info["quote_vault"], is_signer=False, is_writable=True
             ),  # quote_vault
             AccountMeta(
-                pubkey=token_info.mint, is_signer=False, is_writable=False
+                pubkey=accounts_info["base_token_mint"],
+                is_signer=False,
+                is_writable=False,
             ),  # base_token_mint
             AccountMeta(
-                pubkey=SystemAddresses.SOL_MINT, is_signer=False, is_writable=False
+                pubkey=accounts_info["quote_token_mint"],
+                is_signer=False,
+                is_writable=False,
             ),  # quote_token_mint
             AccountMeta(
-                pubkey=accounts_info["base_token_program"], is_signer=False, is_writable=False
+                pubkey=accounts_info["base_token_program"],
+                is_signer=False,
+                is_writable=False,
             ),  # base_token_program
             AccountMeta(
-                pubkey=accounts_info["quote_token_program"], is_signer=False, is_writable=False
+                pubkey=accounts_info["quote_token_program"],
+                is_signer=False,
+                is_writable=False,
             ),  # quote_token_program
             AccountMeta(
                 pubkey=accounts_info["event_authority"],
@@ -242,13 +244,14 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
         Returns:
             List of instructions needed for the sell operation
         """
-        instructions = []
-
-        # Get all required accounts
+        self._validate_raw_amount(amount_in, "amount_in")
+        self._validate_raw_amount(minimum_amount_out, "minimum_amount_out")
         accounts_info = address_provider.get_sell_instruction_accounts(token_info, user)
+        self._require_wsol_quote(accounts_info)
+        instructions: list[Instruction] = []
 
         # 1. Create WSOL account with seed (to receive SOL)
-        wsol_seed = self._generate_wsol_seed(user)
+        wsol_seed = self._generate_wsol_seed()
         wsol_account = address_provider.create_wsol_account_with_seed(user, wsol_seed)
 
         # Minimal account creation cost
@@ -307,16 +310,24 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
                 pubkey=accounts_info["quote_vault"], is_signer=False, is_writable=True
             ),  # quote_vault (sends WSOL)
             AccountMeta(
-                pubkey=token_info.mint, is_signer=False, is_writable=False
+                pubkey=accounts_info["base_token_mint"],
+                is_signer=False,
+                is_writable=False,
             ),  # base_token_mint
             AccountMeta(
-                pubkey=SystemAddresses.SOL_MINT, is_signer=False, is_writable=False
+                pubkey=accounts_info["quote_token_mint"],
+                is_signer=False,
+                is_writable=False,
             ),  # quote_token_mint
             AccountMeta(
-                pubkey=accounts_info["base_token_program"], is_signer=False, is_writable=False
+                pubkey=accounts_info["base_token_program"],
+                is_signer=False,
+                is_writable=False,
             ),  # base_token_program
             AccountMeta(
-                pubkey=accounts_info["quote_token_program"], is_signer=False, is_writable=False
+                pubkey=accounts_info["quote_token_program"],
+                is_signer=False,
+                is_writable=False,
             ),  # quote_token_program
             AccountMeta(
                 pubkey=accounts_info["event_authority"],
@@ -380,65 +391,61 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
     def get_required_accounts_for_buy(
         self, token_info: TokenInfo, user: Pubkey, address_provider: AddressProvider
     ) -> list[Pubkey]:
-        """Get list of accounts required for buy operation (for priority fee calculation).
-
-        Args:
-            token_info: Token information
-            user: User's wallet address
-            address_provider: Platform address provider
-
-        Returns:
-            List of account addresses that will be accessed
-        """
+        """Get write-locked LaunchLab accounts used for priority fee sampling."""
         accounts_info = address_provider.get_buy_instruction_accounts(token_info, user)
-
-        return [
-            accounts_info["pool_state"],
-            accounts_info["user_base_token"],
-            accounts_info["base_vault"],
-            accounts_info["quote_vault"],
-            token_info.mint,
-            SystemAddresses.SOL_MINT,
-            accounts_info["program"],
-        ]
+        return self._priority_fee_accounts(accounts_info)
 
     def get_required_accounts_for_sell(
         self, token_info: TokenInfo, user: Pubkey, address_provider: AddressProvider
     ) -> list[Pubkey]:
-        """Get list of accounts required for sell operation (for priority fee calculation).
-
-        Args:
-            token_info: Token information
-            user: User's wallet address
-            address_provider: Platform address provider
-
-        Returns:
-            List of account addresses that will be accessed
-        """
+        """Get write-locked LaunchLab accounts used for priority fee sampling."""
         accounts_info = address_provider.get_sell_instruction_accounts(token_info, user)
+        return self._priority_fee_accounts(accounts_info)
 
-        return [
-            accounts_info["pool_state"],
-            accounts_info["user_base_token"],
-            accounts_info["base_vault"],
-            accounts_info["quote_vault"],
-            token_info.mint,
-            SystemAddresses.SOL_MINT,
-            accounts_info["program"],
-        ]
+    @staticmethod
+    def _validate_raw_amount(amount: int, field: str) -> None:
+        if isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0:
+            raise ValueError(f"{field} must be a positive raw integer amount")
+        if amount > 2**64 - 1:
+            raise ValueError(f"{field} exceeds the u64 range")
 
-    def _generate_wsol_seed(self, user: Pubkey) -> str:
-        """Generate a unique seed for WSOL account creation.
+    @staticmethod
+    def _require_wsol_quote(accounts_info: dict[str, Pubkey]) -> None:
+        quote_mint = accounts_info["quote_token_mint"]
+        quote_program = accounts_info["quote_token_program"]
+        if quote_mint != SystemAddresses.SOL_MINT:
+            raise ValueError(
+                f"Unsupported LetsBonk quote mint {quote_mint}; "
+                "the current instruction path only supports wrapped SOL"
+            )
+        if quote_program != SystemAddresses.TOKEN_PROGRAM:
+            raise ValueError(f"Unsupported wrapped-SOL token program {quote_program}")
 
-        Args:
-            user: User's wallet address
+    @staticmethod
+    def _priority_fee_accounts(accounts_info: dict[str, Pubkey]) -> list[Pubkey]:
+        """Return stable write locks, excluding read-only programs and mints."""
+        account_names = (
+            "pool_state",
+            "base_vault",
+            "quote_vault",
+            "platform_fee_vault",
+            "creator_fee_vault",
+        )
+        accounts: list[Pubkey] = []
+        for name in account_names:
+            account = accounts_info.get(name)
+            if not isinstance(account, Pubkey):
+                raise ValueError(
+                    f"LetsBonk priority-fee account {name} is not a valid public key"
+                )
+            if account not in accounts:
+                accounts.append(account)
+        return accounts
 
-        Returns:
-            Unique seed string for WSOL account
-        """
-        # Generate a unique seed based on timestamp and user pubkey
-        seed_data = f"{int(time.time())}{user!s}"
-        return hashlib.sha256(seed_data.encode()).hexdigest()[:32]
+    @staticmethod
+    def _generate_wsol_seed() -> str:
+        """Generate a collision-resistant 32-byte-compatible account seed."""
+        return secrets.token_hex(16)
 
     def _create_initialize_account_instruction(
         self, account: Pubkey, mint: Pubkey, owner: Pubkey

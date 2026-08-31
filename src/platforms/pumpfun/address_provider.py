@@ -12,7 +12,11 @@ from typing import ClassVar, Final
 from solders.pubkey import Pubkey
 from spl.token.instructions import get_associated_token_address
 
-from core.pubkeys import SystemAddresses, normalize_quote_mint, quote_token_program
+from core.pubkeys import (
+    SystemAddresses,
+    normalize_quote_mint,
+    require_quote_token_program,
+)
 from interfaces.core import AddressProvider, Platform, TokenInfo
 
 
@@ -391,10 +395,12 @@ class PumpFunAddressProvider(AddressProvider):
             Tuple of (quote_mint, quote_token_program)
         """
         quote_mint = normalize_quote_mint(token_info.quote_mint)
-        quote_program = token_info.quote_token_program_id or quote_token_program(
-            quote_mint
-        )
-        return quote_mint, quote_program
+        expected_program = require_quote_token_program(quote_mint)
+        if token_info.quote_token_program_id not in (None, expected_program):
+            raise ValueError(
+                "Quote token program does not match the registered quote mint"
+            )
+        return quote_mint, expected_program
 
     def derive_quote_token_account(
         self, owner: Pubkey, quote_mint: Pubkey, quote_token_program_id: Pubkey
@@ -410,6 +416,48 @@ class PumpFunAddressProvider(AddressProvider):
             Associated token account address
         """
         return get_associated_token_address(owner, quote_mint, quote_token_program_id)
+
+    def _resolve_mint_bound_accounts(
+        self,
+        token_info: TokenInfo,
+        token_program: Pubkey,
+        *,
+        require_creator: bool,
+    ) -> tuple[Pubkey, Pubkey, Pubkey | None]:
+        """Validate listener-supplied PDAs and return canonical addresses."""
+        if token_program not in (
+            SystemAddresses.TOKEN_PROGRAM,
+            SystemAddresses.TOKEN_2022_PROGRAM,
+        ):
+            raise ValueError("Unsupported base token program")
+        bonding_curve = self.derive_pool_address(token_info.mint)
+        if (
+            token_info.bonding_curve is not None
+            and token_info.bonding_curve != bonding_curve
+        ):
+            raise ValueError("Bonding curve does not match the token mint")
+        associated_curve = self.derive_associated_bonding_curve(
+            token_info.mint, bonding_curve, token_program
+        )
+        if (
+            token_info.associated_bonding_curve is not None
+            and token_info.associated_bonding_curve != associated_curve
+        ):
+            raise ValueError(
+                "Associated bonding curve does not match the mint and token program"
+            )
+
+        creator_vault: Pubkey | None = None
+        if token_info.creator is not None:
+            creator_vault = self.derive_creator_vault(token_info.creator)
+            if (
+                token_info.creator_vault is not None
+                and token_info.creator_vault != creator_vault
+            ):
+                raise ValueError("Creator vault does not match the creator")
+        elif require_creator:
+            raise ValueError("Creator metadata is required for v2 execution")
+        return bonding_curve, associated_curve, creator_vault
 
     def _get_v2_common_accounts(
         self, token_info: TokenInfo, user: Pubkey
@@ -428,20 +476,20 @@ class PumpFunAddressProvider(AddressProvider):
         Returns:
             Dictionary of account addresses keyed by IDL account name
         """
-        additional_accounts = self.get_additional_accounts(token_info)
-
         base_mint = token_info.mint
-        base_token_program = (
-            token_info.token_program_id or SystemAddresses.TOKEN_2022_PROGRAM
-        )
+        base_token_program = token_info.token_program_id
+        if base_token_program is None:
+            raise ValueError("Base token program metadata is required for v2 execution")
         quote_mint, quote_program = self.resolve_quote(token_info)
-
-        bonding_curve = additional_accounts.get(
-            "bonding_curve", token_info.bonding_curve
+        bonding_curve, associated_base_bonding_curve, creator_vault = (
+            self._resolve_mint_bound_accounts(
+                token_info,
+                base_token_program,
+                require_creator=True,
+            )
         )
-        creator_vault = additional_accounts.get(
-            "creator_vault", token_info.creator_vault
-        )
+        if creator_vault is None:
+            raise ValueError("Creator vault derivation is required for v2 execution")
         fee_recipient = self.get_fee_recipient(token_info)
         buyback_fee_recipient = PumpFunAddresses.pick_buyback_fee_recipient()
         user_volume_accumulator = self.derive_user_volume_accumulator(user)
@@ -462,9 +510,7 @@ class PumpFunAddressProvider(AddressProvider):
                 buyback_fee_recipient, quote_mint, quote_program
             ),
             "bonding_curve": bonding_curve,
-            "associated_base_bonding_curve": additional_accounts.get(
-                "associated_bonding_curve", token_info.associated_bonding_curve
-            ),
+            "associated_base_bonding_curve": associated_base_bonding_curve,
             "associated_quote_bonding_curve": self.derive_quote_token_account(
                 bonding_curve, quote_mint, quote_program
             ),
@@ -537,46 +583,30 @@ class PumpFunAddressProvider(AddressProvider):
     def get_buy_instruction_accounts(
         self, token_info: TokenInfo, user: Pubkey
     ) -> dict[str, Pubkey]:
-        """Get all accounts needed for a buy instruction.
-
-        Args:
-            token_info: Token information
-            user: User's wallet address
-
-        Returns:
-            Dictionary of account addresses for buy instruction
-        """
-        additional_accounts = self.get_additional_accounts(token_info)
-
-        # Determine token program to use
-        token_program_id = (
-            token_info.token_program_id
-            if token_info.token_program_id
-            else SystemAddresses.TOKEN_PROGRAM
+        """Get all accounts needed for the legacy buy instruction."""
+        token_program_id = token_info.token_program_id or SystemAddresses.TOKEN_PROGRAM
+        bonding_curve, associated_bonding_curve, creator_vault = (
+            self._resolve_mint_bound_accounts(
+                token_info,
+                token_program_id,
+                require_creator=True,
+            )
         )
-
-        # Determine fee recipient based on mayhem mode
         fee_recipient = self.get_fee_recipient(token_info)
 
         return {
             "global": PumpFunAddresses.GLOBAL,
             "fee": fee_recipient,
             "mint": token_info.mint,
-            "bonding_curve": additional_accounts.get(
-                "bonding_curve", token_info.bonding_curve
-            ),
-            "associated_bonding_curve": additional_accounts.get(
-                "associated_bonding_curve", token_info.associated_bonding_curve
-            ),
+            "bonding_curve": bonding_curve,
+            "associated_bonding_curve": associated_bonding_curve,
             "user_token_account": self.derive_user_token_account(
                 user, token_info.mint, token_program_id
             ),
             "user": user,
             "system_program": SystemAddresses.SYSTEM_PROGRAM,
             "token_program": token_program_id,
-            "creator_vault": additional_accounts.get(
-                "creator_vault", token_info.creator_vault
-            ),
+            "creator_vault": creator_vault,
             "event_authority": PumpFunAddresses.EVENT_AUTHORITY,
             "program": PumpFunAddresses.PROGRAM,
             "global_volume_accumulator": self.derive_global_volume_accumulator(),
@@ -590,45 +620,29 @@ class PumpFunAddressProvider(AddressProvider):
     def get_sell_instruction_accounts(
         self, token_info: TokenInfo, user: Pubkey
     ) -> dict[str, Pubkey]:
-        """Get all accounts needed for a sell instruction.
-
-        Args:
-            token_info: Token information
-            user: User's wallet address
-
-        Returns:
-            Dictionary of account addresses for sell instruction
-        """
-        additional_accounts = self.get_additional_accounts(token_info)
-
-        # Determine token program to use
-        token_program_id = (
-            token_info.token_program_id
-            if token_info.token_program_id
-            else SystemAddresses.TOKEN_PROGRAM
+        """Get all accounts needed for the legacy sell instruction."""
+        token_program_id = token_info.token_program_id or SystemAddresses.TOKEN_PROGRAM
+        bonding_curve, associated_bonding_curve, creator_vault = (
+            self._resolve_mint_bound_accounts(
+                token_info,
+                token_program_id,
+                require_creator=True,
+            )
         )
-
-        # Determine fee recipient based on mayhem mode
         fee_recipient = self.get_fee_recipient(token_info)
 
         return {
             "global": PumpFunAddresses.GLOBAL,
             "fee": fee_recipient,
             "mint": token_info.mint,
-            "bonding_curve": additional_accounts.get(
-                "bonding_curve", token_info.bonding_curve
-            ),
-            "associated_bonding_curve": additional_accounts.get(
-                "associated_bonding_curve", token_info.associated_bonding_curve
-            ),
+            "bonding_curve": bonding_curve,
+            "associated_bonding_curve": associated_bonding_curve,
             "user_token_account": self.derive_user_token_account(
                 user, token_info.mint, token_program_id
             ),
             "user": user,
             "system_program": SystemAddresses.SYSTEM_PROGRAM,
-            "creator_vault": additional_accounts.get(
-                "creator_vault", token_info.creator_vault
-            ),
+            "creator_vault": creator_vault,
             "token_program": token_program_id,
             "event_authority": PumpFunAddresses.EVENT_AUTHORITY,
             "program": PumpFunAddresses.PROGRAM,

@@ -3,16 +3,76 @@ Universal PumpPortal listener that works with multiple platforms.
 """
 
 import asyncio
-import json
+from collections import deque
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 import websockets
+from websockets.exceptions import ConnectionClosed
 
 from interfaces.core import Platform, TokenInfo
 from monitoring.base_listener import BaseTokenListener
+from monitoring.event_normalization import (
+    NormalizationError,
+    attach_event_context,
+    normalize_pumpportal_event,
+)
+from monitoring.subscription import (
+    SubscriptionRejected,
+    decode_json_frame,
+    subscribe_pumpportal,
+)
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+WEBSOCKET_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
+
+PUMPPORTAL_SUPPORTED_PLATFORMS = frozenset({Platform.PUMP_FUN})
+PUMPPORTAL_FAILURE_STATUSES = frozenset(
+    {"error", "failed", "failure", "rejected", "unsuccessful"}
+)
+
+
+def _reject_failure_envelope(
+    envelope: dict[str, Any],
+    *,
+    context: str,
+) -> None:
+    """Reject explicit provider failure signals before token processing."""
+    status = envelope.get("status")
+    status_failed = status is False or (
+        isinstance(status, str)
+        and status.strip().lower() in PUMPPORTAL_FAILURE_STATUSES
+    )
+    if isinstance(status, dict):
+        status_failed = (
+            status.get("success") is False
+            or status.get("ok") is False
+            or any(status.get(key) is not None for key in ("error", "err", "Err"))
+            or any(bool(status.get(key)) for key in PUMPPORTAL_FAILURE_STATUSES)
+        )
+    error_failed = any(
+        envelope.get(key) is not None for key in ("error", "err", "transactionError")
+    )
+    if error_failed or envelope.get("success") is False or status_failed:
+        raise NormalizationError(
+            f"PumpPortal {context} reports a failure: {envelope!r}"
+        )
+
+
+def _validate_token_envelope(token_data: dict[str, Any]) -> None:
+    """Require PumpPortal's routing and correlation fields before dispatch."""
+    invalid_fields = [
+        field
+        for field in ("signature", "mint", "pool")
+        if not isinstance(token_data.get(field), str) or not token_data[field].strip()
+    ]
+    if invalid_fields:
+        raise SubscriptionRejected(
+            "PumpPortal token object requires non-empty string fields: "
+            f"{invalid_fields}"
+        )
 
 
 class UniversalPumpPortalListener(BaseTokenListener):
@@ -32,30 +92,38 @@ class UniversalPumpPortalListener(BaseTokenListener):
         super().__init__()
         self.pumpportal_url = pumpportal_url
         self.ping_interval = 20  # seconds
+        self._pending_frames: deque[str | bytes] = deque()
+        self._subscription_ids: frozenset[int] = frozenset()
 
-        # Get platform-specific processors
-        from platforms.letsbonk.pumpportal_processor import LetsBonkPumpPortalProcessor
         from platforms.pumpfun.pumpportal_processor import PumpFunPumpPortalProcessor
 
-        # Create processor instances
-        all_processors = [
-            PumpFunPumpPortalProcessor(),
-            LetsBonkPumpPortalProcessor(),
+        selected_platforms = [Platform.PUMP_FUN] if platforms is None else platforms
+        if not selected_platforms:
+            raise ValueError(
+                "At least one platform is required for PumpPortal listener"
+            )
+        unsupported = [
+            platform
+            for platform in selected_platforms
+            if platform not in PUMPPORTAL_SUPPORTED_PLATFORMS
         ]
+        if unsupported:
+            unsupported_names = [
+                platform.value if isinstance(platform, Platform) else repr(platform)
+                for platform in unsupported
+            ]
+            raise ValueError(
+                "PumpPortal does not support platforms: "
+                f"{unsupported_names}. Supported platforms: "
+                f"{[Platform.PUMP_FUN.value]}"
+            )
 
-        # Filter processors based on requested platforms
-        if platforms is None:
-            self.processors = all_processors
-        else:
-            self.processors = [p for p in all_processors if p.platform in platforms]
+        self.processors = [PumpFunPumpPortalProcessor()]
 
-        # Build mapping of pool names to processors for quick lookup
         self.pool_to_processors: dict[str, list] = {}
         for processor in self.processors:
             for pool_name in processor.supported_pool_names:
-                if pool_name not in self.pool_to_processors:
-                    self.pool_to_processors[pool_name] = []
-                self.pool_to_processors[pool_name].append(processor)
+                self.pool_to_processors.setdefault(pool_name, []).append(processor)
 
         logger.info(
             f"Initialized Universal PumpPortal listener for platforms: {[p.platform.value for p in self.processors]}"
@@ -68,84 +136,56 @@ class UniversalPumpPortalListener(BaseTokenListener):
         match_string: str | None = None,
         creator_address: str | None = None,
     ) -> None:
-        """Listen for new token creations using PumpPortal WebSocket.
-
-        Args:
-            token_callback: Callback function for new tokens
-            match_string: Optional string to match in token name/symbol
-            creator_address: Optional creator address to filter by
-        """
+        """Listen for acknowledged, successful PumpPortal creation events."""
+        reconnect_attempt = 0
         while True:
+            ping_task: asyncio.Task[object] | None = None
             try:
-                async with websockets.connect(self.pumpportal_url) as websocket:
+                async with websockets.connect(
+                    self.pumpportal_url,
+                    max_size=WEBSOCKET_MAX_MESSAGE_BYTES,
+                ) as websocket:
+                    self._pending_frames.clear()
                     await self._subscribe_to_new_tokens(websocket)
+                    reconnect_attempt = 0
                     ping_task = asyncio.create_task(self._ping_loop(websocket))
-
                     try:
                         while True:
                             token_info = await self._wait_for_token_creation(websocket)
-                            if not token_info:
+                            if token_info is None:
                                 continue
-
                             logger.info(
-                                f"New token detected: {token_info.name} ({token_info.symbol}) on {token_info.platform.value}"
+                                "New token detected: %s (%s) on %s",
+                                token_info.name,
+                                token_info.symbol,
+                                token_info.platform.value,
                             )
-
-                            # Apply filters
-                            if match_string and not (
-                                match_string.lower() in token_info.name.lower()
-                                or match_string.lower() in token_info.symbol.lower()
-                            ):
-                                logger.info(
-                                    f"Token does not match filter '{match_string}'. Skipping..."
-                                )
-                                continue
-
-                            if creator_address:
-                                creator_str = (
-                                    str(token_info.creator)
-                                    if token_info.creator
-                                    else ""
-                                )
-                                user_str = (
-                                    str(token_info.user) if token_info.user else ""
-                                )
-                                if creator_address not in [creator_str, user_str]:
-                                    logger.info(
-                                        f"Token not created by {creator_address}. Skipping..."
-                                    )
-                                    continue
-
-                            await token_callback(token_info)
-
-                    except websockets.exceptions.ConnectionClosed:
-                        logger.warning(
-                            "PumpPortal WebSocket connection closed. Reconnecting..."
-                        )
+                            await self.dispatch_token(
+                                token_info,
+                                token_callback,
+                                match_string=match_string,
+                                creator_address=creator_address,
+                            )
                     finally:
-                        ping_task.cancel()
-                        try:
-                            await ping_task
-                        except asyncio.CancelledError:
-                            pass
+                        await self.cancel_task(ping_task)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                reconnect_attempt += 1
+                await self.wait_before_reconnect(reconnect_attempt, exc)
 
-            except Exception:
-                logger.exception("PumpPortal WebSocket connection error")
-                logger.info("Reconnecting in 5 seconds...")
-                await asyncio.sleep(5)
+    async def _subscribe_to_new_tokens(self, websocket: Any) -> None:
+        """Subscribe and require PumpPortal's explicit success response."""
+        result = await subscribe_pumpportal(
+            websocket,
+            request_id=1,
+            timeout=self.subscription_timeout,
+        )
+        self._subscription_ids = result.subscription_ids
+        self._pending_frames.extend(result.pending_frames)
+        logger.info("Confirmed PumpPortal new-token subscription")
 
-    async def _subscribe_to_new_tokens(self, websocket) -> None:
-        """Subscribe to new token events from PumpPortal.
-
-        Args:
-            websocket: Active WebSocket connection
-        """
-        subscription_message = json.dumps({"method": "subscribeNewToken", "params": []})
-
-        await websocket.send(subscription_message)
-        logger.info("Subscribed to PumpPortal new token events")
-
-    async def _ping_loop(self, websocket) -> None:
+    async def _ping_loop(self, websocket: Any) -> None:
         """Keep connection alive with pings.
 
         Args:
@@ -166,61 +206,77 @@ class UniversalPumpPortalListener(BaseTokenListener):
             pass
         except Exception:
             logger.exception("Ping error")
+            await websocket.close()
 
-    async def _wait_for_token_creation(self, websocket) -> TokenInfo | None:
-        """Wait for token creation event from PumpPortal.
+    async def _next_frame(self, websocket: Any) -> str | bytes:
+        if self._pending_frames:
+            return self._pending_frames.popleft()
+        return await asyncio.wait_for(websocket.recv(), timeout=self.receive_timeout)
 
-        Args:
-            websocket: Active WebSocket connection
-
-        Returns:
-            TokenInfo if a token creation is found, None otherwise
-        """
+    async def _wait_for_token_creation(self, websocket: Any) -> TokenInfo | None:
+        """Wait for one normalized PumpPortal creation event."""
         try:
-            response = await asyncio.wait_for(websocket.recv(), timeout=30)
-            data = json.loads(response)
+            data = decode_json_frame(await self._next_frame(websocket))
+            _reject_failure_envelope(data, context="event envelope")
 
-            # Handle different message formats from PumpPortal
-            token_data = None
-            if "method" in data and data["method"] == "newToken":
-                # Standard newToken method format
-                params = data.get("params", [])
-                if params and len(params) > 0:
-                    token_data = params[0]
-            elif "signature" in data and "mint" in data and "pool" in data:
-                # Direct token data format
+            token_data: dict[str, Any] | None = None
+            if data.get("method") == "newToken":
+                params = data.get("params")
+                if (
+                    not isinstance(params, list)
+                    or not params
+                    or not isinstance(params[0], dict)
+                ):
+                    raise SubscriptionRejected(
+                        "PumpPortal newToken params must contain a token object"
+                    )
+                token_data = params[0]
+            elif {"signature", "mint", "pool"}.issubset(data):
                 token_data = data
-
-            if not token_data:
+            if token_data is None:
                 return None
 
-            # Get pool name to determine which processor to use
-            pool_name = token_data.get("pool", "").lower()
-            if pool_name not in self.pool_to_processors:
-                logger.debug(f"Ignoring token from unsupported pool: {pool_name}")
+            _reject_failure_envelope(token_data, context="token envelope")
+            _validate_token_envelope(token_data)
+
+            pool_name = str(token_data.get("pool", "")).lower()
+            processors = self.pool_to_processors.get(pool_name)
+            if not processors:
+                logger.debug("Ignoring token from unsupported pool: %s", pool_name)
                 return None
 
-            # Try each processor that supports this pool
-            for processor in self.pool_to_processors[pool_name]:
-                if processor.can_process(token_data):
+            for processor in processors:
+                try:
+                    if not processor.can_process(token_data):
+                        continue
+                    event = normalize_pumpportal_event(
+                        token_data,
+                        platform=processor.platform,
+                    )
                     token_info = processor.process_token_data(token_data)
-                    if token_info:
-                        logger.debug(
-                            f"Successfully processed token using {processor.platform.value} processor"
-                        )
-                        return token_info
-
-            logger.debug(f"No processor could handle token data from pool {pool_name}")
+                except NormalizationError:
+                    raise
+                except Exception:
+                    logger.exception(
+                        "PumpPortal processor error for %s at signature %s",
+                        processor.platform.value,
+                        token_data.get("signature"),
+                    )
+                    continue
+                if token_info is not None:
+                    return attach_event_context(token_info, event)
             return None
-
         except TimeoutError:
-            logger.debug("No data received from PumpPortal for 30 seconds")
-        except websockets.exceptions.ConnectionClosed:
-            logger.warning("PumpPortal WebSocket connection closed")
+            logger.debug(
+                "No data received from PumpPortal for %.0f seconds",
+                self.receive_timeout,
+            )
+        except ConnectionClosed:
             raise
-        except json.JSONDecodeError:
-            logger.exception("Failed to decode PumpPortal message")
+        except SubscriptionRejected:
+            raise
+        except NormalizationError as exc:
+            logger.warning("Rejected PumpPortal notification: %s", exc)
         except Exception:
             logger.exception("Error processing PumpPortal WebSocket message")
-
         return None

@@ -68,7 +68,15 @@ class PumpFunPumpPortalProcessor:
             # - marketCapSol: Market cap in SOL
             # - signature: Transaction signature
 
-            if not all([name, symbol, mint_str, bonding_curve_str, creator_str]):
+            if (
+                not isinstance(name, str)
+                or not name.strip()
+                or not isinstance(symbol, str)
+                or not symbol.strip()
+            ):
+                logger.warning("Invalid token name or symbol in PumpPortal token data")
+                return None
+            if not all([mint_str, bonding_curve_str, creator_str]):
                 logger.warning("Missing required fields in PumpPortal token data")
                 return None
 

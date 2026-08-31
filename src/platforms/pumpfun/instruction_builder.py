@@ -11,7 +11,13 @@ from solders.instruction import AccountMeta, Instruction
 from solders.pubkey import Pubkey
 from spl.token.instructions import create_idempotent_associated_token_account
 
-from core.pubkeys import TOKEN_DECIMALS, is_sol_paired
+from core.pubkeys import (
+    QUOTE_TOKEN_PROGRAMS,
+    TOKEN_DECIMALS,
+    SystemAddresses,
+    is_sol_paired,
+    normalize_quote_mint,
+)
 from interfaces.core import AddressProvider, InstructionBuilder, Platform, TokenInfo
 from utils.idl_parser import IDLParser
 from utils.logger import get_logger
@@ -58,6 +64,10 @@ _SELL_V2_ACCOUNTS: list[tuple[str, bool]] = [
     entry for entry in _BUY_V2_ACCOUNTS if entry[0] != "global_volume_accumulator"
 ]
 
+_SUPPORTED_TOKEN_PROGRAMS = frozenset(
+    (SystemAddresses.TOKEN_PROGRAM, SystemAddresses.TOKEN_2022_PROGRAM)
+)
+
 
 class PumpFunInstructionBuilder(InstructionBuilder):
     """Pump.Fun implementation of InstructionBuilder interface with IDL-based discriminators."""
@@ -76,7 +86,7 @@ class PumpFunInstructionBuilder(InstructionBuilder):
 
         # Get discriminators from injected IDL parser
         discriminators = self._idl_parser.get_instruction_discriminators()
-        self._buy_discriminator = discriminators["buy"]
+        self._buy_discriminator = discriminators["buy_exact_sol_in"]
         self._sell_discriminator = discriminators["sell"]
         self._buy_v2_discriminator = discriminators["buy_v2"]
         self._sell_v2_discriminator = discriminators["sell_v2"]
@@ -90,6 +100,11 @@ class PumpFunInstructionBuilder(InstructionBuilder):
     def platform(self) -> Platform:
         """Get the platform this builder serves."""
         return Platform.PUMP_FUN
+
+    @property
+    def buy_uses_exact_output(self) -> bool:
+        """Return whether the active Pump.fun buy ABI is exact-output."""
+        return not self._use_legacy_instructions
 
     @staticmethod
     def _build_account_metas(
@@ -123,6 +138,66 @@ class PumpFunInstructionBuilder(InstructionBuilder):
                 )
             )
         return metas
+
+    @staticmethod
+    def _validate_raw_amounts(amount_in: int, minimum_amount_out: int) -> None:
+        """Reject non-integer or zero execution amounts before account resolution."""
+        for name, value in (
+            ("amount_in", amount_in),
+            ("minimum_amount_out", minimum_amount_out),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not 0 < value <= 0xFFFF_FFFF_FFFF_FFFF
+            ):
+                raise ValueError(f"{name} must be a positive raw u64 integer")
+
+    @staticmethod
+    def _validate_v2_metadata(token_info: TokenInfo) -> tuple[Pubkey, Pubkey]:
+        """Require explicit, supported base and quote program provenance."""
+        if token_info.token_program_id not in _SUPPORTED_TOKEN_PROGRAMS:
+            raise ValueError("Unsupported or missing base token program metadata")
+        if not isinstance(token_info.quote_mint, Pubkey):
+            raise ValueError("Missing quote mint metadata for v2 instruction")
+
+        quote_mint = normalize_quote_mint(token_info.quote_mint)
+        expected_quote_program = QUOTE_TOKEN_PROGRAMS.get(quote_mint)
+        if expected_quote_program is None:
+            raise ValueError(f"Unsupported quote mint metadata: {quote_mint}")
+        if token_info.quote_token_program_id != expected_quote_program:
+            raise ValueError("Missing or inconsistent quote token program metadata")
+        return quote_mint, expected_quote_program
+
+    @staticmethod
+    def _validate_v2_accounts(
+        token_info: TokenInfo,
+        accounts_info: dict[str, Pubkey],
+        quote_mint: Pubkey,
+        quote_program: Pubkey,
+    ) -> None:
+        """Ensure address resolution did not substitute protocol metadata."""
+        expected = {
+            "base_mint": token_info.mint,
+            "quote_mint": quote_mint,
+            "base_token_program": token_info.token_program_id,
+            "quote_token_program": quote_program,
+        }
+        for name, pubkey in expected.items():
+            if accounts_info.get(name) != pubkey:
+                raise ValueError(f"Inconsistent v2 account metadata for {name}")
+
+    @staticmethod
+    def _validate_legacy_metadata(token_info: TokenInfo) -> None:
+        """Reject combinations the legacy SOL-only interface cannot represent."""
+        if token_info.token_program_id not in _SUPPORTED_TOKEN_PROGRAMS:
+            raise ValueError(
+                "Unsupported or missing token program for legacy instruction"
+            )
+        if token_info.quote_mint is not None and not is_sol_paired(
+            token_info.quote_mint
+        ):
+            raise ValueError("Legacy pump.fun instructions only support SOL pairs")
 
     async def build_buy_instruction(
         self,
@@ -176,11 +251,13 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         Returns:
             List of instructions needed for the buy operation
         """
-        instructions = []
-
+        self._validate_raw_amounts(amount_in, minimum_amount_out)
+        quote_mint, quote_program = self._validate_v2_metadata(token_info)
         accounts_info = address_provider.get_buy_v2_instruction_accounts(
             token_info, user
         )
+        self._validate_v2_accounts(token_info, accounts_info, quote_mint, quote_program)
+        instructions = []
 
         # Base-token ATA for the buyer. buy_v2 does not create this for us.
         instructions.append(
@@ -248,11 +325,13 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         Returns:
             List of instructions needed for the sell operation
         """
-        instructions = []
-
+        self._validate_raw_amounts(amount_in, minimum_amount_out)
+        quote_mint, quote_program = self._validate_v2_metadata(token_info)
         accounts_info = address_provider.get_sell_v2_instruction_accounts(
             token_info, user
         )
+        self._validate_v2_accounts(token_info, accounts_info, quote_mint, quote_program)
+        instructions = []
 
         # Proceeds of a non-SOL sale land in the seller's quote ATA, which must
         # exist. SOL-paired sales pay out in native SOL.
@@ -307,10 +386,12 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         Returns:
             List of instructions needed for the buy operation
         """
-        instructions = []
-
-        # Get all required accounts (includes mayhem-mode-aware fee recipient)
+        self._validate_raw_amounts(amount_in, minimum_amount_out)
+        self._validate_legacy_metadata(token_info)
         accounts_info = address_provider.get_buy_instruction_accounts(token_info, user)
+        if accounts_info.get("token_program") != token_info.token_program_id:
+            raise ValueError("Inconsistent legacy base token program metadata")
+        instructions = []
 
         # 1. Create idempotent ATA instruction (won't fail if ATA already exists)
         # Use token_program from accounts_info to ensure AddressProvider controls program selection
@@ -402,14 +483,13 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             ),
         ]
 
-        # Build instruction data: discriminator + token_amount + max_sol_cost + track_volume
-        # Encode OptionBool for track_volume: [1, 1] = Some(true)
-        track_volume_bytes = bytes([1, 1])
+        # Vendored IDL order: spendable_sol_in, min_tokens_out, track_volume.
+        # OptionBool is a struct wrapping one bool, so it occupies one byte.
         instruction_data = (
             self._buy_discriminator
-            + struct.pack("<Q", minimum_amount_out)  # token amount in raw units
-            + struct.pack("<Q", amount_in)  # max SOL cost in lamports
-            + track_volume_bytes  # enable volume tracking
+            + struct.pack("<Q", amount_in)
+            + struct.pack("<Q", minimum_amount_out)
+            + bytes([1])
         )
 
         buy_instruction = Instruction(
@@ -474,10 +554,12 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         Returns:
             List of instructions needed for the sell operation
         """
-        instructions = []
-
-        # Get all required accounts (includes mayhem-mode-aware fee recipient)
+        self._validate_raw_amounts(amount_in, minimum_amount_out)
+        self._validate_legacy_metadata(token_info)
         accounts_info = address_provider.get_sell_instruction_accounts(token_info, user)
+        if accounts_info.get("token_program") != token_info.token_program_id:
+            raise ValueError("Inconsistent legacy base token program metadata")
+        instructions = []
 
         # Build sell instruction accounts
         sell_accounts = [
@@ -564,14 +646,12 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             )
         )
 
-        # Build instruction data: discriminator + token_amount + min_sol_output + track_volume
-        # Encode OptionBool for track_volume: [1, 1] = Some(true)
-        track_volume_bytes = bytes([1, 1])
+        # Vendored IDL sell has exactly two u64 arguments. Unlike legacy buy,
+        # it has no trailing track_volume OptionBool.
         instruction_data = (
             self._sell_discriminator
-            + struct.pack("<Q", amount_in)  # token amount in raw units
-            + struct.pack("<Q", minimum_amount_out)  # min SOL output in lamports
-            + track_volume_bytes  # enable volume tracking
+            + struct.pack("<Q", amount_in)
+            + struct.pack("<Q", minimum_amount_out)
         )
 
         sell_instruction = Instruction(

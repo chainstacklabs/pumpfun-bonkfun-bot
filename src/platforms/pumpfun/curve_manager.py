@@ -12,16 +12,53 @@ from solders.pubkey import Pubkey
 from core.client import SolanaClient
 from core.pubkeys import (
     LAMPORTS_PER_SOL,
+    QUOTE_TOKEN_PROGRAMS,
     TOKEN_DECIMALS,
+    SystemAddresses,
     is_sol_paired,
     normalize_quote_mint,
     quote_units_per_token,
 )
 from interfaces.core import CurveManager, Platform
+from platforms.pumpfun.address_provider import PumpFunAddresses
 from utils.idl_parser import IDLParser
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+_BONDING_CURVE_DISCRIMINATOR = bytes((23, 183, 248, 55, 96, 216, 172, 96))
+# 8-byte discriminator + five u64 + bool + pubkey + two bools + quote pubkey.
+_BONDING_CURVE_MIN_ACCOUNT_SIZE = 115
+_SUPPORTED_TOKEN_PROGRAMS = frozenset(
+    (SystemAddresses.TOKEN_PROGRAM, SystemAddresses.TOKEN_2022_PROGRAM)
+)
+
+
+def _coerce_pubkey(value: object) -> Pubkey | None:
+    """Coerce an IDL pubkey field without guessing a default."""
+    if isinstance(value, Pubkey):
+        return value
+    if isinstance(value, str):
+        try:
+            return Pubkey.from_string(value)
+        except ValueError:
+            return None
+    if isinstance(value, bytes | bytearray) and len(value) == 32:
+        return Pubkey.from_bytes(bytes(value))
+    return None
+
+
+def _require_raw_u64(value: object, name: str, *, positive: bool = False) -> int:
+    """Return a validated raw u64 or raise."""
+    minimum = 1 if positive else 0
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not minimum <= value <= 0xFFFF_FFFF_FFFF_FFFF
+    ):
+        qualifier = "positive " if positive else ""
+        raise ValueError(f"{name} must be a {qualifier}raw u64 integer")
+    return value
 
 
 class PumpFunCurveManager(CurveManager):
@@ -44,6 +81,30 @@ class PumpFunCurveManager(CurveManager):
         """Get the platform this manager serves."""
         return Platform.PUMP_FUN
 
+    @staticmethod
+    def _validated_curve_data(account: Any, pool_address: Pubkey) -> bytes:
+        """Validate account provenance and fixed-layout prefix before decoding."""
+        if account is None:
+            raise ValueError(f"Bonding curve account {pool_address} not found")
+        if getattr(account, "owner", None) != PumpFunAddresses.PROGRAM:
+            raise ValueError(
+                f"Bonding curve account {pool_address} has an unexpected owner"
+            )
+        data = getattr(account, "data", None)
+        if not isinstance(data, bytes | bytearray):
+            raise ValueError(f"No data in bonding curve account {pool_address}")
+        raw_data = bytes(data)
+        if len(raw_data) < _BONDING_CURVE_MIN_ACCOUNT_SIZE:
+            raise ValueError(
+                f"Bonding curve account {pool_address} is too short: "
+                f"{len(raw_data)}/{_BONDING_CURVE_MIN_ACCOUNT_SIZE}"
+            )
+        if raw_data[:8] != _BONDING_CURVE_DISCRIMINATOR:
+            raise ValueError(
+                f"Bonding curve account {pool_address} has an invalid discriminator"
+            )
+        return raw_data
+
     async def get_pool_state(
         self, pool_address: Pubkey, commitment: str | None = None
     ) -> dict[str, Any]:
@@ -62,11 +123,8 @@ class PumpFunCurveManager(CurveManager):
             account = await self.client.get_account_info(
                 pool_address, commitment=commitment
             )
-            if not account.data:
-                raise ValueError(f"No data in bonding curve account {pool_address}")
-
-            # Decode bonding curve state using injected IDL parser
-            curve_state_data = self._decode_curve_state_with_idl(account.data)
+            account_data = self._validated_curve_data(account, pool_address)
+            curve_state_data = self._decode_curve_state_with_idl(account_data)
 
             return curve_state_data
 
@@ -96,6 +154,13 @@ class PumpFunCurveManager(CurveManager):
         Raises:
             ValueError: If the bonding curve account is missing or undecodable
         """
+        if (
+            pool_address
+            != Pubkey.find_program_address(
+                [b"bonding-curve", bytes(mint)], PumpFunAddresses.PROGRAM
+            )[0]
+        ):
+            raise ValueError("Bonding curve address does not match the mint")
         try:
             curve_account, mint_account = await self.client.get_multiple_accounts(
                 [pool_address, mint], commitment=commitment
@@ -104,12 +169,21 @@ class PumpFunCurveManager(CurveManager):
             logger.exception("Failed to read curve and mint accounts")
             raise ValueError(f"Invalid bonding curve state: {e!s}") from e  # noqa: TRY003
 
-        if curve_account is None or not curve_account.data:
-            raise ValueError(f"No data in bonding curve account {pool_address}")  # noqa: TRY003
+        curve_data = self._validated_curve_data(curve_account, pool_address)
+        curve_state_data = self._decode_curve_state_with_idl(curve_data)
+        if mint_account is None:
+            return curve_state_data, None
 
-        curve_state_data = self._decode_curve_state_with_idl(curve_account.data)
-        token_program = mint_account.owner if mint_account is not None else None
+        token_program = getattr(mint_account, "owner", None)
+        if token_program not in _SUPPORTED_TOKEN_PROGRAMS:
+            raise ValueError(f"Mint account {mint} has an unsupported owner")
         return curve_state_data, token_program
+
+    @staticmethod
+    def _require_incomplete_curve(state: dict[str, Any]) -> None:
+        """Reject migrated curves before deriving any executable quote."""
+        if state.get("complete") is not False:
+            raise ValueError("Pump.fun bonding curve is complete or malformed")
 
     async def calculate_price(self, pool_address: Pubkey) -> float:
         """Calculate current token price from bonding curve state.
@@ -133,62 +207,65 @@ class PumpFunCurveManager(CurveManager):
     async def calculate_buy_amount_out(
         self, pool_address: Pubkey, amount_in: int
     ) -> int:
-        """Calculate expected tokens received for a buy operation.
+        """Calculate a pre-fee token-output upper bound in raw units.
 
-        Uses the pump.fun bonding curve formula to calculate token output.
-
-        Args:
-            pool_address: Address of the bonding curve
-            amount_in: Amount of SOL to spend (in lamports)
-
-        Returns:
-            Expected amount of tokens to receive (in raw token units)
+        The dynamic protocol and creator fee schedule lives outside the bonding
+        curve account. This helper therefore does not pretend a zero-fee quote
+        is an executable minimum; callers must apply a sourced fee schedule and
+        slippage before instruction construction.
         """
+        amount_in = _require_raw_u64(amount_in, "amount_in", positive=True)
         pool_state = await self.get_pool_state(pool_address)
+        self._require_incomplete_curve(pool_state)
+        virtual_token_reserves = _require_raw_u64(
+            pool_state["virtual_token_reserves"],
+            "virtual_token_reserves",
+            positive=True,
+        )
+        virtual_quote_reserves = _require_raw_u64(
+            pool_state["virtual_quote_reserves"],
+            "virtual_quote_reserves",
+            positive=True,
+        )
+        real_token_reserves = _require_raw_u64(
+            pool_state["real_token_reserves"], "real_token_reserves"
+        )
 
-        virtual_token_reserves = pool_state["virtual_token_reserves"]
-        virtual_sol_reserves = pool_state["virtual_sol_reserves"]
-
-        # Use virtual reserves for bonding curve calculation
-        # Formula: tokens_out = (amount_in * virtual_token_reserves) / (virtual_sol_reserves + amount_in)
-        numerator = amount_in * virtual_token_reserves
-        denominator = virtual_sol_reserves + amount_in
-
-        if denominator == 0:
-            return 0
-
-        tokens_out = numerator // denominator
-        return tokens_out
+        tokens_out = (amount_in * virtual_token_reserves) // (
+            virtual_quote_reserves + amount_in
+        )
+        return min(tokens_out, real_token_reserves)
 
     async def calculate_sell_amount_out(
         self, pool_address: Pubkey, amount_in: int
     ) -> int:
-        """Calculate expected SOL received for a sell operation.
+        """Calculate a pre-fee quote-output upper bound in raw units.
 
-        Uses the pump.fun bonding curve formula to calculate SOL output.
-
-        Args:
-            pool_address: Address of the bonding curve
-            amount_in: Amount of tokens to sell (in raw token units)
-
-        Returns:
-            Expected amount of SOL to receive (in lamports)
+        Output is capped by the real quote reserves available on the curve.
+        Dynamic protocol and creator fees must be sourced separately before
+        deriving an executable minimum output.
         """
+        amount_in = _require_raw_u64(amount_in, "amount_in", positive=True)
         pool_state = await self.get_pool_state(pool_address)
+        self._require_incomplete_curve(pool_state)
+        virtual_token_reserves = _require_raw_u64(
+            pool_state["virtual_token_reserves"],
+            "virtual_token_reserves",
+            positive=True,
+        )
+        virtual_quote_reserves = _require_raw_u64(
+            pool_state["virtual_quote_reserves"],
+            "virtual_quote_reserves",
+            positive=True,
+        )
+        real_quote_reserves = _require_raw_u64(
+            pool_state["real_quote_reserves"], "real_quote_reserves"
+        )
 
-        virtual_token_reserves = pool_state["virtual_token_reserves"]
-        virtual_sol_reserves = pool_state["virtual_sol_reserves"]
-
-        # Use virtual reserves for bonding curve calculation
-        # Formula: sol_out = (amount_in * virtual_sol_reserves) / (virtual_token_reserves + amount_in)
-        numerator = amount_in * virtual_sol_reserves
-        denominator = virtual_token_reserves + amount_in
-
-        if denominator == 0:
-            return 0
-
-        sol_out = numerator // denominator
-        return sol_out
+        quote_out = (amount_in * virtual_quote_reserves) // (
+            virtual_token_reserves + amount_in
+        )
+        return min(quote_out, real_quote_reserves)
 
     async def get_reserves(self, pool_address: Pubkey) -> tuple[int, int]:
         """Get current bonding curve reserves.
@@ -217,125 +294,141 @@ class PumpFunCurveManager(CurveManager):
         Raises:
             ValueError: If IDL parsing fails
         """
-        # Use injected IDL parser to decode BondingCurve account data
-        decoded_curve_state = self._idl_parser.decode_account_data(
-            data, "BondingCurve", skip_discriminator=True
-        )
+        if not isinstance(data, bytes | bytearray):
+            raise ValueError("Bonding curve data must be bytes")
+        raw_data = bytes(data)
+        if len(raw_data) < _BONDING_CURVE_MIN_ACCOUNT_SIZE:
+            raise ValueError(
+                f"Bonding curve data is too short: "
+                f"{len(raw_data)}/{_BONDING_CURVE_MIN_ACCOUNT_SIZE}"
+            )
+        if raw_data[:8] != _BONDING_CURVE_DISCRIMINATOR:
+            raise ValueError("Invalid BondingCurve account discriminator")
 
+        decoded_curve_state = self._idl_parser.decode_account_data(
+            raw_data, "BondingCurve", skip_discriminator=True
+        )
         if not decoded_curve_state:
             raise ValueError("Failed to decode bonding curve state with IDL parser")
 
-        # Extract the fields we need for trading calculations.
-        # The BondingCurve struct renamed its SOL fields to quote fields when
-        # pump.fun added non-SOL quote assets, and appended quote_mint. The
-        # old names are kept as aliases below so callers written against the
-        # SOL-only layout keep working for SOL-paired coins.
-        raw_quote_mint = decoded_curve_state.get("quote_mint")
-        quote_mint = normalize_quote_mint(
-            Pubkey.from_string(raw_quote_mint)
-            if isinstance(raw_quote_mint, str)
-            else raw_quote_mint
+        required_fields = {
+            "virtual_token_reserves",
+            "virtual_quote_reserves",
+            "real_token_reserves",
+            "real_quote_reserves",
+            "token_total_supply",
+            "complete",
+            "creator",
+            "is_mayhem_mode",
+            "is_cashback_coin",
+            "quote_mint",
+        }
+        missing_fields = required_fields.difference(decoded_curve_state)
+        if missing_fields:
+            raise ValueError(
+                f"BondingCurve state is missing fields: {sorted(missing_fields)}"
+            )
+
+        virtual_token_reserves = _require_raw_u64(
+            decoded_curve_state["virtual_token_reserves"],
+            "virtual_token_reserves",
+            positive=True,
         )
+        virtual_quote_reserves = _require_raw_u64(
+            decoded_curve_state["virtual_quote_reserves"],
+            "virtual_quote_reserves",
+            positive=True,
+        )
+        real_token_reserves = _require_raw_u64(
+            decoded_curve_state["real_token_reserves"], "real_token_reserves"
+        )
+        real_quote_reserves = _require_raw_u64(
+            decoded_curve_state["real_quote_reserves"], "real_quote_reserves"
+        )
+        token_total_supply = _require_raw_u64(
+            decoded_curve_state["token_total_supply"],
+            "token_total_supply",
+            positive=True,
+        )
+        if real_token_reserves > virtual_token_reserves:
+            raise ValueError("real_token_reserves exceeds virtual_token_reserves")
+        if real_quote_reserves > virtual_quote_reserves:
+            raise ValueError("real_quote_reserves exceeds virtual_quote_reserves")
+        if real_token_reserves > token_total_supply:
+            raise ValueError("real_token_reserves exceeds token_total_supply")
+
+        complete = decoded_curve_state["complete"]
+        is_mayhem_mode = decoded_curve_state["is_mayhem_mode"]
+        is_cashback_coin = decoded_curve_state["is_cashback_coin"]
+        if not all(
+            isinstance(value, bool)
+            for value in (complete, is_mayhem_mode, is_cashback_coin)
+        ):
+            raise ValueError("BondingCurve flag fields must be booleans")
+
+        creator = _coerce_pubkey(decoded_curve_state["creator"])
+        if creator is None:
+            raise ValueError("BondingCurve creator is not a valid pubkey")
+        raw_quote_mint = _coerce_pubkey(decoded_curve_state["quote_mint"])
+        if raw_quote_mint is None:
+            raise ValueError("BondingCurve quote_mint is not a valid pubkey")
+        quote_mint = normalize_quote_mint(raw_quote_mint)
+        if quote_mint not in QUOTE_TOKEN_PROGRAMS:
+            raise ValueError(f"Unsupported BondingCurve quote mint: {quote_mint}")
         quote_unit = quote_units_per_token(quote_mint)
 
         curve_data = {
-            "virtual_token_reserves": decoded_curve_state.get(
-                "virtual_token_reserves", 0
-            ),
-            "virtual_quote_reserves": decoded_curve_state.get(
-                "virtual_quote_reserves", 0
-            ),
-            "real_token_reserves": decoded_curve_state.get("real_token_reserves", 0),
-            "real_quote_reserves": decoded_curve_state.get("real_quote_reserves", 0),
-            "token_total_supply": decoded_curve_state.get("token_total_supply", 0),
-            "complete": decoded_curve_state.get("complete", False),
-            "creator": decoded_curve_state.get("creator", ""),
-            "is_mayhem_mode": decoded_curve_state.get("is_mayhem_mode", False),
-            "is_cashback_coin": decoded_curve_state.get("is_cashback_coin", False),
+            "virtual_token_reserves": virtual_token_reserves,
+            "virtual_quote_reserves": virtual_quote_reserves,
+            "real_token_reserves": real_token_reserves,
+            "real_quote_reserves": real_quote_reserves,
+            "token_total_supply": token_total_supply,
+            "complete": complete,
+            "creator": creator,
+            "is_mayhem_mode": is_mayhem_mode,
+            "is_cashback_coin": is_cashback_coin,
             "quote_mint": quote_mint,
             "is_sol_paired": is_sol_paired(quote_mint),
         }
 
-        # Back-compat aliases for the pre-quote-mint field names.
-        curve_data["virtual_sol_reserves"] = curve_data["virtual_quote_reserves"]
-        curve_data["real_sol_reserves"] = curve_data["real_quote_reserves"]
+        # Back-compat field names remain aliases only; all calculations above
+        # use the quote-asset-neutral current IDL names.
+        curve_data["virtual_sol_reserves"] = virtual_quote_reserves
+        curve_data["real_sol_reserves"] = real_quote_reserves
 
-        # Calculate additional metrics
-        # Validate reserves are positive before calculating price
-        if curve_data["virtual_token_reserves"] <= 0:
-            raise ValueError(
-                f"Invalid virtual_token_reserves: {curve_data['virtual_token_reserves']} - cannot calculate price"
-            )
-        if curve_data["virtual_quote_reserves"] <= 0:
-            raise ValueError(
-                f"Invalid virtual_quote_reserves: {curve_data['virtual_quote_reserves']} - cannot calculate price"
-            )
-
-        # Price is denominated in the curve's quote asset, so scale by that
-        # mint's decimals (1e9 for SOL, 1e6 for USDC) rather than assuming SOL.
         curve_data["price_per_token"] = (
-            (
-                curve_data["virtual_quote_reserves"]
-                / curve_data["virtual_token_reserves"]
-            )
+            (virtual_quote_reserves / virtual_token_reserves)
             * (10**TOKEN_DECIMALS)
             / quote_unit
         )
-
-        # Add convenience decimal fields
         curve_data["token_reserves_decimal"] = (
-            curve_data["virtual_token_reserves"] / 10**TOKEN_DECIMALS
+            virtual_token_reserves / 10**TOKEN_DECIMALS
         )
-        curve_data["quote_reserves_decimal"] = (
-            curve_data["virtual_quote_reserves"] / quote_unit
-        )
+        curve_data["quote_reserves_decimal"] = virtual_quote_reserves / quote_unit
         curve_data["sol_reserves_decimal"] = curve_data["quote_reserves_decimal"]
 
         logger.debug(
-            f"Decoded curve state: virtual_token_reserves={curve_data['virtual_token_reserves']}, "
-            f"virtual_quote_reserves={curve_data['virtual_quote_reserves']}, "
+            f"Decoded curve state: virtual_token_reserves={virtual_token_reserves}, "
+            f"virtual_quote_reserves={virtual_quote_reserves}, "
             f"quote_mint={quote_mint}, "
             f"price={curve_data['price_per_token']:.8f} quote/token"
         )
-
         return curve_data
 
-    # Additional convenience methods for pump.fun specific operations
+    # Compatibility aliases retained for callers that used the older helper
+    # names. Inputs and outputs are now raw integers; decimal conversion belongs
+    # only at presentation boundaries.
     async def calculate_expected_tokens(
-        self, pool_address: Pubkey, sol_amount: float
-    ) -> float:
-        """Calculate the expected token amount for a given SOL input.
-
-        This is a convenience method that converts between decimal and raw units.
-
-        Args:
-            pool_address: Address of the bonding curve
-            sol_amount: Amount of SOL to spend (in decimal SOL)
-
-        Returns:
-            Expected token amount (in decimal tokens)
-        """
-        sol_lamports = int(sol_amount * LAMPORTS_PER_SOL)
-        tokens_raw = await self.calculate_buy_amount_out(pool_address, sol_lamports)
-        return tokens_raw / 10**TOKEN_DECIMALS
+        self, pool_address: Pubkey, quote_amount_raw: int
+    ) -> int:
+        """Return the raw token-output upper bound for raw quote input."""
+        return await self.calculate_buy_amount_out(pool_address, quote_amount_raw)
 
     async def calculate_expected_sol(
-        self, pool_address: Pubkey, token_amount: float
-    ) -> float:
-        """Calculate the expected SOL amount for a given token input.
-
-        This is a convenience method that converts between decimal and raw units.
-
-        Args:
-            pool_address: Address of the bonding curve
-            token_amount: Amount of tokens to sell (in decimal tokens)
-
-        Returns:
-            Expected SOL amount (in decimal SOL)
-        """
-        tokens_raw = int(token_amount * 10**TOKEN_DECIMALS)
-        sol_lamports = await self.calculate_sell_amount_out(pool_address, tokens_raw)
-        return sol_lamports / LAMPORTS_PER_SOL
+        self, pool_address: Pubkey, token_amount_raw: int
+    ) -> int:
+        """Return the raw quote-output upper bound for raw token input."""
+        return await self.calculate_sell_amount_out(pool_address, token_amount_raw)
 
     async def is_curve_complete(self, pool_address: Pubkey) -> bool:
         """Check if the bonding curve is complete (migrated to Raydium).

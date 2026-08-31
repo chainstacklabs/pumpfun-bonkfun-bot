@@ -18,21 +18,33 @@ from interfaces.core import Platform, TokenInfo
 
 @dataclass
 class TradeResult:
-    """Enhanced result of a trading operation with platform support."""
+    """Result of a trading operation, including raw receipt accounting."""
 
     success: bool
-    platform: Platform = Platform.PUMP_FUN  # Add platform tracking
+    platform: Platform = Platform.PUMP_FUN
     tx_signature: str | None = None
     error_message: str | None = None
     amount: float | None = None
     price: float | None = None
+    amount_raw: int | None = None
+    quote_amount_raw: int | None = None
+    account_balance_baseline_raw: int | None = None
+    fee_lamports: int | None = None
+    slot: int | None = None
+    status: str | None = None
+
+    def __post_init__(self) -> None:
+        """Fill the compatibility status when no typed outcome was supplied."""
+        if self.status is None:
+            self.status = "success" if self.success else "failed"
+
+    @property
+    def unresolved(self) -> bool:
+        """Whether the transaction's chain outcome is still unknown."""
+        return self.status == "unknown"
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for logging/serialization.
-
-        Returns:
-            Dictionary representation of the trade result
-        """
+        """Convert to a JSON-compatible dictionary."""
         return {
             "success": self.success,
             "platform": self.platform.value,
@@ -40,6 +52,12 @@ class TradeResult:
             "error_message": self.error_message,
             "amount": self.amount,
             "price": self.price,
+            "amount_raw": self.amount_raw,
+            "quote_amount_raw": self.quote_amount_raw,
+            "account_balance_baseline_raw": self.account_balance_baseline_raw,
+            "fee_lamports": self.fee_lamports,
+            "slot": self.slot,
+            "status": self.status,
         }
 
 

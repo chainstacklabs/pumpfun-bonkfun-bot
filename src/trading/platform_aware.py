@@ -4,20 +4,30 @@ Final cleanup removing all platform-specific hardcoding.
 """
 
 import asyncio
+from decimal import ROUND_DOWN, Decimal
+from math import isfinite
 from time import monotonic
 
+from solders.instruction import Instruction
 from solders.pubkey import Pubkey
 
-from core.client import SolanaClient
+from core.client import (
+    SolanaClient,
+    TransactionStatus,
+    TransactionSubmissionUnknown,
+)
+from core.execution_policy import ExecutionMode
 from core.priority_fee.manager import PriorityFeeManager
 from core.pubkeys import (
     TOKEN_DECIMALS,
     WSOL_MINT,
     SystemAddresses,
+    get_quote_asset,
     is_sol_paired,
     normalize_quote_mint,
     quote_units_per_token,
 )
+from core.quote_engine import minimum_output_with_slippage
 from core.wallet import Wallet
 from interfaces.core import AddressProvider, Platform, TokenInfo
 from platforms import get_platform_implementations
@@ -40,6 +50,144 @@ def _quote_symbol(quote_mint: Pubkey) -> str:
         return "SOL"
     mint_str = str(quote_mint)
     return f"{mint_str[:4]}..{mint_str[-4:]}"
+
+
+def _additional_native_buy_recipients(
+    platform: Platform,
+    instructions: list[Instruction],
+    address_provider: AddressProvider,
+    primary_destination: Pubkey,
+) -> tuple[Pubkey, ...]:
+    """Extract every native-SOL fee recipient from the built venue instruction."""
+    if not instructions:
+        return ()
+    program_id = getattr(address_provider, "program_id", None)
+    if not isinstance(program_id, Pubkey):
+        raise ValueError("Address provider has no canonical program id")
+    venue_instructions = [
+        instruction
+        for instruction in instructions
+        if instruction.program_id == program_id
+    ]
+    if len(venue_instructions) != 1:
+        raise ValueError(
+            "Expected exactly one venue instruction for receipt accounting"
+        )
+    accounts = list(venue_instructions[0].accounts)
+    if platform is Platform.PUMP_FUN:
+        if len(accounts) == 27:
+            primary_index = 10
+            additional_indexes = (6, 8, 16)
+        elif len(accounts) == 18:
+            primary_index = 3
+            additional_indexes = (1, 9, 17)
+        else:
+            raise ValueError(f"Unsupported Pump.fun buy account count: {len(accounts)}")
+    elif platform is Platform.LETS_BONK:
+        if len(accounts) < 17:
+            raise ValueError(f"Unsupported LetsBonk buy account count: {len(accounts)}")
+        primary_index = 8
+        additional_indexes = (16, *((17,) if len(accounts) > 17 else ()))
+    else:
+        raise ValueError(
+            f"Unsupported platform for native receipt accounting: {platform}"
+        )
+
+    if accounts[primary_index].pubkey != primary_destination:
+        raise ValueError("Built venue instruction disagrees with its SOL destination")
+    recipients = tuple(accounts[index].pubkey for index in additional_indexes)
+    if any(not isinstance(recipient, Pubkey) for recipient in recipients):
+        raise ValueError("Built venue instruction contains an invalid SOL recipient")
+    if primary_destination in recipients or len(set(recipients)) != len(recipients):
+        raise ValueError("Built venue instruction contains duplicate SOL recipients")
+    return recipients
+
+
+async def _exact_native_receipt_destinations(
+    client: SolanaClient,
+    signature: str,
+    local_destinations: tuple[Pubkey, ...],
+) -> tuple[Pubkey, ...]:
+    """Prefer the destination set bound to the exact durable wire transaction."""
+    reader = getattr(client, "get_submission_receipt_destinations", None)
+    if callable(reader):
+        durable_destinations = await reader(signature)
+        if durable_destinations is not None:
+            if (
+                not durable_destinations
+                or any(
+                    not isinstance(destination, Pubkey)
+                    for destination in durable_destinations
+                )
+                or len(set(durable_destinations)) != len(durable_destinations)
+            ):
+                raise ValueError("Durable native receipt destinations are invalid")
+            return durable_destinations
+        if getattr(client, "ledger", None) is not None:
+            raise ValueError(
+                "Submitted transaction has no durable native receipt context"
+            )
+    if not local_destinations:
+        raise ValueError("Native buy has no receipt destinations")
+    return local_destinations
+
+
+def _to_raw_units(amount: float, unit: int, field_name: str) -> int:
+    """Convert a presentation amount to raw units without binary-float drift."""
+    decimal_amount = Decimal(str(amount))
+    if not decimal_amount.is_finite() or decimal_amount <= 0:
+        raise ValueError(f"{field_name} must be finite and positive")
+    if isinstance(unit, bool) or not isinstance(unit, int) or unit <= 0:
+        raise ValueError("unit must be a positive integer")
+    raw_amount = int((decimal_amount * unit).to_integral_value(rounding=ROUND_DOWN))
+    if raw_amount <= 0:
+        raise ValueError(f"{field_name} is below one raw unit")
+    return raw_amount
+
+
+def _slippage_bps(slippage: float) -> int:
+    """Validate and convert a fractional slippage value into basis points."""
+    decimal_slippage = Decimal(str(slippage))
+    if (
+        not decimal_slippage.is_finite()
+        or decimal_slippage < 0
+        or decimal_slippage >= 1
+    ):
+        raise ValueError("slippage must be finite and between 0 (inclusive) and 1")
+    return int((decimal_slippage * 10_000).to_integral_value(rounding=ROUND_DOWN))
+
+
+def _base_unit(token_info: TokenInfo) -> int:
+    """Return the authoritative base-token unit for execution accounting."""
+    decimals = token_info.base_decimals
+    if decimals is None and token_info.platform is Platform.PUMP_FUN:
+        decimals = TOKEN_DECIMALS
+    if (
+        isinstance(decimals, bool)
+        or not isinstance(decimals, int)
+        or not 0 <= decimals <= 18
+    ):
+        raise ValueError(
+            f"Unsupported or unknown base decimals for {token_info.mint}: {decimals}"
+        )
+    token_info.base_decimals = decimals
+    return 10**decimals
+
+
+def _require_executable_quote_contract(
+    token_info: TokenInfo, client: SolanaClient
+) -> None:
+    """Reject live Pump.fun execution until its dynamic fees are sourced."""
+    policy = getattr(client, "execution_policy", None)
+    if (
+        token_info.platform is Platform.PUMP_FUN
+        and policy is not None
+        and policy.mode is ExecutionMode.LIVE
+    ):
+        raise RuntimeError(
+            "Pump.fun dynamic protocol and creator fees are unavailable; "
+            "refusing to derive an executable minimum from a pre-fee quote"
+        )
 
 
 async def _read_pool_state_with_retry(
@@ -104,23 +252,178 @@ async def _read_pool_state_with_retry(
 
 
 def _refresh_quote_mint(token_info: TokenInfo, pool_state: dict) -> Pubkey:
-    """Sync token_info's quote asset from freshly-read curve state.
+    """Sync and validate quote-asset metadata from authoritative pool state."""
+    asset = get_quote_asset(pool_state.get("quote_mint", token_info.quote_mint))
+    state_program = pool_state.get("quote_token_program")
+    if state_program is not None and state_program != asset.token_program:
+        raise ValueError(
+            "Pool quote token program does not match the registered quote mint"
+        )
+    if token_info.quote_token_program_id not in (None, asset.token_program):
+        raise ValueError(
+            "Listener quote token program conflicts with authoritative quote metadata"
+        )
+    state_decimals = pool_state.get("quote_decimals")
+    if state_decimals is not None and (
+        type(state_decimals) is not int or state_decimals != asset.decimals
+    ):
+        raise ValueError("Pool quote decimals do not match the registered quote mint")
 
-    Listeners do not all carry quote_mint (pumpportal carries none of the
-    per-coin flags), and the curve is authoritative, so prefer its value.
+    token_info.quote_mint = asset.mint
+    token_info.quote_token_program_id = asset.token_program
+    token_info.quote_decimals = asset.decimals
+    return asset.mint
 
-    Args:
-        token_info: Token information, mutated in place
-        pool_state: Decoded bonding curve state
 
-    Returns:
-        The resolved quote mint
-    """
-    quote_mint = normalize_quote_mint(
-        pool_state.get("quote_mint", token_info.quote_mint)
+def _record_executable_state(token_info: TokenInfo, pool_state: dict) -> None:
+    """Require current venue state to remain executable before building a tx."""
+    if not isinstance(pool_state, dict):
+        raise ValueError("Pool state must be a mapping")
+    if token_info.platform is Platform.PUMP_FUN:
+        if pool_state.get("complete") is not False:
+            raise ValueError(
+                "Pump.fun bonding curve is complete or missing its completion flag"
+            )
+        token_info.curve_complete = False
+        token_info.pool_tradeable = True
+        token_info.pool_status = "funding"
+        return
+
+    if token_info.platform is Platform.LETS_BONK:
+        if pool_state.get("is_tradeable") is not True:
+            raise ValueError("LetsBonk pool is not tradeable")
+        status_name = pool_state.get("status_name")
+        status = pool_state.get("status")
+        if not isinstance(status_name, str):
+            status_name = getattr(status, "name", "").lower()
+        if status_name != "funding":
+            raise ValueError(
+                f"LetsBonk pool status is not FUNDING: {status_name or status!r}"
+            )
+        token_info.curve_complete = False
+        token_info.pool_tradeable = True
+        token_info.pool_status = status_name
+        return
+
+    raise ValueError(f"Unsupported trading platform: {token_info.platform!r}")
+
+
+def _require_recorded_executable_state(token_info: TokenInfo) -> None:
+    """Validate state carried by a no-RPC creation-event execution path."""
+    if token_info.platform is Platform.PUMP_FUN:
+        if token_info.curve_complete is not False:
+            raise ValueError(
+                "Pump.fun extreme-fast buy lacks authoritative incomplete-curve state"
+            )
+        return
+    raise ValueError(
+        "Extreme-fast execution requires a fresh authoritative pool read for "
+        f"{token_info.platform.value}"
     )
-    token_info.quote_mint = quote_mint
-    return quote_mint
+
+
+def _apply_token_program(
+    token_info: TokenInfo,
+    token_program: Pubkey | None,
+    address_provider: AddressProvider,
+) -> None:
+    """Apply authoritative token-program metadata and validate mint-bound PDAs."""
+    known_programs = (
+        SystemAddresses.TOKEN_PROGRAM,
+        SystemAddresses.TOKEN_2022_PROGRAM,
+    )
+    resolved_program = token_program or token_info.token_program_id
+    if resolved_program not in known_programs:
+        raise ValueError(
+            f"Unsupported or unknown token program for {token_info.mint}: "
+            f"{resolved_program}"
+        )
+
+    if (
+        token_info.platform is Platform.PUMP_FUN
+        and getattr(address_provider, "platform", None) is Platform.PUMP_FUN
+    ):
+        expected_curve = address_provider.derive_pool_address(token_info.mint)
+        if (
+            token_info.bonding_curve is not None
+            and token_info.bonding_curve != expected_curve
+        ):
+            raise ValueError("Pump.fun bonding curve does not match the token mint")
+        token_info.bonding_curve = expected_curve
+        expected_associated_curve = address_provider.derive_associated_bonding_curve(
+            token_info.mint, expected_curve, resolved_program
+        )
+        if (
+            token_info.associated_bonding_curve is not None
+            and token_info.associated_bonding_curve != expected_associated_curve
+            and token_info.metadata_verified
+        ):
+            raise ValueError(
+                "Verified Pump.fun associated bonding curve does not match the mint"
+            )
+        token_info.associated_bonding_curve = expected_associated_curve
+        if token_info.creator is not None:
+            expected_creator_vault = address_provider.derive_creator_vault(
+                token_info.creator
+            )
+            if (
+                token_info.creator_vault is not None
+                and token_info.creator_vault != expected_creator_vault
+            ):
+                raise ValueError("Pump.fun creator vault does not match the creator")
+            token_info.creator_vault = expected_creator_vault
+
+    if token_info.token_program_id != resolved_program:
+        logger.info(
+            "Correcting token program for %s: %s -> %s",
+            token_info.mint,
+            token_info.token_program_id,
+            resolved_program,
+        )
+        token_info.token_program_id = resolved_program
+
+
+def _require_pool_pubkey(pool_state: dict, field_name: str) -> Pubkey:
+    """Return a required authoritative pool pubkey."""
+    value = pool_state.get(field_name)
+    if not isinstance(value, Pubkey):
+        raise ValueError(f"Pool state has invalid {field_name}")
+    return value
+
+
+def _sync_letsbonk_execution_metadata(
+    token_info: TokenInfo,
+    pool_state: dict,
+    address_provider: AddressProvider,
+) -> None:
+    """Replace listener/journal LaunchLab accounts with authoritative state."""
+    if token_info.platform is not Platform.LETS_BONK:
+        return
+
+    base_mint = _require_pool_pubkey(pool_state, "base_mint")
+    quote_mint = _require_pool_pubkey(pool_state, "quote_mint")
+    pool_address = _require_pool_pubkey(pool_state, "pool_address")
+    base_token_program = _require_pool_pubkey(pool_state, "base_token_program")
+    quote_token_program = _require_pool_pubkey(pool_state, "quote_token_program")
+    if base_mint != token_info.mint:
+        raise ValueError("LaunchLab pool base mint does not match the token")
+    if quote_mint != token_info.quote_mint:
+        raise ValueError("LaunchLab pool quote mint does not match refreshed metadata")
+    if base_token_program != token_info.token_program_id:
+        raise ValueError("LaunchLab base token program is inconsistent")
+    if quote_token_program != token_info.quote_token_program_id:
+        raise ValueError("LaunchLab quote token program is inconsistent")
+
+    expected_pool = address_provider.derive_pool_address(base_mint, quote_mint)
+    if pool_address != expected_pool:
+        raise ValueError("LaunchLab pool address is not mint-bound")
+
+    token_info.pool_state = pool_address
+    token_info.base_vault = _require_pool_pubkey(pool_state, "base_vault")
+    token_info.quote_vault = _require_pool_pubkey(pool_state, "quote_vault")
+    token_info.global_config = _require_pool_pubkey(pool_state, "global_config")
+    token_info.platform_config = _require_pool_pubkey(pool_state, "platform_config")
+    token_info.creator = _require_pool_pubkey(pool_state, "creator")
 
 
 class PlatformAwareBuyer(Trader):
@@ -133,7 +436,7 @@ class PlatformAwareBuyer(Trader):
         priority_fee_manager: PriorityFeeManager,
         amount: float,
         slippage: float = 0.01,
-        max_retries: int = 5,
+        max_retries: int = 1,
         extreme_fast_token_amount: int = 0,
         extreme_fast_mode: bool = False,
         compute_units: dict | None = None,
@@ -150,7 +453,8 @@ class PlatformAwareBuyer(Trader):
             priority_fee_manager: Priority fee strategy
             amount: Amount of SOL to spend per buy on SOL-paired coins
             slippage: Acceptable price deviation
-            max_retries: Transaction submission attempts
+            max_retries: Safety assertion; must be one because newly signed
+                retries are disabled
             extreme_fast_token_amount: Tokens to buy when skipping price checks
             extreme_fast_mode: Skip curve stabilization and price check
             compute_units: Optional CU overrides
@@ -168,11 +472,20 @@ class PlatformAwareBuyer(Trader):
                 makes zero RPC calls between detection and submission. Set
                 False to force the refresh for every listener.
         """
+        if (
+            isinstance(max_retries, bool)
+            or not isinstance(max_retries, int)
+            or max_retries != 1
+        ):
+            raise ValueError(
+                "newly signed transaction retries are disabled; max_retries must be 1"
+            )
         self.client = client
         self.wallet = wallet
         self.priority_fee_manager = priority_fee_manager
         self.amount = amount
         self.slippage = slippage
+        self.slippage_bps = _slippage_bps(slippage)
         self.max_retries = max_retries
         self.extreme_fast_mode = extreme_fast_mode
         self.extreme_fast_token_amount = extreme_fast_token_amount
@@ -197,8 +510,35 @@ class PlatformAwareBuyer(Trader):
         """
         return self.quote_amounts.get(quote_mint)
 
+    async def _read_pretrade_balance(self, token_info: TokenInfo) -> int | None:
+        """Capture a cleanup ownership baseline when the token program is known."""
+        if token_info.token_program_id is None:
+            return None
+        ata = self.wallet.get_associated_token_address(
+            token_info.mint, token_info.token_program_id
+        )
+        try:
+            await self.client.get_account_info(ata)
+        except ValueError:
+            return 0
+        except Exception as exc:
+            logger.warning(
+                f"Could not record pre-buy ATA baseline for {token_info.mint}: {exc}"
+            )
+            return None
+        return await self.client.get_token_account_balance(ata)
+
     async def execute(self, token_info: TokenInfo) -> TradeResult:
         """Execute buy operation using platform-specific implementations."""
+        token_amount: float | None = None
+        token_price_sol: float | None = None
+        expected_token_amount_raw: int | None = None
+        max_quote_amount_raw: int | None = None
+        account_balance_baseline_raw: int | None = None
+        submitted_signature: str | None = None
+        quote_mint: Pubkey | None = None
+        zero_rpc_event_path = False
+        native_receipt_destinations: tuple[Pubkey, ...] = ()
         try:
             # Get platform-specific implementations
             implementations = get_platform_implementations(
@@ -207,11 +547,6 @@ class PlatformAwareBuyer(Trader):
             address_provider = implementations.address_provider
             instruction_builder = implementations.instruction_builder
             curve_manager = implementations.curve_manager
-
-            # Quote asset is resolved from the curve below; start from whatever
-            # the listener gave us so extreme_fast_mode has a usable default.
-            quote_mint = normalize_quote_mint(token_info.quote_mint)
-
             if self.extreme_fast_mode:
                 # Zero-RPC hot path — the point of extreme_fast_mode. When the
                 # CreateEvent already carried the canonical creator, the
@@ -228,31 +563,58 @@ class PlatformAwareBuyer(Trader):
                             platform=token_info.platform,
                             error_message=skip_reason,
                         )
+                else:
+                    _require_recorded_executable_state(token_info)
+                    zero_rpc_event_path = True
                     quote_mint = normalize_quote_mint(token_info.quote_mint)
+                    pool_address = self._get_pool_address(token_info, address_provider)
             else:
                 # Get pool address based on platform using platform-agnostic method
                 pool_address = self._get_pool_address(token_info, address_provider)
 
-                # Regular behavior with RPC call
-                # Fetch pool state to get price and mayhem mode status
-                pool_state = await curve_manager.get_pool_state(pool_address)
+                pool_state, fresh_token_program = await _read_pool_state_with_retry(
+                    curve_manager,
+                    pool_address,
+                    mint=token_info.mint,
+                    budget_seconds=self.curve_refresh_budget,
+                )
+                _record_executable_state(token_info, pool_state)
+                token_info.base_decimals = pool_state.get(
+                    "base_decimals", token_info.base_decimals
+                )
+                token_info.quote_decimals = pool_state.get(
+                    "quote_decimals", token_info.quote_decimals
+                )
                 token_price_sol = pool_state.get("price_per_token")
-
-                # Validate price_per_token is present and positive
                 if token_price_sol is None or token_price_sol <= 0:
                     raise ValueError(
-                        f"Invalid price_per_token: {token_price_sol} for pool {pool_address} "
-                        f"(mint: {token_info.mint}) - cannot execute buy with zero/invalid price"
+                        f"Invalid price_per_token: {token_price_sol} for "
+                        f"pool {pool_address} (mint: {token_info.mint})"
                     )
-
-                # Set mayhem-mode and cashback flags from bonding-curve state
-                # so the instruction builder picks the correct fee_recipient and
-                # account-list shape (cashback sells use 17 accounts, non-cashback 16).
                 token_info.is_mayhem_mode = pool_state.get("is_mayhem_mode", False)
                 token_info.is_cashback_coin = pool_state.get(
                     "is_cashback_coin", token_info.is_cashback_coin
                 )
                 quote_mint = _refresh_quote_mint(token_info, pool_state)
+                fresh_creator = pool_state.get("creator")
+                derive_creator_vault = getattr(
+                    address_provider, "derive_creator_vault", None
+                )
+                if fresh_creator and callable(derive_creator_vault):
+                    new_creator = (
+                        Pubkey.from_string(fresh_creator)
+                        if isinstance(fresh_creator, str)
+                        else fresh_creator
+                    )
+                    token_info.creator = new_creator
+                    token_info.creator_vault = derive_creator_vault(new_creator)
+                _apply_token_program(token_info, fresh_token_program, address_provider)
+                _sync_letsbonk_execution_metadata(
+                    token_info, pool_state, address_provider
+                )
+
+            if quote_mint is None:
+                quote_mint = normalize_quote_mint(token_info.quote_mint)
 
             # A coin paired against a quote asset we have no configured amount
             # for cannot be traded — spending `amount` of it would be a
@@ -270,139 +632,258 @@ class PlatformAwareBuyer(Trader):
 
             quote_unit = quote_units_per_token(quote_mint)
             quote_label = _quote_symbol(quote_mint)
+            quote_amount_raw = _to_raw_units(quote_amount, quote_unit, "quote amount")
+            _require_executable_quote_contract(token_info, self.client)
 
-            # Both branches need the resolved quote amount to finish sizing the
-            # trade: extreme_fast_mode fixes the token count and back-derives an
-            # implied price, while the regular path fixes the spend and derives
-            # the token count from the curve price.
+            # Use the venue's nonlinear exact-in quote whenever a curve read is
+            # available. A marginal spot price is not a safe execution floor.
             if self.extreme_fast_mode:
-                token_amount = self.extreme_fast_token_amount
-                token_price_sol = quote_amount / token_amount if token_amount > 0 else 0
+                expected_token_amount_raw = _to_raw_units(
+                    self.extreme_fast_token_amount,
+                    _base_unit(token_info),
+                    "extreme fast token amount",
+                )
             else:
-                token_amount = quote_amount / token_price_sol
+                expected_token_amount_raw = (
+                    await curve_manager.calculate_buy_amount_out(
+                        pool_address, quote_amount_raw
+                    )
+                )
+                if expected_token_amount_raw <= 0:
+                    raise ValueError("Platform buy quote returned no tokens")
 
-            # Calculate minimum token amount with slippage
-            minimum_token_amount = token_amount * (1 - self.slippage)
-            minimum_token_amount_raw = int(minimum_token_amount * 10**TOKEN_DECIMALS)
-
-            # Calculate maximum quote to spend with slippage, in the quote
-            # mint's own raw units (lamports for SOL, 1e-6 for USDC).
-            max_quote_amount_raw = int(quote_amount * quote_unit * (1 + self.slippage))
-
-            # Build buy instructions using platform-specific builder
+            minimum_token_amount_raw = minimum_output_with_slippage(
+                expected_token_amount_raw, self.slippage_bps
+            )
+            token_unit = _base_unit(token_info)
+            token_amount = expected_token_amount_raw / token_unit
+            token_price_sol = quote_amount / token_amount
+            max_quote_amount_raw = (
+                quote_amount_raw * (10_000 + self.slippage_bps) + 9_999
+            ) // 10_000
+            builder_quote_amount_raw = (
+                quote_amount_raw
+                if token_info.platform is Platform.LETS_BONK
+                else max_quote_amount_raw
+            )
+            buy_amount_argument = (
+                expected_token_amount_raw
+                if getattr(instruction_builder, "buy_uses_exact_output", False)
+                else minimum_token_amount_raw
+            )
             instructions = await instruction_builder.build_buy_instruction(
                 token_info,
                 self.wallet.pubkey,
-                max_quote_amount_raw,  # amount_in (raw quote units)
-                minimum_token_amount_raw,  # minimum_amount_out (tokens)
+                builder_quote_amount_raw,
+                buy_amount_argument,
                 address_provider,
             )
-
-            # Get accounts for priority fee calculation
+            if is_sol_paired(quote_mint):
+                primary_destination = self._get_sol_destination(
+                    token_info, address_provider
+                )
+                native_receipt_destinations = (
+                    primary_destination,
+                    *_additional_native_buy_recipients(
+                        token_info.platform,
+                        instructions,
+                        address_provider,
+                        primary_destination,
+                    ),
+                )
             priority_accounts = instruction_builder.get_required_accounts_for_buy(
                 token_info, self.wallet.pubkey, address_provider
             )
+            priority_fee = await self.priority_fee_manager.calculate_priority_fee(
+                priority_accounts
+            )
+            if not zero_rpc_event_path:
+                account_balance_baseline_raw = await self._read_pretrade_balance(
+                    token_info
+                )
 
             logger.info(
-                f"Buying {token_amount:.6f} tokens at {token_price_sol:.8f} "
-                f"{quote_label} per token on {token_info.platform.value}"
+                f"Buying {token_amount:.6f} tokens at average quote "
+                f"{token_price_sol:.8f} {quote_label} per token on "
+                f"{token_info.platform.value}"
             )
             logger.info(
                 f"Total cost: {quote_amount:.6f} {quote_label} "
                 f"(max: {max_quote_amount_raw / quote_unit:.6f} {quote_label})"
             )
 
-            # Send transaction
             tx_signature = await self.client.build_and_send_transaction(
                 instructions,
                 self.wallet.keypair,
                 skip_preflight=True,
                 max_retries=self.max_retries,
-                priority_fee=await self.priority_fee_manager.calculate_priority_fee(
-                    priority_accounts
-                ),
+                priority_fee=priority_fee,
                 compute_unit_limit=instruction_builder.get_buy_compute_unit_limit(
                     self._get_cu_override("buy", token_info.platform)
                 ),
                 account_data_size_limit=self._get_cu_override(
                     "account_data_size", token_info.platform
                 ),
+                quote_amount_raw=max_quote_amount_raw,
+                intent_id=f"buy:{token_info.platform.value}:{token_info.mint}",
+                receipt_destinations=(
+                    tuple(
+                        str(destination) for destination in native_receipt_destinations
+                    )
+                    if native_receipt_destinations
+                    else None
+                ),
             )
+            signature = str(tx_signature)
+            submitted_signature = signature
+            outcome = await self.client.confirm_transaction_outcome(signature)
 
-            success = await self.client.confirm_transaction(tx_signature)
-
-            if success:
-                logger.info(f"Buy transaction confirmed: {tx_signature}")
-
-                # Fetch actual tokens and SOL spent from transaction
-                # Uses preBalances/postBalances to get exact amounts
-                sol_destination = self._get_sol_destination(
-                    token_info, address_provider
-                )
+            if outcome.status is TransactionStatus.SUCCESS:
+                logger.info(f"Buy transaction confirmed: {signature}")
+                if is_sol_paired(quote_mint):
+                    exact_destinations = await _exact_native_receipt_destinations(
+                        self.client,
+                        signature,
+                        native_receipt_destinations,
+                    )
+                    sol_destination = exact_destinations[0]
+                    native_quote_destinations = exact_destinations[1:]
+                else:
+                    sol_destination = self._get_sol_destination(
+                        token_info, address_provider
+                    )
+                    native_quote_destinations = ()
                 tokens_raw, quote_spent = await self.client.get_buy_transaction_details(
-                    str(tx_signature),
+                    signature,
                     token_info.mint,
                     sol_destination,
                     quote_mint=quote_mint,
+                    quote_destinations=list(native_quote_destinations),
                 )
-
-                if tokens_raw is not None and quote_spent is not None:
-                    actual_amount = tokens_raw / 10**TOKEN_DECIMALS
-                    actual_price = (quote_spent / quote_unit) / actual_amount
-                    logger.info(
-                        f"Actual tokens received: {actual_amount:.6f} "
-                        f"(expected: {token_amount:.6f})"
+                if (
+                    isinstance(tokens_raw, bool)
+                    or not isinstance(tokens_raw, int)
+                    or tokens_raw <= 0
+                    or isinstance(quote_spent, bool)
+                    or not isinstance(quote_spent, int)
+                    or quote_spent <= 0
+                ):
+                    return TradeResult(
+                        success=False,
+                        platform=token_info.platform,
+                        tx_signature=signature,
+                        error_message=(
+                            "Buy confirmed but receipt accounting is unresolved: "
+                            f"tokens={tokens_raw}, quote_spent={quote_spent}"
+                        ),
+                        account_balance_baseline_raw=account_balance_baseline_raw,
+                        slot=outcome.slot,
+                        status=TransactionStatus.UNKNOWN.value,
                     )
-                    logger.info(
-                        f"Actual {quote_label} spent: "
-                        f"{quote_spent / quote_unit:.10f} {quote_label}"
-                    )
-                    logger.info(
-                        f"Actual price: {actual_price:.10f} {quote_label}/token"
-                    )
-                    token_amount = actual_amount
-                    token_price_sol = actual_price
-                else:
-                    raise ValueError(
-                        f"Failed to parse transaction details: tokens={tokens_raw}, "
-                        f"quote_spent={quote_spent} (tx: {tx_signature}). "
-                        f"The transaction may have failed on-chain — check explorer."
-                    )
-
+                token_unit = _base_unit(token_info)
+                actual_amount = tokens_raw / token_unit
+                actual_price = (quote_spent / quote_unit) / actual_amount
+                logger.info(
+                    f"Actual tokens received: {actual_amount:.6f} "
+                    f"(quoted: {token_amount:.6f})"
+                )
+                logger.info(
+                    f"Actual {quote_label} spent: "
+                    f"{quote_spent / quote_unit:.10f} {quote_label}"
+                )
                 return TradeResult(
                     success=True,
                     platform=token_info.platform,
-                    tx_signature=tx_signature,
-                    amount=token_amount,
-                    price=token_price_sol,
-                )
-            else:
-                return TradeResult(
-                    success=False,
-                    platform=token_info.platform,
-                    error_message=f"Transaction failed to confirm: {tx_signature}",
+                    tx_signature=signature,
+                    amount=actual_amount,
+                    price=actual_price,
+                    amount_raw=tokens_raw,
+                    quote_amount_raw=quote_spent,
+                    account_balance_baseline_raw=account_balance_baseline_raw,
+                    slot=outcome.slot,
+                    status=outcome.status.value,
                 )
 
+            return TradeResult(
+                success=False,
+                platform=token_info.platform,
+                tx_signature=signature,
+                error_message=outcome.error
+                or f"Buy transaction outcome: {outcome.status.value}",
+                amount_raw=expected_token_amount_raw,
+                quote_amount_raw=max_quote_amount_raw,
+                account_balance_baseline_raw=account_balance_baseline_raw,
+                slot=outcome.slot,
+                status=outcome.status.value,
+            )
+
+        except TransactionSubmissionUnknown as exc:
+            logger.warning(
+                "Buy submission outcome is unresolved for %s: %s",
+                token_info.mint,
+                exc,
+            )
+            return TradeResult(
+                success=False,
+                platform=token_info.platform,
+                tx_signature=exc.signature,
+                error_message=str(exc),
+                amount=token_amount,
+                price=token_price_sol,
+                amount_raw=expected_token_amount_raw,
+                quote_amount_raw=max_quote_amount_raw,
+                account_balance_baseline_raw=account_balance_baseline_raw,
+                status=TransactionStatus.UNKNOWN.value,
+            )
         except Exception as e:
             logger.exception("Buy operation failed")
             return TradeResult(
-                success=False, platform=token_info.platform, error_message=str(e)
+                success=False,
+                platform=token_info.platform,
+                tx_signature=submitted_signature,
+                error_message=str(e),
+                amount=token_amount,
+                price=token_price_sol,
+                amount_raw=expected_token_amount_raw,
+                quote_amount_raw=max_quote_amount_raw,
+                account_balance_baseline_raw=account_balance_baseline_raw,
+                status=(
+                    TransactionStatus.UNKNOWN.value
+                    if submitted_signature is not None
+                    else None
+                ),
             )
 
     def _get_pool_address(
         self, token_info: TokenInfo, address_provider: AddressProvider
     ) -> Pubkey:
-        """Get the pool/curve address for price calculations using platform-agnostic method."""
-        # Try to get the address from token_info first, then derive if needed
-        if token_info.platform == Platform.PUMP_FUN:
-            if hasattr(token_info, "bonding_curve") and token_info.bonding_curve:
-                return token_info.bonding_curve
-        elif token_info.platform == Platform.LETS_BONK:
-            if hasattr(token_info, "pool_state") and token_info.pool_state:
-                return token_info.pool_state
-
-        # Fallback to deriving the address using platform provider
-        return address_provider.derive_pool_address(token_info.mint)
+        """Resolve a mint-bound pool address without trusting listener input."""
+        if token_info.platform is Platform.PUMP_FUN:
+            derived = address_provider.derive_pool_address(token_info.mint)
+            supplied = token_info.bonding_curve
+            if (
+                getattr(address_provider, "platform", None) is Platform.PUMP_FUN
+                and supplied is not None
+                and supplied != derived
+            ):
+                raise ValueError("Pump.fun bonding curve does not match the token mint")
+            token_info.bonding_curve = derived
+            return derived
+        if token_info.platform is Platform.LETS_BONK:
+            if not isinstance(token_info.quote_mint, Pubkey):
+                raise ValueError(
+                    "LetsBonk pool resolution requires quote mint metadata"
+                )
+            quote_mint = get_quote_asset(token_info.quote_mint).mint
+            derived = address_provider.derive_pool_address(token_info.mint, quote_mint)
+            supplied = token_info.pool_state
+            if supplied is not None and supplied != derived:
+                raise ValueError(
+                    "LetsBonk pool does not match the base/quote mint pair"
+                )
+            token_info.pool_state = derived
+            return derived
+        raise ValueError(f"Unsupported trading platform: {token_info.platform!r}")
 
     def _can_skip_refresh(self, token_info: TokenInfo) -> bool:
         """Whether the pre-buy curve read can be skipped entirely.
@@ -418,9 +899,16 @@ class PlatformAwareBuyer(Trader):
             True if the buy can be built from token_info as-is
         """
         return (
-            self.trust_create_event
+            token_info.platform is Platform.PUMP_FUN
+            and self.trust_create_event
             and token_info.state_from_event
+            and token_info.curve_complete is False
             and token_info.quote_mint is not None
+            and token_info.token_program_id
+            in {
+                SystemAddresses.TOKEN_PROGRAM,
+                SystemAddresses.TOKEN_2022_PROGRAM,
+            }
         )
 
     async def _refresh_curve_state(
@@ -458,10 +946,13 @@ class PlatformAwareBuyer(Trader):
                 mint=token_info.mint,
                 budget_seconds=self.curve_refresh_budget,
             )
-        except Exception as e:  # noqa: BLE001
+            _record_executable_state(token_info, pool_state)
+        except (TypeError, ValueError) as exc:
+            return f"Pool is not executable ({exc}); skipping buy"
+        except Exception as exc:  # noqa: BLE001
             return (
                 f"Curve state unreadable within {self.curve_refresh_budget:.1f}s "
-                f"({e}); skipping buy rather than submitting with guessed accounts"
+                f"({exc}); skipping buy rather than submitting with guessed accounts"
             )
 
         token_info.is_mayhem_mode = pool_state.get(
@@ -470,63 +961,28 @@ class PlatformAwareBuyer(Trader):
         token_info.is_cashback_coin = pool_state.get(
             "is_cashback_coin", token_info.is_cashback_coin
         )
+        token_info.base_decimals = pool_state.get(
+            "base_decimals", token_info.base_decimals
+        )
+        token_info.quote_decimals = pool_state.get(
+            "quote_decimals", token_info.quote_decimals
+        )
         # The quote asset decides which balance we spend and how amounts are
         # scaled, so it must come from the curve rather than a listener guess.
         _refresh_quote_mint(token_info, pool_state)
         fresh_creator = pool_state.get("creator")
-        if fresh_creator and hasattr(address_provider, "derive_creator_vault"):
+        derive_creator_vault = getattr(address_provider, "derive_creator_vault", None)
+        if fresh_creator and callable(derive_creator_vault):
             new_creator = (
                 Pubkey.from_string(fresh_creator)
                 if isinstance(fresh_creator, str)
                 else fresh_creator
             )
             token_info.creator = new_creator
-            token_info.creator_vault = address_provider.derive_creator_vault(
-                new_creator
-            )
-        self._apply_token_program(token_info, fresh_token_program, address_provider)
+            token_info.creator_vault = derive_creator_vault(new_creator)
+        _apply_token_program(token_info, fresh_token_program, address_provider)
+        _sync_letsbonk_execution_metadata(token_info, pool_state, address_provider)
         return None
-
-    def _apply_token_program(
-        self,
-        token_info: TokenInfo,
-        token_program: Pubkey | None,
-        address_provider: AddressProvider,
-    ) -> None:
-        """Correct a listener-guessed token program from the mint's real owner.
-
-        PumpPortal payloads carry no token program, so the processor defaults
-        to Token-2022; a legacy-`create` coin is SPL Token and the ATA-create
-        instruction then fails with IncorrectProgramId. The associated bonding
-        curve is an ordinary ATA, so it must be re-derived under the corrected
-        program too.
-
-        Args:
-            token_info: Token information, mutated in place
-            token_program: Owner of the mint account, or None if unknown
-            address_provider: Platform address provider for ATA derivation
-        """
-        known_programs = (
-            SystemAddresses.TOKEN_PROGRAM,
-            SystemAddresses.TOKEN_2022_PROGRAM,
-        )
-        if token_program is None or token_program not in known_programs:
-            return
-        if token_info.token_program_id == token_program:
-            return
-        logger.info(
-            f"Correcting token program for {token_info.mint}: "
-            f"{token_info.token_program_id} -> {token_program}"
-        )
-        token_info.token_program_id = token_program
-        if token_info.bonding_curve and hasattr(
-            address_provider, "derive_associated_bonding_curve"
-        ):
-            token_info.associated_bonding_curve = (
-                address_provider.derive_associated_bonding_curve(
-                    token_info.mint, token_info.bonding_curve, token_program
-                )
-            )
 
     def _get_sol_destination(
         self, token_info: TokenInfo, address_provider: AddressProvider
@@ -590,19 +1046,34 @@ class PlatformAwareSeller(Trader):
         wallet: Wallet,
         priority_fee_manager: PriorityFeeManager,
         slippage: float = 0.25,
-        max_retries: int = 5,
+        max_retries: int = 1,
         compute_units: dict | None = None,
     ):
         """Initialize platform-aware token seller."""
+        if (
+            isinstance(max_retries, bool)
+            or not isinstance(max_retries, int)
+            or max_retries != 1
+        ):
+            raise ValueError(
+                "newly signed transaction retries are disabled; max_retries must be 1"
+            )
         self.client = client
         self.wallet = wallet
         self.priority_fee_manager = priority_fee_manager
         self.slippage = slippage
+        self.slippage_bps = _slippage_bps(slippage)
         self.max_retries = max_retries
         self.compute_units = compute_units or {}
 
     async def execute(
-        self, token_info: TokenInfo, token_amount: float, token_price: float
+        self,
+        token_info: TokenInfo,
+        token_amount: float | None,
+        token_price: float | None,
+        *,
+        token_amount_raw: int | None = None,
+        intent_id: str | None = None,
     ) -> TradeResult:
         """Execute sell operation using platform-specific implementations.
 
@@ -623,19 +1094,28 @@ class PlatformAwareSeller(Trader):
         Raises:
             ValueError: If required parameters are not provided
         """
-        if token_amount is None:
-            raise ValueError(
-                "token_amount is required for sell operation. "
-                "Pass the amount from buy result to avoid RPC delays."
-            )
-        if token_price is None or token_price <= 0:
-            raise ValueError(
-                "token_price is required for sell operation and must be positive. "
-                "Pass the price from buy result to avoid RPC delays."
-            )
+        if token_amount_raw is None and token_amount is None:
+            raise ValueError("token_amount or token_amount_raw is required")
+        if token_amount_raw is not None and (
+            isinstance(token_amount_raw, bool)
+            or not isinstance(token_amount_raw, int)
+            or token_amount_raw <= 0
+        ):
+            raise ValueError("token_amount_raw must be a positive integer")
+        if token_price is not None and (
+            isinstance(token_price, bool)
+            or not isinstance(token_price, (int, float))
+            or not isfinite(token_price)
+            or token_price <= 0
+        ):
+            raise ValueError("token_price must be finite and positive when supplied")
 
+        token_balance: int | None = None
+        token_balance_decimal: float | None = None
+        quoted_average_price: float | None = None
+        expected_quote_output_raw: int | None = None
+        submitted_signature: str | None = None
         try:
-            # Get platform-specific implementations
             implementations = get_platform_implementations(
                 token_info.platform, self.client
             )
@@ -646,161 +1126,259 @@ class PlatformAwareSeller(Trader):
             # Fall back to the listener's quote asset if the refresh below fails.
             quote_mint = normalize_quote_mint(token_info.quote_mint)
 
-            # Refresh mayhem-mode and cashback flags from curve state.
-            # The sell account list is 16 (non-cashback) vs 17 (cashback), and
-            # fee_recipient differs in mayhem mode — both can change between
-            # buy and sell, so re-read from chain instead of trusting create-time
-            # flags carried in token_info.
+            # Refresh all execution metadata immediately before a sell.
+            pool_address = self._get_pool_address(token_info, address_provider)
             try:
-                pool_address = self._get_pool_address(token_info, address_provider)
-                # Retry rather than reading once at `confirmed`: a node serving a
-                # slightly stale slot reports the curve as missing, and silently
-                # falling back to create-time values risks a wrong creator_vault
-                # (ConstraintSeeds 0x7d6) or wrong mayhem fee_recipient.
-                pool_state, _ = await _read_pool_state_with_retry(
-                    curve_manager, pool_address
+                pool_state, fresh_token_program = await _read_pool_state_with_retry(
+                    curve_manager,
+                    pool_address,
+                    mint=token_info.mint,
                 )
+                _record_executable_state(token_info, pool_state)
                 token_info.is_mayhem_mode = pool_state.get(
                     "is_mayhem_mode", token_info.is_mayhem_mode
                 )
                 token_info.is_cashback_coin = pool_state.get(
                     "is_cashback_coin", token_info.is_cashback_coin
                 )
+                token_info.base_decimals = pool_state.get(
+                    "base_decimals", token_info.base_decimals
+                )
+                token_info.quote_decimals = pool_state.get(
+                    "quote_decimals", token_info.quote_decimals
+                )
                 quote_mint = _refresh_quote_mint(token_info, pool_state)
-                # Refresh creator/creator_vault from current BC state. Post
-                # 2026-04-28 the program may delegate BC.creator to a PFEE-owned
-                # PDA after the initial creator buy, so the create-time vault
-                # cached on token_info goes stale before the sell lands. Failing
-                # to refresh manifests as ConstraintSeeds (0x7d6) on Sell.
                 fresh_creator = pool_state.get("creator")
                 if fresh_creator:
-                    from solders.pubkey import Pubkey as _Pubkey
-
                     new_creator = (
-                        _Pubkey.from_string(fresh_creator)
+                        Pubkey.from_string(fresh_creator)
                         if isinstance(fresh_creator, str)
                         else fresh_creator
                     )
+                    if not isinstance(new_creator, Pubkey):
+                        raise ValueError("Pool state returned an invalid creator")
                     token_info.creator = new_creator
-                    token_info.creator_vault = address_provider.derive_creator_vault(
-                        new_creator
-                    )
-            except Exception as e:  # noqa: BLE001
-                logger.warning(
-                    f"Could not refresh curve flags before sell ({e}); "
-                    f"using token_info values is_mayhem_mode={token_info.is_mayhem_mode}, "
-                    f"is_cashback_coin={token_info.is_cashback_coin}"
+                derive_creator_vault = getattr(
+                    address_provider, "derive_creator_vault", None
                 )
+                if token_info.platform is Platform.PUMP_FUN:
+                    if token_info.creator is None:
+                        raise RuntimeError("Pump.fun sell requires creator metadata")
+                    if not callable(derive_creator_vault):
+                        raise RuntimeError(
+                            "Pump.fun sell requires creator-vault derivation "
+                            "from its address provider"
+                        )
+                    token_info.creator_vault = derive_creator_vault(token_info.creator)
+                elif fresh_creator and callable(derive_creator_vault):
+                    token_info.creator_vault = derive_creator_vault(token_info.creator)
+                _apply_token_program(token_info, fresh_token_program, address_provider)
+                _sync_letsbonk_execution_metadata(
+                    token_info, pool_state, address_provider
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    "Could not refresh authoritative protocol metadata before "
+                    f"sell: {exc}"
+                ) from exc
 
             quote_unit = quote_units_per_token(quote_mint)
             quote_label = _quote_symbol(quote_mint)
-
-            # Use pre-known amount and price (no RPC delay)
-            token_balance_decimal = token_amount
-            token_balance = int(token_amount * 10**TOKEN_DECIMALS)
-            token_price_sol = token_price
-
-            logger.info(f"Token balance: {token_balance_decimal:.6f}")
-            logger.info(
-                f"Reference price per token: {token_price_sol:.8f} {quote_label}"
-            )
-
-            if token_balance == 0:
-                logger.info("No tokens to sell.")
-                return TradeResult(
-                    success=False,
-                    platform=token_info.platform,
-                    error_message="No tokens to sell",
+            if token_amount_raw is None:
+                token_balance = _to_raw_units(
+                    token_amount, _base_unit(token_info), "token amount"
                 )
+            else:
+                token_balance = token_amount_raw
+            token_balance_decimal = token_balance / _base_unit(token_info)
+            _require_executable_quote_contract(token_info, self.client)
 
-            # Calculate expected quote output with slippage protection, in the
-            # quote mint's raw units.
-            expected_quote_output = token_balance_decimal * token_price_sol
-            min_quote_output = max(
-                1,
-                int((expected_quote_output * (1 - self.slippage)) * quote_unit),
+            quote_method = getattr(curve_manager, "calculate_sell_amount_out", None)
+            if quote_method is not None:
+                expected_quote_output_raw = await quote_method(
+                    pool_address, token_balance
+                )
+            elif token_price is not None:
+                expected_quote_output_raw = _to_raw_units(
+                    token_balance_decimal * token_price,
+                    quote_unit,
+                    "expected quote output",
+                )
+            else:
+                raise ValueError(
+                    "Platform has no exact sell quote and no reference price was supplied"
+                )
+            if expected_quote_output_raw <= 0:
+                raise ValueError("Platform sell quote returned no output")
+            min_quote_output = minimum_output_with_slippage(
+                expected_quote_output_raw, self.slippage_bps
             )
+            expected_quote_output = expected_quote_output_raw / quote_unit
+            quoted_average_price = expected_quote_output / token_balance_decimal
+
             logger.info(
                 f"Selling {token_balance_decimal} tokens on {token_info.platform.value}"
             )
             logger.info(
-                f"Expected {quote_label} output: {expected_quote_output:.10f} {quote_label}"
+                f"Nonlinear quote output: {expected_quote_output:.10f} {quote_label}"
             )
             logger.info(
-                f"Minimum {quote_label} output (with {self.slippage * 100:.1f}% slippage): "
+                f"Minimum {quote_label} output (with "
+                f"{self.slippage * 100:.1f}% slippage): "
                 f"{min_quote_output / quote_unit:.10f} {quote_label} "
                 f"({min_quote_output} raw units)"
             )
 
-            # Build sell instructions using platform-specific builder
             instructions = await instruction_builder.build_sell_instruction(
                 token_info,
                 self.wallet.pubkey,
-                token_balance,  # amount_in (tokens)
-                min_quote_output,  # minimum_amount_out (raw quote units)
+                token_balance,
+                min_quote_output,
                 address_provider,
             )
-
-            # Get accounts for priority fee calculation
             priority_accounts = instruction_builder.get_required_accounts_for_sell(
                 token_info, self.wallet.pubkey, address_provider
             )
-
-            # Send transaction
+            priority_fee = await self.priority_fee_manager.calculate_priority_fee(
+                priority_accounts
+            )
             tx_signature = await self.client.build_and_send_transaction(
                 instructions,
                 self.wallet.keypair,
                 skip_preflight=True,
                 max_retries=self.max_retries,
-                priority_fee=await self.priority_fee_manager.calculate_priority_fee(
-                    priority_accounts
-                ),
+                priority_fee=priority_fee,
                 compute_unit_limit=instruction_builder.get_sell_compute_unit_limit(
                     self._get_cu_override("sell", token_info.platform)
                 ),
                 account_data_size_limit=self._get_cu_override(
                     "account_data_size", token_info.platform
                 ),
+                quote_amount_raw=0,
+                intent_id=intent_id
+                or (
+                    f"sell:{token_info.platform.value}:{token_info.mint}:"
+                    f"{token_balance}"
+                ),
             )
-
-            success = await self.client.confirm_transaction(tx_signature)
-
-            if success:
-                logger.info(f"Sell transaction confirmed: {tx_signature}")
+            signature = str(tx_signature)
+            submitted_signature = signature
+            outcome = await self.client.confirm_transaction_outcome(signature)
+            if outcome.status is TransactionStatus.SUCCESS:
+                logger.info(f"Sell transaction confirmed: {signature}")
+                quote_received_raw = await self.client.get_sell_transaction_details(
+                    signature,
+                    quote_mint,
+                    self.wallet.pubkey,
+                )
+                if (
+                    isinstance(quote_received_raw, bool)
+                    or not isinstance(quote_received_raw, int)
+                    or quote_received_raw <= 0
+                ):
+                    return TradeResult(
+                        success=False,
+                        platform=token_info.platform,
+                        tx_signature=signature,
+                        error_message=(
+                            "Sell confirmed but receipt accounting is unresolved: "
+                            f"quote_received={quote_received_raw}"
+                        ),
+                        amount=token_balance_decimal,
+                        amount_raw=token_balance,
+                        slot=outcome.slot,
+                        status=TransactionStatus.UNKNOWN.value,
+                    )
+                actual_price = (quote_received_raw / quote_unit) / (
+                    token_balance_decimal or 1
+                )
                 return TradeResult(
                     success=True,
                     platform=token_info.platform,
-                    tx_signature=tx_signature,
+                    tx_signature=signature,
                     amount=token_balance_decimal,
-                    price=token_price_sol,
+                    price=actual_price,
+                    amount_raw=token_balance,
+                    quote_amount_raw=quote_received_raw,
+                    slot=outcome.slot,
+                    status=outcome.status.value,
                 )
-            else:
-                return TradeResult(
-                    success=False,
-                    platform=token_info.platform,
-                    error_message=f"Transaction failed to confirm: {tx_signature}",
-                )
+            return TradeResult(
+                success=False,
+                platform=token_info.platform,
+                tx_signature=signature,
+                error_message=outcome.error
+                or f"Sell transaction outcome: {outcome.status.value}",
+                amount=token_balance_decimal,
+                price=quoted_average_price,
+                amount_raw=token_balance,
+                slot=outcome.slot,
+                status=outcome.status.value,
+            )
 
+        except TransactionSubmissionUnknown as exc:
+            logger.warning(
+                "Sell submission outcome is unresolved for %s: %s",
+                token_info.mint,
+                exc,
+            )
+            return TradeResult(
+                success=False,
+                platform=token_info.platform,
+                tx_signature=exc.signature,
+                error_message=str(exc),
+                amount=token_balance_decimal,
+                price=quoted_average_price,
+                amount_raw=token_balance,
+                status=TransactionStatus.UNKNOWN.value,
+            )
         except Exception as e:
             logger.exception("Sell operation failed")
             return TradeResult(
-                success=False, platform=token_info.platform, error_message=str(e)
+                success=False,
+                platform=token_info.platform,
+                tx_signature=submitted_signature,
+                error_message=str(e),
+                amount=token_balance_decimal,
+                price=quoted_average_price,
+                amount_raw=token_balance,
+                status=(
+                    TransactionStatus.UNKNOWN.value
+                    if submitted_signature is not None
+                    else None
+                ),
             )
 
     def _get_pool_address(
         self, token_info: TokenInfo, address_provider: AddressProvider
     ) -> Pubkey:
-        """Get the pool/curve address for price calculations using platform-agnostic method."""
-        # Try to get the address from token_info first, then derive if needed
-        if token_info.platform == Platform.PUMP_FUN:
-            if hasattr(token_info, "bonding_curve") and token_info.bonding_curve:
-                return token_info.bonding_curve
-        elif token_info.platform == Platform.LETS_BONK:
-            if hasattr(token_info, "pool_state") and token_info.pool_state:
-                return token_info.pool_state
-
-        # Fallback to deriving the address using platform provider
-        return address_provider.derive_pool_address(token_info.mint)
+        """Resolve a mint-bound pool address without trusting listener input."""
+        if token_info.platform is Platform.PUMP_FUN:
+            derived = address_provider.derive_pool_address(token_info.mint)
+            supplied = token_info.bonding_curve
+            if (
+                getattr(address_provider, "platform", None) is Platform.PUMP_FUN
+                and supplied is not None
+                and supplied != derived
+            ):
+                raise ValueError("Pump.fun bonding curve does not match the token mint")
+            token_info.bonding_curve = derived
+            return derived
+        if token_info.platform is Platform.LETS_BONK:
+            if not isinstance(token_info.quote_mint, Pubkey):
+                raise ValueError(
+                    "LetsBonk pool resolution requires quote mint metadata"
+                )
+            quote_mint = get_quote_asset(token_info.quote_mint).mint
+            derived = address_provider.derive_pool_address(token_info.mint, quote_mint)
+            supplied = token_info.pool_state
+            if supplied is not None and supplied != derived:
+                raise ValueError(
+                    "LetsBonk pool does not match the base/quote mint pair"
+                )
+            token_info.pool_state = derived
+            return derived
+        raise ValueError(f"Unsupported trading platform: {token_info.platform!r}")
 
     def _get_cu_override(self, operation: str, platform: Platform) -> int | None:
         """Get compute unit override from configuration.

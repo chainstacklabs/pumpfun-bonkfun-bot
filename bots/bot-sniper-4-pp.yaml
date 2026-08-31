@@ -11,8 +11,24 @@ private_key: "${SOLANA_PRIVATE_KEY}"
 enabled: false # You can turn off the bot w/o removing its config
 separate_process: true
 
-# Options: "pump_fun" (default), "lets_bonk"
-platform: "lets_bonk"
+# Execution policy. As checked in, this sample cannot submit transactions.
+# The only bot execution modes are "dry_run" and "live"; dry-run does not prove
+# a later live transaction will succeed. Live mode additionally requires an exact
+# wallet, raw-unit caps, and the separate --authorize-live acknowledgement.
+# This pump_fun sample is additionally blocked from live execution until the
+# dynamic protocol and creator fee schedule is sourced into executable quotes.
+# Recovery state is stored under .state/ relative to the working directory;
+# do not delete it while a position or transaction outcome is unresolved.
+execution:
+  mode: "dry_run"
+  expected_wallet: null # Set the exact signer public key before any live review
+  #max_trade_quote_raw: 100_000 # Required for live; integer raw quote units
+  #max_total_fee_lamports: 10_000 # Required for live; integer lamports
+  allow_skip_preflight: false
+  allow_force_burn: false
+
+# PumpPortal is supported for pump.fun; LetsBonk requires blocks or geyser.
+platform: "pump_fun"
 
 # PumpPortal configuration (optional - uses default URL if not specified)
 pumpportal:
@@ -44,7 +60,7 @@ trade:
   # CreateEvent — ZERO RPC calls between detection and submission (see
   # trust_create_event below). pumpportal payloads lack the needed fields, so
   # that listener does one batched read first (see curve_refresh_budget).
-  extreme_fast_mode: true
+  extreme_fast_mode: false
   extreme_fast_token_amount: 20 # Amount of tokens to buy
 
   # Pre-buy curve refresh (issue #170). The buyer re-reads the bonding curve /
@@ -55,11 +71,11 @@ trade:
   curve_refresh_budget: 2.0
 
   # When the create event carried the canonical creator, mayhem/cashback flags
-  # and quote_mint (geyser/logs/blocks listeners), skip the pre-buy read
-  # entirely: extreme_fast_mode then submits with ZERO RPC calls after
-  # detection. pumpportal events never carry these, so they always refresh.
+  # and quote_mint (geyser/logs/blocks listeners), skip the pre-buy read.
+  # PumpPortal events never carry this state, so this listener always refreshes
+  # and refuses to submit with guessed accounts.
   # Set false to force the refresh for every listener.
-  trust_create_event: true
+  trust_create_event: false
 
 # Priority fee configuration
 # Manage transaction speed and cost on the Solana network.
@@ -73,7 +89,7 @@ priority_fees:
 
 # Compute unit limits for transaction processing
 # Operation-specific defaults are used if not specified: buy=100K, sell=60K
-compute_units:
+compute_units: {}
   # Override default CU limits for this platform
   # buy: 100_000    # Buy operations (ATA creation + trading)
   # sell: 60_000    # Sell operations (just trading)
@@ -97,7 +113,7 @@ filters:
 
 # Retry and timeout settings
 retries:
-  max_attempts: 1 # Number of attempts for transaction submission
+  max_attempts: 1 # Must stay 1; ambiguous sends are recovered, never re-signed
   wait_after_creation: 15 # Seconds to wait after token creation (only if EXTREME FAST is disabled)
   wait_after_buy: 15 # Holding period after buy transaction
   wait_before_new_token: 15 # Pause between token trades
@@ -109,9 +125,11 @@ cleanup:
   # "on_fail": only clean up if a buy transaction fails.
   # "after_sell": clean up after selling.
   # "post_session": clean up all empty accounts after a trading session ends.
-  mode: "post_session"
-  force_close_with_burn: false # Force burning remaining tokens before closing account
-  with_priority_fee: false # Use priority fees for cleanup transactions
+  mode: "disabled"
+  # Force burn irreversibly destroys remaining tokens. It is blocked unless
+  # this value and execution.allow_force_burn are both explicitly true.
+  force_close_with_burn: false
+  with_priority_fee: false # Use priority fees for authorized cleanup transactions
 
 # Node provider configuration
 node:

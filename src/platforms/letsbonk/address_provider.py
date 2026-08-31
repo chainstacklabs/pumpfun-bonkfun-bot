@@ -6,7 +6,7 @@ by implementing the AddressProvider interface.
 """
 
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, cast
 
 from solders.pubkey import Pubkey
 from spl.token.instructions import get_associated_token_address
@@ -23,20 +23,12 @@ class LetsBonkAddresses:
     PROGRAM: Final[Pubkey] = Pubkey.from_string(
         "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj"
     )
-    # NOTE: GLOBAL_CONFIG is NOT constant across all pools!
-    # Each pool can be initialized with different global_config values. Different global_configs
-    # may define different program-wide settings, versions, or operational parameters.
-    # The correct global_config for each pool is extracted during pool initialization
-    # and stored in TokenInfo.global_config. This value below is a default, used as a fallback.
+    # These are known LaunchLab configuration accounts, exposed for discovery
+    # only. Pool metadata is authoritative and trading paths must never fall
+    # back to either value.
     GLOBAL_CONFIG: Final[Pubkey] = Pubkey.from_string(
         "6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX"
     )
-    # NOTE: PLATFORM_CONFIG is NOT constant across all pools!
-    # Each pool is initialized with a specific platform_config that defines its fee structure,
-    # launch restrictions, and other settings. Different pools may use different platform_configs
-    # (e.g., standard launches vs partner launches). The correct platform_config for each pool
-    # is extracted during pool initialization and stored in TokenInfo.platform_config.
-    # This value below is the default/most common platform_config, used as a fallback.
     PLATFORM_CONFIG: Final[Pubkey] = Pubkey.from_string(
         "5thqcDwKp5QQ8US4XRMoseGeGbmLKMmoKZmS6zHrQAsA"
     )
@@ -78,19 +70,12 @@ class LetsBonkAddressProvider(AddressProvider):
     def derive_pool_address(
         self, base_mint: Pubkey, quote_mint: Pubkey | None = None
     ) -> Pubkey:
-        """Derive the pool state address for a token pair.
-
-        For LetsBonk, this derives the pool state PDA using base_mint and WSOL.
-
-        Args:
-            base_mint: Base token mint address
-            quote_mint: Quote token mint (defaults to WSOL)
-
-        Returns:
-            Pool state address
-        """
+        """Derive the pool state address for an explicit token pair."""
         if quote_mint is None:
-            quote_mint = SystemAddresses.SOL_MINT
+            raise ValueError(
+                "LetsBonk pool derivation requires the pool's quote_mint; "
+                "refusing to assume wrapped SOL"
+            )
 
         pool_state, _ = Pubkey.find_program_address(
             [b"pool", bytes(base_mint), bytes(quote_mint)], LetsBonkAddresses.PROGRAM
@@ -100,22 +85,8 @@ class LetsBonkAddressProvider(AddressProvider):
     def derive_base_vault(
         self, base_mint: Pubkey, quote_mint: Pubkey | None = None
     ) -> Pubkey:
-        """Derive the base vault address for a token pair.
-
-        Args:
-            base_mint: Base token mint address
-            quote_mint: Quote token mint (defaults to WSOL)
-
-        Returns:
-            Base vault address
-        """
-        if quote_mint is None:
-            quote_mint = SystemAddresses.SOL_MINT
-
-        # First derive the pool state address
+        """Derive the base vault for an explicit token pair."""
         pool_state = self.derive_pool_address(base_mint, quote_mint)
-
-        # Then derive the base vault using pool_vault seed
         base_vault, _ = Pubkey.find_program_address(
             [b"pool_vault", bytes(pool_state), bytes(base_mint)],
             LetsBonkAddresses.PROGRAM,
@@ -125,22 +96,13 @@ class LetsBonkAddressProvider(AddressProvider):
     def derive_quote_vault(
         self, base_mint: Pubkey, quote_mint: Pubkey | None = None
     ) -> Pubkey:
-        """Derive the quote vault address for a token pair.
-
-        Args:
-            base_mint: Base token mint address
-            quote_mint: Quote token mint (defaults to WSOL)
-
-        Returns:
-            Quote vault address
-        """
+        """Derive the quote vault for an explicit token pair."""
         if quote_mint is None:
-            quote_mint = SystemAddresses.SOL_MINT
-
-        # First derive the pool state address
+            raise ValueError(
+                "LetsBonk quote vault derivation requires the pool's quote_mint; "
+                "refusing to assume wrapped SOL"
+            )
         pool_state = self.derive_pool_address(base_mint, quote_mint)
-
-        # Then derive the quote vault using pool_vault seed
         quote_vault, _ = Pubkey.find_program_address(
             [b"pool_vault", bytes(pool_state), bytes(quote_mint)],
             LetsBonkAddresses.PROGRAM,
@@ -150,55 +112,34 @@ class LetsBonkAddressProvider(AddressProvider):
     def derive_user_token_account(
         self, user: Pubkey, mint: Pubkey, token_program_id: Pubkey | None = None
     ) -> Pubkey:
-        """Derive user's associated token account address.
-
-        Args:
-            user: User's wallet address
-            mint: Token mint address
-            token_program_id: Token program (TOKEN or TOKEN_2022). Defaults to TOKEN_2022_PROGRAM
-
-        Returns:
-            User's associated token account address
-        """
+        """Derive a user's ATA under the mint's authoritative token program."""
         if token_program_id is None:
-            token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
+            raise ValueError(
+                f"Token program is required to derive the ATA for mint {mint}"
+            )
         return get_associated_token_address(user, mint, token_program_id)
 
     def get_additional_accounts(self, token_info: TokenInfo) -> dict[str, Pubkey]:
-        """Get LetsBonk-specific additional accounts needed for trading.
+        """Get authoritative LetsBonk pool accounts needed for trading."""
+        required = {
+            "pool_state": token_info.pool_state,
+            "base_vault": token_info.base_vault,
+            "quote_vault": token_info.quote_vault,
+        }
+        missing = [name for name, value in required.items() if value is None]
+        if missing:
+            raise ValueError(
+                "LetsBonk pool metadata is missing "
+                f"{', '.join(missing)}; refusing to derive execution accounts"
+            )
 
-        Args:
-            token_info: Token information
-
-        Returns:
-            Dictionary of additional account addresses
-        """
-        accounts = {}
-
-        # Add pool state - derive if not present or use existing
-        if token_info.pool_state:
-            accounts["pool_state"] = token_info.pool_state
-        else:
-            accounts["pool_state"] = self.derive_pool_address(token_info.mint)
-
-        # Add vault addresses - derive if not present or use existing
-        if token_info.base_vault:
-            accounts["base_vault"] = token_info.base_vault
-        else:
-            accounts["base_vault"] = self.derive_base_vault(token_info.mint)
-
-        if token_info.quote_vault:
-            accounts["quote_vault"] = token_info.quote_vault
-        else:
-            accounts["quote_vault"] = self.derive_quote_vault(token_info.mint)
-
-        # Derive authority PDA
-        accounts["authority"] = self.derive_authority_pda()
-
-        # Derive event authority PDA
-        accounts["event_authority"] = self.derive_event_authority_pda()
-
-        return accounts
+        return {
+            "pool_state": cast("Pubkey", required["pool_state"]),
+            "base_vault": cast("Pubkey", required["base_vault"]),
+            "quote_vault": cast("Pubkey", required["quote_vault"]),
+            "authority": self.derive_authority_pda(),
+            "event_authority": self.derive_event_authority_pda(),
+        }
 
     def derive_authority_pda(self) -> Pubkey:
         """Derive the authority PDA for Raydium LaunchLab.
@@ -231,19 +172,11 @@ class LetsBonkAddressProvider(AddressProvider):
     def derive_creator_fee_vault(
         self, creator: Pubkey, quote_mint: Pubkey | None = None
     ) -> Pubkey:
-        """Derive the creator fee vault PDA.
-
-        This vault accumulates creator fees from trades.
-
-        Args:
-            creator: The pool creator's pubkey
-            quote_mint: The quote token mint (defaults to WSOL)
-
-        Returns:
-            Creator fee vault address
-        """
+        """Derive the creator fee vault for an explicit quote mint."""
         if quote_mint is None:
-            quote_mint = SystemAddresses.SOL_MINT
+            raise ValueError(
+                "Creator fee vault derivation requires the pool's quote_mint"
+            )
 
         creator_fee_vault, _ = Pubkey.find_program_address(
             [bytes(creator), bytes(quote_mint)], LetsBonkAddresses.PROGRAM
@@ -253,22 +186,15 @@ class LetsBonkAddressProvider(AddressProvider):
     def derive_platform_fee_vault(
         self, platform_config: Pubkey | None = None, quote_mint: Pubkey | None = None
     ) -> Pubkey:
-        """Derive the platform fee vault PDA.
-
-        This vault accumulates platform fees from trades.
-
-        Args:
-            platform_config: The platform config account (defaults to LetsBonk config)
-            quote_mint: The quote token mint (defaults to WSOL)
-
-        Returns:
-            Platform fee vault address
-        """
+        """Derive the platform fee vault from authoritative pool metadata."""
         if platform_config is None:
-            platform_config = LetsBonkAddresses.PLATFORM_CONFIG
-
+            raise ValueError(
+                "Platform fee vault derivation requires the pool's platform_config"
+            )
         if quote_mint is None:
-            quote_mint = SystemAddresses.SOL_MINT
+            raise ValueError(
+                "Platform fee vault derivation requires the pool's quote_mint"
+            )
 
         platform_fee_vault, _ = Pubkey.find_program_address(
             [bytes(platform_config), bytes(quote_mint)], LetsBonkAddresses.PROGRAM
@@ -290,126 +216,90 @@ class LetsBonkAddressProvider(AddressProvider):
     def get_buy_instruction_accounts(
         self, token_info: TokenInfo, user: Pubkey
     ) -> dict[str, Pubkey]:
-        """Get all accounts needed for a buy instruction.
-
-        Args:
-            token_info: Token information
-            user: User's wallet address
-
-        Returns:
-            Dictionary of account addresses for buy instruction
-        """
-        additional_accounts = self.get_additional_accounts(token_info)
-
-        # Determine token program to use
-        token_program_id = (
-            token_info.token_program_id
-            if token_info.token_program_id
-            else SystemAddresses.TOKEN_2022_PROGRAM
-        )
-
-        # Use global_config from TokenInfo if available, otherwise use default
-        global_config = (
-            token_info.global_config
-            if token_info.global_config
-            else LetsBonkAddresses.GLOBAL_CONFIG
-        )
-
-        # Use platform_config from TokenInfo if available, otherwise use default
-        platform_config = (
-            token_info.platform_config
-            if token_info.platform_config
-            else LetsBonkAddresses.PLATFORM_CONFIG
-        )
-
-        accounts = {
-            "payer": user,
-            "authority": additional_accounts["authority"],
-            "global_config": global_config,
-            "platform_config": platform_config,
-            "pool_state": additional_accounts["pool_state"],
-            "user_base_token": self.derive_user_token_account(user, token_info.mint, token_program_id),
-            "base_vault": additional_accounts["base_vault"],
-            "quote_vault": additional_accounts["quote_vault"],
-            "base_token_mint": token_info.mint,
-            "quote_token_mint": SystemAddresses.SOL_MINT,
-            "base_token_program": token_program_id,
-            "quote_token_program": SystemAddresses.TOKEN_PROGRAM,
-            "event_authority": additional_accounts["event_authority"],
-            "program": LetsBonkAddresses.PROGRAM,
-            "system_program": SystemAddresses.SYSTEM_PROGRAM,
-            "platform_fee_vault": self.derive_platform_fee_vault(platform_config),
-        }
-
-        # Add creator fee vault if creator is known
-        if token_info.creator:
-            accounts["creator_fee_vault"] = self.derive_creator_fee_vault(
-                token_info.creator
-            )
-
-        return accounts
+        """Get fail-closed accounts for a LaunchLab buy instruction."""
+        return self._get_trade_instruction_accounts(token_info, user)
 
     def get_sell_instruction_accounts(
         self, token_info: TokenInfo, user: Pubkey
     ) -> dict[str, Pubkey]:
-        """Get all accounts needed for a sell instruction.
+        """Get fail-closed accounts for a LaunchLab sell instruction."""
+        return self._get_trade_instruction_accounts(token_info, user)
 
-        Args:
-            token_info: Token information
-            user: User's wallet address
+    def _get_trade_instruction_accounts(
+        self, token_info: TokenInfo, user: Pubkey
+    ) -> dict[str, Pubkey]:
+        """Build a trade account bundle without guessing pool metadata."""
+        metadata = {
+            "global_config": token_info.global_config,
+            "platform_config": token_info.platform_config,
+            "quote_token_mint": token_info.quote_mint,
+            "base_token_program": token_info.token_program_id,
+            "quote_token_program": token_info.quote_token_program_id,
+            "creator": token_info.creator,
+        }
+        missing = [name for name, value in metadata.items() if value is None]
+        if missing:
+            raise ValueError(
+                "LetsBonk trade metadata is missing "
+                f"{', '.join(missing)}; refusing to build guessed accounts"
+            )
 
-        Returns:
-            Dictionary of account addresses for sell instruction
-        """
+        known_token_programs = {
+            SystemAddresses.TOKEN_PROGRAM,
+            SystemAddresses.TOKEN_2022_PROGRAM,
+        }
+        if metadata["base_token_program"] not in known_token_programs:
+            raise ValueError(
+                f"Unsupported base token program {metadata['base_token_program']}"
+            )
+        if metadata["quote_token_program"] not in known_token_programs:
+            raise ValueError(
+                f"Unsupported quote token program {metadata['quote_token_program']}"
+            )
+
         additional_accounts = self.get_additional_accounts(token_info)
+        quote_mint = cast("Pubkey", metadata["quote_token_mint"])
+        expected_pool = self.derive_pool_address(token_info.mint, quote_mint)
+        if additional_accounts["pool_state"] != expected_pool:
+            raise ValueError(
+                "LetsBonk pool_state does not match the base/quote mint pair"
+            )
+        if additional_accounts["base_vault"] != self.derive_base_vault(
+            token_info.mint, quote_mint
+        ):
+            raise ValueError("LetsBonk base_vault does not match pool metadata")
+        if additional_accounts["quote_vault"] != self.derive_quote_vault(
+            token_info.mint, quote_mint
+        ):
+            raise ValueError("LetsBonk quote_vault does not match pool metadata")
 
-        # Determine token program to use
-        token_program_id = (
-            token_info.token_program_id
-            if token_info.token_program_id
-            else SystemAddresses.TOKEN_2022_PROGRAM
-        )
-
-        # Use global_config from TokenInfo if available, otherwise use default
-        global_config = (
-            token_info.global_config
-            if token_info.global_config
-            else LetsBonkAddresses.GLOBAL_CONFIG
-        )
-
-        # Use platform_config from TokenInfo if available, otherwise use default
-        platform_config = (
-            token_info.platform_config
-            if token_info.platform_config
-            else LetsBonkAddresses.PLATFORM_CONFIG
-        )
-
-        accounts = {
+        platform_config = cast("Pubkey", metadata["platform_config"])
+        creator = cast("Pubkey", metadata["creator"])
+        return {
             "payer": user,
             "authority": additional_accounts["authority"],
-            "global_config": global_config,
+            "global_config": cast("Pubkey", metadata["global_config"]),
             "platform_config": platform_config,
             "pool_state": additional_accounts["pool_state"],
-            "user_base_token": self.derive_user_token_account(user, token_info.mint, token_program_id),
+            "user_base_token": self.derive_user_token_account(
+                user,
+                token_info.mint,
+                cast("Pubkey", metadata["base_token_program"]),
+            ),
             "base_vault": additional_accounts["base_vault"],
             "quote_vault": additional_accounts["quote_vault"],
             "base_token_mint": token_info.mint,
-            "quote_token_mint": SystemAddresses.SOL_MINT,
-            "base_token_program": token_program_id,
-            "quote_token_program": SystemAddresses.TOKEN_PROGRAM,
+            "quote_token_mint": quote_mint,
+            "base_token_program": cast("Pubkey", metadata["base_token_program"]),
+            "quote_token_program": cast("Pubkey", metadata["quote_token_program"]),
             "event_authority": additional_accounts["event_authority"],
             "program": LetsBonkAddresses.PROGRAM,
             "system_program": SystemAddresses.SYSTEM_PROGRAM,
-            "platform_fee_vault": self.derive_platform_fee_vault(platform_config),
+            "platform_fee_vault": self.derive_platform_fee_vault(
+                platform_config, quote_mint
+            ),
+            "creator_fee_vault": self.derive_creator_fee_vault(creator, quote_mint),
         }
-
-        # Add creator fee vault if creator is known
-        if token_info.creator:
-            accounts["creator_fee_vault"] = self.derive_creator_fee_vault(
-                token_info.creator
-            )
-
-        return accounts
 
     def get_wsol_account_creation_accounts(
         self, user: Pubkey, wsol_account: Pubkey
