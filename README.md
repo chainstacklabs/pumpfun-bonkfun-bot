@@ -163,12 +163,13 @@ you leave it off. The `decode_from_*.py` scripts fall back to the saved fixtures
 them (`raw_*.json`), which are recaptured from mainnet rather than hand-edited — a
 stale fixture makes a working decoder look broken and a broken one look fine.
 
-Two examples double as verification scripts to run after any pump.fun program upgrade:
+Three examples double as verification scripts to run after any pump.fun program upgrade:
 
 ```bash
-uv run learning-examples/verify_v2_account_layout.py    # offline: account layouts, PDAs, encoding
-uv run learning-examples/simulate_v2_trades.py <MINT>   # mainnet simulation, no funds moved
-uv run learning-examples/verify_tx_status_checks.py     # offline: every example checks meta.err
+uv run learning-examples/verify_v2_account_layout.py     # offline: account layouts, PDAs, encoding
+uv run learning-examples/verify_curve_account_sizes.py   # offline: 125/151/256-byte curves all decode
+uv run learning-examples/simulate_v2_trades.py <MINT>    # mainnet simulation, no funds moved
+uv run learning-examples/verify_tx_status_checks.py      # offline: every example checks meta.err
 ```
 
 Related docs: [Listening to pump.fun migrations](https://docs.chainstack.com/docs/solana-listening-to-pumpfun-migrations-to-raydium) · [Sniping with only logsSubscribe](https://docs.chainstack.com/docs/solana-listening-to-pumpfun-token-mint-using-only-logssubscribe)

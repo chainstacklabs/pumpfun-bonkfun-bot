@@ -89,9 +89,11 @@ def _describe_program_error(err: object) -> str | None:
         err: The raw `meta.err` value from a `getTransaction` response.
 
     Returns:
-        A description like "pump.fun IDL: 6062 BuybackFeeRecipientMissing:
-        ..." for a code pump.fun's IDL defines, or None if the shape doesn't
-        match or the code is not in that table. The "pump.fun IDL:" prefix is
+        A description like "pump.fun IDL: 6062 BuybackFeeRecipientMissing"
+        for a code pump.fun's IDL defines (the IDL error entry's own `msg`,
+        if it has one, follows after a colon — 6062 has none, so there's no
+        suffix here), or None if the shape doesn't match or the code is not
+        in that table. The "pump.fun IDL:" prefix is
         deliberate: it is the only table checked, so it must stay visible in
         the rendered string, not just in this docstring -- a reader looking
         at a log line, not this source file, still needs to know the name is

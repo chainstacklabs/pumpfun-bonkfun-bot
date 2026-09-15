@@ -106,6 +106,10 @@ is protoc — needed only to regenerate the `geyser_pb2` stubs in
 # instruction encoding and quote-asset config against idl/pump_fun_idl.json
 uv run learning-examples/verify_v2_account_layout.py
 
+# Offline: 125/151/256-byte bonding curves all decode, and the graduating-
+# token examples don't filter on account length
+uv run learning-examples/verify_curve_account_sizes.py
+
 # Mainnet, no funds moved: simulate buy_v2/sell_v2 for one coin, report CU
 uv run learning-examples/simulate_v2_trades.py <MINT>
 
@@ -114,7 +118,7 @@ uv run learning-examples/simulate_bot_buy_path.py
 uv run learning-examples/simulate_bot_buy_path.py --no-extreme-fast
 ```
 
-Run all three after any pump.fun program upgrade. The simulations report
+Run all four after any pump.fun program upgrade. The simulations report
 `unitsConsumed`; use it to retune `get_buy_compute_unit_limit` /
 `get_sell_compute_unit_limit` in `platforms/pumpfun/instruction_builder.py`.
 
@@ -287,14 +291,28 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
 
 ### Quote assets and the v2 trade instructions (current path)
 
-- pump.fun supports quote assets other than SOL. `BondingCurve.quote_mint` is
-  `Pubkey::default()` (all zeros) for SOL-paired coins; USDC
-  (`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`) is whitelisted in `Global`.
-  **Legacy `buy`/`sell` cannot trade non-SOL-paired coins at all.**
+- pump.fun supports quote assets other than SOL, and it's no longer just
+  SOL and USDC. `BondingCurve.quote_mint` is `Pubkey::default()` (all zeros)
+  for SOL-paired coins; USDC (`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`)
+  is one whitelisted entry in `Global`, but coins paired with Token-2022
+  quote mints are live on chain too. **Legacy `buy`/`sell` cannot trade
+  non-SOL-paired coins at all.**
+- **`Global.whitelisted_quote_mints` is not the authoritative quote-mint
+  registry.** The 2026-09-15 upgrade added a `QuoteControl` account with its
+  own mint list, which is how a coin can pair with a mint `Global` never
+  lists. Error `6064` was relaxed to match — it used to require legacy SPL
+  Token and now accepts SPL Token or Token-2022.
+- **The quote mint's token program is resolved from chain, not assumed.**
+  `resolve_quote_token_program` (`src/core/pubkeys.py`) reads a mint's owner
+  once — pre-seeded with WSOL/USDC so those stay free — and caches it for the
+  process; `cached_quote_token_program` is the hot-path read used by event
+  parsing and address resolution. The bot warms this cache once at startup
+  for every configured quote mint, so `extreme_fast_mode`'s zero-RPC contract
+  between detection and submission still holds.
 - The bot uses **`buy_v2` (27 accounts)** and **`sell_v2` (26 accounts)**. Every
-  account is mandatory and the order is identical for every coin — SOL or USDC
-  paired, mayhem or not, cashback or not. `sell_v2` is `buy_v2` minus
-  `global_volume_accumulator`. Layouts live in `_BUY_V2_ACCOUNTS` /
+  account is mandatory and the order is identical for every coin — whatever
+  quote mint it's paired with, mayhem or not, cashback or not. `sell_v2` is
+  `buy_v2` minus `global_volume_accumulator`. Layouts live in `_BUY_V2_ACCOUNTS` /
   `_SELL_V2_ACCOUNTS` in `platforms/pumpfun/instruction_builder.py` and are
   machine-checked against the IDL by `learning-examples/verify_v2_account_layout.py`.
 - v2 args carry **no `track_volume` OptionBool** (24-byte data: discriminator +
@@ -314,12 +332,24 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
 
 ### BondingCurve account layout
 
-- The account is **151 bytes**: 8-byte discriminator, then
-  `virtual_token_reserves, virtual_quote_reserves, real_token_reserves,
-  real_quote_reserves, token_total_supply` (u64 each), `complete` (1B, offset 48),
-  `creator` (32B, offset 49), `is_mayhem_mode` (offset 81),
-  `is_cashback_coin` (offset 82), `quote_mint` (32B, offset 83), then 36 reserved
-  zero bytes. The documented struct is 115 bytes; the extra 36 are padding.
+- **`create_v2` now allocates a 125-byte account, not 151.** The 36 reserved
+  padding bytes are gone, and three fields were appended after `quote_mint`:
+  `creator_fee_bps` (u64), `can_edit_creator_fee` (bool, reserved — always
+  false) and `is_holder_reward` (bool). Every field the bot reads sits before
+  where the padding used to start, and none of it moved.
+- `extend_account` can grow a curve past 125 bytes, and a length allowlist is
+  whack-a-mole against that — don't filter on account length; decode any
+  length at or above 125 the same way:
+
+  | Length | What it is |
+  |---|---|
+  | 125 bytes | What `create_v2` allocates now (2026-09-15 upgrade) |
+  | 151 bytes | The old allocation size; still reachable via `extend_account` |
+  | 256 bytes | A rarer `extend_account` target, confirmed live 2026-09-15 |
+
+  `learning-examples/verify_curve_account_sizes.py` checks that all three
+  decode correctly and that the graduating-token examples don't filter on
+  account length.
 - The SOL-named fields were **renamed**: `virtual_sol_reserves` →
   `virtual_quote_reserves`, `real_sol_reserves` → `real_quote_reserves`. The
   curve manager still exposes the old names as aliases, so pre-existing callers
@@ -339,16 +369,27 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
 
 ### Coin creation
 
-- The IDL instruction is `create_v2` (snake_case). Args: `name (str),
-  symbol (str), uri (str), creator (pubkey), is_mayhem_mode (bool),
-  is_cashback_enabled (OptionBool 1B)`. `OptionBool` is a struct wrapping a single
-  bool — serialized as 1 byte, not 2.
-- **`is_cashback_enabled` can be absent from the wire entirely.** Two mainnet
-  `create_v2` instructions carry `0001` and `00` after `creator`: one sends both
-  trailing args, the other omits the last. A decoder that reads a fixed number of
-  trailing bytes raises `IndexError` on roughly half of all coins. Decode
-  trailing args defensively and report a missing one as unset —
-  `utils/idl_parser.py` does this for trailing option-typed args since #184
+- The IDL instruction is `create_v2` (snake_case) and takes **eight args**:
+  `name (str), symbol (str), uri (str), creator (pubkey), is_mayhem_mode
+  (bool), is_cashback_enabled (OptionBool), creator_fee_bps (OptionU64),
+  is_holder_reward (OptionBool)`. The last two were added by the 2026-09-15
+  upgrade. `OptionBool` and `OptionU64` are single-field Anchor structs with
+  no presence tag — each serializes as its bare inner value, 1 byte and 8
+  bytes respectively, never a discriminated Option.
+- **`is_cashback_enabled = [true]` is rejected as of 2026-09-15**, with error
+  `6082 CashbackDeprecated` — `create_v2` can no longer mint a new cashback
+  coin. Existing cashback coins are unaffected: they keep trading, keep
+  accruing, and remain claimable, so every cashback code path in this repo
+  (the legacy sell path's cashback branch, `is_cashback_coin` on `TokenInfo`,
+  etc.) stays live and must not be treated as dead.
+- **The trailing args are positional, not independently optional.** Reaching
+  `is_holder_reward` (arg 8) means sending `is_cashback_enabled` (6) and
+  `creator_fee_bps` (7) first, even when both are false/zero. Two wire forms
+  occur live: some `create_v2` instructions omit the trailing args entirely,
+  others send all three. A decoder that reads a fixed number of trailing
+  bytes raises `IndexError` on the shorter form. Decode trailing args
+  defensively and report a missing one as unset — `utils/idl_parser.py` does
+  this for trailing option-typed args since #184
   (`uv run learning-examples/verify_create_v2_optional_args.py` checks it).
 - `create_v2` accounts 1-16 are in the IDL; accounts **17-19 are optional
   remaining accounts** (`quote_mint`, `associated_quote_bonding_curve`,
@@ -371,6 +412,25 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   means spending the wrong balance entirely. Event parsers populate
   `quote_mint` from `CreateEvent` (which gained `quote_mint` and
   `virtual_quote_reserves` as trailing fields).
+
+### Holder reward coins
+
+`create_v2` can set `is_holder_reward` so the creator fee is set aside for
+holders instead of paid to a creator wallet. On such a coin
+`BondingCurve.creator` holds a pump.fun address rather than the actual
+creator's — that's expected, and the `creator_vault` derivation is unchanged
+and still correct either way, since it derives from whatever `creator` the
+curve carries. **No trade instruction changed**: `buy`, `sell`, `buy_v2`,
+`sell_v2` and the PumpSwap instructions take identical accounts and arguments
+whether or not a coin is a holder-reward coin. `Global.is_holder_reward_enabled`
+can switch creation off globally.
+
+`TokenInfo.is_holder_reward` and `TokenInfo.creator_fee_bps` surface this to
+the bot — see the field comments on `TokenInfo` in `src/interfaces/core.py`
+(dated 2026-09-15) for what's been verified live: SOL- and USDC-paired coins
+keep `creator_fee_bps` at 0 (checked on 25 SOL-paired and 10 USDC-paired
+coins), while every custom-pair coin checked in the same pass carried a
+nonzero value.
 
 ### Legacy instructions (fallback only)
 

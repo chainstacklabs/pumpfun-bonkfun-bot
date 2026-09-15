@@ -422,7 +422,11 @@ class PumpFunEventParser(EventParser):
                 else SystemAddresses.TOKEN_PROGRAM
             )
 
-            # Extract cashback flag from OptionBool struct (decoded as {"field_0": bool})
+            # Extract cashback flag from OptionBool struct (decoded as
+            # {"field_0": bool}). Cashback creation was deprecated 2026-09-15
+            # (create_v2 rejects a new true here with 6082 CashbackDeprecated),
+            # but older create_v2 instructions still carry it and existing
+            # cashback coins still trade, so it's still decoded here.
             is_cashback_raw = args.get("is_cashback_enabled")
             is_cashback = (
                 is_cashback_raw.get("field_0", False)
