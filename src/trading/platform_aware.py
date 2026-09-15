@@ -14,6 +14,7 @@ from core.pubkeys import (
     TOKEN_DECIMALS,
     WSOL_MINT,
     SystemAddresses,
+    cached_quote_token_program,
     is_sol_paired,
     normalize_quote_mint,
     quote_units_per_token,
@@ -108,6 +109,12 @@ def _refresh_quote_mint(token_info: TokenInfo, pool_state: dict) -> Pubkey:
 
     Listeners do not all carry quote_mint (pumpportal carries none of the
     per-coin flags), and the curve is authoritative, so prefer its value.
+    `quote_token_program_id` is re-derived alongside it: it was set from the
+    *previous* quote_mint at TokenInfo construction (or left None), and a
+    stale non-None value would otherwise win the `or` in
+    AddressProvider.resolve_quote, so the corrected program never gets
+    looked up. `cached_quote_token_program` is a synchronous dict read, so
+    this stays a zero-RPC-call operation on the extreme_fast_mode path.
 
     Args:
         token_info: Token information, mutated in place
@@ -120,6 +127,7 @@ def _refresh_quote_mint(token_info: TokenInfo, pool_state: dict) -> Pubkey:
         pool_state.get("quote_mint", token_info.quote_mint)
     )
     token_info.quote_mint = quote_mint
+    token_info.quote_token_program_id = cached_quote_token_program(quote_mint)
     return quote_mint
 
 
