@@ -25,12 +25,16 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from dotenv import load_dotenv  # noqa: E402
-from solders.compute_budget import set_compute_unit_limit, set_compute_unit_price  # noqa: E402
+from solders.compute_budget import (  # noqa: E402
+    set_compute_unit_limit,
+    set_compute_unit_price,
+)
 from solders.message import Message  # noqa: E402
 from solders.transaction import Transaction  # noqa: E402
 
 from core.client import SolanaClient  # noqa: E402
 from core.priority_fee.manager import PriorityFeeManager  # noqa: E402
+from core.pubkeys import USDC_MINT  # noqa: E402
 from core.wallet import Wallet  # noqa: E402
 from interfaces.core import Platform, TokenInfo  # noqa: E402
 from monitoring.listener_factory import ListenerFactory  # noqa: E402
@@ -43,6 +47,13 @@ EXTREME_FAST_TOKEN_AMOUNT = 20
 # Matches retries.wait_after_creation in the bot configs. Only used when
 # extreme_fast_mode is off, where the buyer reads the curve at `confirmed`.
 CURVE_STABILIZE_SECONDS = 15
+# Without a trade.quote_amounts entry, PlatformAwareBuyer only trades
+# SOL-paired coins and skips anything else with "No configured buy amount"
+# — including the non-SOL-paired coins this task is about. USDC is the one
+# non-SOL quote mint with a fixed, well-known amount scale; a coin paired
+# with any other quote mint (Token-2022 included) still needs its own entry
+# here, keyed by the exact mint, to be tradeable in this script.
+QUOTE_AMOUNTS = {USDC_MINT: 0.01}
 
 
 async def wait_for_token(timeout_seconds: float = 90.0) -> TokenInfo | None:
@@ -192,6 +203,7 @@ async def main() -> int:
         max_retries=1,
         extreme_fast_token_amount=EXTREME_FAST_TOKEN_AMOUNT,
         extreme_fast_mode=extreme_fast,
+        quote_amounts=QUOTE_AMOUNTS,
     )
 
     if not extreme_fast:

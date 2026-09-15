@@ -15,8 +15,8 @@ from solders.transaction import VersionedTransaction
 
 from core.pubkeys import (
     SystemAddresses,
+    cached_quote_token_program,
     normalize_quote_mint,
-    quote_token_program,
 )
 from interfaces.core import EventParser, Platform, TokenInfo
 from platforms.pumpfun.address_provider import PumpFunAddresses
@@ -332,7 +332,7 @@ class PumpFunEventParser(EventParser):
                         is_holder_reward=bool(fields.get("is_holder_reward", False)),
                         creator_fee_bps=int(fields.get("creator_fee_bps", 0) or 0),
                         quote_mint=quote_mint,
-                        quote_token_program_id=quote_token_program(quote_mint),
+                        quote_token_program_id=cached_quote_token_program(quote_mint),
                         virtual_quote_reserves=fields.get("virtual_quote_reserves"),
                         state_from_event=state_from_event,
                         creation_timestamp=monotonic(),
@@ -455,7 +455,7 @@ class PumpFunEventParser(EventParser):
                 is_mayhem_mode=bool(args.get("is_mayhem_mode", False)),
                 is_cashback_coin=is_cashback,
                 quote_mint=quote_mint,
-                quote_token_program_id=quote_token_program(quote_mint),
+                quote_token_program_id=cached_quote_token_program(quote_mint),
                 creation_timestamp=monotonic(),
             )
 

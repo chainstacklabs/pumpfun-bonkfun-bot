@@ -12,7 +12,11 @@ from typing import ClassVar, Final
 from solders.pubkey import Pubkey
 from spl.token.instructions import get_associated_token_address
 
-from core.pubkeys import SystemAddresses, normalize_quote_mint, quote_token_program
+from core.pubkeys import (
+    SystemAddresses,
+    cached_quote_token_program,
+    normalize_quote_mint,
+)
 from interfaces.core import AddressProvider, Platform, TokenInfo
 
 
@@ -391,7 +395,7 @@ class PumpFunAddressProvider(AddressProvider):
             Tuple of (quote_mint, quote_token_program)
         """
         quote_mint = normalize_quote_mint(token_info.quote_mint)
-        quote_program = token_info.quote_token_program_id or quote_token_program(
+        quote_program = token_info.quote_token_program_id or cached_quote_token_program(
             quote_mint
         )
         return quote_mint, quote_program
