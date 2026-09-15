@@ -89,9 +89,14 @@ def _describe_program_error(err: object) -> str | None:
         err: The raw `meta.err` value from a `getTransaction` response.
 
     Returns:
-        A description like "6062 BuybackFeeRecipientMissing: ..." for a
-        code pump.fun's IDL defines, or None if the shape doesn't match or
-        the code is not in that table.
+        A description like "pump.fun IDL: 6062 BuybackFeeRecipientMissing:
+        ..." for a code pump.fun's IDL defines, or None if the shape doesn't
+        match or the code is not in that table. The "pump.fun IDL:" prefix is
+        deliberate: it is the only table checked, so it must stay visible in
+        the rendered string, not just in this docstring -- a reader looking
+        at a log line, not this source file, still needs to know the name is
+        pump.fun's interpretation and not a fact about whichever program
+        actually reverted.
     """
     if not isinstance(err, dict):
         return None
@@ -107,7 +112,10 @@ def _describe_program_error(err: object) -> str | None:
     code = detail.get("Custom")
     if not isinstance(code, int):
         return None
-    return get_idl_parser(Platform.PUMP_FUN).describe_error_code(code)
+    description = get_idl_parser(Platform.PUMP_FUN).describe_error_code(code)
+    if description is None:
+        return None
+    return f"pump.fun IDL: {description}"
 
 
 class SolanaClient:
