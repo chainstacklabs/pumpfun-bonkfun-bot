@@ -242,7 +242,7 @@ class SolanaClient:
 
     async def get_multiple_accounts(
         self, pubkeys: list[Pubkey], commitment: str | None = None
-    ) -> list[Any]:
+    ) -> list[Account | None]:
         """Get several accounts in one slot-consistent RPC round trip.
 
         A single getMultipleAccounts response is served by one node at one
@@ -254,7 +254,10 @@ class SolanaClient:
             commitment: Optional commitment override (default "confirmed")
 
         Returns:
-            One entry per pubkey, in order; None for accounts that don't exist
+            One entry per pubkey, in order -- each a solders `Account` (same
+            type as `get_account_info` returns; attributes like `.data` and
+            `.owner`, never subscriptable) or None for accounts that don't
+            exist.
         """
         await self._rate_limiter.acquire()
         client = await self.get_client()
