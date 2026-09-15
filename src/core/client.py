@@ -11,6 +11,7 @@ import aiohttp
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Processed
 from solana.rpc.types import TxOpts
+from solders.account import Account
 from solders.compute_budget import set_compute_unit_limit, set_compute_unit_price
 from solders.hash import Hash
 from solders.instruction import Instruction
@@ -202,7 +203,7 @@ class SolanaClient:
 
     async def get_account_info(
         self, pubkey: Pubkey, commitment: str | None = None
-    ) -> dict[str, Any]:
+    ) -> Account:
         """Get account info from the blockchain.
 
         Args:
@@ -211,10 +212,13 @@ class SolanaClient:
                 fresh state right after a geyser event; default "confirmed")
 
         Returns:
-            Account info response
+            The solders `Account` (verified 2026-09-15: `response.value` from
+            `AsyncClient.get_account_info` is a `solders.account.Account`, not
+            a dict -- callers read attributes like `.data` and `.owner`, never
+            subscript it).
 
         Raises:
-            ValueError: If account doesn't exist or has no data
+            ValueError: If account doesn't exist
         """
         await self._rate_limiter.acquire()
         client = await self.get_client()
