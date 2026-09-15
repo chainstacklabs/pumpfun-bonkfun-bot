@@ -18,6 +18,11 @@ Offline machine checks, no network and no funds moved:
      None tag, Some tag, and omitted-trailing forms.
   5. The pump.fun event parser turns the raw fixture instruction into a
      TokenInfo with is_cashback_coin=False and state_from_event=False.
+  6. A post-2026-09-15 create_v2 that omits the trailing creator_fee_bps
+     (OptionU64, program upgrade 8109141) decodes instead of dropping the
+     coin — issue #184 reintroduced by a new optional-typed arg.
+  7. A post-upgrade create_v2 that does send creator_fee_bps reads the
+     value back.
 
 Usage:
     uv run learning-examples/verify_create_v2_optional_args.py
@@ -28,6 +33,8 @@ import json
 import struct
 import sys
 from pathlib import Path
+
+import base58
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -44,6 +51,22 @@ FIXTURE = (
     / "learning-examples"
     / "blocksubscribe-transactions"
     / "raw_create_tx_from_blocksubscribe.json"
+)
+# Post-upgrade (2026-09-15, program 8109141) getTransaction fixtures — real
+# mainnet create_v2 instructions, one omitting the trailing creator_fee_bps
+# (OptionU64) and one sending it. Captured with maxSupportedTransactionVersion:
+# 0 and encoding: json, so account keys/instruction data are base58 strings
+# rather than a raw base64 VersionedTransaction like the blocksubscribe
+# fixture above.
+FIXTURE_OMITTED_FEE_BPS = (
+    PROJECT_ROOT
+    / "learning-examples"
+    / "raw_create_v2_omitted_fee_bps_from_gettransaction.json"
+)
+FIXTURE_WITH_FEE_BPS = (
+    PROJECT_ROOT
+    / "learning-examples"
+    / "raw_create_v2_with_fee_bps_from_gettransaction.json"
 )
 IDL_PATH = PROJECT_ROOT / "idl" / "pump_fun_idl.json"
 
@@ -66,6 +89,37 @@ def _fixture_create_v2() -> tuple[bytes, list[int], list[bytes]]:
         if data.startswith(CREATE_V2_DISCRIMINATOR):
             return data, list(ix.accounts), account_keys
     raise ValueError("fixture has no create_v2 instruction")  # noqa: TRY003
+
+
+def _fixture_create_v2_from_gettransaction(
+    path: Path,
+) -> tuple[bytes, list[int], list[bytes]]:
+    """Raw create_v2 data, account indices and keys from a getTransaction fixture.
+
+    Captured with `encoding: json`, so instruction data and account keys are
+    base58 strings straight off the RPC response — unlike the blocksubscribe
+    fixture above, there is no raw VersionedTransaction to decode.
+    """
+    fixture = json.loads(path.read_text())
+    message = fixture["transaction"]["message"]
+    account_keys = [base58.b58decode(key) for key in message["accountKeys"]]
+    for ix in message["instructions"]:
+        data = base58.b58decode(ix["data"])
+        if data.startswith(CREATE_V2_DISCRIMINATOR):
+            return data, list(ix["accounts"]), account_keys
+    raise ValueError(  # noqa: TRY003
+        f"{path.name} has no top-level create_v2 instruction"
+    )
+
+
+def _fixture_create_v2_omitted_fee_bps() -> tuple[bytes, list[int], list[bytes]]:
+    """create_v2 that omits the trailing creator_fee_bps (OptionU64)."""
+    return _fixture_create_v2_from_gettransaction(FIXTURE_OMITTED_FEE_BPS)
+
+
+def _fixture_create_v2_with_fee_bps() -> tuple[bytes, list[int], list[bytes]]:
+    """create_v2 that sends creator_fee_bps on the wire."""
+    return _fixture_create_v2_from_gettransaction(FIXTURE_WITH_FEE_BPS)
 
 
 def check_omitted_trailing_option_decodes() -> bool:
@@ -156,6 +210,49 @@ def check_event_parser_reads_raw_fixture() -> bool:
     return ok
 
 
+def check_omitted_option_u64_decodes() -> bool:
+    """create_v2 omitting creator_fee_bps must decode, not drop the coin.
+
+    Post-upgrade create_v2 carries two trailing optionals: creator_fee_bps
+    (OptionU64) and is_holder_reward (OptionBool). Live transactions omit
+    either or both. Dropping those coins is issue #184 all over again.
+    """
+    parser = _parser()
+    data, _, _ = _fixture_create_v2_omitted_fee_bps()
+    disc = data[:8]
+    # Exercise the trailing-optional guard directly, below decode_instruction's
+    # account-building — no accounts/keys needed for this fixture.
+    args = parser._decode_instruction_args(  # noqa: SLF001
+        parser.instructions[disc], data[8:]
+    )
+    if args is None:
+        print("  FAIL create_v2 with omitted creator_fee_bps decoded as None")
+        return False
+    for name in ("creator_fee_bps", "is_holder_reward"):
+        if name not in args:
+            print(f"  FAIL {name} missing from decoded args")
+            return False
+    print("  OK  omitted OptionU64 reported as unset")
+    return True
+
+
+def check_option_u64_present_decodes() -> bool:
+    """A create_v2 that does send creator_fee_bps reads the value back."""
+    parser = _parser()
+    data, _, _ = _fixture_create_v2_with_fee_bps()
+    disc = data[:8]
+    # Exercise the trailing-optional guard directly, below decode_instruction's
+    # account-building — no accounts/keys needed for this fixture.
+    args = parser._decode_instruction_args(  # noqa: SLF001
+        parser.instructions[disc], data[8:]
+    )
+    if args is None or args.get("creator_fee_bps") is None:
+        print("  FAIL present creator_fee_bps did not decode")
+        return False
+    print(f"  OK  creator_fee_bps decoded: {args['creator_fee_bps']}")
+    return True
+
+
 def main() -> int:
     checks = [
         (
@@ -169,6 +266,11 @@ def main() -> int:
         ("mandatory args still enforced", check_mandatory_args_still_enforced),
         ("native Option<u64> decodes", check_native_option_decodes),
         ("event parser reads the raw fixture", check_event_parser_reads_raw_fixture),
+        (
+            "create_v2 omitting creator_fee_bps decodes",
+            check_omitted_option_u64_decodes,
+        ),
+        ("create_v2 with creator_fee_bps decodes", check_option_u64_present_decodes),
     ]
     failed = 0
     for label, check in checks:

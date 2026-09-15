@@ -8,27 +8,22 @@
   },
   "instructions": [
     {
-      "name": "admin_set_coin_creator",
-      "docs": [
-        "Overrides the coin creator for a canonical pump pool"
-      ],
+      "name": "admin_cto_pool",
       "discriminator": [
-        242,
-        40,
-        117,
-        145,
-        73,
-        96,
-        105,
-        104
+        45,
+        61,
+        165,
+        151,
+        104,
+        0,
+        49,
+        189
       ],
       "accounts": [
         {
-          "name": "admin_set_coin_creator_authority",
-          "signer": true,
-          "relations": [
-            "global_config"
-          ]
+          "name": "payer",
+          "writable": true,
+          "signer": true
         },
         {
           "name": "global_config"
@@ -36,6 +31,79 @@
         {
           "name": "pool",
           "writable": true
+        },
+        {
+          "name": "pool_authority",
+          "signer": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool.base_mint",
+                "account": "Pool"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                1,
+                86,
+                224,
+                246,
+                147,
+                102,
+                90,
+                207,
+                68,
+                219,
+                21,
+                104,
+                191,
+                23,
+                91,
+                170,
+                81,
+                137,
+                203,
+                151,
+                245,
+                210,
+                255,
+                59,
+                101,
+                93,
+                43,
+                182,
+                253,
+                109,
+                24,
+                176
+              ]
+            }
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
         },
         {
           "name": "event_authority",
@@ -74,6 +142,16 @@
         {
           "name": "coin_creator",
           "type": "pubkey"
+        },
+        {
+          "name": "is_holder_reward",
+          "type": "bool"
+        },
+        {
+          "name": "creator_fee_bps",
+          "type": {
+            "option": "u64"
+          }
         }
       ]
     },
@@ -1349,6 +1427,10 @@
     },
     {
       "name": "claim_cashback",
+      "docs": [
+        "Pays out the user's accrued cashback. `user_wsol_token_account` may be any token account",
+        "of `quote_mint` owned by `user`, not only the associated one."
+      ],
       "discriminator": [
         37,
         58,
@@ -1469,60 +1551,7 @@
         },
         {
           "name": "user_wsol_token_account",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "user"
-              },
-              {
-                "kind": "account",
-                "path": "quote_token_program"
-              },
-              {
-                "kind": "account",
-                "path": "quote_mint"
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
-              ]
-            }
-          }
+          "writable": true
         },
         {
           "name": "system_program",
@@ -2526,6 +2555,30 @@
               "name": "OptionBool"
             }
           }
+        },
+        {
+          "name": "creator_fee_bps",
+          "type": {
+            "defined": {
+              "name": "OptionU64"
+            }
+          }
+        },
+        {
+          "name": "can_edit_creator_fee",
+          "type": {
+            "defined": {
+              "name": "OptionBool"
+            }
+          }
+        },
+        {
+          "name": "is_holder_reward",
+          "type": {
+            "defined": {
+              "name": "OptionBool"
+            }
+          }
         }
       ]
     },
@@ -2753,6 +2806,7 @@
         },
         {
           "name": "user",
+          "writable": true,
           "signer": true
         },
         {
@@ -4849,6 +4903,79 @@
       ]
     },
     {
+      "name": "update_creator_fee_config",
+      "discriminator": [
+        61,
+        175,
+        160,
+        249,
+        66,
+        66,
+        136,
+        175
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "global_config"
+          ]
+        },
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "creator_fee_configurable",
+          "type": "bool"
+        },
+        {
+          "name": "max_configurable_creator_fee_bps",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "update_fee_config",
       "discriminator": [
         104,
@@ -5154,16 +5281,16 @@
   ],
   "events": [
     {
-      "name": "AdminSetCoinCreatorEvent",
+      "name": "AdminCtoPoolEvent",
       "discriminator": [
-        45,
-        220,
-        93,
-        24,
-        25,
-        97,
-        172,
-        104
+        47,
+        35,
+        163,
+        249,
+        150,
+        157,
+        147,
+        122
       ]
     },
     {
@@ -5453,6 +5580,19 @@
       ]
     },
     {
+      "name": "UpdateCreatorFeeConfigEvent",
+      "discriminator": [
+        152,
+        198,
+        124,
+        124,
+        106,
+        246,
+        127,
+        191
+      ]
+    },
+    {
       "name": "UpdateFeeConfigEvent",
       "discriminator": [
         90,
@@ -5673,7 +5813,7 @@
     {
       "code": 6047,
       "name": "CoinCreatorMigratedToSharingConfig",
-      "msg": "coin creator has been migrated to sharing config, use pump_fees::reset_fee_sharing_config instead"
+      "msg": "coin creator has been migrated to sharing config"
     },
     {
       "code": 6048,
@@ -5768,21 +5908,67 @@
       "code": 6067,
       "name": "SeedLockViolation",
       "msg": "BOOST: lp_supply must never drop below the circulating LP mint supply"
+    },
+    {
+      "code": 6068,
+      "name": "CreatorFeeNotConfigurable",
+      "msg": "Configurable creator fee is disabled"
+    },
+    {
+      "code": 6069,
+      "name": "CreatorFeeBpsOutOfRange",
+      "msg": "Creator fee basis points must be between 1 and the configured maximum"
+    },
+    {
+      "code": 6070,
+      "name": "CreatorFeeNotEditable",
+      "msg": "Creator fee is not editable for this pool"
+    },
+    {
+      "code": 6071,
+      "name": "CreatorFeeNotAllowedForCashbackCoin",
+      "msg": "Cashback coins cannot have a creator fee"
+    },
+    {
+      "code": 6072,
+      "name": "SharingConfigNotActive",
+      "msg": "Sharing config is not active"
+    },
+    {
+      "code": 6073,
+      "name": "NotAuthorized",
+      "msg": "Not authorized"
+    },
+    {
+      "code": 6074,
+      "name": "HolderRewardCreatorImmutable",
+      "msg": "The coin creator of a holder-reward pool cannot be changed"
+    },
+    {
+      "code": 6075,
+      "name": "CtoNotAllowedForMayhemPool",
+      "msg": "CTO is not allowed on a mayhem-mode pool"
+    },
+    {
+      "code": 6076,
+      "name": "InvalidHolderRewardCoinCreator",
+      "msg": "A holder-reward pool's coin creator must be the holder-rewards PDA"
+    },
+    {
+      "code": 6077,
+      "name": "CreatorFeeNotConfigurableForQuote",
+      "msg": "Creator fee is not configurable on a SOL or USDC quote; the fee schedule applies"
     }
   ],
   "types": [
     {
-      "name": "AdminSetCoinCreatorEvent",
+      "name": "AdminCtoPoolEvent",
       "type": {
         "kind": "struct",
         "fields": [
           {
             "name": "timestamp",
             "type": "i64"
-          },
-          {
-            "name": "admin_set_coin_creator_authority",
-            "type": "pubkey"
           },
           {
             "name": "base_mint",
@@ -5799,6 +5985,22 @@
           {
             "name": "new_coin_creator",
             "type": "pubkey"
+          },
+          {
+            "name": "is_holder_reward",
+            "type": "bool"
+          },
+          {
+            "name": "is_cashback_coin",
+            "type": "bool"
+          },
+          {
+            "name": "old_creator_fee_bps",
+            "type": "u64"
+          },
+          {
+            "name": "new_creator_fee_bps",
+            "type": "u64"
           }
         ]
       }
@@ -6094,6 +6296,14 @@
           {
             "name": "base_supply",
             "type": "u64"
+          },
+          {
+            "name": "holder_rewards_bps",
+            "type": "u64"
+          },
+          {
+            "name": "holder_rewards",
+            "type": "u64"
           }
         ]
       }
@@ -6361,6 +6571,18 @@
           {
             "name": "is_mayhem_mode",
             "type": "bool"
+          },
+          {
+            "name": "creator_fee_bps",
+            "type": "u64"
+          },
+          {
+            "name": "can_edit_creator_fee",
+            "type": "bool"
+          },
+          {
+            "name": "is_holder_reward",
+            "type": "bool"
           }
         ]
       }
@@ -6541,6 +6763,14 @@
                 }
               }
             }
+          },
+          {
+            "name": "exotic_flat_fees",
+            "type": {
+              "defined": {
+                "name": "Fees"
+              }
+            }
           }
         ]
       }
@@ -6685,6 +6915,14 @@
           {
             "name": "boost_enabled",
             "type": "bool"
+          },
+          {
+            "name": "creator_fee_configurable",
+            "type": "bool"
+          },
+          {
+            "name": "max_configurable_creator_fee_bps",
+            "type": "u64"
           }
         ]
       }
@@ -6825,6 +7063,15 @@
       }
     },
     {
+      "name": "OptionU64",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          "u64"
+        ]
+      }
+    },
+    {
       "name": "Pool",
       "type": {
         "kind": "struct",
@@ -6886,6 +7133,18 @@
               "For non-boost pools, value is 0, so the behavior is identical to legacy pools."
             ],
             "type": "i128"
+          },
+          {
+            "name": "creator_fee_bps",
+            "type": "u64"
+          },
+          {
+            "name": "can_edit_creator_fee",
+            "type": "bool"
+          },
+          {
+            "name": "is_holder_reward",
+            "type": "bool"
           }
         ]
       }
@@ -7038,6 +7297,14 @@
           },
           {
             "name": "base_supply",
+            "type": "u64"
+          },
+          {
+            "name": "holder_rewards_bps",
+            "type": "u64"
+          },
+          {
+            "name": "holder_rewards",
             "type": "u64"
           }
         ]
@@ -7225,6 +7492,30 @@
           {
             "name": "new_admin",
             "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UpdateCreatorFeeConfigEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "creator_fee_configurable",
+            "type": "bool"
+          },
+          {
+            "name": "max_configurable_creator_fee_bps",
+            "type": "u64"
           }
         ]
       }
