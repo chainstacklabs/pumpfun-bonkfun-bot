@@ -52,14 +52,26 @@ side for a minute: same curves, nothing dropped, nothing extra.
 
 `dataSize` now has to match two lengths, not one: `create_v2` allocates the curve
 at exactly 125 bytes, and an account only grows to 151 once the separate
-`extend_account` instruction has run on it (verified 2026-09-15 against freshly
-created coins caught live off `logsSubscribe` — most stayed at 125 bytes, one
-reached 151 after an `extend_account` in the same transaction as `create_v2`).
-Filtering on 151 alone sees no new coins at all, so this script opens one
-subscription per length and merges the streams. The original 49-byte layout (no
-`creator` field) still has accounts with `complete = false`, but none of them are
-written to any more — verified over a 45s window in which all 205 updates across
-24 curves were 125 or 151 bytes.
+`extend_account` instruction has run on it. Filtering on 151 alone sees no new
+coins at all, so this script opens one subscription per length and merges the
+streams.
+
+Confirmed live on 2026-09-15 with an unfiltered-by-length `programSubscribe`
+(discriminator only, both `complete` states, no `dataSize` filter) run for 46s:
+355 updates total — 68 across 28 curves at 125 bytes, 285 across 68 curves at
+151 bytes, and 2 across 1 curve at 256 bytes. That 256-byte curve decodes fine
+under the same IDL (its trailing bytes past the documented fields are zero
+padding) but is a length neither this script nor `CURVE_ACCOUNT_LENS` covers —
+UNVERIFIED: how common a further-resized curve is, or what resizes it past
+151. None of the 355 updates were the legacy 49-byte layout (no `creator`
+field); that layout still has some `complete = false` accounts on chain, but
+nothing currently writes to them.
+
+Also confirmed live on 2026-09-15: one curve was watched going from 125 to 151
+bytes, with several 125-byte trades logged in between, showing `extend_account`
+ran as its own later transaction rather than bundled into `create_v2`.
+UNVERIFIED: whether `extend_account` can also land in the same transaction as
+`create_v2` for some coins.
 """
 
 import argparse

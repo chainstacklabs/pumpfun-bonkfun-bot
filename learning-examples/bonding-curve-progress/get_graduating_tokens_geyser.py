@@ -49,15 +49,26 @@ side for a minute: same curves, nothing dropped, nothing extra.
 
 `datasize` now has to match two lengths, not one: `create_v2` allocates the curve
 at exactly 125 bytes, and an account only grows to 151 once the separate
-`extend_account` instruction has run on it (verified 2026-09-15 against freshly
-created coins caught live off `logsSubscribe` — most stayed at 125 bytes, one
-reached 151 after an `extend_account` in the same transaction as `create_v2`).
-Filtering on 151 alone sees no new coins at all, so this script subscribes to two
-named account-filter groups, one per length, which Geyser reports as an OR — an
-account is delivered if it matches either group. The original 49-byte layout still
-has accounts with `complete = false`, but none of them are written to any more —
-verified over a 45s window in which all 205 updates across 24 curves were 125 or
-151 bytes.
+`extend_account` instruction has run on it. Filtering on 151 alone sees no new
+coins at all, so this script subscribes to two named account-filter groups, one
+per length, which Geyser reports as an OR — an account is delivered if it
+matches either group.
+
+Confirmed live on 2026-09-15 by running this script's own
+`build_subscribe_request` against the real endpoint for 75s with the
+reserves-based pre-filter disabled (so it takes in every non-graduated curve):
+5,393 updates arrived, split cleanly by the named group each matched —
+830 updates across 76 curves under `graduating_curves_125`, and 4,563 updates
+across 161 curves under `graduating_curves_151`. Both groups delivered, so the
+OR-across-groups shape works as intended.
+
+UNVERIFIED here: whether the original 49-byte layout (no `creator` field) is
+still written anywhere — a `dataSize`-filtered subscription can only ever
+report matches at the sizes it names, so this script's own 2026-09-15
+confirmation above (125 and 151 only) cannot speak to that. See
+`get_graduating_tokens.py`'s module docstring for a length-unfiltered
+measurement that does cover it, and which also turned up a rare 256-byte
+curve that neither script's filter handles.
 """
 
 import argparse
