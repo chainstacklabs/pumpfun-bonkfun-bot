@@ -49,6 +49,15 @@ class TokenInfo:
     is_mayhem_mode: bool = False  # pump.fun mayhem mode flag
     is_cashback_coin: bool = False  # pump.fun cashback coin flag
 
+    # Holder rewards coins (2026-09-15 upgrade): the creator fee is set aside
+    # for holders instead of a creator wallet, and BondingCurve.creator holds a
+    # pump.fun address. Trading is identical — creator_vault derivation and the
+    # buy_v2/sell_v2 account lists are unchanged — so this is informational and
+    # available for filtering. creator_fee_bps is non-zero only on custom-pair
+    # coins; SOL- and USDC-paired coins always use the standard fee schedule.
+    is_holder_reward: bool = False
+    creator_fee_bps: int = 0
+
     # Quote asset (pump.fun v2 instructions). SOL-paired coins carry
     # Pubkey::default() on-chain; normalize_quote_mint() maps that to wrapped
     # SOL, which is what buy_v2/sell_v2 expect to be passed.

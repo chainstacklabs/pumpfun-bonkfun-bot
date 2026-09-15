@@ -329,6 +329,8 @@ class PumpFunEventParser(EventParser):
                         token_program_id=token_program_id,
                         is_mayhem_mode=fields.get("is_mayhem_mode", False),
                         is_cashback_coin=fields.get("is_cashback_enabled", False),
+                        is_holder_reward=bool(fields.get("is_holder_reward", False)),
+                        creator_fee_bps=int(fields.get("creator_fee_bps", 0) or 0),
                         quote_mint=quote_mint,
                         quote_token_program_id=quote_token_program(quote_mint),
                         virtual_quote_reserves=fields.get("virtual_quote_reserves"),

@@ -252,6 +252,8 @@ class PumpFunCurveManager(CurveManager):
             "creator": decoded_curve_state.get("creator", ""),
             "is_mayhem_mode": decoded_curve_state.get("is_mayhem_mode", False),
             "is_cashback_coin": decoded_curve_state.get("is_cashback_coin", False),
+            "is_holder_reward": decoded_curve_state.get("is_holder_reward", False),
+            "creator_fee_bps": decoded_curve_state.get("creator_fee_bps", 0),
             "quote_mint": quote_mint,
             "is_sol_paired": is_sol_paired(quote_mint),
         }
