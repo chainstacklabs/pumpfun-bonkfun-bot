@@ -256,9 +256,11 @@ def pick_buyback_fee_recipient() -> Pubkey:
 class BondingCurveState:
     """Parsed pump.fun BondingCurve account.
 
-    The account is 151 bytes: the 115-byte documented struct followed by
-    reserved padding. The SOL-named reserve fields were renamed to quote fields
-    when non-SOL quote assets landed; the old names are kept as aliases.
+    The account is 125 bytes as created; the separate extend_account
+    instruction grows it to 151. The struct below covers the leading fields,
+    which are at the same offsets in both. The SOL-named reserve fields were
+    renamed to quote fields when non-SOL quote assets landed; the old names
+    are kept as aliases.
     """
 
     _STRUCT = Struct(

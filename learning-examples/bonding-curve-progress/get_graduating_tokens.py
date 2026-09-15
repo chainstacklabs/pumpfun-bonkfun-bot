@@ -13,7 +13,8 @@ Solana Tracker), not core Agave, and its `limit` is a *scan* budget rather than 
 result count, so answering this question with it means ~1000 sequential pages.
 
 `programSubscribe` sidesteps the scan entirely. A curve can only approach
-graduation by being traded, and every write to it pushes the full 151-byte account,
+graduation by being traded, and every write to it pushes the full account — 125
+bytes as `create_v2` allocates it, or 151 once `extend_account` has run on it —
 so each notification carries everything needed to compute progress — there is no
 state to accumulate and no cold start beyond the next trade. Verified accepted on
 both a paid endpoint and the public `api.mainnet-beta.solana.com`.
@@ -49,10 +50,16 @@ migration want the 3-byte one, a wider funnel the 2-byte one.
 Checked against mainnet by running the filtered and unfiltered subscriptions side by
 side for a minute: same curves, nothing dropped, nothing extra.
 
-`dataSize: 151` restricts this to the current curve layout. The original 49-byte
-layout (no `creator` field) still has accounts with `complete = false`, but none of
-them are written to any more — verified over a 45s window in which all 205 updates
-across 24 curves were 151-byte accounts.
+`dataSize` now has to match two lengths, not one: `create_v2` allocates the curve
+at exactly 125 bytes, and an account only grows to 151 once the separate
+`extend_account` instruction has run on it (verified 2026-09-15 against freshly
+created coins caught live off `logsSubscribe` — most stayed at 125 bytes, one
+reached 151 after an `extend_account` in the same transaction as `create_v2`).
+Filtering on 151 alone sees no new coins at all, so this script opens one
+subscription per length and merges the streams. The original 49-byte layout (no
+`creator` field) still has accounts with `complete = false`, but none of them are
+written to any more — verified over a 45s window in which all 205 updates across
+24 curves were 125 or 151 bytes.
 """
 
 import argparse
@@ -93,7 +100,11 @@ TOKEN_PROGRAM_ID: Final[Pubkey] = Pubkey.from_string(
 
 # See learning-examples/calculate_discriminator.py
 BONDING_CURVE_DISCRIMINATOR: Final[bytes] = bytes.fromhex("17b7f83760d8ac60")
-CURVE_ACCOUNT_LEN: Final[int] = 151
+
+# create_v2 allocates the exact 125-byte struct. An account only reaches 151
+# bytes after extend_account runs, so both lengths are live on chain
+# (verified 2026-09-15). Filtering on one of them alone sees no new coins.
+CURVE_ACCOUNT_LENS: Final[tuple[int, ...]] = (125, 151)
 
 TOKEN_DECIMALS: Final[int] = 6
 _RESERVES_OFFSET: Final[int] = 24  # real_token_reserves, u64 LE
@@ -147,11 +158,16 @@ def zero_prefix_gate(bound_raw: int) -> tuple[int, bytes] | None:
     return None
 
 
-def build_filters(bound_raw: int) -> list[dict[str, Any]]:
-    """Assemble the server-side `programSubscribe` filters.
+def build_filters(bound_raw: int, curve_len: int) -> list[dict[str, Any]]:
+    """Assemble the server-side `programSubscribe` filters for one curve length.
+
+    `dataSize` is a single integer, so a curve fresh out of `create_v2` (125
+    bytes) and one `extend_account` has since grown to 151 bytes each need
+    their own filter set.
 
     Args:
         bound_raw: Highest qualifying `real_token_reserves`, in raw units
+        curve_len: The exact account length this filter set matches
 
     Returns:
         Filter dicts in the shape the RPC expects
@@ -167,7 +183,7 @@ def build_filters(bound_raw: int) -> list[dict[str, Any]]:
         }
 
     filters: list[dict[str, Any]] = [
-        {"dataSize": CURVE_ACCOUNT_LEN},
+        {"dataSize": curve_len},
         memcmp(0, BONDING_CURVE_DISCRIMINATOR),
         memcmp(_COMPLETE_OFFSET, b"\x00"),  # Not graduated yet
     ]
@@ -179,7 +195,11 @@ def build_filters(bound_raw: int) -> list[dict[str, Any]]:
 
 
 def parse_curve(data: bytes) -> dict[str, Any]:
-    """Decode the 151-byte bonding curve fields needed for a progress report.
+    """Decode the bonding curve fields needed for a progress report.
+
+    Works on the account at either length pump.fun writes it at — 125 bytes as
+    created, or 151 once extended — since every field read here sits in the
+    first 115 bytes, before the length difference begins.
 
     Args:
         data: Raw bonding curve account data
@@ -370,39 +390,48 @@ class GraduationReporter:
 
 
 async def stream_once(
-    reporter: GraduationReporter, filters: list[dict[str, Any]]
+    reporter: GraduationReporter, filter_sets: list[list[dict[str, Any]]]
 ) -> None:
     """Subscribe and consume notifications until the connection drops.
 
+    `programSubscribe` takes one filter set per subscription, and a curve can
+    be either 125 or 151 bytes, so this opens one subscription per entry in
+    `filter_sets` on the same connection and merges the two notification
+    streams. Only the subscription ids handed back by our own acks are
+    treated as ours, so a notification from an unrelated subscription on this
+    connection (there should not be one) is ignored rather than mishandled.
+
     Args:
         reporter: Sink for decoded curve updates
-        filters: Server-side filters for the subscription
+        filter_sets: One server-side filter list per curve length to watch
 
     Raises:
-        ConnectionRefusedError: If the endpoint rejects the subscription outright
+        ConnectionRefusedError: If the endpoint rejects a subscription outright
     """
     async with websockets.connect(WSS_ENDPOINT, max_size=None) as ws:
-        await ws.send(
-            json.dumps(
-                {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "programSubscribe",
-                    "params": [
-                        str(PUMP_PROGRAM_ID),
-                        {
-                            "encoding": "base64",
-                            "commitment": "processed",
-                            "filters": filters,
-                        },
-                    ],
-                }
+        subscription_ids: set[int] = set()
+        for request_id, filters in enumerate(filter_sets, start=1):
+            await ws.send(
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "method": "programSubscribe",
+                        "params": [
+                            str(PUMP_PROGRAM_ID),
+                            {
+                                "encoding": "base64",
+                                "commitment": "processed",
+                                "filters": filters,
+                            },
+                        ],
+                    }
+                )
             )
-        )
-
-        ack = json.loads(await ws.recv())
-        if "error" in ack:
-            raise ConnectionRefusedError(str(ack["error"]))
+            ack = json.loads(await ws.recv())
+            if "error" in ack:
+                raise ConnectionRefusedError(str(ack["error"]))
+            subscription_ids.add(ack["result"])
 
         while True:
             # ConnectionClosed deliberately propagates to the reconnect handler in
@@ -415,6 +444,8 @@ async def stream_once(
                 continue
 
             if message.get("method") != "programNotification":
+                continue
+            if message["params"]["subscription"] not in subscription_ids:
                 continue
 
             value = message["params"]["result"]["value"]
@@ -438,12 +469,15 @@ async def watch(min_progress: float) -> None:
         baseline = await fetch_initial_real_token_reserves(client)
         print_banner(baseline, min_progress)
 
-        filters = build_filters(progress_to_bound(baseline, min_progress))
+        bound_raw = progress_to_bound(baseline, min_progress)
+        filter_sets = [
+            build_filters(bound_raw, curve_len) for curve_len in CURVE_ACCOUNT_LENS
+        ]
         reporter = GraduationReporter(client, baseline, min_progress)
 
         while True:
             try:
-                await stream_once(reporter, filters)
+                await stream_once(reporter, filter_sets)
             except ConnectionRefusedError as e:
                 print(f"❌ Subscription rejected: {e}")
                 return
