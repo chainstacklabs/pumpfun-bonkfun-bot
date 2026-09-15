@@ -49,10 +49,11 @@ EXTREME_FAST_TOKEN_AMOUNT = 20
 CURVE_STABILIZE_SECONDS = 15
 # Without a trade.quote_amounts entry, PlatformAwareBuyer only trades
 # SOL-paired coins and skips anything else with "No configured buy amount"
-# — including the non-SOL-paired coins this task is about. USDC is the one
-# non-SOL quote mint with a fixed, well-known amount scale; a coin paired
-# with any other quote mint (Token-2022 included) still needs its own entry
-# here, keyed by the exact mint, to be tradeable in this script.
+# — including non-SOL-paired coins, which this script also needs to be able
+# to trade. USDC is the one non-SOL quote mint with a fixed, well-known
+# amount scale; a coin paired with any other quote mint (Token-2022
+# included) still needs its own entry here, keyed by the exact mint, to be
+# tradeable in this script.
 QUOTE_AMOUNTS = {USDC_MINT: 0.01}
 
 

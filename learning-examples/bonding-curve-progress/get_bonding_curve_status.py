@@ -108,11 +108,12 @@ class BondingCurveState:
         "is_cashback_coin" / Flag,
     )
 
-    # V5: V4 + quote_mint. Live accounts are 125 bytes as created, or 151 once
-    # extend_account has run on them; this struct covers the fields needed here at
-    # the same offsets either way, and anything past it is left unread. The
-    # quote-side reserves are in the quote mint's raw units, so a non-SOL coin must
-    # not be scaled by 1e9.
+    # V5: V4 + quote_mint. Live accounts are 125 bytes as created; extend_account
+    # can grow one to 151, 256, or any other length the program allows — this
+    # struct covers the fields needed here at the same offsets regardless of
+    # total length, and anything past it is left unread. The quote-side
+    # reserves are in the quote mint's raw units, so a non-SOL coin must not be
+    # scaled by 1e9.
     _STRUCT_V5 = Struct(
         "virtual_token_reserves" / Int64ul,
         "virtual_sol_reserves" / Int64ul,

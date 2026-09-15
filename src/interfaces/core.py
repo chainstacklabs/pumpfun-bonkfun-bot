@@ -60,7 +60,8 @@ class TokenInfo:
     # buy_v2/sell_v2 account lists are unchanged — so this is informational and
     # available for filtering. creator_fee_bps is non-zero only on custom-pair
     # coins; SOL- and USDC-paired coins use the standard fee schedule (bps 0).
-    # Verified live on 2026-09-15: 25 SOL-paired CreateEvents (bps 0 on all)
+    # Verified live on 2026-09-15: 21 SOL-paired CreateEvents (bps 0 on all;
+    # the 90-second capture window saw 25 coins total, 4 of them custom-pair)
     # and 10 USDC-paired bonding curves — located via Dune's indexed
     # pumpdotfun_solana.pump_evt_createevent table, then read directly by
     # deriving each curve PDA and calling PumpFunCurveManager.get_pool_state —

@@ -384,12 +384,18 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   etc.) stays live and must not be treated as dead.
 - **The trailing args are positional, not independently optional.** Reaching
   `is_holder_reward` (arg 8) means sending `is_cashback_enabled` (6) and
-  `creator_fee_bps` (7) first, even when both are false/zero. Two wire forms
-  occur live: some `create_v2` instructions omit the trailing args entirely,
-  others send all three. A decoder that reads a fixed number of trailing
-  bytes raises `IndexError` on the shorter form. Decode trailing args
-  defensively and report a missing one as unset — `utils/idl_parser.py` does
-  this for trailing option-typed args since #184
+  `creator_fee_bps` (7) first, even when both are false/zero. The three
+  committed fixtures show three different wire lengths: the blocksubscribe
+  fixture omits all trailing args (0 bytes after `is_mayhem_mode`), the
+  "omitted fee bps" getTransaction fixture sends `is_cashback_enabled` only
+  (1 byte), and the "with fee bps" getTransaction fixture sends
+  `is_cashback_enabled` + `creator_fee_bps` (9 bytes) — counted directly from
+  each fixture's instruction data, 2026-09-15. `is_holder_reward` (the
+  three-trailing-arg form) is legal per the IDL but has not been observed on
+  the wire — UNVERIFIED whether it is ever sent. A decoder that reads a
+  fixed number of trailing bytes raises `IndexError` on the shorter forms.
+  Decode trailing args defensively and report a missing one as unset —
+  `utils/idl_parser.py` does this for trailing option-typed args since #184
   (`uv run learning-examples/verify_create_v2_optional_args.py` checks it).
 - `create_v2` accounts 1-16 are in the IDL; accounts **17-19 are optional
   remaining accounts** (`quote_mint`, `associated_quote_bonding_curve`,
@@ -428,7 +434,7 @@ can switch creation off globally.
 `TokenInfo.is_holder_reward` and `TokenInfo.creator_fee_bps` surface this to
 the bot — see the field comments on `TokenInfo` in `src/interfaces/core.py`
 (dated 2026-09-15) for what's been verified live: SOL- and USDC-paired coins
-keep `creator_fee_bps` at 0 (checked on 25 SOL-paired and 10 USDC-paired
+keep `creator_fee_bps` at 0 (checked on 21 SOL-paired and 10 USDC-paired
 coins), while every custom-pair coin checked in the same pass carried a
 nonzero value.
 

@@ -90,18 +90,21 @@ bytes; the unfiltered subscription took in 1,066 updates / 593,509 bytes —
 enumerated length can match. That is a **1.006x update ratio / 1.007x byte
 ratio** — under 1% either way, not the double subscription's worth intuition
 might suggest, because in this trade window virtually every update already
-lands on 125 or 151 — `dataSize` was filtering
-almost nothing, since between them the two enumerated lengths already cover
-the overwhelming majority of traffic. Dropping the filter is effectively free
-here; if a resize-happy period ever shifts that mix, the cost scales with
-however much traffic sits outside 125/151, not with total volume.
+lands on one of the two dataSize-filtered lengths (125 or 151), and 256 is
+rare. Dropping the filter is effectively free here; if a resize-happy period
+ever shifts that mix, the cost scales with however much traffic sits outside
+the two filtered lengths (125/151, i.e. the rarer 256-byte curves and
+beyond), not with total volume.
 
 UNVERIFIED: a curve was once observed going from 125 to 151 bytes, with
 several 125-byte trades logged in between, suggesting `extend_account` ran as
 its own later transaction rather than bundled into `create_v2` — not
-re-measured here. Also UNVERIFIED: whether `extend_account` can land in the
-same transaction as `create_v2` for some coins, and how common a
-further-resized curve is.
+re-measured here. `extend_account` **can** land in the same transaction as
+`create_v2` — `learning-examples/mint_and_buy_v2.py` does exactly that,
+appending `create_extend_account_instruction` right after
+`create_pump_create_v2_instruction` in the same instruction list — so both
+orderings occur; how common a further-resized (256-byte) curve is remains
+unmeasured.
 """
 
 import argparse

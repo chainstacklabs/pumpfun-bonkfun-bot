@@ -52,8 +52,11 @@ def _fabricated_curve_bytes(
 
     `create_v2` allocates exactly 125 bytes; pass curve_len=151 to get the
     shape an account has once extend_account has run on it (padded with
-    reserved zero bytes past the struct). Both decode identically, since
-    everything read here sits at the same offsets in both.
+    reserved zero bytes past the struct). `extend_account` can in fact grow a
+    curve to 151, 256, or any other length the program allows — this helper
+    only exercises 125 and 151 because those are the two shapes the checks
+    below need — but every length decodes identically, since everything read
+    here sits at the same offsets regardless of total size.
     """
     idl = json.loads((PROJECT_ROOT / "idl" / "pump_fun_idl.json").read_text())
     disc = next(

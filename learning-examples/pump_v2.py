@@ -311,11 +311,13 @@ def pick_buyback_fee_recipient() -> Pubkey:
 class BondingCurveState:
     """Parsed pump.fun BondingCurve account.
 
-    The account is 125 bytes as created; the separate extend_account
-    instruction grows it to 151. The struct below covers the leading fields,
-    which are at the same offsets in both. The SOL-named reserve fields were
-    renamed to quote fields when non-SOL quote assets landed; the old names
-    are kept as aliases.
+    The account is 125 bytes as created; an extend_account instruction (not
+    always in a separate transaction from create_v2 — see
+    learning-examples/mint_and_buy_v2.py) can grow it to 151, 256, or any
+    other length the program allows. The struct below covers the leading
+    fields, which are at the same offsets regardless of total length. The
+    SOL-named reserve fields were renamed to quote fields when non-SOL quote
+    assets landed; the old names are kept as aliases.
     """
 
     _STRUCT = Struct(

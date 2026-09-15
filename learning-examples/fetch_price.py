@@ -37,8 +37,9 @@ QUOTE_SYMBOLS: Final[dict[Pubkey, str]] = {WSOL_MINT: "SOL", USDC_MINT: "USDC"}
 EXPECTED_DISCRIMINATOR: Final[bytes] = struct.pack("<Q", 6966180631402821399)
 
 # Data lengths, excluding the 8-byte discriminator: V2 stops after `creator`, V4
-# runs through `quote_mint`. Live accounts are 125 bytes as created, or 151 once
-# extend_account has run on them; either way the tail past V4 is unread here.
+# runs through `quote_mint`. Live accounts are 125 bytes as created; extend_account
+# can grow one to 151, 256, or any other length the program allows — the tail
+# past V4 is unread here regardless of total length.
 _V2_LENGTH: Final[int] = 73
 _V4_LENGTH: Final[int] = 107
 
@@ -81,8 +82,9 @@ class BondingCurveState:
     )
 
     # Current layout, covering the account as created (125 bytes) and, at the same
-    # offsets, as it reads once extend_account has grown it to 151. Trailing fields
-    # appended past this struct are not needed for a price read and are left unread.
+    # offsets, as it reads once extend_account has grown it to 151, 256, or any
+    # other length. Trailing fields appended past this struct are not needed for
+    # a price read and are left unread.
     _STRUCT_V4 = Struct(
         "virtual_token_reserves" / Int64ul,
         "virtual_quote_reserves" / Int64ul,
