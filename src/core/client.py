@@ -22,11 +22,18 @@ from solders.transaction import Transaction
 
 from core.pubkeys import is_sol_paired
 from core.rpc_rate_limiter import TokenBucketRateLimiter
+from interfaces.core import Platform
+from utils.idl_manager import get_idl_parser
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 HTTP_TOO_MANY_REQUESTS = 429
+
+# Length of the `[instruction_index, error_detail]` pair inside
+# `{"InstructionError": [...]}` -- fixed by the RPC's `meta.err` shape, not a
+# tunable.
+INSTRUCTION_ERROR_PAIR_LEN = 2
 
 
 def set_loaded_accounts_data_size_limit(bytes_limit: int) -> Instruction:
@@ -56,6 +63,50 @@ def set_loaded_accounts_data_size_limit(bytes_limit: int) -> Instruction:
 
     data = struct.pack("<BI", 4, bytes_limit)
     return Instruction(COMPUTE_BUDGET_PROGRAM, data, [])
+
+
+def _describe_program_error(err: object) -> str | None:
+    """Best-effort human name for an Anchor `Custom(N)` error in `meta.err`.
+
+    Digs `{"InstructionError": [idx, {"Custom": n}]}` out of `meta.err` and
+    looks the code up in pump.fun's IDL error table. `SolanaClient` is shared
+    across pump.fun and letsbonk.fun and carries no record of which program a
+    given transaction actually invoked, so this only ever checks pump.fun's
+    table (`idl/pump_fun_idl.json`) -- the program the bot's own `buy_v2` /
+    `sell_v2` call directly, and the source of issue #175's
+    `BuybackFeeRecipientMissing`. A revert on a different program (letsbonk's
+    Raydium LaunchLab program, or one raised inside a pump-amm or pump-fees
+    CPI) is described against the wrong table if its numeric code happens to
+    also be defined there, and left unnamed otherwise -- picking the right
+    table per invoked program id is not attempted here.
+
+    Any shape this does not recognize (a non-Anchor failure such as compute
+    budget exhaustion, `MaxLoadedAccountsDataSizeExceeded`, or a top-level
+    string error) is reported as `None`, never raised.
+
+    Args:
+        err: The raw `meta.err` value from a `getTransaction` response.
+
+    Returns:
+        A description like "6062 BuybackFeeRecipientMissing: ..." for a
+        code pump.fun's IDL defines, or None if the shape doesn't match or
+        the code is not in that table.
+    """
+    if not isinstance(err, dict):
+        return None
+    instruction_error = err.get("InstructionError")
+    if (
+        not isinstance(instruction_error, list)
+        or len(instruction_error) != INSTRUCTION_ERROR_PAIR_LEN
+    ):
+        return None
+    detail = instruction_error[1]
+    if not isinstance(detail, dict):
+        return None
+    code = detail.get("Custom")
+    if not isinstance(code, int):
+        return None
+    return get_idl_parser(Platform.PUMP_FUN).describe_error_code(code)
 
 
 class SolanaClient:
@@ -385,8 +436,10 @@ class SolanaClient:
 
         tx_err = result.get("meta", {}).get("err")
         if tx_err:
+            detail = _describe_program_error(tx_err)
             logger.error(
                 f"Transaction {signature[:16]}... confirmed but failed: {tx_err}"
+                + (f" ({detail})" if detail else "")
             )
             return False
 
@@ -462,7 +515,11 @@ class SolanaClient:
         # Check for transaction execution errors (e.g., MaxLoadedAccountsDataSizeExceeded)
         tx_err = meta.get("err")
         if tx_err:
-            logger.error(f"Transaction {signature[:16]}... failed with error: {tx_err}")
+            detail = _describe_program_error(tx_err)
+            logger.error(
+                f"Transaction {signature[:16]}... failed with error: {tx_err}"
+                + (f" ({detail})" if detail else "")
+            )
             return None, None
 
         # Get tokens received from pre/post token balance diff
@@ -550,9 +607,7 @@ class SolanaClient:
 
         return best
 
-    async def _get_transaction_result(
-        self, signature: str | Signature
-    ) -> dict | None:
+    async def _get_transaction_result(self, signature: str | Signature) -> dict | None:
         """Fetch transaction result from RPC.
 
         Args:

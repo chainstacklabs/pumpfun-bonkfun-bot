@@ -353,6 +353,25 @@ class IDLParser:
             return None
 
     # --------------------------------------------------------------------------
+    # Public Methods (External API) - Errors
+    # --------------------------------------------------------------------------
+
+    def describe_error_code(self, code: int) -> str | None:
+        """Render an Anchor custom error code as "<code> <Name>: <msg>".
+
+        Args:
+            code: The Custom(N) value from meta.err.
+
+        Returns:
+            A human-readable description, or None if this IDL's error table
+            has no such code.
+        """
+        for err in self.idl.get("errors", []):
+            if err.get("code") == code:
+                return f"{code} {err['name']}: {err.get('msg', '')}".rstrip(": ")
+        return None
+
+    # --------------------------------------------------------------------------
     # Internal Helper Methods
     # --------------------------------------------------------------------------
 
