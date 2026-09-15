@@ -1,10 +1,13 @@
-"""Offline + mainnet: the bonding curve is 125 bytes, or 151 once extended.
+"""Offline + mainnet: the bonding curve is 125 bytes as created, and grows.
 
 The 2026-09-15 program upgrade appended creator_fee_bps (u64),
 can_edit_creator_fee (bool) and is_holder_reward (bool) to BondingCurve and
 dropped the 36 reserved padding bytes. create_v2 now allocates exactly 125
-bytes; an account only reaches 151 after extend_account runs. Anything that
-filters curves by dataSize must accept both, or it sees no new coins at all.
+bytes; extend_account can grow an account past that to any length the
+program allows — 151 and 256 are both confirmed live. A dataSize allowlist
+is whack-a-mole against that: the next length silently drops curves again.
+Anything that watches for curves must not filter on dataSize at all, and must
+decode correctly regardless of which length turns up.
 
 Moves no funds.
 """
@@ -21,15 +24,18 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 CURVE_LEN_CREATED = 125
 CURVE_LEN_EXTENDED = 151
+CURVE_LEN_RESIZED = 256  # confirmed live 2026-09-15, see the two graduating-
+# token scripts' module docstrings for the getAccountInfo + decode evidence
 _VIRTUAL_TOKEN_RESERVES = 1_073_000_000_000_000
 
 
 def _synthetic_curve(length: int) -> bytes:
     """Build a valid BondingCurve account image at the given total length.
 
-    `length` must be 125 (as `create_v2` allocates it) or 151 (after
-    `extend_account` has run on it) — every other length is not a shape the
-    program ever writes.
+    `length` must be at least `CURVE_LEN_CREATED` — the smallest shape the
+    program ever writes. Anything at or above that is a legal `extend_account`
+    target: this appends zero-byte padding to reach it, matching what live
+    125/151/256-byte curves actually look like past their documented fields.
 
     Args:
         length: Total account length in bytes, including the discriminator
@@ -38,9 +44,9 @@ def _synthetic_curve(length: int) -> bytes:
         Account bytes matching the IDL's field order and discriminator
 
     Raises:
-        ValueError: If length is not 125 or 151
+        ValueError: If length is shorter than CURVE_LEN_CREATED
     """
-    if length not in (CURVE_LEN_CREATED, CURVE_LEN_EXTENDED):
+    if length < CURVE_LEN_CREATED:
         raise ValueError(f"unexpected curve length: {length}")  # noqa: TRY003
 
     idl = json.loads((PROJECT_ROOT / "idl" / "pump_fun_idl.json").read_text())
@@ -72,19 +78,17 @@ def _synthetic_curve(length: int) -> bytes:
     return account + bytes(length - len(account))
 
 
-def check_both_lengths_decode() -> bool:
-    """A synthetic 125-byte and 151-byte curve both decode identically."""
+def check_all_lengths_decode() -> bool:
+    """A synthetic 125-, 151- and 256-byte curve all decode identically."""
     from platforms.pumpfun.curve_manager import PumpFunCurveManager  # noqa: PLC0415
     from utils.idl_parser import IDLParser  # noqa: PLC0415
 
     parser = IDLParser("idl/pump_fun_idl.json")
     manager = PumpFunCurveManager(client=None, idl_parser=parser)
 
-    base = _synthetic_curve(CURVE_LEN_CREATED)
-    extended = base + b"\x00" * (CURVE_LEN_EXTENDED - CURVE_LEN_CREATED)
-
     ok = True
-    for length, data in ((CURVE_LEN_CREATED, base), (CURVE_LEN_EXTENDED, extended)):
+    for length in (CURVE_LEN_CREATED, CURVE_LEN_EXTENDED, CURVE_LEN_RESIZED):
+        data = _synthetic_curve(length)
         try:
             state = manager._decode_curve_state_with_idl(data)  # noqa: SLF001
         except Exception as exc:  # noqa: BLE001 - verifier reports, doesn't raise
@@ -99,22 +103,33 @@ def check_both_lengths_decode() -> bool:
     return ok
 
 
-def check_filters_accept_both() -> bool:
-    """Neither graduating-token example may filter on a single dataSize."""
+def check_no_datasize_filter() -> bool:
+    """Neither graduating-token example may pre-filter by dataSize/datasize.
+
+    `extend_account` can grow a curve to any length the program allows, so
+    enumerating lengths is whack-a-mole — the fix is to not filter on length
+    at all, not to enumerate one more. Checked by looking for the actual
+    filter-construction syntax (a quoted `"dataSize":` dict key in the
+    WebSocket script, a `.datasize =` protobuf field assignment in the
+    Geyser one) rather than a bare substring match, since both scripts'
+    docstrings legitimately discuss `dataSize`/`datasize` in prose.
+    """
     ok = True
-    for rel in (
-        "learning-examples/bonding-curve-progress/get_graduating_tokens.py",
-        "learning-examples/bonding-curve-progress/get_graduating_tokens_geyser.py",
-    ):
+    needles = {
+        "learning-examples/bonding-curve-progress/get_graduating_tokens.py": (
+            '"dataSize":'
+        ),
+        "learning-examples/bonding-curve-progress/get_graduating_tokens_geyser.py": (
+            ".datasize ="
+        ),
+    }
+    for rel, needle in needles.items():
         text = Path(rel).read_text()
-        if "CURVE_ACCOUNT_LEN:" in text or "CURVE_ACCOUNT_LEN " in text:
-            print(f"  FAIL {rel} still filters on one dataSize")
-            ok = False
-        elif "CURVE_ACCOUNT_LENS" not in text:
-            print(f"  FAIL {rel} has no CURVE_ACCOUNT_LENS")
+        if needle in text:
+            print(f"  FAIL {rel} still constructs a dataSize filter")
             ok = False
         else:
-            print(f"  OK  {rel} accepts both lengths")
+            print(f"  OK  {rel} has no dataSize filter")
     return ok
 
 
@@ -125,8 +140,11 @@ def main() -> int:
         0 if every check passed, 1 otherwise
     """
     checks = [
-        ("both curve lengths decode via the IDL parser", check_both_lengths_decode),
-        ("graduating-token filters accept both lengths", check_filters_accept_both),
+        (
+            "125/151/256-byte curves all decode via the IDL parser",
+            check_all_lengths_decode,
+        ),
+        ("graduating-token scripts don't filter on dataSize", check_no_datasize_filter),
     ]
     failed = 0
     for label, check in checks:
