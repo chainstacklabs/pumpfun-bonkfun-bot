@@ -69,15 +69,13 @@ elsewhere) returned 256 bytes, discriminator matching, owned by the pump
 program, and it decoded cleanly through this repo's own IDL-driven decoder
 (`PumpFunCurveManager._decode_curve_state_with_idl`) with sane reserves —
 everything past the documented fields is zero padding. Second, over the
-wire: two live `programSubscribe` windows with this script's own filters
-(discriminator + `complete = false`, no `dataSize`) each turned up that same
-256 length among ordinary traffic — 2 updates in a 90s window (1,092 total,
-alongside 224 at 125 bytes and 866 at 151) and 6 updates in a separate 120s
-window (1,066 total, alongside 207 at 125 bytes and 853 at 151). No update in
-either window was the legacy 49-byte layout (no `creator` field). UNVERIFIED
-(carried from an earlier session, not rechecked this session): that layout
-still has some `complete = false` accounts on chain, but nothing currently
-writes to them.
+wire: a 120s `programSubscribe` window with this script's own filters
+(discriminator + `complete = false`, no `dataSize`) took in 1,066 updates —
+207 at 125 bytes, 853 at 151, and 6 at that same 256 length, among ordinary
+traffic. None of the 1,066 were the legacy 49-byte layout (no `creator`
+field). UNVERIFIED: whether that layout still has any `complete = false`
+accounts left on chain, and whether anything still writes to them — not
+re-measured here.
 
 **Bandwidth trade-off, measured 2026-09-15.** A first attempt ran the
 `dataSize`-filtered shape and the unfiltered shape back to back, 90s each,
@@ -89,20 +87,21 @@ connection**, so all three watch the identical trade stream over the same
 120s: the two enumerated lengths together took in 1,060 updates / 589,279
 bytes; the unfiltered subscription took in 1,066 updates / 593,509 bytes —
 6 extra updates, 4,230 extra bytes, all of it the 256-byte curve neither
-enumerated length can match. That is a **0.7% overhead**, not the double
-subscription's worth intuition might suggest, because in this trade window
-virtually every update already lands on 125 or 151 — `dataSize` was filtering
+enumerated length can match. That is a **1.006x update ratio / 1.007x byte
+ratio** — under 1% either way, not the double subscription's worth intuition
+might suggest, because in this trade window virtually every update already
+lands on 125 or 151 — `dataSize` was filtering
 almost nothing, since between them the two enumerated lengths already cover
 the overwhelming majority of traffic. Dropping the filter is effectively free
 here; if a resize-happy period ever shifts that mix, the cost scales with
 however much traffic sits outside 125/151, not with total volume.
 
-UNVERIFIED (carried from an earlier session, not rechecked this session): one
-curve was watched going from 125 to 151 bytes, with several 125-byte trades
-logged in between, showing `extend_account` ran as its own later transaction
-rather than bundled into `create_v2`. Also UNVERIFIED: whether `extend_account`
-can land in the same transaction as `create_v2` for some coins, and how
-common a further-resized curve is.
+UNVERIFIED: a curve was once observed going from 125 to 151 bytes, with
+several 125-byte trades logged in between, suggesting `extend_account` ran as
+its own later transaction rather than bundled into `create_v2` — not
+re-measured here. Also UNVERIFIED: whether `extend_account` can land in the
+same transaction as `create_v2` for some coins, and how common a
+further-resized curve is.
 """
 
 import argparse
