@@ -47,7 +47,12 @@ class TokenInfo:
     creator_vault: Pubkey | None = None
     token_program_id: Pubkey | None = None  # Token or Token2022 program
     is_mayhem_mode: bool = False  # pump.fun mayhem mode flag
-    is_cashback_coin: bool = False  # pump.fun cashback coin flag
+
+    # pump.fun cashback coin flag. Cashback was deprecated 2026-09-15 —
+    # create_v2 rejects new cashback coins with 6082 CashbackDeprecated — but
+    # existing cashback coins keep trading and accruing cashback exactly as
+    # before, so every cashback code path that reads this flag stays live.
+    is_cashback_coin: bool = False
 
     # Holder rewards coins (2026-09-15 upgrade): the creator fee is set aside
     # for holders instead of a creator wallet, and BondingCurve.creator holds a

@@ -537,7 +537,11 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             ),
         ]
 
-        # Remaining accounts (after fee_program) for cashback + bonding_curve_v2
+        # Remaining accounts (after fee_program) for cashback + bonding_curve_v2.
+        # Cashback was deprecated 2026-09-15 (create_v2 now rejects new
+        # cashback coins with 6082 CashbackDeprecated), but existing cashback
+        # coins still trade and still accrue cashback, so this branch stays
+        # live for them — do not remove it.
         if token_info.is_cashback_coin:
             # Cashback sell: user_volume_accumulator (mutable) + bonding_curve_v2 (readonly)
             sell_accounts.append(

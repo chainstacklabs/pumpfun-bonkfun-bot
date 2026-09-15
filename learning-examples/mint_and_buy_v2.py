@@ -30,6 +30,11 @@ MAX_SLIPPAGE = 0.3  # 30% slippage
 PRIORITY_FEE_MICROLAMPORTS = 37_037  # Priority fee in microlamports
 COMPUTE_UNIT_LIMIT = 350_000  # Compute unit limit for the transaction
 ENABLE_MAYHEM_MODE = True  # Set to True to enable mayhem mode
+# Set to True to create a holder-reward coin: the creator fee is set aside for
+# holders instead of paid to a creator wallet. Cashback was deprecated
+# 2026-09-15 — create_v2 now rejects is_cashback_enabled=[true] with error
+# 6082 (CashbackDeprecated) — so this is the only trailing-args path left.
+ENABLE_HOLDER_REWARD = False
 
 load_dotenv()
 
@@ -149,10 +154,20 @@ def create_pump_create_v2_instruction(
     symbol: str,
     uri: str,
     is_mayhem_mode: bool = False,
+    is_holder_reward: bool = False,
 ) -> Instruction:
     """Create the pump.fun create_v2 instruction for Token2022.
 
     Account order matches pump_fun_idl.json create_v2 instruction.
+
+    Args:
+        is_holder_reward: Sets the trailing is_holder_reward arg so the
+            creator fee is set aside for holders instead of a creator wallet.
+            Reaching it on the wire requires also sending is_cashback_enabled
+            and creator_fee_bps (see the data-building comment below) — the
+            three trailing args are positional, not independently addressable.
+            Cashback itself was deprecated 2026-09-15 (create_v2 error 6082),
+            so is_cashback_enabled is always sent False here.
     """
     accounts = [
         AccountMeta(pubkey=mint, is_signer=True, is_writable=True),
@@ -213,8 +228,33 @@ def create_pump_create_v2_instruction(
         + encode_string(symbol)
         + encode_string(uri)
         + encode_pubkey(creator)
-        + struct.pack("<?", is_mayhem_mode)  # OptionBool for is_mayhem_mode
+        + struct.pack("<?", is_mayhem_mode)  # is_mayhem_mode (plain bool)
     )
+
+    if is_holder_reward:
+        # Trailing args are positional and independently omittable — the
+        # program does not require any of them, but sending is_holder_reward
+        # means sending is_cashback_enabled and creator_fee_bps first.
+        # idl/pump_fun_idl.json's `types` entries for both OptionBool and
+        # OptionU64 are single-field structs with no presence tag, so each
+        # serializes as its bare inner value: OptionBool as one byte, OptionU64
+        # as a little-endian u64 — never a bool-then-value pair. Confirmed by
+        # decoding live post-upgrade create_v2 instructions through this
+        # repo's IDLParser (2026-09-15): is_cashback_enabled decoded as
+        # {'field_0': False}, creator_fee_bps as {'field_0': 0}, matching this
+        # packing byte-for-byte.
+        # is_cashback_enabled (OptionBool, bare bool): always False here.
+        # Cashback is deprecated as of the 2026-09-15 upgrade; create_v2
+        # rejects [true] with 6082 CashbackDeprecated.
+        is_cashback_enabled = False
+        # creator_fee_bps (OptionU64, bare u64): unused for holder-reward
+        # coins created here, so 0.
+        creator_fee_bps = 0
+        data += (
+            struct.pack("<?", is_cashback_enabled)
+            + struct.pack("<Q", creator_fee_bps)
+            + struct.pack("<?", is_holder_reward)
+        )
 
     return Instruction(PUMP_PROGRAM, data, accounts)
 
@@ -339,6 +379,7 @@ async def main():
     print(f"  Mint: {mint_keypair.pubkey()}")
     print(f"  Creator: {payer.pubkey()}")
     print(f"  Mayhem mode: {'Enabled' if ENABLE_MAYHEM_MODE else 'Disabled'}")
+    print(f"  Holder reward: {'Enabled' if ENABLE_HOLDER_REWARD else 'Disabled'}")
 
     # Derive PDAs
     bonding_curve, _ = find_bonding_curve_address(mint_keypair.pubkey())
@@ -403,6 +444,7 @@ async def main():
                 symbol=TOKEN_SYMBOL,
                 uri=TOKEN_URI,
                 is_mayhem_mode=ENABLE_MAYHEM_MODE,
+                is_holder_reward=ENABLE_HOLDER_REWARD,
             ),
             # Extend bonding curve account (required for frontend visibility)
             create_extend_account_instruction(

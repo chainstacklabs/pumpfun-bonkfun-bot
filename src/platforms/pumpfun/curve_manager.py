@@ -251,6 +251,11 @@ class PumpFunCurveManager(CurveManager):
             "complete": decoded_curve_state.get("complete", False),
             "creator": decoded_curve_state.get("creator", ""),
             "is_mayhem_mode": decoded_curve_state.get("is_mayhem_mode", False),
+            # is_cashback_coin: decoded for every coin regardless of when it
+            # was created. Cashback creation was deprecated 2026-09-15
+            # (create_v2 error 6082 CashbackDeprecated), but this flag keeps
+            # driving the legacy sell path's cashback account branch for
+            # coins that already have it set.
             "is_cashback_coin": decoded_curve_state.get("is_cashback_coin", False),
             "is_holder_reward": decoded_curve_state.get("is_holder_reward", False),
             "creator_fee_bps": decoded_curve_state.get("creator_fee_bps", 0),
