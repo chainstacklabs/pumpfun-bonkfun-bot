@@ -218,16 +218,12 @@ def check_omitted_option_u64_decodes() -> bool:
     either or both. Dropping those coins is issue #184 all over again.
     """
     parser = _parser()
-    data, _, _ = _fixture_create_v2_omitted_fee_bps()
-    disc = data[:8]
-    # Exercise the trailing-optional guard directly, below decode_instruction's
-    # account-building — no accounts/keys needed for this fixture.
-    args = parser._decode_instruction_args(  # noqa: SLF001
-        parser.instructions[disc], data[8:]
-    )
-    if args is None:
+    data, accounts, keys = _fixture_create_v2_omitted_fee_bps()
+    decoded = parser.decode_instruction(data, keys, accounts)
+    if decoded is None:
         print("  FAIL create_v2 with omitted creator_fee_bps decoded as None")
         return False
+    args = decoded["args"]
     for name in ("creator_fee_bps", "is_holder_reward"):
         if name not in args:
             print(f"  FAIL {name} missing from decoded args")
@@ -239,17 +235,12 @@ def check_omitted_option_u64_decodes() -> bool:
 def check_option_u64_present_decodes() -> bool:
     """A create_v2 that does send creator_fee_bps reads the value back."""
     parser = _parser()
-    data, _, _ = _fixture_create_v2_with_fee_bps()
-    disc = data[:8]
-    # Exercise the trailing-optional guard directly, below decode_instruction's
-    # account-building — no accounts/keys needed for this fixture.
-    args = parser._decode_instruction_args(  # noqa: SLF001
-        parser.instructions[disc], data[8:]
-    )
-    if args is None or args.get("creator_fee_bps") is None:
+    data, accounts, keys = _fixture_create_v2_with_fee_bps()
+    decoded = parser.decode_instruction(data, keys, accounts)
+    if decoded is None or decoded["args"].get("creator_fee_bps") is None:
         print("  FAIL present creator_fee_bps did not decode")
         return False
-    print(f"  OK  creator_fee_bps decoded: {args['creator_fee_bps']}")
+    print(f"  OK  creator_fee_bps decoded: {decoded['args']['creator_fee_bps']}")
     return True
 
 
