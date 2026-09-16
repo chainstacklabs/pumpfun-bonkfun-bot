@@ -163,7 +163,7 @@ you leave it off. The `decode_from_*.py` scripts fall back to the saved fixtures
 them (`raw_*.json`), which are recaptured from mainnet rather than hand-edited — a
 stale fixture makes a working decoder look broken and a broken one look fine.
 
-Three examples double as verification scripts to run after any pump.fun program upgrade:
+Four examples double as verification scripts to run after any pump.fun program upgrade:
 
 ```bash
 uv run learning-examples/verify_v2_account_layout.py     # offline: account layouts, PDAs, encoding

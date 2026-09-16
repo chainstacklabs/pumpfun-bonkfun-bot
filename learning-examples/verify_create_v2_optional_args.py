@@ -225,10 +225,13 @@ def check_omitted_option_u64_decodes() -> bool:
         return False
     args = decoded["args"]
     for name in ("creator_fee_bps", "is_holder_reward"):
-        if name not in args:
-            print(f"  FAIL {name} missing from decoded args")
+        value = args.get(name)
+        if value is not None:
+            print(f"  FAIL {name} omitted but decoded as {value}, expected None")
             return False
-    print("  OK  omitted OptionU64 reported as unset")
+    print(
+        "  OK  omitted optionals are None: creator_fee_bps=None, is_holder_reward=None"
+    )
     return True
 
 
@@ -237,10 +240,24 @@ def check_option_u64_present_decodes() -> bool:
     parser = _parser()
     data, accounts, keys = _fixture_create_v2_with_fee_bps()
     decoded = parser.decode_instruction(data, keys, accounts)
-    if decoded is None or decoded["args"].get("creator_fee_bps") is None:
+    if decoded is None:
         print("  FAIL present creator_fee_bps did not decode")
         return False
-    print(f"  OK  creator_fee_bps decoded: {decoded['args']['creator_fee_bps']}")
+    args = decoded["args"]
+    creator_fee_bps = args.get("creator_fee_bps")
+    is_holder_reward = args.get("is_holder_reward")
+    # OptionU64 is wrapped as {"field_0": <value>}
+    if not isinstance(creator_fee_bps, dict) or "field_0" not in creator_fee_bps:
+        print(f"  FAIL creator_fee_bps has unexpected shape: {creator_fee_bps}")
+        return False
+    expected_value = creator_fee_bps["field_0"]
+    if is_holder_reward is not None:
+        print(f"  FAIL is_holder_reward should be None, got {is_holder_reward}")
+        return False
+    print(
+        f"  OK  creator_fee_bps={expected_value} (wrapped as {creator_fee_bps}), "
+        f"is_holder_reward=None"
+    )
     return True
 
 
