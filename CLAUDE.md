@@ -309,6 +309,18 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   parsing and address resolution. The bot warms this cache once at startup
   for every configured quote mint, so `extreme_fast_mode`'s zero-RPC contract
   between detection and submission still holds.
+- **The quote mint's decimals are resolved from chain too, in the same read.**
+  Amounts like `max_sol_cost` and `min_sol_output` are in the quote mint's raw
+  units, so assuming 9 decimals for a 6-decimal mint overstates the cap by
+  1000x and effectively disables slippage protection. `getAccountInfo` returns
+  the owner and the mint data together, so decimals cost no extra call; they
+  are cached alongside the token program and pre-seeded for WSOL (9) and
+  USDC (6). A quote mint whose decimals cannot be resolved fails at startup
+  rather than silently mis-scaling a trade. The `decimals` byte sits at
+  offset 44 in both SPL Token and Token-2022 mints — extensions are appended
+  after the base struct and never move it (verified 2026-09-16 against
+  `jsonParsed` on six mints: plain SPL at 82 bytes and Token-2022 with
+  extensions at 405, 690 and 866 bytes, all matching).
 - The bot uses **`buy_v2` (27 accounts)** and **`sell_v2` (26 accounts)**. Every
   account is mandatory and the order is identical for every coin — whatever
   quote mint it's paired with, mayhem or not, cashback or not. `sell_v2` is
