@@ -24,7 +24,7 @@ from solders.transaction import Transaction
 
 from core.pubkeys import is_sol_paired
 from core.rpc_rate_limiter import TokenBucketRateLimiter
-from interfaces.core import Platform
+from interfaces.core import ConfirmationStatus, Platform
 from utils.idl_manager import get_idl_parser
 from utils.logger import get_logger
 
@@ -45,6 +45,77 @@ INSTRUCTION_ERROR_PAIR_LEN = 2
 # landed buys as failed buys, leaving the tokens held and unsold.
 TX_RESULT_RETRY_BUDGET = 5.0
 TX_RESULT_RETRY_DELAY = 0.4
+
+
+class _Deadline:
+    """An optional wall-clock budget shared by every attempt of one RPC call.
+
+    Attempts and elapsed time are different bounds, and post_rpc has always had
+    only the first. This carries the second, so a caller can say how long an
+    answer is worth waiting for without touching the retry counts.
+    """
+
+    def __init__(self, seconds: float | None) -> None:
+        """Start the clock.
+
+        Args:
+            seconds: Budget in seconds, or None for no deadline at all
+        """
+        self.seconds = seconds
+        self._expires_at = None if seconds is None else monotonic() + seconds
+
+    def expired(self) -> bool:
+        """Check whether the budget is already spent.
+
+        Returns:
+            True if there is a deadline and it has passed
+        """
+        return self._expires_at is not None and monotonic() >= self._expires_at
+
+    def allows(self, wait: float) -> bool:
+        """Check whether a backoff fits in what is left.
+
+        A sleep longer than the remaining time would overshoot the budget the
+        caller asked for, so it is not taken at all.
+
+        Args:
+            wait: How long the next backoff would sleep, in seconds
+
+        Returns:
+            True if the wait fits, or if there is no deadline
+        """
+        return self._expires_at is None or wait < self._expires_at - monotonic()
+
+    def __str__(self) -> str:
+        """Describe the deadline for a log line.
+
+        Returns:
+            Human-readable budget
+        """
+        return (
+            "unbounded budget"
+            if self.seconds is None
+            else f"{self.seconds:.1f}s deadline"
+        )
+
+
+def _retry_after_seconds(header: str | None, attempt: int) -> float:
+    """Work out how long to wait before retrying a rate-limited request.
+
+    Args:
+        header: Raw `Retry-After` header value, if the server sent one
+        attempt: 1-based count of 429s seen so far on this call
+
+    Returns:
+        Seconds to wait, including jitter
+    """
+    try:
+        wait_time = float(header) if header else None
+    except (ValueError, TypeError):
+        wait_time = None
+    if wait_time is None:
+        wait_time = min(2**attempt, 30)
+    return wait_time + wait_time * random.uniform(0, 0.25)  # noqa: S311
 
 
 def set_loaded_accounts_data_size_limit(bytes_limit: int) -> Instruction:
@@ -407,12 +478,40 @@ class SolanaClient:
         ensure the inner program instructions actually succeeded. A transaction
         can be "confirmed" (included in a block) but still fail execution.
 
+        This deliberately stays a bool. Returning the richer
+        :class:`ConfirmationStatus` here would be a silent trap: every enum
+        member is truthy, so each existing `if await client.confirm_transaction(
+        sig):` would start passing unconditionally. Callers that need to tell a
+        revert from an unknown call :meth:`confirm_transaction_detailed`.
+
         Args:
             signature: Transaction signature, base58 string or Signature
             commitment: Confirmation commitment level
 
         Returns:
             Whether transaction was confirmed AND executed successfully
+        """
+        status = await self.confirm_transaction_detailed(signature, commitment)
+        return status is ConfirmationStatus.SUCCESS
+
+    async def confirm_transaction_detailed(
+        self, signature: str | Signature, commitment: str = "confirmed"
+    ) -> ConfirmationStatus:
+        """Confirm a transaction, distinguishing a revert from an unknown.
+
+        Same work as :meth:`confirm_transaction`, but it reports *why* a
+        transaction did not succeed. A caller deciding whether to resubmit a
+        non-idempotent transaction needs that: resubmitting after a confirmed
+        revert is correct, while resubmitting after a lookup that simply never
+        answered can send a second transaction for a position that is already
+        closed.
+
+        Args:
+            signature: Transaction signature, base58 string or Signature
+            commitment: Confirmation commitment level
+
+        Returns:
+            SUCCESS, REVERTED, or UNCONFIRMED
         """
         # The RPC client rejects a base58 string, and the resulting TypeError
         # would be swallowed by the handler below — reporting "not confirmed"
@@ -422,7 +521,7 @@ class SolanaClient:
                 signature = Signature.from_string(signature)
             except ValueError:
                 logger.exception(f"Malformed transaction signature: {signature}")
-                return False
+                return ConfirmationStatus.UNCONFIRMED
 
         await self._rate_limiter.acquire()
         client = await self.get_client()
@@ -432,25 +531,44 @@ class SolanaClient:
             )
         except Exception:
             logger.exception(f"Failed to confirm transaction {signature}")
-            return False
+            return ConfirmationStatus.UNCONFIRMED
 
-        return await self.verify_transaction_succeeded(signature)
+        return await self.verify_transaction_status(signature)
 
     async def verify_transaction_succeeded(self, signature: str | Signature) -> bool:
         """Check whether a landed transaction actually executed successfully.
 
-        Landing in a block and succeeding are different things: RPC reports a
-        revert in `meta.err`, so a transaction can be "confirmed" and still have
-        done nothing. Split out from :meth:`confirm_transaction` so the check can
-        be run against a transaction that landed some time ago — signature
-        statuses fall out of the RPC's recent history, but `getTransaction` does
-        not.
+        Bool wrapper around :meth:`verify_transaction_status`, kept because most
+        callers only need to know whether to carry on. See
+        :meth:`confirm_transaction` for why this does not return the enum.
 
         Args:
             signature: Transaction signature, base58 string or Signature
 
         Returns:
             Whether the transaction executed without a program error
+        """
+        status = await self.verify_transaction_status(signature)
+        return status is ConfirmationStatus.SUCCESS
+
+    async def verify_transaction_status(
+        self, signature: str | Signature
+    ) -> ConfirmationStatus:
+        """Read what actually happened to a landed transaction.
+
+        Landing in a block and succeeding are different things: RPC reports a
+        revert in `meta.err`, so a transaction can be "confirmed" and still have
+        done nothing. Split out from :meth:`confirm_transaction` so the check can
+        be run against a transaction that landed some time ago — signature
+        statuses fall out of the RPC's recent history, but `getTransaction` does
+        not. That makes this the right call for re-checking a transaction whose
+        first confirmation came back UNCONFIRMED.
+
+        Args:
+            signature: Transaction signature, base58 string or Signature
+
+        Returns:
+            SUCCESS, REVERTED, or UNCONFIRMED
         """
         signature = str(signature)
         result = await self._get_transaction_result(signature)
@@ -459,7 +577,7 @@ class SolanaClient:
                 f"Could not fetch transaction {signature[:16]}... "
                 f"to verify execution — treating as unconfirmed"
             )
-            return False
+            return ConfirmationStatus.UNCONFIRMED
 
         tx_err = result.get("meta", {}).get("err")
         if tx_err:
@@ -468,9 +586,9 @@ class SolanaClient:
                 f"Transaction {signature[:16]}... confirmed but failed: {tx_err}"
                 + (f" ({detail})" if detail else "")
             )
-            return False
+            return ConfirmationStatus.REVERTED
 
-        return True
+        return ConfirmationStatus.SUCCESS
 
     async def get_transaction_token_balance(
         self, signature: str | Signature, user_pubkey: Pubkey, mint: Pubkey
@@ -650,7 +768,9 @@ class SolanaClient:
             signature: Transaction signature, base58 string or Signature
             budget_seconds: How long to keep retrying while the RPC cannot see
                 the transaction. Bounded so a signature that truly does not
-                exist still returns.
+                exist still returns. It is the whole budget, not just the gap
+                between attempts: each lookup is given the time left on it, so
+                a stalled endpoint cannot stretch the call past it.
 
         Returns:
             Transaction result dict or None
@@ -679,7 +799,13 @@ class SolanaClient:
         attempts = 0
         while True:
             attempts += 1
-            response = await self.post_rpc(body)
+            # Hand the lookup what is left of the budget rather than letting it
+            # run its own retry schedule to completion. The deadline check below
+            # only runs once post_rpc returns, so without this the real worst
+            # case is budget_seconds plus one full post_rpc backoff.
+            response = await self.post_rpc(
+                body, deadline_seconds=max(0.0, deadline - monotonic())
+            )
             result = response.get("result") if response else None
             if result and "meta" in result:
                 if attempts > 1:
@@ -699,14 +825,31 @@ class SolanaClient:
             await asyncio.sleep(TX_RESULT_RETRY_DELAY)
 
     async def post_rpc(
-        self, body: dict[str, Any], max_retries: int = 3, max_429_retries: int = 10
+        self,
+        body: dict[str, Any],
+        max_retries: int = 3,
+        max_429_retries: int = 10,
+        deadline_seconds: float | None = None,
     ) -> dict[str, Any] | None:
         """Send a raw RPC request with rate limiting, retry, and 429 handling.
+
+        Attempts and wall time are bounded separately. Without a deadline the
+        retry schedule alone can keep one call going for minutes — three error
+        retries backing off 1, 2, 4 ... 16s, or ten 429 retries waiting up to
+        30s each and honouring a `Retry-After` header of any size. Every caller
+        inherits that, and on the trade path a confirmation that blocks for
+        minutes holds up the whole bot.
 
         Args:
             body: JSON-RPC request body.
             max_retries: Maximum number of retry attempts for errors.
             max_429_retries: Maximum number of retry attempts for 429 rate limits.
+            deadline_seconds: Overall wall-clock budget for this call, covering
+                every attempt and every backoff between them. `None` (the
+                default) keeps the historical behaviour: attempts are bounded,
+                elapsed time is not. A caller that would rather have a slow
+                truthful answer than a punctual wrong one should leave it unset
+                or pass a generous value.
 
         Returns:
             Parsed JSON response, or None if all attempts fail.
@@ -714,8 +857,13 @@ class SolanaClient:
         method = body.get("method", "unknown")
         error_attempts = 0
         rate_limit_attempts = 0
+        deadline = _Deadline(deadline_seconds)
 
         while error_attempts < max_retries:
+            if deadline.expired():
+                logger.warning(f"RPC request {method} exceeded its {deadline}")
+                break
+
             try:
                 await self._rate_limiter.acquire()
                 session = await self._get_session()
@@ -731,21 +879,21 @@ class SolanaClient:
                                 f"RPC rate limited (429) on {method}, "
                                 f"exhausted {max_429_retries} rate-limit retries"
                             )
-                            return None
-                        retry_after = response.headers.get("Retry-After")
-                        try:
-                            wait_time = float(retry_after) if retry_after else None
-                        except (ValueError, TypeError):
-                            wait_time = None
-                        if wait_time is None:
-                            wait_time = min(2**rate_limit_attempts, 30)
-                        jitter = wait_time * random.uniform(0, 0.25)  # noqa: S311
-                        total_wait = wait_time + jitter
+                            break
+                        total_wait = _retry_after_seconds(
+                            response.headers.get("Retry-After"), rate_limit_attempts
+                        )
                         logger.warning(
                             f"RPC rate limited (429) on {method}, "
                             f"429 retry {rate_limit_attempts}/{max_429_retries}, "
                             f"waiting {total_wait:.1f}s"
                         )
+                        if not deadline.allows(total_wait):
+                            logger.warning(
+                                f"RPC request {method} gave up on its {deadline} "
+                                f"(next retry would wait {total_wait:.1f}s)"
+                            )
+                            break
                         await asyncio.sleep(total_wait)
                         continue
 
@@ -754,7 +902,7 @@ class SolanaClient:
 
             except aiohttp.ContentTypeError:
                 logger.exception(f"Failed to decode RPC response for {method}")
-                return None
+                break
 
             # asyncio.TimeoutError is what aiohttp raises when the request
             # timeout fires, and it is not an aiohttp.ClientError — without it
@@ -766,7 +914,7 @@ class SolanaClient:
                     logger.exception(
                         f"RPC request {method} failed after {max_retries} attempts"
                     )
-                    return None
+                    break
 
                 wait_time = min(2 ** (error_attempts - 1), 16)
                 jitter = wait_time * random.uniform(0, 0.25)  # noqa: S311
@@ -775,6 +923,12 @@ class SolanaClient:
                     f"(attempt {error_attempts}/{max_retries}), "
                     f"retrying in {wait_time + jitter:.1f}s"
                 )
+                if not deadline.allows(wait_time + jitter):
+                    logger.warning(
+                        f"RPC request {method} gave up on its {deadline} "
+                        f"(next retry would wait {wait_time + jitter:.1f}s)"
+                    )
+                    break
                 await asyncio.sleep(wait_time + jitter)
 
         return None

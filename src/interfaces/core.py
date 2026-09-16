@@ -21,6 +21,39 @@ class Platform(Enum):
     LETS_BONK = "lets_bonk"
 
 
+class ConfirmationStatus(Enum):
+    """Outcome of asking the RPC what happened to a submitted transaction.
+
+    "Did not succeed" is two different answers, and conflating them is how a
+    non-idempotent retry gets fired at a trade that already went through:
+
+    - `REVERTED` is a fact. The transaction landed in a block and the program
+      returned an error, so nothing it intended actually happened.
+    - `UNCONFIRMED` is an absence of information. The lookup ran out of budget
+      before any node would answer, which on a load-balanced endpoint says
+      nothing about whether the transaction landed.
+
+    Retrying is right for the first and wrong for the second.
+    """
+
+    SUCCESS = "success"
+    REVERTED = "reverted"
+    UNCONFIRMED = "unconfirmed"
+
+
+class TradeFailureReason(Enum):
+    """Why a trade did not complete, as far as the trader can tell.
+
+    Mirrors :class:`ConfirmationStatus` and adds the case that never reached
+    an RPC at all, so a caller can tell "the chain rejected it" from "we never
+    found out" from "it never left the building".
+    """
+
+    REVERTED = "reverted"
+    UNCONFIRMED = "unconfirmed"
+    SUBMIT_FAILED = "submit_failed"
+
+
 @dataclass
 class TokenInfo:
     """Enhanced token information with platform support."""
