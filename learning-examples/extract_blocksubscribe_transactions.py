@@ -83,7 +83,8 @@ async def listen_for_transactions():
                         block_data = data["params"]["result"]
                         if "value" in block_data and "block" in block_data["value"]:
                             block = block_data["value"]["block"]
-                            if "transactions" in block:
+                            # `block` is null for a skipped or unavailable slot.
+                            if block and "transactions" in block:
                                 transactions = block["transactions"]
                                 for tx in transactions:
                                     tx_signature = extract_signature(tx)

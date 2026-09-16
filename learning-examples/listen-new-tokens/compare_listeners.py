@@ -544,8 +544,11 @@ async def listen_block_subscription(wss_url, provider_name, tracker, known_token
                         ):
                             continue
 
+                        # `block` is null for a skipped or unavailable slot,
+                        # which would make the membership test raise TypeError
+                        # and cost this lane the whole notification.
                         block = block_data["value"]["block"]
-                        if "transactions" not in block:
+                        if not block or "transactions" not in block:
                             continue
 
                         for tx in block["transactions"]:
