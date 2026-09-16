@@ -2,10 +2,31 @@
 Base class for WebSocket token listeners - now platform-agnostic.
 """
 
+import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 
 from interfaces.core import Platform, TokenInfo
+
+
+def reraise_if_cancelled() -> None:
+    """Re-raise CancelledError if the running task is being cancelled.
+
+    Call this first inside a broad `except Exception` that guards a websocket
+    read. Cancelling a task parked in `websockets`' `recv()` does not reliably
+    surface as `CancelledError`: when the cancellation lands while the library
+    is assembling frames it raises `AssertionError: cannot reset() while queue
+    isn't empty` instead. That is an ordinary `Exception`, so a broad handler
+    swallows the shutdown request, and the loop it guards never stops — while
+    the connection's frame state is left corrupt, so every later read asserts
+    too.
+
+    Raises:
+        asyncio.CancelledError: If the current task has a pending cancellation.
+    """
+    task = asyncio.current_task()
+    if task is not None and task.cancelling():
+        raise asyncio.CancelledError
 
 
 class BaseTokenListener(ABC):

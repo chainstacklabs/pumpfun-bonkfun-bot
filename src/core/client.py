@@ -5,6 +5,7 @@ Solana client abstraction for blockchain operations.
 import asyncio
 import random
 import struct
+from time import monotonic
 from typing import Any
 
 import aiohttp
@@ -35,6 +36,15 @@ HTTP_TOO_MANY_REQUESTS = 429
 # `{"InstructionError": [...]}` -- fixed by the RPC's `meta.err` shape, not a
 # tunable.
 INSTRUCTION_ERROR_PAIR_LEN = 2
+
+# How long getTransaction keeps retrying a signature the node has not caught
+# up to yet, and the pause between attempts. A null result means "I cannot
+# see this transaction", which on a load-balanced endpoint is not the same
+# as "it failed": the node that serves getTransaction is not necessarily the
+# one that just confirmed the signature. Treating the two as one reported
+# landed buys as failed buys, leaving the tokens held and unsold.
+TX_RESULT_RETRY_BUDGET = 5.0
+TX_RESULT_RETRY_DELAY = 0.4
 
 
 def set_loaded_accounts_data_size_limit(bytes_limit: int) -> Instruction:
@@ -624,11 +634,23 @@ class SolanaClient:
 
         return best
 
-    async def _get_transaction_result(self, signature: str | Signature) -> dict | None:
-        """Fetch transaction result from RPC.
+    async def _get_transaction_result(
+        self,
+        signature: str | Signature,
+        budget_seconds: float = TX_RESULT_RETRY_BUDGET,
+    ) -> dict | None:
+        """Fetch transaction result from RPC, retrying while it is not visible.
+
+        A null result is ambiguous: the transaction may not exist, or the node
+        answering may simply be behind the one that confirmed the signature.
+        Retrying within a budget separates the two, so a trade that landed is
+        not read back as a failure.
 
         Args:
             signature: Transaction signature, base58 string or Signature
+            budget_seconds: How long to keep retrying while the RPC cannot see
+                the transaction. Bounded so a signature that truly does not
+                exist still returns.
 
         Returns:
             Transaction result dict or None
@@ -653,16 +675,28 @@ class SolanaClient:
             ],
         }
 
-        response = await self.post_rpc(body)
-        if not response or "result" not in response:
-            logger.warning(f"Failed to get transaction {signature}")
-            return None
+        deadline = monotonic() + budget_seconds
+        attempts = 0
+        while True:
+            attempts += 1
+            response = await self.post_rpc(body)
+            result = response.get("result") if response else None
+            if result and "meta" in result:
+                if attempts > 1:
+                    logger.info(
+                        f"Transaction {signature[:16]}... became visible on "
+                        f"attempt {attempts}"
+                    )
+                return result
 
-        result = response["result"]
-        if not result or "meta" not in result:
-            return None
+            if monotonic() + TX_RESULT_RETRY_DELAY > deadline:
+                logger.warning(
+                    f"Failed to get transaction {signature[:16]}... after "
+                    f"{attempts} attempt(s) within {budget_seconds:.1f}s"
+                )
+                return None
 
-        return result
+            await asyncio.sleep(TX_RESULT_RETRY_DELAY)
 
     async def post_rpc(
         self, body: dict[str, Any], max_retries: int = 3, max_429_retries: int = 10

@@ -12,7 +12,7 @@ from solders.transaction import VersionedTransaction
 
 from core.client import SolanaClient
 from interfaces.core import Platform, TokenInfo
-from monitoring.base_listener import BaseTokenListener
+from monitoring.base_listener import BaseTokenListener, reraise_if_cancelled
 from platforms import get_platform_implementations, platform_factory
 from utils.logger import get_logger
 
@@ -142,6 +142,13 @@ class UniversalBlockListener(BaseTokenListener):
 
                     except websockets.exceptions.ConnectionClosed:
                         logger.warning("WebSocket connection closed. Reconnecting...")
+                    finally:
+                        # Every exit from the read loop leaves this connection
+                        # behind, not just a closed one: an unexpected read
+                        # error now reconnects too, and cancellation unwinds
+                        # through here. An uncancelled ping loop would go on
+                        # pinging a dead socket for up to ping_interval before
+                        # dying on its own, logging a spurious "Ping error".
                         ping_task.cancel()
 
             except Exception:
@@ -203,6 +210,37 @@ class UniversalBlockListener(BaseTokenListener):
         except Exception:
             logger.exception("Ping error")
 
+    def _transactions_from_frame(self, data: dict) -> list | None:
+        """Pull the transaction list out of one blockSubscribe frame.
+
+        Args:
+            data: Decoded WebSocket frame
+
+        Returns:
+            The block's transactions, or None if the frame carries no block —
+            a subscription reply, an error, or a slot with no block at all
+        """
+        if "error" in data:
+            logger.error(f"Block subscription error: {data['error']}")
+            return None
+        if "result" in data:
+            # Subscription confirmation - continue waiting for notifications
+            return None
+
+        if data.get("method") != "blockNotification":
+            return None
+
+        result = data.get("params", {}).get("result", {})
+        # `block` is null for a skipped or unavailable slot — the key is
+        # present, the value is not. Without the null check the membership
+        # test below raises TypeError, the notification is dropped and the
+        # blocks listener quietly detects fewer coins than logs/geyser.
+        block = result.get("value", {}).get("block")
+        if not block or "transactions" not in block:
+            return None
+
+        return block["transactions"]
+
     async def _wait_for_token_creation(
         self, websocket: websockets.WebSocketServerProtocol
     ) -> TokenInfo | None:
@@ -216,40 +254,32 @@ class UniversalBlockListener(BaseTokenListener):
         """
         try:
             response = await asyncio.wait_for(websocket.recv(), timeout=30)
-            data = json.loads(response)
-
-            # Handle subscription errors
-            if "error" in data:
-                logger.error(f"Block subscription error: {data['error']}")
-                return None
-            elif "result" in data:
-                # Subscription confirmation - continue waiting for notifications
-                return None
-
-            if "method" not in data or data["method"] != "blockNotification":
-                return None
-
-            if "params" not in data or "result" not in data["params"]:
-                return None
-
-            block_data = data["params"]["result"]
-            if "value" not in block_data or "block" not in block_data["value"]:
-                return None
-
-            block = block_data["value"]["block"]
-            if "transactions" not in block:
+            transactions = self._transactions_from_frame(json.loads(response))
+            if transactions is None:
                 return None
 
             # Process all transactions in the block for token creations
-            return self._process_block_transactions(block["transactions"])
+            return self._process_block_transactions(transactions)
 
         except TimeoutError:
             logger.debug("No data received for 30 seconds")
         except websockets.exceptions.ConnectionClosed:
             logger.warning("WebSocket connection closed")
             raise
+        except json.JSONDecodeError:
+            # One malformed frame is not worth dropping the connection over.
+            logger.warning("Discarding a frame that is not valid JSON")
         except Exception:
-            logger.exception("Error processing WebSocket message")
+            # Order matters: a cancellation arriving mid-frame-assembly is
+            # reported as AssertionError, so it has to be recognised before
+            # the broad handler treats it as a per-message problem.
+            reraise_if_cancelled()
+            # Anything else here came from the read itself rather than from
+            # parsing one transaction, which is contained further down. The
+            # library's frame state may be corrupt, and re-reading a corrupt
+            # stream just repeats the same error forever — reconnect instead.
+            logger.exception("Error reading from the WebSocket; reconnecting")
+            raise
 
         return None
 

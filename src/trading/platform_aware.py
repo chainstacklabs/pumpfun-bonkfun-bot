@@ -371,11 +371,39 @@ class PlatformAwareBuyer(Trader):
                     token_amount = actual_amount
                     token_price_sol = actual_price
                 else:
-                    raise ValueError(
-                        f"Failed to parse transaction details: tokens={tokens_raw}, "
-                        f"quote_spent={quote_spent} (tx: {tx_signature}). "
-                        f"The transaction may have failed on-chain — check explorer."
+                    # confirm_transaction already read meta.err, so the buy
+                    # executed — the amounts just could not be read back.
+                    # Reporting failure here would run _handle_failed_buy on a
+                    # position we actually hold: never sold, and burned outright
+                    # under cleanup.mode "on_fail" with force_close_with_burn.
+                    # Fall back to the balance the wallet really holds so the
+                    # sell has a true amount to work with.
+                    logger.warning(
+                        f"Could not parse buy amounts (tokens={tokens_raw}, "
+                        f"quote_spent={quote_spent}) from tx {tx_signature}; "
+                        f"the buy did land, falling back to the wallet balance"
                     )
+                    balance = await self._read_token_balance(token_info)
+                    if balance is not None and balance > 0:
+                        # The balance is cumulative, so cap it at what this buy
+                        # asked for: anything above that was already held, and
+                        # selling it would liquidate an unrelated position.
+                        # Reading the balance *before* submitting would give an
+                        # exact delta, but that is an RPC call on every buy and
+                        # would break extreme_fast_mode's zero-RPC contract
+                        # between detection and submission — and this path only
+                        # runs when the transaction could not be read back.
+                        logger.info(
+                            f"Token balance after buy: {balance:.6f}, selling at "
+                            f"most the {token_amount:.6f} this buy asked for"
+                        )
+                        token_amount = min(balance, token_amount)
+                    else:
+                        logger.warning(
+                            f"Token balance unreadable too; holding the expected "
+                            f"{token_amount:.6f} tokens at the implied price. "
+                            f"Verify tx {tx_signature} before relying on the PnL."
+                        )
 
                 return TradeResult(
                     success=True,
@@ -411,6 +439,32 @@ class PlatformAwareBuyer(Trader):
 
         # Fallback to deriving the address using platform provider
         return address_provider.derive_pool_address(token_info.mint)
+
+    async def _read_token_balance(self, token_info: TokenInfo) -> float | None:
+        """Read how many of a coin the wallet actually holds.
+
+        Used only when a landed buy's amounts could not be parsed back out of
+        the transaction. The balance is what the sell has to work with, so it
+        beats the expected amount: selling more than is held reverts.
+
+        Args:
+            token_info: Token information carrying the mint and token program
+
+        Returns:
+            Balance in whole tokens, or None if it cannot be read
+        """
+        token_program = (
+            token_info.token_program_id or SystemAddresses.TOKEN_2022_PROGRAM
+        )
+        try:
+            ata = self.wallet.get_associated_token_address(
+                token_info.mint, token_program
+            )
+            balance_raw = await self.client.get_token_account_balance(ata)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Could not read token balance for {token_info.mint}: {e}")
+            return None
+        return balance_raw / 10**TOKEN_DECIMALS
 
     def _can_skip_refresh(self, token_info: TokenInfo) -> bool:
         """Whether the pre-buy curve read can be skipped entirely.

@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 import websockets
 
 from interfaces.core import Platform, TokenInfo
-from monitoring.base_listener import BaseTokenListener
+from monitoring.base_listener import BaseTokenListener, reraise_if_cancelled
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -141,6 +141,13 @@ class UniversalLogsListener(BaseTokenListener):
 
                     except websockets.exceptions.ConnectionClosed:
                         logger.warning("WebSocket connection closed. Reconnecting...")
+                    finally:
+                        # Every exit from the read loop leaves this connection
+                        # behind, not just a closed one: an unexpected read
+                        # error now reconnects too, and cancellation unwinds
+                        # through here. An uncancelled ping loop would go on
+                        # pinging a dead socket for up to ping_interval before
+                        # dying on its own, logging a spurious "Ping error".
                         ping_task.cancel()
 
             except Exception:
@@ -224,7 +231,19 @@ class UniversalLogsListener(BaseTokenListener):
         except websockets.exceptions.ConnectionClosed:
             logger.warning("WebSocket connection closed")
             raise
+        except json.JSONDecodeError:
+            # One malformed frame is not worth dropping the connection over.
+            logger.warning("Discarding a frame that is not valid JSON")
         except Exception:
-            logger.exception("Error processing WebSocket message")
+            # Order matters: a cancellation arriving mid-frame-assembly is
+            # reported as AssertionError, so it has to be recognised before
+            # the broad handler treats it as a per-message problem.
+            reraise_if_cancelled()
+            # Anything else here came from the read itself rather than from
+            # parsing one transaction, which is contained further down. The
+            # library's frame state may be corrupt, and re-reading a corrupt
+            # stream just repeats the same error forever — reconnect instead.
+            logger.exception("Error reading from the WebSocket; reconnecting")
+            raise
 
         return None
