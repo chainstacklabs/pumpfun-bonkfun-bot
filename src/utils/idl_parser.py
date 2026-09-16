@@ -353,6 +353,25 @@ class IDLParser:
             return None
 
     # --------------------------------------------------------------------------
+    # Public Methods (External API) - Errors
+    # --------------------------------------------------------------------------
+
+    def describe_error_code(self, code: int) -> str | None:
+        """Render an Anchor custom error code as "<code> <Name>: <msg>".
+
+        Args:
+            code: The Custom(N) value from meta.err.
+
+        Returns:
+            A human-readable description, or None if this IDL's error table
+            has no such code.
+        """
+        for err in self.idl.get("errors", []):
+            if err.get("code") == code:
+                return f"{code} {err['name']}: {err.get('msg', '')}".rstrip(": ")
+        return None
+
+    # --------------------------------------------------------------------------
     # Internal Helper Methods
     # --------------------------------------------------------------------------
 
@@ -425,15 +444,17 @@ class IDLParser:
     def _is_optional_type(self, type_def: str | dict) -> bool:
         """Whether a type may legally be absent when it trails instruction data.
 
-        Covers Anchor's native ``option`` wrapper and pump.fun's ``OptionBool``
-        defined type — both are observed omitted from the wire when trailing.
+        Covers Anchor's native ``option`` wrapper and pump.fun's ``Option*``
+        defined types — ``OptionBool`` (is_cashback_enabled, is_holder_reward)
+        and ``OptionU64`` (creator_fee_bps). All are observed omitted from the
+        wire when trailing; see issue #184 and the 2026-09-15 program upgrade.
         """
         if not isinstance(type_def, dict):
             return False
         if "option" in type_def:
             return True
         if "defined" in type_def:
-            return self._get_defined_type_name(type_def) == "OptionBool"
+            return self._get_defined_type_name(type_def).startswith("Option")
         return False
 
     def _get_primitive_size(self, type_name: str) -> int:

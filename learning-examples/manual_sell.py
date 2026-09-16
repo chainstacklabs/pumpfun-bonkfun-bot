@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
 from solana.rpc.types import TxOpts
+from solders.account import Account
 from solders.compute_budget import set_compute_unit_price
 from solders.keypair import Keypair
 from solders.message import Message
@@ -119,6 +120,29 @@ async def get_token_balance(conn: AsyncClient, associated_token_account: Pubkey)
     return 0
 
 
+async def _get_mint_account_info(client: AsyncClient, address: Pubkey) -> Account:
+    """Fetch an account, unwrapping AsyncClient's `.value` envelope.
+
+    Adapter for `pump_v2.resolve_quote_token_program`, which expects a
+    getter returning the account object (with an `.owner` attribute)
+    directly rather than solana-py's RPC response wrapper.
+
+    Args:
+        client: Solana RPC client
+        address: Account to fetch
+
+    Returns:
+        The account object
+
+    Raises:
+        ValueError: If the account does not exist
+    """
+    response = await client.get_account_info(address)
+    if response.value is None:
+        raise ValueError(f"Could not fetch account info for {address}")
+    return response.value
+
+
 async def get_token_program_id(client: AsyncClient, mint_address: Pubkey) -> Pubkey:
     """Determines if a mint uses TokenProgram or Token2022Program."""
     mint_info = await client.get_account_info(mint_address)
@@ -177,6 +201,14 @@ async def sell_token(
         expected_output = float(token_balance_decimal) * float(token_price_sol)
         min_quote_output = max(1, int(expected_output * (1 - slippage) * quote_unit))
 
+        # The quote mint can be Token-2022-owned (verified 2026-09-15 upgrade
+        # note: error 6064 now accepts "SPL Token or Token-2022"), so its
+        # token program must be resolved rather than assumed. Free for WSOL
+        # and USDC (pre-seeded in pump_v2's cache); one RPC call otherwise.
+        quote_token_program_id = await pump_v2.resolve_quote_token_program(
+            quote_mint, lambda pk: _get_mint_account_info(client, pk)
+        )
+
         print(f"Selling {token_balance_decimal} tokens")
         print(f"Quote asset: {quote_mint}")
         print(
@@ -194,6 +226,7 @@ async def sell_token(
             quote_mint=quote_mint,
             base_token_program=token_program_id,
             is_mayhem_mode=curve_state.is_mayhem_mode,
+            quote_token_program_id=quote_token_program_id,
         )
 
         instructions = [set_compute_unit_price(1_000)]
@@ -204,7 +237,7 @@ async def sell_token(
                     payer.pubkey(),
                     payer.pubkey(),
                     quote_mint,
-                    token_program_id=pump_v2.quote_token_program(quote_mint),
+                    token_program_id=quote_token_program_id,
                 )
             )
         instructions.append(sell_ix)

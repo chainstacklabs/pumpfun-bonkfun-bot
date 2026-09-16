@@ -4,7 +4,8 @@ This module contains only system-level addresses that are shared across all plat
 Platform-specific addresses are handled by their respective AddressProvider implementations.
 """
 
-from typing import Final
+from collections.abc import Awaitable, Callable
+from typing import Any, Final
 
 from solders.pubkey import Pubkey
 
@@ -54,17 +55,67 @@ QUOTE_DECIMALS: Final[dict[Pubkey, int]] = {
     USDC_MINT: 6,
 }
 
-# Token program that owns each quote mint. Both current quote mints are
-# legacy SPL Token, but the v2 instructions take quote_token_program
-# separately from base_token_program, so keep them decoupled.
+# Token program that owns each quote mint. WSOL and USDC are legacy SPL
+# Token, but the v2 instructions take quote_token_program separately from
+# base_token_program, so keep them decoupled. A pump.fun upgrade verified
+# 2026-09-15 lets create_v2 pair a coin with a Token-2022 quote mint (error
+# 6064 now accepts "SPL Token or Token-2022"), so this two-entry map is not
+# exhaustive of every tradeable quote mint -- see
+# resolve_quote_token_program below for mints outside it.
 QUOTE_TOKEN_PROGRAMS: Final[dict[Pubkey, Pubkey]] = {
     WSOL_MINT: TOKEN_PROGRAM,
     USDC_MINT: TOKEN_PROGRAM,
 }
 
 
+# Byte offset of the `decimals` field in a Mint account's raw data. SPL Token
+# and Token-2022 mints share the same base layout -- COption<Pubkey>
+# mint_authority (4-byte tag + 32-byte pubkey = 36 bytes), u64 supply
+# (8 bytes), then u8 decimals at byte 44. Token-2022 extensions are appended
+# *after* this base 82-byte struct, never rearranging it. Verified 2026-09-15
+# by reading byte 44 off-chain for WSOL (9), USDC (6) and a live Token-2022
+# quote mint (6, in a 690-byte account carrying extensions) -- all three
+# matched their known decimals.
+_MINT_DECIMALS_OFFSET: Final[int] = 44
+
+
+def _parse_mint_decimals(data: bytes) -> int:
+    """Read the `decimals` field out of a raw Mint account's byte layout.
+
+    Args:
+        data: Raw account data, e.g. `.data` on the solders `Account` from
+            `SolanaClient.get_account_info`
+
+    Returns:
+        The mint's decimal count
+
+    Raises:
+        ValueError: If the data is too short to be a Mint account
+    """
+    if len(data) <= _MINT_DECIMALS_OFFSET:
+        raise ValueError(
+            f"Account data is only {len(data)} bytes, too short to be a "
+            f"Mint account (decimals lives at byte {_MINT_DECIMALS_OFFSET})"
+        )
+    return data[_MINT_DECIMALS_OFFSET]
+
+
+# Process-lifetime cache of quote mint -> decimals. Pre-seeded from
+# QUOTE_DECIMALS so WSOL/USDC never cost an RPC call. Every other entry is
+# added by resolve_quote_token_program, which reads decimals off the same
+# mint-account fetch it already makes to resolve the token program -- so
+# warming this cache costs zero RPC calls beyond that one read per mint.
+_QUOTE_DECIMALS_CACHE: dict[Pubkey, int] = dict(QUOTE_DECIMALS)
+
+
 def quote_decimals(quote_mint: Pubkey) -> int:
-    """Get the decimal count for a quote mint, defaulting to SOL's 9.
+    """Get a quote mint's decimal count from the warm cache -- zero RPC.
+
+    Mirrors `cached_quote_token_program`'s shape: pre-seeded with WSOL (9)
+    and USDC (6), and every other configured quote mint is resolved (and
+    thus cached) once at startup by `resolve_quote_token_program`, so an
+    uncached mint here is one the bot will refuse to start trading rather
+    than one this silently mis-scales -- see that function's docstring.
 
     Args:
         quote_mint: Quote mint address
@@ -72,7 +123,7 @@ def quote_decimals(quote_mint: Pubkey) -> int:
     Returns:
         Number of decimals used by the quote mint
     """
-    return QUOTE_DECIMALS.get(quote_mint, 9)
+    return _QUOTE_DECIMALS_CACHE.get(quote_mint, 9)
 
 
 def quote_units_per_token(quote_mint: Pubkey) -> int:
@@ -97,6 +148,87 @@ def quote_token_program(quote_mint: Pubkey) -> Pubkey:
         Token program id for the quote mint
     """
     return QUOTE_TOKEN_PROGRAMS.get(quote_mint, TOKEN_PROGRAM)
+
+
+# Process-lifetime cache of quote mint -> owning token program. Pre-seeded
+# from QUOTE_TOKEN_PROGRAMS so WSOL/USDC never cost an RPC call. Every other
+# entry is added by resolve_quote_token_program, normally once per mint at
+# bot startup, so the hot path (cached_quote_token_program) never has to make
+# a chain read to learn a configured quote mint's token program.
+_QUOTE_TOKEN_PROGRAM_CACHE: dict[Pubkey, Pubkey] = dict(QUOTE_TOKEN_PROGRAMS)
+
+
+async def resolve_quote_token_program(
+    quote_mint: Pubkey,
+    get_account_info: Callable[[Pubkey], Awaitable[Any]],
+) -> Pubkey:
+    """Resolve and cache the token program *and* decimals for a quote mint.
+
+    Returns instantly, with no RPC call, for a mint already in
+    QUOTE_TOKEN_PROGRAMS or resolved by an earlier call in this process.
+    Otherwise fetches the mint account once -- a mint account's owner *is*
+    the token program that created it, and its raw data carries `decimals`
+    at a fixed byte offset shared by SPL Token and Token-2022 (see
+    `_parse_mint_decimals`) -- and caches both results for the rest of the
+    process. One fetch resolves both facts, so this never costs more than
+    one RPC call per quote mint even though it warms two caches.
+
+    This does one RPC call in the worst case, so callers on a zero-RPC hot
+    path (e.g. `extreme_fast_mode`) must not call it directly; read
+    `cached_quote_token_program` / `quote_decimals` instead once this has
+    warmed the caches.
+
+    Args:
+        quote_mint: Quote mint address to resolve
+        get_account_info: Async getter returning an account object with
+            `.owner` (Pubkey) and `.data` (bytes) attributes, e.g.
+            `SolanaClient.get_account_info`
+
+    Returns:
+        Token program id that owns the quote mint
+
+    Raises:
+        ValueError: If the mint's owner is neither SPL Token nor Token-2022,
+            or its account data is too short to carry a decimals field.
+            Left for the caller to leave uncaught at startup -- trading a
+            quote mint the bot cannot correctly size or derive accounts for
+            is worse than refusing to start.
+    """
+    cached = _QUOTE_TOKEN_PROGRAM_CACHE.get(quote_mint)
+    if cached is not None:
+        return cached
+
+    account = await get_account_info(quote_mint)
+    owner = account.owner
+    if owner not in (TOKEN_PROGRAM, TOKEN_2022_PROGRAM):
+        raise ValueError(
+            f"Quote mint {quote_mint} is owned by {owner}, expected "
+            f"{TOKEN_PROGRAM} (SPL Token) or {TOKEN_2022_PROGRAM} (Token-2022)"
+        )
+    decimals = _parse_mint_decimals(bytes(account.data))
+    _QUOTE_TOKEN_PROGRAM_CACHE[quote_mint] = owner
+    _QUOTE_DECIMALS_CACHE[quote_mint] = decimals
+    return owner
+
+
+def cached_quote_token_program(quote_mint: Pubkey) -> Pubkey:
+    """Read a quote mint's token program from the warm cache -- zero RPC.
+
+    Returns whatever `resolve_quote_token_program` cached for this mint.
+    A mint that was never resolved falls back to `quote_token_program`'s
+    SPL Token default. That is safe for the bot's own hot path:
+    `_resolve_quote_config` only ever trades a quote mint the operator
+    configured an amount for, and every configured mint is resolved (and
+    thus cached) once at startup, so an uncached mint here is one the bot
+    will skip before it ever reaches a buy.
+
+    Args:
+        quote_mint: Quote mint address
+
+    Returns:
+        Cached token program id, or the SPL Token default if unresolved
+    """
+    return _QUOTE_TOKEN_PROGRAM_CACHE.get(quote_mint, quote_token_program(quote_mint))
 
 
 def normalize_quote_mint(quote_mint: Pubkey | None) -> Pubkey:

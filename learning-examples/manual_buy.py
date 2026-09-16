@@ -35,6 +35,7 @@ from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
 from solana.rpc.types import TxOpts
+from solders.account import Account
 from solders.compute_budget import set_compute_unit_price
 from solders.instruction import Instruction
 from solders.keypair import Keypair
@@ -112,6 +113,29 @@ async def get_pump_curve_state(
     return pump_v2.BondingCurveState(response.value.data)
 
 
+async def _get_account_info(conn: AsyncClient, address: Pubkey) -> Account:
+    """Fetch an account, unwrapping AsyncClient's `.value` envelope.
+
+    Adapter for `pump_v2.resolve_quote_token_program`, which expects a
+    getter returning the account object (with an `.owner` attribute)
+    directly rather than solana-py's RPC response wrapper.
+
+    Args:
+        conn: Solana RPC client
+        address: Account to fetch
+
+    Returns:
+        The account object
+
+    Raises:
+        ValueError: If the account does not exist
+    """
+    response = await conn.get_account_info(address)
+    if response.value is None:
+        raise ValueError(f"Could not fetch account info for {address}")
+    return response.value
+
+
 def calculate_pump_curve_price(curve_state: pump_v2.BondingCurveState) -> float:
     """Price of one whole token in whole quote units.
 
@@ -175,6 +199,14 @@ async def buy_token(
         token_amount = amount / token_price_sol
         max_quote_cost = int(amount * quote_unit * (1 + slippage))
 
+        # The quote mint can be Token-2022-owned (verified 2026-09-15 upgrade
+        # note: error 6064 now accepts "SPL Token or Token-2022"), so its
+        # token program must be resolved rather than assumed. Free for WSOL
+        # and USDC (pre-seeded in pump_v2's cache); one RPC call otherwise.
+        quote_token_program_id = await pump_v2.resolve_quote_token_program(
+            quote_mint, lambda pk: _get_account_info(client, pk)
+        )
+
         print(f"Quote asset: {quote_mint}")
         print(f"Buying {token_amount:.6f} tokens, max cost {max_quote_cost} raw units")
 
@@ -188,6 +220,7 @@ async def buy_token(
             quote_mint=quote_mint,
             base_token_program=token_program,
             is_mayhem_mode=curve_state.is_mayhem_mode,
+            quote_token_program_id=quote_token_program_id,
         )
 
         instructions = []
@@ -210,7 +243,7 @@ async def buy_token(
                     payer.pubkey(),
                     payer.pubkey(),
                     quote_mint,
-                    token_program_id=pump_v2.quote_token_program(quote_mint),
+                    token_program_id=quote_token_program_id,
                 )
             )
         instructions.append(buy_ix)

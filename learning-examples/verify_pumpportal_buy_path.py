@@ -45,8 +45,19 @@ WRONG_BC = Pubkey.from_string("Vote111111111111111111111111111111111111111")
 PROVIDER = PumpFunAddressProvider()
 
 
-def _fabricated_curve_bytes(creator: Pubkey, *, is_mayhem: bool) -> bytes:
-    """Build a 151-byte BondingCurve account image matching the IDL layout."""
+def _fabricated_curve_bytes(
+    creator: Pubkey, *, is_mayhem: bool, curve_len: int = 125
+) -> bytes:
+    """Build a BondingCurve account image matching the IDL layout.
+
+    `create_v2` allocates exactly 125 bytes; pass curve_len=151 to get the
+    shape an account has once extend_account has run on it (padded with
+    reserved zero bytes past the struct). `extend_account` can in fact grow a
+    curve to 151, 256, or any other length the program allows — this helper
+    only exercises 125 and 151 because those are the two shapes the checks
+    below need — but every length decodes identically, since everything read
+    here sits at the same offsets regardless of total size.
+    """
     idl = json.loads((PROJECT_ROOT / "idl" / "pump_fun_idl.json").read_text())
     disc = next(
         bytes(a["discriminator"])
@@ -61,7 +72,7 @@ def _fabricated_curve_bytes(creator: Pubkey, *, is_mayhem: bool) -> bytes:
         0,  # real_quote_reserves
         1_000_000_000_000,  # token_total_supply
     )
-    return (
+    account = (
         disc
         + reserves
         + b"\x00"  # complete
@@ -69,8 +80,11 @@ def _fabricated_curve_bytes(creator: Pubkey, *, is_mayhem: bool) -> bytes:
         + (b"\x01" if is_mayhem else b"\x00")  # is_mayhem_mode
         + b"\x00"  # is_cashback_coin
         + bytes(32)  # quote_mint = Pubkey::default() (SOL-paired)
-        + bytes(36)  # reserved padding
+        + struct.pack("<Q", 0)  # creator_fee_bps
+        + b"\x00"  # can_edit_creator_fee
+        + b"\x00"  # is_holder_reward
     )
+    return account + bytes(curve_len - len(account))
 
 
 def _pumpportal_token_info(**overrides: object) -> TokenInfo:
@@ -216,10 +230,14 @@ def check_b_still_buys_when_curve_readable() -> bool:
     return ok
 
 
-def check_c_curve_manager_batch_read() -> bool:
-    """C: curve manager reads curve + mint owner in one batch call."""
+def _check_curve_manager_batch_read(curve_len: int) -> bool:
+    """C: curve manager reads curve + mint owner in one batch call.
+
+    Args:
+        curve_len: Bonding curve account length to fabricate (125 or 151)
+    """
     creator = TRADER
-    curve_bytes = _fabricated_curve_bytes(creator, is_mayhem=True)
+    curve_bytes = _fabricated_curve_bytes(creator, is_mayhem=True, curve_len=curve_len)
 
     class BatchClient:
         def __init__(self) -> None:
@@ -258,9 +276,20 @@ def check_c_curve_manager_batch_read() -> bool:
     )
     if not ok:
         print(
-            f"    batch_calls={client.batch_calls} token_program={token_program} state={state}"
+            f"    curve_len={curve_len} batch_calls={client.batch_calls} "
+            f"token_program={token_program} state={state}"
         )
     return ok
+
+
+def check_c_curve_manager_batch_read() -> bool:
+    """C: curve manager decodes a curve at its as-created length (125 bytes)."""
+    return _check_curve_manager_batch_read(125)
+
+
+def check_c_curve_manager_batch_read_extended_curve() -> bool:
+    """C: curve manager decodes a curve extend_account has grown to 151 bytes."""
+    return _check_curve_manager_batch_read(151)
 
 
 def check_c_buyer_corrects_token_program() -> bool:
@@ -321,6 +350,10 @@ def main() -> int:
         (
             "C: curve manager batch-reads curve + mint owner",
             check_c_curve_manager_batch_read,
+        ),
+        (
+            "C: curve manager batch-reads a 151-byte extended curve",
+            check_c_curve_manager_batch_read_extended_curve,
         ),
         (
             "C: buyer corrects token_program_id and ATA",

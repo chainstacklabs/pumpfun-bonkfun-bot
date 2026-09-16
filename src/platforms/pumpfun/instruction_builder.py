@@ -537,7 +537,11 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             ),
         ]
 
-        # Remaining accounts (after fee_program) for cashback + bonding_curve_v2
+        # Remaining accounts (after fee_program) for cashback + bonding_curve_v2.
+        # Cashback was deprecated 2026-09-15 (create_v2 now rejects new
+        # cashback coins with 6082 CashbackDeprecated), but existing cashback
+        # coins still trade and still accrue cashback, so this branch stays
+        # live for them — do not remove it.
         if token_info.is_cashback_coin:
             # Cashback sell: user_volume_accumulator (mutable) + bonding_curve_v2 (readonly)
             sell_accounts.append(
@@ -714,10 +718,11 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             # Buy operations: ATA creation + buy instruction
             return 100_000
         # buy_v2 touches 27 accounts, so it costs more than the legacy
-        # 18-account buy. Mainnet simulation of a SOL-paired Token-2022 buy
-        # (including base ATA creation) consumed ~125k CU; a non-SOL quote adds
-        # another ATA init on top. Re-measure with
-        # learning-examples/simulate_v2_trades.py after any program upgrade.
+        # 18-account buy. Mainnet simulation measured 106,677 CU on
+        # 2026-09-15 (`uv run learning-examples/simulate_v2_trades.py
+        # <MINT>`), so 180k keeps headroom for a non-SOL quote's extra ATA
+        # init. Re-measure with that script after any program upgrade — the
+        # exact figure varies with account state.
         return 180_000
 
     def get_sell_compute_unit_limit(self, config_override: int | None = None) -> int:
@@ -734,7 +739,9 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         if self._use_legacy_instructions:
             # Sell operations: typically just sell instruction (ATA exists)
             return 60_000
-        # sell_v2 touches 26 accounts. Measured at ~85k CU by simulating a
-        # buy+sell in one transaction on mainnet (the combined tx consumed
-        # ~211k against ~126k for the buy alone).
+        # sell_v2 touches 26 accounts. Measured at ~77,196 CU on 2026-09-15
+        # (`uv run learning-examples/simulate_v2_trades.py <MINT>`, via its
+        # buy+sell combined estimate), so 120k keeps headroom. The exact
+        # figure varies with account state — re-measure after any program
+        # upgrade.
         return 120_000

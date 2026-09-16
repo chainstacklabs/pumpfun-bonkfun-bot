@@ -14,9 +14,10 @@ and transaction signature behind every update, which the WebSocket feed does not
 Why a subscription and not `getProgramAccounts`: the pump.fun program now owns over
 10 million accounts, and every provider refuses to scan it — the rejection is on
 program size, before filters apply. A curve can only approach graduation by being
-traded, and every write pushes the full 151-byte account, so each update carries
-everything needed to compute progress: no accumulated state, no cold start beyond the
-next trade.
+traded, and every write pushes the full account — 125 bytes as `create_v2` allocates
+it, or 151 once `extend_account` has run on it — so each update carries everything
+needed to compute progress: no accumulated state, no cold start beyond the next
+trade.
 
 Selecting a graduation threshold
 --------------------------------
@@ -46,10 +47,44 @@ migration want the 3-byte one, a wider funnel the 2-byte one.
 Checked against mainnet by running the filtered and unfiltered subscriptions side by
 side for a minute: same curves, nothing dropped, nothing extra.
 
-`datasize = 151` restricts this to the current curve layout. The original 49-byte
-layout still has accounts with `complete = false`, but none of them are written to any
-more — verified over a 45s window in which all 205 updates across 24 curves were
-151-byte accounts.
+This script does **not** filter on `datasize`. Earlier it named two
+account-filter groups, one per enumerated length (125 and 151), because
+Geyser ORs across named groups and a single group ANDs its own filters
+together — there was no way to ask one group for "datasize 125 or 151".
+That shape stopped being enough once a third live length (256 bytes) turned
+up, and `extend_account` can grow a curve to any length the program allows,
+so no finite set of named groups closes the gap for good. Dropping `datasize`
+collapses back to the single group this script had before lengths were
+enumerated at all: the discriminator memcmp alone already restricts delivery
+to `BondingCurve` accounts, so nothing is lost by not naming a length. A
+client-side `MIN_CURVE_LEN` floor discards anything shorter than the
+smallest real struct, so a stray short/legacy account still can't reach the
+decoder.
+
+**Bandwidth trade-off, measured 2026-09-15 directly over Geyser** (not
+borrowed from the WebSocket script's measurement — Geyser reports slot and
+signature per update and its named-group model batches differently, so it
+gets its own number). Two *separate* concurrent gRPC streams over the same
+120s window, so both see the identical trade activity without the
+sequential-window volume-swing problem (a first attempt comparing sequential
+windows was unreliable for exactly that reason — see
+`get_graduating_tokens.py`'s module docstring): one stream subscribed with
+this script's old two named groups (`datasize` 125 and 151), the other with
+a single unfiltered group. The filtered stream took in 6,754 updates /
+2,340,863 proto bytes; the unfiltered stream took in 6,761 updates /
+2,337,304 proto bytes — a 1.001x update ratio and a 0.998x byte ratio,
+i.e. no measurable cost. The 7-update difference was the 256-byte curve
+(`EJpNsfxnTB6mtVdzrTcgQ9xfywobHSSsUtu1Gh1GFvEg`) that no enumerated length
+could ever match; the filtered stream structurally cannot see it at all.
+`getAccountInfo` on that same curve, run directly the same day, confirms it:
+still 256 bytes, discriminator intact, and it decodes cleanly through this
+repo's own IDL-driven decoder — the bytes past the documented fields are
+zero padding.
+
+UNVERIFIED here: whether the original 49-byte layout (no `creator` field) is
+still written anywhere. None of the 6,761 unfiltered updates in the
+measurement above were that length, but that is one 120s window, not proof
+of absence.
 """
 
 import argparse
@@ -99,7 +134,13 @@ TOKEN_PROGRAM_ID: Final[Pubkey] = Pubkey.from_string(
 
 # See learning-examples/calculate_discriminator.py
 BONDING_CURVE_DISCRIMINATOR: Final[bytes] = bytes.fromhex("17b7f83760d8ac60")
-CURVE_ACCOUNT_LEN: Final[int] = 151
+
+# create_v2 allocates the 125-byte struct; extend_account can grow it past
+# that to any length the program allows (151 and 256 both confirmed live,
+# 2026-09-15) — there is no fixed set of lengths to enumerate. This is a
+# floor, not an allowlist: anything shorter than the smallest real struct is
+# dropped client-side, everything at or above it is decoded and let through.
+MIN_CURVE_LEN: Final[int] = 125
 
 TOKEN_DECIMALS: Final[int] = 6
 _RESERVES_OFFSET: Final[int] = 24  # real_token_reserves, u64 LE
@@ -157,6 +198,17 @@ def zero_prefix_gate(bound_raw: int) -> tuple[int, bytes] | None:
 def build_subscribe_request(bound_raw: int) -> geyser_pb2.SubscribeRequest:
     """Build the Geyser account subscription for near-graduation curves.
 
+    One named group, with no `datasize` filter: `extend_account` can grow a
+    curve past 125 bytes to any length the program allows, so there is no
+    fixed set of lengths to enumerate across multiple named groups. (An
+    earlier version of this script did use two named groups, one per
+    enumerated length, because `SubscribeRequest.accounts` ANDs the filters
+    *inside* a group and there was no way to ask one group for "datasize 125
+    or 151" — see the module docstring for why that stopped being enough and
+    what it costs in bandwidth to drop entirely.) The discriminator memcmp
+    alone already restricts delivery to `BondingCurve` accounts, so a single
+    group loses no precision by not naming a length.
+
     Args:
         bound_raw: Highest qualifying `real_token_reserves`, in raw units
 
@@ -164,10 +216,10 @@ def build_subscribe_request(bound_raw: int) -> geyser_pb2.SubscribeRequest:
         The subscription request
     """
     request = geyser_pb2.SubscribeRequest()
+    gate = zero_prefix_gate(bound_raw)
+
     accounts = request.accounts["graduating_curves"]
     accounts.owner.append(str(PUMP_PROGRAM_ID))
-
-    accounts.filters.add().datasize = CURVE_ACCOUNT_LEN
 
     discriminator = accounts.filters.add().memcmp
     discriminator.offset = 0
@@ -177,7 +229,6 @@ def build_subscribe_request(bound_raw: int) -> geyser_pb2.SubscribeRequest:
     not_complete.offset = _COMPLETE_OFFSET
     not_complete.bytes = b"\x00"  # Not graduated yet
 
-    gate = zero_prefix_gate(bound_raw)
     if gate:
         reserves = accounts.filters.add().memcmp
         reserves.offset, reserves.bytes = gate
@@ -217,7 +268,13 @@ def create_geyser_connection() -> tuple[Any, grpc.aio.Channel]:
 
 
 def parse_curve(data: bytes) -> dict[str, Any]:
-    """Decode the 151-byte bonding curve fields needed for a progress report.
+    """Decode the bonding curve fields needed for a progress report.
+
+    Works at any length the account might arrive at — 125 bytes as created,
+    151 once extended, 256 confirmed live, or any other length the program
+    allows in the future — since every field read here sits in the first 115
+    bytes, well before where any resizing appends. Callers are expected to
+    apply `MIN_CURVE_LEN` first; this function does not re-check it.
 
     Args:
         data: Raw bonding curve account data
@@ -422,6 +479,12 @@ async def stream_once(reporter: GraduationReporter, bound_raw: int) -> None:
                 continue
 
             account = update.account.account
+            data = bytes(account.data)
+            if len(data) < MIN_CURVE_LEN:
+                # Shorter than the smallest real BondingCurve struct — not a
+                # shape the decoder should be trusted with. See MIN_CURVE_LEN.
+                continue
+
             signature = (
                 str(Signature(bytes(account.txn_signature)))
                 if account.txn_signature
@@ -429,7 +492,7 @@ async def stream_once(reporter: GraduationReporter, bound_raw: int) -> None:
             )
             await reporter.handle(
                 Pubkey.from_bytes(bytes(account.pubkey)),
-                bytes(account.data),
+                data,
                 suffix=f"  slot={update.account.slot}  sig={signature}",
             )
     finally:

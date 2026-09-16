@@ -12,7 +12,11 @@ from typing import ClassVar, Final
 from solders.pubkey import Pubkey
 from spl.token.instructions import get_associated_token_address
 
-from core.pubkeys import SystemAddresses, normalize_quote_mint, quote_token_program
+from core.pubkeys import (
+    SystemAddresses,
+    cached_quote_token_program,
+    normalize_quote_mint,
+)
 from interfaces.core import AddressProvider, Platform, TokenInfo
 
 
@@ -391,7 +395,7 @@ class PumpFunAddressProvider(AddressProvider):
             Tuple of (quote_mint, quote_token_program)
         """
         quote_mint = normalize_quote_mint(token_info.quote_mint)
-        quote_program = token_info.quote_token_program_id or quote_token_program(
+        quote_program = token_info.quote_token_program_id or cached_quote_token_program(
             quote_mint
         )
         return quote_mint, quote_program
@@ -419,7 +423,10 @@ class PumpFunAddressProvider(AddressProvider):
         Both instructions take the same 26 accounts; buy_v2 additionally takes
         global_volume_accumulator. All accounts are mandatory — there are no
         optional or conditional accounts on the v2 interface, regardless of
-        mayhem/cashback/quote-mint combination.
+        mayhem/cashback/holder-reward/quote-mint combination. (Cashback is
+        legacy-only since the 2026-09-15 upgrade — create_v2 no longer mints
+        new cashback coins — but existing cashback coins still trade through
+        this same account set.)
 
         Args:
             token_info: Token information

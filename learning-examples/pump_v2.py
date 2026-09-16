@@ -16,6 +16,8 @@ github.com/pump-fun/pump-public-docs
 
 import secrets
 import struct
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from construct import Flag, Int64ul, Struct
 from solders.instruction import AccountMeta, Instruction
@@ -41,6 +43,13 @@ DEFAULT_PUBKEY = Pubkey.from_string("11111111111111111111111111111111")
 WSOL_MINT = Pubkey.from_string("So11111111111111111111111111111111111111112")
 USDC_MINT = Pubkey.from_string("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
 QUOTE_DECIMALS = {WSOL_MINT: 9, USDC_MINT: 6}
+
+# Token program that owns each quote mint below. WSOL and USDC are legacy
+# SPL Token, but a pump.fun upgrade verified 2026-09-15 lets create_v2 pair a
+# coin with a Token-2022 quote mint (error 6064 now accepts "SPL Token or
+# Token-2022"), so this two-entry map is not exhaustive -- see
+# resolve_quote_token_program below for mints outside it.
+QUOTE_TOKEN_PROGRAMS = {WSOL_MINT: TOKEN_PROGRAM, USDC_MINT: TOKEN_PROGRAM}
 
 TOKEN_DECIMALS = 6
 LAMPORTS_PER_SOL = 1_000_000_000
@@ -112,28 +121,124 @@ def is_sol_paired(quote_mint: Pubkey | None) -> bool:
     return normalize_quote_mint(quote_mint) == WSOL_MINT
 
 
+# Byte offset of the `decimals` field in a Mint account's raw data. SPL Token
+# and Token-2022 mints share the same base layout -- COption<Pubkey>
+# mint_authority (4-byte tag + 32-byte pubkey = 36 bytes), u64 supply
+# (8 bytes), then u8 decimals at byte 44. Token-2022 extensions are appended
+# *after* this base 82-byte struct, never rearranging it. Verified 2026-09-15
+# by reading byte 44 off-chain for WSOL (9), USDC (6) and a live Token-2022
+# quote mint (6, in a 690-byte account carrying extensions) -- all three
+# matched their known decimals. Mirrors core/pubkeys.py's constant, kept as a
+# separate copy because this module deliberately imports nothing from src/.
+_MINT_DECIMALS_OFFSET = 44
+
+
+def _parse_mint_decimals(data: bytes) -> int:
+    """Read the `decimals` field out of a raw Mint account's byte layout.
+
+    Args:
+        data: Raw account data, e.g. `.data` on an `AsyncClient.get_account_info`
+            response's `.value`
+
+    Returns:
+        The mint's decimal count
+
+    Raises:
+        ValueError: If the data is too short to be a Mint account
+    """
+    if len(data) <= _MINT_DECIMALS_OFFSET:
+        raise ValueError(
+            f"Account data is only {len(data)} bytes, too short to be a "
+            f"Mint account (decimals lives at byte {_MINT_DECIMALS_OFFSET})"
+        )
+    return data[_MINT_DECIMALS_OFFSET]
+
+
+# Process-lifetime cache of quote mint -> decimals, pre-seeded so WSOL/USDC
+# never cost an RPC call. Mirrors core/pubkeys.py's cache, kept as a separate
+# copy because this module deliberately imports nothing from src/. Warmed by
+# `resolve_quote_token_program` off the same mint-account fetch it already
+# makes to resolve the token program, so this costs zero extra RPC calls.
+_QUOTE_DECIMALS_CACHE = dict(QUOTE_DECIMALS)
+
+
 def quote_units(quote_mint: Pubkey) -> int:
-    """Raw units per whole unit of a quote mint.
+    """Raw units per whole unit of a quote mint, from the warm cache.
+
+    Pre-seeded with WSOL (9) and USDC (6); any other quote mint is resolved
+    (and thus cached) by `resolve_quote_token_program` before it is traded.
 
     Args:
         quote_mint: Quote mint address
 
     Returns:
-        1e9 for SOL, 1e6 for USDC
+        10 ** decimals for the quote mint (1e9 for SOL, 1e6 for USDC)
     """
-    return 10 ** QUOTE_DECIMALS.get(quote_mint, 9)
+    return 10 ** _QUOTE_DECIMALS_CACHE.get(quote_mint, 9)
 
 
 def quote_token_program(quote_mint: Pubkey) -> Pubkey:
-    """Token program owning a quote mint.
+    """Token program owning a quote mint, defaulting to SPL Token.
 
     Args:
         quote_mint: Quote mint address
 
     Returns:
-        Token program id (both current quote mints are legacy SPL Token)
+        Token program id for quote_mint if known, else SPL Token
     """
-    return TOKEN_PROGRAM
+    return QUOTE_TOKEN_PROGRAMS.get(quote_mint, TOKEN_PROGRAM)
+
+
+# Process-lifetime cache of quote mint -> owning token program, pre-seeded so
+# WSOL/USDC never cost an RPC call. Mirrors core/pubkeys.py's cache, kept as
+# a separate copy because this module deliberately imports nothing from src/.
+_QUOTE_TOKEN_PROGRAM_CACHE = dict(QUOTE_TOKEN_PROGRAMS)
+
+
+async def resolve_quote_token_program(
+    quote_mint: Pubkey,
+    get_account_info: Callable[[Pubkey], Awaitable[Any]],
+) -> Pubkey:
+    """Resolve and cache the token program *and* decimals for a quote mint.
+
+    Returns instantly, with no RPC call, for a mint already known or
+    resolved by an earlier call in this process. Otherwise fetches the mint
+    account once -- a mint account's owner *is* the token program that
+    created it, and its raw data carries `decimals` at a fixed byte offset
+    shared by SPL Token and Token-2022 (see `_parse_mint_decimals`) -- and
+    caches both results. `build_v2_accounts` and its callers stay
+    synchronous; call this first and pass the result as
+    `quote_token_program_id` when trading a mint outside QUOTE_TOKEN_PROGRAMS.
+
+    Args:
+        quote_mint: Quote mint address to resolve
+        get_account_info: Async getter returning an account object with
+            `.owner` (Pubkey) and `.data` (bytes) attributes, e.g.
+            `AsyncClient.get_account_info` (unwrap `.value` from the RPC
+            response first)
+
+    Returns:
+        Token program id that owns the quote mint
+
+    Raises:
+        ValueError: If the mint's owner is neither SPL Token nor Token-2022,
+            or its account data is too short to carry a decimals field
+    """
+    cached = _QUOTE_TOKEN_PROGRAM_CACHE.get(quote_mint)
+    if cached is not None:
+        return cached
+
+    account = await get_account_info(quote_mint)
+    owner = account.owner
+    if owner not in (TOKEN_PROGRAM, TOKEN_2022_PROGRAM):
+        raise ValueError(
+            f"Quote mint {quote_mint} is owned by {owner}, expected "
+            f"{TOKEN_PROGRAM} (SPL Token) or {TOKEN_2022_PROGRAM} (Token-2022)"
+        )
+    decimals = _parse_mint_decimals(bytes(account.data))
+    _QUOTE_TOKEN_PROGRAM_CACHE[quote_mint] = owner
+    _QUOTE_DECIMALS_CACHE[quote_mint] = decimals
+    return owner
 
 
 def find_bonding_curve(mint: Pubkey) -> Pubkey:
@@ -256,9 +361,13 @@ def pick_buyback_fee_recipient() -> Pubkey:
 class BondingCurveState:
     """Parsed pump.fun BondingCurve account.
 
-    The account is 151 bytes: the 115-byte documented struct followed by
-    reserved padding. The SOL-named reserve fields were renamed to quote fields
-    when non-SOL quote assets landed; the old names are kept as aliases.
+    The account is 125 bytes as created; an extend_account instruction (not
+    always in a separate transaction from create_v2 — see
+    learning-examples/mint_and_buy_v2.py) can grow it to 151, 256, or any
+    other length the program allows. The struct below covers the leading
+    fields, which are at the same offsets regardless of total length. The
+    SOL-named reserve fields were renamed to quote fields when non-SOL quote
+    assets landed; the old names are kept as aliases.
     """
 
     _STRUCT = Struct(
@@ -338,9 +447,9 @@ class BondingCurveState:
         """
         if not self.virtual_token_reserves or not self.virtual_quote_reserves:
             return 0.0
-        return (
-            self.virtual_quote_reserves / 10 ** QUOTE_DECIMALS.get(self.quote_mint, 9)
-        ) / (self.virtual_token_reserves / 10**TOKEN_DECIMALS)
+        return (self.virtual_quote_reserves / quote_units(self.quote_mint)) / (
+            self.virtual_token_reserves / 10**TOKEN_DECIMALS
+        )
 
 
 def build_v2_accounts(
@@ -352,6 +461,7 @@ def build_v2_accounts(
     base_token_program: Pubkey,
     is_mayhem_mode: bool,
     include_global_volume_accumulator: bool,
+    quote_token_program_id: Pubkey | None = None,
 ) -> list[AccountMeta]:
     """Build the ordered account list shared by buy_v2 and sell_v2.
 
@@ -363,11 +473,15 @@ def build_v2_accounts(
         base_token_program: Token program owning base_mint
         is_mayhem_mode: Selects which fee recipient set to draw from
         include_global_volume_accumulator: True for buy_v2, False for sell_v2
+        quote_token_program_id: Token program owning quote_mint. Omit to use
+            `quote_token_program`'s SPL Token default; pass the result of
+            `resolve_quote_token_program` for a mint outside that default,
+            e.g. a Token-2022-paired coin.
 
     Returns:
         Ordered AccountMeta list (27 entries for buy_v2, 26 for sell_v2)
     """
-    quote_program = quote_token_program(quote_mint)
+    quote_program = quote_token_program_id or quote_token_program(quote_mint)
     bonding_curve = find_bonding_curve(base_mint)
     creator_vault = find_creator_vault(creator)
     user_volume_accumulator = find_user_volume_accumulator(user)
@@ -426,6 +540,7 @@ def build_buy_v2_instruction(
     quote_mint: Pubkey = WSOL_MINT,
     base_token_program: Pubkey = TOKEN_2022_PROGRAM,
     is_mayhem_mode: bool = False,
+    quote_token_program_id: Pubkey | None = None,
 ) -> Instruction:
     """Build a buy_v2 instruction.
 
@@ -438,6 +553,8 @@ def build_buy_v2_instruction(
         quote_mint: Normalized quote mint
         base_token_program: Token program owning base_mint
         is_mayhem_mode: Whether the coin is in mayhem mode
+        quote_token_program_id: Token program owning quote_mint; see
+            `build_v2_accounts`
 
     Returns:
         The buy_v2 instruction
@@ -455,6 +572,7 @@ def build_buy_v2_instruction(
             base_token_program=base_token_program,
             is_mayhem_mode=is_mayhem_mode,
             include_global_volume_accumulator=True,
+            quote_token_program_id=quote_token_program_id,
         ),
     )
 
@@ -469,6 +587,7 @@ def build_sell_v2_instruction(
     quote_mint: Pubkey = WSOL_MINT,
     base_token_program: Pubkey = TOKEN_2022_PROGRAM,
     is_mayhem_mode: bool = False,
+    quote_token_program_id: Pubkey | None = None,
 ) -> Instruction:
     """Build a sell_v2 instruction.
 
@@ -481,6 +600,8 @@ def build_sell_v2_instruction(
         quote_mint: Normalized quote mint
         base_token_program: Token program owning base_mint
         is_mayhem_mode: Whether the coin is in mayhem mode
+        quote_token_program_id: Token program owning quote_mint; see
+            `build_v2_accounts`
 
     Returns:
         The sell_v2 instruction
@@ -498,5 +619,6 @@ def build_sell_v2_instruction(
             base_token_program=base_token_program,
             is_mayhem_mode=is_mayhem_mode,
             include_global_volume_accumulator=False,
+            quote_token_program_id=quote_token_program_id,
         ),
     )

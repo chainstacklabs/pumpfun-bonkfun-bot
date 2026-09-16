@@ -22,8 +22,10 @@ from core.priority_fee.manager import PriorityFeeManager
 from core.pubkeys import (
     WSOL_MINT,
     normalize_quote_mint,
+    quote_decimals,
     resolve_quote_amounts,
     resolve_quote_mint,
+    resolve_quote_token_program,
 )
 from core.wallet import Wallet
 from interfaces.core import Platform, TokenInfo
@@ -277,6 +279,36 @@ class UniversalTrader:
         self.processed_tokens: set[str] = set()
         self.token_timestamps: dict[str, float] = {}
 
+    async def _resolve_quote_token_programs(self) -> None:
+        """Warm the quote-mint token-program and decimals caches at startup.
+
+        `extreme_fast_mode` submits a buy with zero RPC calls between
+        detecting a token and sending the transaction, so the token program
+        that owns a coin's quote mint -- and its decimals, which size
+        `max_sol_cost`/`min_sol_output` -- have to already be known by then.
+        The set of quote mints the bot can ever buy is fixed once at startup
+        -- `self.quote_amounts` comes from `_resolve_quote_config` -- so this
+        resolves and caches both facts for each of them once here, from the
+        single mint-account fetch `resolve_quote_token_program` already
+        makes. The hot path only ever reads those caches (see
+        `cached_quote_token_program` and `quote_decimals` in core.pubkeys).
+
+        Raises:
+            ValueError: If a configured quote mint's owner is neither SPL
+                Token nor Token-2022, or its decimals cannot be read off the
+                mint account. Left uncaught deliberately: trading a quote
+                mint the bot cannot correctly size or derive accounts for is
+                worse than refusing to start.
+        """
+        for quote_mint in self.quote_amounts:
+            token_program = await resolve_quote_token_program(
+                quote_mint, self.solana_client.get_account_info
+            )
+            logger.info(
+                f"Resolved quote mint {quote_mint} -> token program "
+                f"{token_program}, decimals {quote_decimals(quote_mint)}"
+            )
+
     async def start(self) -> None:
         """Start the trading bot and listen for new tokens."""
         logger.info(f"Starting Universal Trader for {self.platform.value}")
@@ -309,6 +341,12 @@ class UniversalTrader:
             logger.info(f"RPC warm-up successful (getHealth passed: {health_resp})")
         except Exception as e:
             logger.warning(f"RPC warm-up failed: {e!s}")
+
+        # Deliberately outside the try/except above: an RPC health check is
+        # best-effort, but a quote mint we cannot resolve to a token program
+        # would go on to derive a wrong (non-existent) ATA and revert every
+        # trade against it -- fail startup instead of trading blind.
+        await self._resolve_quote_token_programs()
 
         try:
             # Choose operating mode based on yolo_mode

@@ -163,12 +163,13 @@ you leave it off. The `decode_from_*.py` scripts fall back to the saved fixtures
 them (`raw_*.json`), which are recaptured from mainnet rather than hand-edited — a
 stale fixture makes a working decoder look broken and a broken one look fine.
 
-Two examples double as verification scripts to run after any pump.fun program upgrade:
+Four examples double as verification scripts to run after any pump.fun program upgrade:
 
 ```bash
-uv run learning-examples/verify_v2_account_layout.py    # offline: account layouts, PDAs, encoding
-uv run learning-examples/simulate_v2_trades.py <MINT>   # mainnet simulation, no funds moved
-uv run learning-examples/verify_tx_status_checks.py     # offline: every example checks meta.err
+uv run learning-examples/verify_v2_account_layout.py     # offline: account layouts, PDAs, encoding
+uv run learning-examples/verify_curve_account_sizes.py   # offline: 125/151/256-byte curves all decode
+uv run learning-examples/simulate_v2_trades.py <MINT>    # mainnet simulation, no funds moved
+uv run learning-examples/verify_tx_status_checks.py      # offline: every example checks meta.err
 ```
 
 Related docs: [Listening to pump.fun migrations](https://docs.chainstack.com/docs/solana-listening-to-pumpfun-migrations-to-raydium) · [Sniping with only logsSubscribe](https://docs.chainstack.com/docs/solana-listening-to-pumpfun-token-mint-using-only-logssubscribe)
@@ -187,7 +188,7 @@ For faster execution, Chainstack offers [Solana Trader nodes](https://docs.chain
 
 ## IDLs
 
-The IDLs under [`idl/`](idl/) are vendored from [pump-fun/pump-public-docs](https://github.com/pump-fun/pump-public-docs) — currently upstream commit `9c82f61`. To refresh, copy `pump.json`, `pump_amm.json`, and `pump_fees.json` into `pump_fun_idl.json`, `pump_swap_idl.json`, and `pump_fees.json`, and note the upstream commit in your commit message. Don't hand-edit them.
+The IDLs under [`idl/`](idl/) are vendored from [pump-fun/pump-public-docs](https://github.com/pump-fun/pump-public-docs) — currently upstream commit `8109141`. To refresh, copy `pump.json`, `pump_amm.json`, and `pump_fees.json` into `pump_fun_idl.json`, `pump_swap_idl.json`, and `pump_fees.json`, and note the upstream commit in your commit message. Don't hand-edit them.
 
 The `buy_v2` / `sell_v2` account lists are complete in the IDL — that's the point of the v2 interface. The **legacy** `buy` / `sell` lists are not: the IDL omits PDAs the on-chain program requires. For anything outside v2, cross-check against a recent successful on-chain transaction before trusting the IDL.
 

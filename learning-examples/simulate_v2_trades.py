@@ -37,8 +37,8 @@ from core.pubkeys import (  # noqa: E402
     TOKEN_DECIMALS,
     SystemAddresses,
     normalize_quote_mint,
-    quote_token_program,
     quote_units_per_token,
+    resolve_quote_token_program,
 )
 from core.wallet import Wallet  # noqa: E402
 from interfaces.core import Platform, TokenInfo  # noqa: E402
@@ -138,7 +138,9 @@ async def build_token_info(
         is_mayhem_mode=state["is_mayhem_mode"],
         is_cashback_coin=state["is_cashback_coin"],
         quote_mint=quote_mint,
-        quote_token_program_id=quote_token_program(quote_mint),
+        quote_token_program_id=await resolve_quote_token_program(
+            quote_mint, client.get_account_info
+        ),
     )
     return token_info, state
 

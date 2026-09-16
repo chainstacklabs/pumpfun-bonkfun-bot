@@ -13,7 +13,8 @@ Solana Tracker), not core Agave, and its `limit` is a *scan* budget rather than 
 result count, so answering this question with it means ~1000 sequential pages.
 
 `programSubscribe` sidesteps the scan entirely. A curve can only approach
-graduation by being traded, and every write to it pushes the full 151-byte account,
+graduation by being traded, and every write to it pushes the full account — 125
+bytes as `create_v2` allocates it, or 151 once `extend_account` has run on it —
 so each notification carries everything needed to compute progress — there is no
 state to accumulate and no cold start beyond the next trade. Verified accepted on
 both a paid endpoint and the public `api.mainnet-beta.solana.com`.
@@ -49,10 +50,61 @@ migration want the 3-byte one, a wider funnel the 2-byte one.
 Checked against mainnet by running the filtered and unfiltered subscriptions side by
 side for a minute: same curves, nothing dropped, nothing extra.
 
-`dataSize: 151` restricts this to the current curve layout. The original 49-byte
-layout (no `creator` field) still has accounts with `complete = false`, but none of
-them are written to any more — verified over a 45s window in which all 205 updates
-across 24 curves were 151-byte accounts.
+This script does **not** filter on `dataSize`. `create_v2` allocates the curve
+at exactly 125 bytes, an account grows to 151 once `extend_account` has run on
+it, and a rarer third length (256 bytes, confirmed live below) also exists.
+`extend_account` can grow a curve to any length — nothing enumerates every
+size it might produce — so a fixed `dataSize` allowlist is whack-a-mole: the
+next length silently drops curves again, and the failure mode is invisible,
+since the script just prints fewer results rather than an error. The
+discriminator `memcmp` alone already restricts delivery to `BondingCurve`
+accounts, so dropping `dataSize` costs no precision — only bandwidth (see the
+measurement below). A `MIN_CURVE_LEN` floor still discards anything shorter
+than the smallest real struct, so a stray short/legacy account can't reach the
+decoder.
+
+Confirmed live on 2026-09-15 two ways. First, directly: `getAccountInfo` on
+`EJpNsfxnTB6mtVdzrTcgQ9xfywobHSSsUtu1Gh1GFvEg` (a 256-byte curve reported
+elsewhere) returned 256 bytes, discriminator matching, owned by the pump
+program, and it decoded cleanly through this repo's own IDL-driven decoder
+(`PumpFunCurveManager._decode_curve_state_with_idl`) with sane reserves —
+everything past the documented fields is zero padding. Second, over the
+wire: a 120s `programSubscribe` window with this script's own filters
+(discriminator + `complete = false`, no `dataSize`) took in 1,066 updates —
+207 at 125 bytes, 853 at 151, and 6 at that same 256 length, among ordinary
+traffic. None of the 1,066 were the legacy 49-byte layout (no `creator`
+field). UNVERIFIED: whether that layout still has any `complete = false`
+accounts left on chain, and whether anything still writes to them — not
+re-measured here.
+
+**Bandwidth trade-off, measured 2026-09-15.** A first attempt ran the
+`dataSize`-filtered shape and the unfiltered shape back to back, 90s each,
+and looked like unfiltered cost *less* (0.68x) — that was noise: pump.fun
+trading volume swings a lot minute to minute, and two sequential windows just
+land on different volume. Rerun with all three filter groups (`dataSize
+125`, `dataSize 151`, and no `dataSize`) subscribed **simultaneously on one
+connection**, so all three watch the identical trade stream over the same
+120s: the two enumerated lengths together took in 1,060 updates / 589,279
+bytes; the unfiltered subscription took in 1,066 updates / 593,509 bytes —
+6 extra updates, 4,230 extra bytes, all of it the 256-byte curve neither
+enumerated length can match. That is a **1.006x update ratio / 1.007x byte
+ratio** — under 1% either way, not the double subscription's worth intuition
+might suggest, because in this trade window virtually every update already
+lands on one of the two dataSize-filtered lengths (125 or 151), and 256 is
+rare. Dropping the filter is effectively free here; if a resize-happy period
+ever shifts that mix, the cost scales with however much traffic sits outside
+the two filtered lengths (125/151, i.e. the rarer 256-byte curves and
+beyond), not with total volume.
+
+UNVERIFIED: a curve was once observed going from 125 to 151 bytes, with
+several 125-byte trades logged in between, suggesting `extend_account` ran as
+its own later transaction rather than bundled into `create_v2` — not
+re-measured here. `extend_account` **can** land in the same transaction as
+`create_v2` — `learning-examples/mint_and_buy_v2.py` does exactly that,
+appending `create_extend_account_instruction` right after
+`create_pump_create_v2_instruction` in the same instruction list — so both
+orderings occur; how common a further-resized (256-byte) curve is remains
+unmeasured.
 """
 
 import argparse
@@ -93,7 +145,13 @@ TOKEN_PROGRAM_ID: Final[Pubkey] = Pubkey.from_string(
 
 # See learning-examples/calculate_discriminator.py
 BONDING_CURVE_DISCRIMINATOR: Final[bytes] = bytes.fromhex("17b7f83760d8ac60")
-CURVE_ACCOUNT_LEN: Final[int] = 151
+
+# create_v2 allocates the 125-byte struct; extend_account can grow it past
+# that to any length the program allows (151 and 256 both confirmed live,
+# 2026-09-15) — there is no fixed set of lengths to enumerate. This is a
+# floor, not an allowlist: anything shorter than the smallest real struct is
+# dropped client-side, everything at or above it is decoded and let through.
+MIN_CURVE_LEN: Final[int] = 125
 
 TOKEN_DECIMALS: Final[int] = 6
 _RESERVES_OFFSET: Final[int] = 24  # real_token_reserves, u64 LE
@@ -150,6 +208,12 @@ def zero_prefix_gate(bound_raw: int) -> tuple[int, bytes] | None:
 def build_filters(bound_raw: int) -> list[dict[str, Any]]:
     """Assemble the server-side `programSubscribe` filters.
 
+    No `dataSize` filter: `extend_account` can grow a curve past 125 bytes to
+    any length the program allows, so there is no fixed set of lengths to
+    match. The discriminator memcmp alone already restricts delivery to
+    `BondingCurve` accounts — see the module docstring for the bandwidth this
+    trades away and the client-side `MIN_CURVE_LEN` floor that replaces it.
+
     Args:
         bound_raw: Highest qualifying `real_token_reserves`, in raw units
 
@@ -167,7 +231,6 @@ def build_filters(bound_raw: int) -> list[dict[str, Any]]:
         }
 
     filters: list[dict[str, Any]] = [
-        {"dataSize": CURVE_ACCOUNT_LEN},
         memcmp(0, BONDING_CURVE_DISCRIMINATOR),
         memcmp(_COMPLETE_OFFSET, b"\x00"),  # Not graduated yet
     ]
@@ -179,7 +242,13 @@ def build_filters(bound_raw: int) -> list[dict[str, Any]]:
 
 
 def parse_curve(data: bytes) -> dict[str, Any]:
-    """Decode the 151-byte bonding curve fields needed for a progress report.
+    """Decode the bonding curve fields needed for a progress report.
+
+    Works at any length the account might arrive at — 125 bytes as created,
+    151 once extended, 256 confirmed live, or any other length the program
+    allows in the future — since every field read here sits in the first 115
+    bytes, well before where any resizing appends. Callers are expected to
+    apply `MIN_CURVE_LEN` first; this function does not re-check it.
 
     Args:
         data: Raw bonding curve account data
@@ -374,9 +443,15 @@ async def stream_once(
 ) -> None:
     """Subscribe and consume notifications until the connection drops.
 
+    One subscription is enough now that there is no `dataSize` filter to
+    fan out over — a curve at any length is delivered on this single
+    filter set. Only the subscription id handed back by our own ack is
+    treated as ours, so a notification from an unrelated subscription on this
+    connection (there should not be one) is ignored rather than mishandled.
+
     Args:
         reporter: Sink for decoded curve updates
-        filters: Server-side filters for the subscription
+        filters: The server-side filter list to install
 
     Raises:
         ConnectionRefusedError: If the endpoint rejects the subscription outright
@@ -399,10 +474,10 @@ async def stream_once(
                 }
             )
         )
-
         ack = json.loads(await ws.recv())
         if "error" in ack:
             raise ConnectionRefusedError(str(ack["error"]))
+        subscription_id = ack["result"]
 
         while True:
             # ConnectionClosed deliberately propagates to the reconnect handler in
@@ -416,12 +491,16 @@ async def stream_once(
 
             if message.get("method") != "programNotification":
                 continue
+            if message["params"]["subscription"] != subscription_id:
+                continue
 
             value = message["params"]["result"]["value"]
-            await reporter.handle(
-                Pubkey.from_string(value["pubkey"]),
-                base64.b64decode(value["account"]["data"][0]),
-            )
+            data = base64.b64decode(value["account"]["data"][0])
+            if len(data) < MIN_CURVE_LEN:
+                # Shorter than the smallest real BondingCurve struct — not a
+                # shape the decoder should be trusted with. See MIN_CURVE_LEN.
+                continue
+            await reporter.handle(Pubkey.from_string(value["pubkey"]), data)
 
 
 async def watch(min_progress: float) -> None:
@@ -438,7 +517,8 @@ async def watch(min_progress: float) -> None:
         baseline = await fetch_initial_real_token_reserves(client)
         print_banner(baseline, min_progress)
 
-        filters = build_filters(progress_to_bound(baseline, min_progress))
+        bound_raw = progress_to_bound(baseline, min_progress)
+        filters = build_filters(bound_raw)
         reporter = GraduationReporter(client, baseline, min_progress)
 
         while True:
