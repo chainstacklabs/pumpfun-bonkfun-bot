@@ -147,6 +147,7 @@ async def check_examples_call_a_status_check() -> None:
         # offline checks with a stub client; never sends a transaction
         "verify_pumpportal_buy_path.py",
         "verify_extreme_fast_zero_rpc.py",
+        "verify_buy_result_not_lost.py",
         # uses the bot's SolanaClient wrapper, which folds meta.err into its
         # return value; the boolean is read at the call site
         "cleanup_accounts.py",
@@ -308,7 +309,10 @@ async def check_client_accepts_both_signature_types() -> None:
 
     for form in (sig_str, sig_obj):
         bodies.clear()
-        await client._get_transaction_result(form)  # noqa: SLF001
+        # budget_seconds=0 keeps this to a single call: the capture stub always
+        # answers "not visible", which the retry would otherwise chase until
+        # its budget ran out. What is under test here is the serialization.
+        await client._get_transaction_result(form, budget_seconds=0)  # noqa: SLF001
         assert len(bodies) == 1, f"no RPC issued for {type(form).__name__}"
         param = bodies[0]["params"][0]
         assert param == sig_str, f"signature not normalized: {param!r}"
