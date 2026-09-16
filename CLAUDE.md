@@ -225,6 +225,58 @@ still held. Watch the `break`: before #189 it sat outside both branches of
 `if sell_result.success:`, so a failed sell abandoned the position after a
 single try while leaving `is_active=True`.
 
+### Verifying exit-sell safety and RPC deadlines (issues #207, #208, #209)
+
+```bash
+# Offline: an exit sell is retried only when retrying is provably safe, and
+# confirm_transaction still returns a bool rather than a truthy enum
+uv run learning-examples/verify_exit_sell_confirmation.py
+
+# Offline: max_hold_time still fires when every price read fails
+uv run learning-examples/verify_time_exit_without_price.py
+
+# Offline: post_rpc bounds wall time, not just attempts (virtual clock)
+uv run learning-examples/verify_rpc_deadline.py
+```
+
+**An exit sell is not idempotent, so "it failed" is not enough to act on.**
+A sell that reverted changed nothing and should be retried; a sell whose
+confirmation never arrived may already have emptied the position, and another
+one spends a fee to act on a balance that no longer exists.
+`SolanaClient.confirm_transaction_detailed` / `verify_transaction_status`
+return `ConfirmationStatus` (`SUCCESS` / `REVERTED` / `UNCONFIRMED`) and the
+seller turns that into `TradeResult.failure_reason`, alongside the
+`tx_signature` its failure branch used to drop. `_classify_failed_exit_sell`
+retries a `REVERTED`, re-checks an `UNCONFIRMED` signature before deciding —
+`getTransaction` still answers after signature statuses have aged out — and
+stops rather than reselling blind if it is still unresolved. **A missing
+`failure_reason` means "unknown", never "reverted"**: a stub seller simulating
+a revert has to say `TradeFailureReason.REVERTED` or the retry will not fire.
+
+**`confirm_transaction` and `verify_transaction_succeeded` deliberately stay
+bools.** Returning the enum from them would be silent: every enum member is
+truthy, so each existing `if await client.confirm_transaction(sig):` would
+start passing unconditionally.
+
+**`position.should_exit()` cannot be asked anything without a price**, so a
+failed price read used to skip every exit check — including `max_hold_time`,
+which needs no price at all. With the read failing repeatedly the monitor loop
+span forever: `is_active` never changed and the position was never sold.
+`Position.should_exit_on_time()` is the price-free question, asked in the
+loop's exception handler; the blind exit is floored against the last price
+actually read, or the entry price if none ever was, and is still bounded by
+`trade.max_exit_sell_attempts`.
+
+**`post_rpc` bounds attempts, not wall time.** Three error retries backing off
+1, 2, 4 … 16s, or ten 429 retries waiting up to 30s each and honouring a
+`Retry-After` of any size, is minutes on one call — and on the trade path that
+holds up the whole bot. `deadline_seconds` is the separate bound; it defaults
+to `None`, which is exactly the historical behaviour. `_get_transaction_result`
+passes the time *it* has left on every lookup, so its `budget_seconds` is a real
+ceiling instead of `budget + one post_rpc worst case`. Don't reach for
+`asyncio.timeout` here: cutting off an in-flight `getTransaction` and returning
+None is the "can't see it, so call it failed" conflation that #206 removed.
+
 ### Listener and decoder pitfalls
 
 Each of these was a live bug in `learning-examples/`, all of them invisible
@@ -468,6 +520,17 @@ interface pump.fun maintains.
 - Bot YAML supports `${VAR}` interpolation from the file named by `env_file`.
   Actual variable names are `SOLANA_NODE_RPC_ENDPOINT`,
   `SOLANA_NODE_WSS_ENDPOINT`, `SOLANA_PRIVATE_KEY`, `GEYSER_*`.
+- **PumpPortal sends a thinner payload for `bonk` pools than for `pump` ones.**
+  A bonk `create` carries no `name`, `symbol` or `uri` — verified against the
+  live feed 2026-09-16, which ran 24 pump creates and 7 bonk creates in 90s.
+  Requiring those fields rejected every bonk token that ever arrived (issue
+  #200), so only `mint` and `traderPublicKey` are required; everything else the
+  trade path needs is derived from the mint. Consequence worth knowing:
+  `filters.match_string` matches on name/symbol, so it can never match a bonk
+  token from this feed. `learning-examples/verify_pumpportal_bonk_fields.py`
+  checks this against committed fixtures, and `--live` re-checks it against the
+  real feed. The bonk **trade** path past detection is still unverified — see
+  issue #201.
 - `config_loader.py` validates the platform/listener pairing before startup:
   pump.fun supports `logs`, `blocks`, `geyser`, `pumpportal`; letsbonk.fun
   supports `blocks`, `geyser`, `pumpportal` — **not `logs`**. Adding a listener
