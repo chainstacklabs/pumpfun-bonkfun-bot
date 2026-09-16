@@ -662,35 +662,85 @@ class UniversalTrader:
         await asyncio.sleep(self.wait_time_after_buy)
 
         logger.info(f"Selling {token_info.symbol}...")
-        # Pass token amount and price from buy result to avoid RPC delays
-        sell_result: TradeResult = await self.seller.execute(
-            token_info, token_amount=buy_result.amount, token_price=buy_result.price
+        # The first attempt prices off the buy: no price has been read since,
+        # and reading one would cost an RPC call on the happy path.
+        token_price = buy_result.price
+
+        for attempt in range(1, self.max_exit_sell_attempts + 1):
+            sell_result: TradeResult = await self.seller.execute(
+                token_info, token_amount=buy_result.amount, token_price=token_price
+            )
+
+            if sell_result.success:
+                logger.info(f"Successfully sold {token_info.symbol}")
+                self._log_trade(
+                    "sell",
+                    token_info,
+                    sell_result.price,
+                    sell_result.amount,
+                    sell_result.tx_signature,
+                )
+                # Close ATA if enabled
+                await handle_cleanup_after_sell(
+                    self.solana_client,
+                    self.wallet,
+                    token_info.mint,
+                    token_info.token_program_id,
+                    self.priority_fee_manager,
+                    self.cleanup_mode,
+                    self.cleanup_with_priority_fee,
+                    self.cleanup_force_close_with_burn,
+                )
+                return
+
+            logger.error(
+                f"Failed to sell {token_info.symbol} (attempt "
+                f"{attempt}/{self.max_exit_sell_attempts}): "
+                f"{sell_result.error_message}"
+            )
+            if attempt >= self.max_exit_sell_attempts:
+                break
+
+            # The seller turns token_price into the slippage floor, and a
+            # revert usually means that floor no longer matches the market —
+            # so re-read the price before trying again rather than repeating
+            # the same unpayable ask (same reasoning as the tp/sl path).
+            token_price = await self._current_price_or(token_info, token_price)
+
+        logger.error(
+            f"Giving up on selling {token_info.symbol} after "
+            f"{self.max_exit_sell_attempts} attempts. Position stays open "
+            f"and is no longer monitored - tokens are still held."
         )
 
-        if sell_result.success:
-            logger.info(f"Successfully sold {token_info.symbol}")
-            self._log_trade(
-                "sell",
-                token_info,
-                sell_result.price,
-                sell_result.amount,
-                sell_result.tx_signature,
+    async def _current_price_or(self, token_info: TokenInfo, fallback: float) -> float:
+        """Read the current price, falling back to the last known one.
+
+        Args:
+            token_info: Token information used to locate the pool/curve
+            fallback: Price to keep if the read fails
+
+        Returns:
+            The freshly read price, or `fallback` if it could not be read
+        """
+        try:
+            curve_manager = self.platform_implementations.curve_manager
+            price = await curve_manager.calculate_price(
+                self._get_pool_address(token_info)
             )
-            # Close ATA if enabled
-            await handle_cleanup_after_sell(
-                self.solana_client,
-                self.wallet,
-                token_info.mint,
-                token_info.token_program_id,
-                self.priority_fee_manager,
-                self.cleanup_mode,
-                self.cleanup_with_priority_fee,
-                self.cleanup_force_close_with_burn,
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"Could not re-read price for {token_info.symbol} ({e}); "
+                f"retrying against {fallback:.8f}"
             )
-        else:
-            logger.error(
-                f"Failed to sell {token_info.symbol}: {sell_result.error_message}"
-            )
+            return fallback
+        if price and price > 0:
+            return price
+        logger.warning(
+            f"Re-read price for {token_info.symbol} was {price}; "
+            f"retrying against {fallback:.8f}"
+        )
+        return fallback
 
     async def _monitor_position_until_exit(
         self, token_info: TokenInfo, position: Position
