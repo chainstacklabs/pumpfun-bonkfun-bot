@@ -31,8 +31,12 @@ Offline machine checks, no network and no funds moved:
      state_from_event, so extreme_fast_mode keeps its zero-RPC contract.
   4. The block listener returns that TokenInfo for the fixture, which is the
      regression that matters: it must not depend on the envelope decoding.
-  5. The listener still reads a v0 create in the same base64 shape, so the
-     log route was added alongside the existing path, not in place of it.
+  5. The listener still reads a pre-v1 create, so nothing regressed for the
+     coins that already worked.
+  6. With the logs removed, the v1 create is NOT detected — which is what makes
+     the log route load-bearing rather than decorative. If this check starts
+     failing, solders has learned to decode a v1 envelope and the routing could
+     be simplified.
 
 Usage:
     uv run learning-examples/verify_transaction_v1.py
@@ -55,8 +59,13 @@ from platforms import get_platform_implementations  # noqa: E402
 V1_FIXTURE = (
     PROJECT_ROOT / "learning-examples" / "raw_create_v2_v1_from_gettransaction.json"
 )
+# A pre-v1 create, already committed for the optional-args verifier. Reused
+# rather than capturing another one: it only has to be a create the listener
+# still detects.
 V0_FIXTURE = (
-    PROJECT_ROOT / "learning-examples" / "raw_create_v2_v0_from_gettransaction.json"
+    PROJECT_ROOT
+    / "learning-examples"
+    / "raw_create_v2_with_fee_bps_from_gettransaction.json"
 )
 
 # Solana tags a v1 transaction with this first byte (SIMD-0385 VersionByte).
@@ -179,6 +188,24 @@ def check_listener_detects_the_v1_create() -> bool:
     return True
 
 
+def check_log_route_is_what_detects_v1() -> bool:
+    """Strip the logs and the v1 create must vanish.
+
+    Proves the log route is doing the work, rather than passing because some
+    other path happens to cope. solders cannot decode a v1 envelope, so with
+    no logs there is nothing left to parse.
+    """
+    listener = UniversalBlockListener("wss://offline.invalid", [Platform.PUMP_FUN])
+    result = _load(V1_FIXTURE)
+    tx = _as_block_transaction(result)
+    tx["meta"] = {**tx["meta"], "logMessages": []}
+    token_info = listener._process_block_transactions([tx])  # noqa: SLF001
+    if token_info is not None:
+        print("     a v1 create parsed without its logs — routing may have changed")
+        return False
+    return True
+
+
 def check_listener_still_detects_a_pre_v1_create() -> bool:
     """The log route is an addition, not a replacement."""
     listener = UniversalBlockListener("wss://offline.invalid", [Platform.PUMP_FUN])
@@ -205,6 +232,7 @@ def main() -> int:
             "block listener still detects a pre-v1 create",
             check_listener_still_detects_a_pre_v1_create,
         ),
+        ("the log route is what detects v1", check_log_route_is_what_detects_v1),
     ]
     failed = 0
     for label, check in checks:
