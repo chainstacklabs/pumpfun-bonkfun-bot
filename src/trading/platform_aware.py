@@ -20,12 +20,26 @@ from core.pubkeys import (
     quote_units_per_token,
 )
 from core.wallet import Wallet
-from interfaces.core import AddressProvider, Platform, TokenInfo
+from interfaces.core import (
+    AddressProvider,
+    ConfirmationStatus,
+    Platform,
+    TokenInfo,
+    TradeFailureReason,
+)
 from platforms import get_platform_implementations
 from trading.base import Trader, TradeResult
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# How a confirmation outcome reads from the trader's side. SUCCESS has no
+# entry: it is not a failure, and a KeyError is a better outcome than silently
+# labelling a successful trade.
+_FAILURE_REASON_FOR = {
+    ConfirmationStatus.REVERTED: TradeFailureReason.REVERTED,
+    ConfirmationStatus.UNCONFIRMED: TradeFailureReason.UNCONFIRMED,
+}
 
 
 def _quote_symbol(quote_mint: Pubkey) -> str:
@@ -696,6 +710,12 @@ class PlatformAwareSeller(Trader):
                 "Pass the price from buy result to avoid RPC delays."
             )
 
+        # Declared before the try so the handler below can tell a sell that was
+        # never submitted from one that was submitted and whose outcome is
+        # simply unknown. The two must not be reported the same way: only the
+        # first is safe to resend without checking the chain first.
+        tx_signature = None
+
         try:
             # Get platform-specific implementations
             implementations = get_platform_implementations(
@@ -825,9 +845,9 @@ class PlatformAwareSeller(Trader):
                 ),
             )
 
-            success = await self.client.confirm_transaction(tx_signature)
+            status = await self.client.confirm_transaction_detailed(tx_signature)
 
-            if success:
+            if status is ConfirmationStatus.SUCCESS:
                 logger.info(f"Sell transaction confirmed: {tx_signature}")
                 return TradeResult(
                     success=True,
@@ -836,17 +856,44 @@ class PlatformAwareSeller(Trader):
                     amount=token_balance_decimal,
                     price=token_price_sol,
                 )
-            else:
-                return TradeResult(
-                    success=False,
-                    platform=token_info.platform,
-                    error_message=f"Transaction failed to confirm: {tx_signature}",
-                )
+
+            # The signature belongs on the failure too. A caller weighing
+            # another sell has to be able to re-check this one, and digging it
+            # back out of error_message as text is not that.
+            return TradeResult(
+                success=False,
+                platform=token_info.platform,
+                tx_signature=str(tx_signature),
+                error_message=(
+                    f"Sell reverted on chain: {tx_signature}"
+                    if status is ConfirmationStatus.REVERTED
+                    else f"Transaction failed to confirm: {tx_signature}"
+                ),
+                failure_reason=_FAILURE_REASON_FOR[status],
+            )
 
         except Exception as e:
             logger.exception("Sell operation failed")
+            if tx_signature is None:
+                # Nothing reached the chain, so there is nothing to resolve and
+                # resending is safe.
+                return TradeResult(
+                    success=False,
+                    platform=token_info.platform,
+                    error_message=str(e),
+                    failure_reason=TradeFailureReason.SUBMIT_FAILED,
+                )
+            # A transaction was submitted and something after that threw -
+            # confirmation and status reads both can. The sell may well have
+            # landed, so this is an unknown outcome, not a failed submission:
+            # keep the signature and let the caller re-check it rather than
+            # firing a second sell.
             return TradeResult(
-                success=False, platform=token_info.platform, error_message=str(e)
+                success=False,
+                platform=token_info.platform,
+                tx_signature=str(tx_signature),
+                error_message=f"Sell outcome unknown for {tx_signature}: {e}",
+                failure_reason=TradeFailureReason.UNCONFIRMED,
             )
 
     def _get_pool_address(

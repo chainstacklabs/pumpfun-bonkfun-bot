@@ -80,8 +80,13 @@ class StubRpc:
     def __init__(self, responses: list[dict]) -> None:
         self.responses = responses
         self.calls = 0
+        self.deadlines_seen: list[float | None] = []
 
-    async def post_rpc(self, _body: dict) -> dict:
+    async def post_rpc(self, _body: dict, **kwargs: float) -> dict:
+        # _get_transaction_result passes the budget it has left as
+        # deadline_seconds, so the stub has to tolerate it. What that budget is
+        # worth is checked in verify_rpc_deadline.py.
+        self.deadlines_seen.append(kwargs.get("deadline_seconds"))
         index = min(self.calls, len(self.responses) - 1)
         self.calls += 1
         return self.responses[index]

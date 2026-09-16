@@ -107,12 +107,26 @@ class Position:
             return True, ExitReason.STOP_LOSS
 
         # Check max hold time
-        if self.max_hold_time:
-            elapsed_time = (datetime.utcnow() - self.entry_time).total_seconds()
-            if elapsed_time >= self.max_hold_time:
-                return True, ExitReason.MAX_HOLD_TIME
+        if self.should_exit_on_time():
+            return True, ExitReason.MAX_HOLD_TIME
 
         return False, None
+
+    def should_exit_on_time(self) -> bool:
+        """Check the one exit condition that needs no price.
+
+        `should_exit` cannot answer anything without a current price, so a
+        caller whose price read just failed has no way to ask about
+        `max_hold_time` — which does not depend on a price at all. Split out so
+        a dead price feed cannot hold a position open past its deadline.
+
+        Returns:
+            Whether an active position has been held for at least max_hold_time
+        """
+        if not self.is_active or not self.max_hold_time:
+            return False
+        elapsed_time = (datetime.utcnow() - self.entry_time).total_seconds()
+        return elapsed_time >= self.max_hold_time
 
     def close_position(self, exit_price: float, exit_reason: ExitReason) -> None:
         """Close the position with exit details.

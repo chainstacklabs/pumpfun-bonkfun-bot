@@ -148,6 +148,9 @@ async def check_examples_call_a_status_check() -> None:
         "verify_pumpportal_buy_path.py",
         "verify_extreme_fast_zero_rpc.py",
         "verify_buy_result_not_lost.py",
+        # asserts on confirm_transaction's own contract - that it returns a
+        # bool rather than a truthy enum - against a stub client
+        "verify_exit_sell_confirmation.py",
         # uses the bot's SolanaClient wrapper, which folds meta.err into its
         # return value; the boolean is read at the call site
         "cleanup_accounts.py",
