@@ -52,21 +52,34 @@ class LetsBonkPumpPortalProcessor:
             TokenInfo if token creation found, None otherwise
         """
         try:
-            # Extract required fields for LetsBonk
-            name = token_data.get("name", "")
-            symbol = token_data.get("symbol", "")
+            # PumpPortal sends a much thinner payload for bonk pools than for
+            # pump ones. Verified against the live subscribeNewToken feed on
+            # 2026-09-16: a bonk `create` carries only signature, traderPublicKey,
+            # txType, mint, tokensInPool, initialBuy, solAmount, newTokenBalance,
+            # marketCapSol and pool — no name, no symbol and no uri, where the
+            # pump payload has all three.
+            #
+            # Requiring name and symbol therefore rejected every bonk token that
+            # ever arrived, which is why detection sat at zero while the feed
+            # was busy. Only the two fields that cannot be derived are required;
+            # everything else the trade path needs is derived from the mint.
             mint_str = token_data.get("mint")
             creator_str = token_data.get("traderPublicKey")
-            uri = token_data.get("uri", "")
 
-            # Note: LetsBonk tokens from PumpPortal might have different field mappings
-            # This would need to be adjusted based on actual PumpPortal data for LetsBonk tokens
-
-            if not all([name, symbol, mint_str, creator_str]):
+            if not all([mint_str, creator_str]):
                 logger.warning(
-                    "Missing required fields in PumpPortal LetsBonk token data"
+                    f"Missing required fields in PumpPortal LetsBonk token data "
+                    f"(keys present: {sorted(token_data)})"
                 )
                 return None
+
+            # Cosmetic only - used for logging and for the match_string filter.
+            # A bonk token from this feed has no name or symbol to match on, so
+            # `filters.match_string` can never match one; fetch the metadata
+            # from `uri` if that matters to you.
+            name = token_data.get("name") or ""
+            symbol = token_data.get("symbol") or f"{mint_str[:4]}..{mint_str[-4:]}"
+            uri = token_data.get("uri", "")
 
             # Convert string addresses to Pubkey objects
             mint = Pubkey.from_string(mint_str)
