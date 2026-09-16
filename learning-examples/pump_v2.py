@@ -121,16 +121,60 @@ def is_sol_paired(quote_mint: Pubkey | None) -> bool:
     return normalize_quote_mint(quote_mint) == WSOL_MINT
 
 
+# Byte offset of the `decimals` field in a Mint account's raw data. SPL Token
+# and Token-2022 mints share the same base layout -- COption<Pubkey>
+# mint_authority (4-byte tag + 32-byte pubkey = 36 bytes), u64 supply
+# (8 bytes), then u8 decimals at byte 44. Token-2022 extensions are appended
+# *after* this base 82-byte struct, never rearranging it. Verified 2026-09-15
+# by reading byte 44 off-chain for WSOL (9), USDC (6) and a live Token-2022
+# quote mint (6, in a 690-byte account carrying extensions) -- all three
+# matched their known decimals. Mirrors core/pubkeys.py's constant, kept as a
+# separate copy because this module deliberately imports nothing from src/.
+_MINT_DECIMALS_OFFSET = 44
+
+
+def _parse_mint_decimals(data: bytes) -> int:
+    """Read the `decimals` field out of a raw Mint account's byte layout.
+
+    Args:
+        data: Raw account data, e.g. `.data` on an `AsyncClient.get_account_info`
+            response's `.value`
+
+    Returns:
+        The mint's decimal count
+
+    Raises:
+        ValueError: If the data is too short to be a Mint account
+    """
+    if len(data) <= _MINT_DECIMALS_OFFSET:
+        raise ValueError(
+            f"Account data is only {len(data)} bytes, too short to be a "
+            f"Mint account (decimals lives at byte {_MINT_DECIMALS_OFFSET})"
+        )
+    return data[_MINT_DECIMALS_OFFSET]
+
+
+# Process-lifetime cache of quote mint -> decimals, pre-seeded so WSOL/USDC
+# never cost an RPC call. Mirrors core/pubkeys.py's cache, kept as a separate
+# copy because this module deliberately imports nothing from src/. Warmed by
+# `resolve_quote_token_program` off the same mint-account fetch it already
+# makes to resolve the token program, so this costs zero extra RPC calls.
+_QUOTE_DECIMALS_CACHE = dict(QUOTE_DECIMALS)
+
+
 def quote_units(quote_mint: Pubkey) -> int:
-    """Raw units per whole unit of a quote mint.
+    """Raw units per whole unit of a quote mint, from the warm cache.
+
+    Pre-seeded with WSOL (9) and USDC (6); any other quote mint is resolved
+    (and thus cached) by `resolve_quote_token_program` before it is traded.
 
     Args:
         quote_mint: Quote mint address
 
     Returns:
-        1e9 for SOL, 1e6 for USDC
+        10 ** decimals for the quote mint (1e9 for SOL, 1e6 for USDC)
     """
-    return 10 ** QUOTE_DECIMALS.get(quote_mint, 9)
+    return 10 ** _QUOTE_DECIMALS_CACHE.get(quote_mint, 9)
 
 
 def quote_token_program(quote_mint: Pubkey) -> Pubkey:
@@ -155,26 +199,30 @@ async def resolve_quote_token_program(
     quote_mint: Pubkey,
     get_account_info: Callable[[Pubkey], Awaitable[Any]],
 ) -> Pubkey:
-    """Resolve and cache the token program that owns a quote mint.
+    """Resolve and cache the token program *and* decimals for a quote mint.
 
     Returns instantly, with no RPC call, for a mint already known or
     resolved by an earlier call in this process. Otherwise fetches the mint
     account once -- a mint account's owner *is* the token program that
-    created it -- and caches the result. `build_v2_accounts` and its callers
-    stay synchronous; call this first and pass the result as
+    created it, and its raw data carries `decimals` at a fixed byte offset
+    shared by SPL Token and Token-2022 (see `_parse_mint_decimals`) -- and
+    caches both results. `build_v2_accounts` and its callers stay
+    synchronous; call this first and pass the result as
     `quote_token_program_id` when trading a mint outside QUOTE_TOKEN_PROGRAMS.
 
     Args:
         quote_mint: Quote mint address to resolve
-        get_account_info: Async getter returning an account object with an
-            `.owner` Pubkey attribute, e.g. `AsyncClient.get_account_info`
-            (unwrap `.value` from the RPC response first)
+        get_account_info: Async getter returning an account object with
+            `.owner` (Pubkey) and `.data` (bytes) attributes, e.g.
+            `AsyncClient.get_account_info` (unwrap `.value` from the RPC
+            response first)
 
     Returns:
         Token program id that owns the quote mint
 
     Raises:
-        ValueError: If the mint's owner is neither SPL Token nor Token-2022
+        ValueError: If the mint's owner is neither SPL Token nor Token-2022,
+            or its account data is too short to carry a decimals field
     """
     cached = _QUOTE_TOKEN_PROGRAM_CACHE.get(quote_mint)
     if cached is not None:
@@ -187,7 +235,9 @@ async def resolve_quote_token_program(
             f"Quote mint {quote_mint} is owned by {owner}, expected "
             f"{TOKEN_PROGRAM} (SPL Token) or {TOKEN_2022_PROGRAM} (Token-2022)"
         )
+    decimals = _parse_mint_decimals(bytes(account.data))
     _QUOTE_TOKEN_PROGRAM_CACHE[quote_mint] = owner
+    _QUOTE_DECIMALS_CACHE[quote_mint] = decimals
     return owner
 
 
@@ -397,9 +447,9 @@ class BondingCurveState:
         """
         if not self.virtual_token_reserves or not self.virtual_quote_reserves:
             return 0.0
-        return (
-            self.virtual_quote_reserves / 10 ** QUOTE_DECIMALS.get(self.quote_mint, 9)
-        ) / (self.virtual_token_reserves / 10**TOKEN_DECIMALS)
+        return (self.virtual_quote_reserves / quote_units(self.quote_mint)) / (
+            self.virtual_token_reserves / 10**TOKEN_DECIMALS
+        )
 
 
 def build_v2_accounts(

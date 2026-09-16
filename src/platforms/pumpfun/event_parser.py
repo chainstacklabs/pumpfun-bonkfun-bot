@@ -436,6 +436,31 @@ class PumpFunEventParser(EventParser):
                 else False
             )
 
+            # Extract the holder-reward flag from its OptionBool struct, same
+            # wrapper shape as is_cashback_enabled above. Unlike `creator`,
+            # this one is safe to trust from instruction args: a succeeded
+            # create_v2 carrying `true` here means the coin genuinely is a
+            # holder-reward coin -- the program itself rejects the request
+            # when the feature is globally disabled, so a landed transaction
+            # is proof, not merely an unverified claim.
+            is_holder_reward_raw = args.get("is_holder_reward")
+            is_holder_reward = (
+                is_holder_reward_raw.get("field_0", False)
+                if isinstance(is_holder_reward_raw, dict)
+                else bool(is_holder_reward_raw)
+                if is_holder_reward_raw is not None
+                else False
+            )
+
+            # `creator_fee_bps` is deliberately left at TokenInfo's default
+            # (0) rather than decoded from args here. Upstream documents it
+            # as ignored on SOL- and USDC-paired coins, where the standard
+            # fee schedule applies regardless of what the creator passed --
+            # so a non-zero arg would not reflect the coin's actual fee for
+            # the common case, and nothing in this codebase reads the field
+            # to act on it (informational only). The CreateEvent path above
+            # gets it from the canonical on-chain event instead.
+
             # create_v2 passes a non-native quote mint as optional remaining
             # account 17 (index 16). Absent means the coin is SOL-paired.
             quote_mint = normalize_quote_mint(
@@ -458,6 +483,7 @@ class PumpFunEventParser(EventParser):
                 token_program_id=token_program_id,
                 is_mayhem_mode=bool(args.get("is_mayhem_mode", False)),
                 is_cashback_coin=is_cashback,
+                is_holder_reward=bool(is_holder_reward),
                 quote_mint=quote_mint,
                 quote_token_program_id=cached_quote_token_program(quote_mint),
                 creation_timestamp=monotonic(),
