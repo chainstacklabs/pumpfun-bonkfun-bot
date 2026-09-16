@@ -47,7 +47,11 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from solders.pubkey import Pubkey  # noqa: E402
 
 from core.pubkeys import WSOL_MINT, quote_units_per_token  # noqa: E402
-from interfaces.core import Platform, TokenInfo  # noqa: E402
+from interfaces.core import (  # noqa: E402
+    Platform,
+    TokenInfo,
+    TradeFailureReason,
+)
 from trading.base import TradeResult  # noqa: E402
 from trading.position import Position  # noqa: E402
 from trading.universal_trader import (  # noqa: E402
@@ -95,7 +99,12 @@ class StubSeller:
             return TradeResult(
                 success=False,
                 platform=token_info.platform,
+                # A revert is what this stub simulates, so it has to say so:
+                # an exit sell is only retried when retrying is provably safe,
+                # and a failure with no reason is treated as unresolved.
+                tx_signature="stub-reverted-signature",
                 error_message=REVERT_6003,
+                failure_reason=TradeFailureReason.REVERTED,
             )
         return TradeResult(
             success=True,

@@ -13,7 +13,7 @@ from typing import Any
 from solders.pubkey import Pubkey
 
 # Import from interfaces to avoid duplication
-from interfaces.core import Platform, TokenInfo
+from interfaces.core import Platform, TokenInfo, TradeFailureReason
 
 
 @dataclass
@@ -26,6 +26,10 @@ class TradeResult:
     error_message: str | None = None
     amount: float | None = None
     price: float | None = None
+    # Why a failed trade failed, when the caller has to decide whether
+    # resubmitting is safe. None on success, and on failures that predate the
+    # distinction — treat a missing reason as "unknown", not as "reverted".
+    failure_reason: TradeFailureReason | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/serialization.
@@ -40,6 +44,9 @@ class TradeResult:
             "error_message": self.error_message,
             "amount": self.amount,
             "price": self.price,
+            "failure_reason": (
+                self.failure_reason.value if self.failure_reason else None
+            ),
         }
 
 
