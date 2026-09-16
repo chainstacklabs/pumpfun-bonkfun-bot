@@ -24,6 +24,8 @@ runs against a curve manager that fails on demand:
   4. Before the deadline, a failing read keeps monitoring and sells nothing.
   5. The blind exit is still bounded by trade.max_exit_sell_attempts.
   6. should_exit_on_time stays False without a deadline or an open position.
+  7. A curve that prices at 0.0 never becomes the slippage floor, on either
+     the blind path or the ordinary one.
 
 Usage:
     uv run learning-examples/verify_time_exit_without_price.py
@@ -61,6 +63,13 @@ SHORT_HOLD_TIME = 1
 CALM_CHECK_INTERVAL = 0.05
 
 RPC_DOWN = "Invalid bonding curve state: Account not found"
+NON_POSITIVE_PRICE = "token_price is required for sell operation and must be positive."
+
+# What calculate_price returns for a curve with no virtual token reserves left.
+# It does not raise, so a naive `last_known_price = current_price` stores it,
+# and the seller rejects a non-positive price with a ValueError raised before
+# its own try block - escaping the bounded exit handling entirely.
+CURVE_PRICED_AT_ZERO = 0.0
 
 
 class FlakyCurveManager:
@@ -104,8 +113,14 @@ class RecordingSeller:
 
         Returns:
             The scripted TradeResult
+
+        Raises:
+            ValueError: On a non-positive price, exactly as the real seller
+                does - and, like the real one, before any try block.
         """
         self.prices_seen.append(token_price)
+        if token_price is None or token_price <= 0:
+            raise ValueError(NON_POSITIVE_PRICE)
         if len(self.prices_seen) <= self.fail_first:
             return TradeResult(
                 success=False,
@@ -344,6 +359,51 @@ async def check_blind_exit_is_bounded() -> bool:
     )
 
 
+async def check_zero_price_never_becomes_the_floor() -> bool:
+    """A curve priced at 0.0 is never handed to the seller as a floor.
+
+    Two ways it could be. The blind path stores the last read, so a 0.0 would
+    be replayed once the feed went down. The ordinary path is worse: 0.0
+    satisfies `current_price <= stop_loss_price`, so the stop loss fires and
+    the exit is priced off the same 0.0 in the same iteration.
+
+    Returns:
+        Whether the check passed
+    """
+    # Ordinary path: one readable 0.0, which trips the stop loss immediately.
+    curve = FlakyCurveManager([CURVE_PRICED_AT_ZERO])
+    seller = RecordingSeller()
+    trader = _make_trader(curve, seller)
+    position = _make_position(past_deadline=False)
+    position.stop_loss_price = BUY_PRICE * 0.5  # 0.0 is comfortably below this
+    timed_out = False
+    try:
+        async with asyncio.timeout(EXIT_TIMEOUT):
+            await trader._monitor_position_until_exit(  # noqa: SLF001
+                _make_token_info(), position
+            )
+    except TimeoutError:
+        timed_out = True
+    except ValueError:
+        escaped = False  # the ValueError got out; that is the bug
+        return _check(
+            "a curve priced at 0.0 never becomes the slippage floor",
+            escaped,
+            "the seller's non-positive price ValueError escaped the monitor loop",
+        )
+
+    floored_at = seller.prices_seen[0] if seller.prices_seen else None
+    return _check(
+        "a curve priced at 0.0 never becomes the slippage floor",
+        not timed_out
+        and floored_at == BUY_PRICE
+        and all(p > 0 for p in seller.prices_seen),
+        f"stop loss fired on a 0.0 read; sold against {floored_at} "
+        f"(entry {BUY_PRICE}), all floors positive: "
+        f"{all(p > 0 for p in seller.prices_seen)}",
+    )
+
+
 def check_should_exit_on_time_is_narrow() -> bool:
     """should_exit_on_time answers only its own question.
 
@@ -383,6 +443,7 @@ async def main() -> None:
         await check_no_early_exit(),
         await check_blind_exit_is_bounded(),
         check_should_exit_on_time_is_narrow(),
+        await check_zero_price_never_becomes_the_floor(),
     ]
 
     print("\n" + "=" * 72)

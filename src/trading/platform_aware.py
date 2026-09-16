@@ -710,6 +710,12 @@ class PlatformAwareSeller(Trader):
                 "Pass the price from buy result to avoid RPC delays."
             )
 
+        # Declared before the try so the handler below can tell a sell that was
+        # never submitted from one that was submitted and whose outcome is
+        # simply unknown. The two must not be reported the same way: only the
+        # first is safe to resend without checking the chain first.
+        tx_signature = None
+
         try:
             # Get platform-specific implementations
             implementations = get_platform_implementations(
@@ -868,11 +874,26 @@ class PlatformAwareSeller(Trader):
 
         except Exception as e:
             logger.exception("Sell operation failed")
+            if tx_signature is None:
+                # Nothing reached the chain, so there is nothing to resolve and
+                # resending is safe.
+                return TradeResult(
+                    success=False,
+                    platform=token_info.platform,
+                    error_message=str(e),
+                    failure_reason=TradeFailureReason.SUBMIT_FAILED,
+                )
+            # A transaction was submitted and something after that threw -
+            # confirmation and status reads both can. The sell may well have
+            # landed, so this is an unknown outcome, not a failed submission:
+            # keep the signature and let the caller re-check it rather than
+            # firing a second sell.
             return TradeResult(
                 success=False,
                 platform=token_info.platform,
-                error_message=str(e),
-                failure_reason=TradeFailureReason.SUBMIT_FAILED,
+                tx_signature=str(tx_signature),
+                error_message=f"Sell outcome unknown for {tx_signature}: {e}",
+                failure_reason=TradeFailureReason.UNCONFIRMED,
             )
 
     def _get_pool_address(

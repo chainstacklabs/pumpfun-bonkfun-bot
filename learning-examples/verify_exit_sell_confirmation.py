@@ -26,6 +26,9 @@ against a stub seller and a stub client serving scripted confirmations:
   7. A submit failure, which never reached the chain, is retried.
   8. The seller populates tx_signature and failure_reason on its failure branch.
   9. confirm_transaction stays a bool, so no `if await ...` silently inverts.
+ 10. A throw after submission is UNCONFIRMED with its signature, not
+     SUBMIT_FAILED - only the latter is safe to resend unchecked.
+ 11. A re-check that itself throws stops, rather than escaping into a retry.
 
 Usage:
     uv run learning-examples/verify_exit_sell_confirmation.py
@@ -55,7 +58,9 @@ from trading.platform_aware import PlatformAwareSeller  # noqa: E402
 from trading.position import Position  # noqa: E402
 from trading.universal_trader import (  # noqa: E402
     DEFAULT_MAX_EXIT_SELL_ATTEMPTS,
+    ExitSellVerdict,
     UniversalTrader,
+    _exit_sell_verdict_for,
 )
 
 BUY_PRICE = 1.0e-6
@@ -67,6 +72,10 @@ EXIT_TIMEOUT = 10
 
 ONE_ATTEMPT = 1
 TWO_ATTEMPTS = 2
+
+# Stands in for an RPC error post_rpc does not contain, e.g. a malformed JSON
+# body raising json.JSONDecodeError out of response.json().
+RECHECK_RPC_FAILURE = "scripted RPC failure during the re-check"
 
 
 class StubSeller:
@@ -117,8 +126,11 @@ class StubSeller:
 class StubClient:
     """Answers verify_transaction_status from a script."""
 
-    def __init__(self, statuses: list[ConfirmationStatus]) -> None:
+    def __init__(
+        self, statuses: list[ConfirmationStatus], *, raises: bool = False
+    ) -> None:
         self.statuses = list(statuses)
+        self.raises = raises
         self.checks = 0
 
     async def verify_transaction_status(self, _signature: str) -> ConfirmationStatus:
@@ -126,8 +138,14 @@ class StubClient:
 
         Returns:
             The scripted ConfirmationStatus
+
+        Raises:
+            RuntimeError: When scripted to fail, standing in for an RPC error
+                post_rpc does not contain.
         """
         self.checks += 1
+        if self.raises:
+            raise RuntimeError(RECHECK_RPC_FAILURE)
         return self.statuses.pop(0) if self.statuses else ConfirmationStatus.UNCONFIRMED
 
 
@@ -216,6 +234,8 @@ async def _run_both_paths(
     reason: TradeFailureReason | None,
     statuses: list[ConfirmationStatus],
     signature: str | None = SELL_SIGNATURE,
+    *,
+    recheck_raises: bool = False,
 ) -> list[tuple[str, StubSeller, StubClient]]:
     """Drive the time-based and tp/sl exits over the same script.
 
@@ -224,6 +244,7 @@ async def _run_both_paths(
         reason: Failure reason the seller reports
         statuses: Scripted re-check statuses
         signature: Signature the failure carries, if any
+        recheck_raises: Whether the status re-check throws instead of answering
 
     Returns:
         One (label, seller, client) triple per exit path
@@ -234,7 +255,7 @@ async def _run_both_paths(
     runs = []
 
     seller = StubSeller(fail_first, reason, signature)
-    client = StubClient(list(statuses))
+    client = StubClient(list(statuses), raises=recheck_raises)
     trader = _make_trader(seller, client)
     buy_result = TradeResult(
         success=True,
@@ -250,7 +271,7 @@ async def _run_both_paths(
     runs.append(("time_based", seller, client))
 
     seller = StubSeller(fail_first, reason, signature)
-    client = StubClient(list(statuses))
+    client = StubClient(list(statuses), raises=recheck_raises)
     trader = _make_trader(seller, client)
     async with asyncio.timeout(EXIT_TIMEOUT):
         await trader._monitor_position_until_exit(  # noqa: SLF001
@@ -450,6 +471,80 @@ async def check_confirm_transaction_stays_bool() -> bool:
     )
 
 
+async def check_recheck_failure_stops() -> bool:
+    """A status re-check that throws stops instead of escaping into a retry.
+
+    The re-check is the only thing between an unresolved sell and a second one.
+    `post_rpc` contains the RPC errors it knows about, but not every reachable
+    one - a malformed JSON body raises `json.JSONDecodeError`, which it does not
+    catch. In the monitor loop an escape lands in the outer handler, which can
+    call straight back into another exit attempt.
+
+    Returns:
+        Whether the check passed
+    """
+    runs = await _run_both_paths(
+        1, TradeFailureReason.UNCONFIRMED, [], recheck_raises=True
+    )
+    passed = all(seller.attempts == ONE_ATTEMPT for _label, seller, _c in runs)
+    return _check(
+        "a re-check that throws stops rather than selling again",
+        passed,
+        ", ".join(f"{label}: {s.attempts} sell(s)" for label, s, _c in runs),
+    )
+
+
+def check_post_submission_throw_is_unconfirmed() -> bool:
+    """A throw after submission keeps the signature and reports UNCONFIRMED.
+
+    Confirmation and status reads both run after `build_and_send_transaction`
+    has returned a signature, and both can raise. Reporting that as
+    SUBMIT_FAILED would drop the signature and map straight to RETRY, so the
+    loop could send a second sell for one that had already landed.
+
+    Returns:
+        Whether the check passed
+    """
+    source = inspect.getsource(PlatformAwareSeller.execute)
+    declares_first = source.index("tx_signature = None") < source.index(
+        "tx_signature = await self.client.build_and_send_transaction"
+    )
+    branches_on_signature = "if tx_signature is None:" in source
+    unconfirmed_after_submit = "failure_reason=TradeFailureReason.UNCONFIRMED" in source
+    return _check(
+        "a throw after submission is UNCONFIRMED with its signature kept",
+        declares_first and branches_on_signature and unconfirmed_after_submit,
+        f"signature declared before submission: {declares_first}, "
+        f"handler branches on it: {branches_on_signature}, "
+        f"reports UNCONFIRMED: {unconfirmed_after_submit}",
+    )
+
+
+def check_submit_failed_only_before_a_signature() -> bool:
+    """SUBMIT_FAILED is only reachable while no signature exists.
+
+    _exit_sell_verdict_for maps SUBMIT_FAILED straight to RETRY without asking
+    the chain anything, so it has to mean "nothing was ever sent".
+
+    Returns:
+        Whether the check passed
+    """
+    verdicts = {
+        reason: _exit_sell_verdict_for(reason) for reason in (None, *TradeFailureReason)
+    }
+    return _check(
+        "only SUBMIT_FAILED and REVERTED retry without asking the chain",
+        verdicts[TradeFailureReason.SUBMIT_FAILED] is ExitSellVerdict.RETRY
+        and verdicts[TradeFailureReason.REVERTED] is ExitSellVerdict.RETRY
+        and verdicts[TradeFailureReason.UNCONFIRMED] is None
+        and verdicts[None] is None,
+        ", ".join(
+            f"{r.value if r else 'unset'}={v.value if v else 're-check'}"
+            for r, v in verdicts.items()
+        ),
+    )
+
+
 async def main() -> None:
     """Run every check and exit non-zero if any failed."""
     print("=" * 72)
@@ -466,6 +561,9 @@ async def main() -> None:
         await check_submit_failure_is_retried(),
         check_seller_reports_failure_detail(),
         await check_confirm_transaction_stays_bool(),
+        await check_recheck_failure_stops(),
+        check_post_submission_throw_is_unconfirmed(),
+        check_submit_failed_only_before_a_signature(),
     ]
 
     print("\n" + "=" * 72)

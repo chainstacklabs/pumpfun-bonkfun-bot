@@ -811,7 +811,20 @@ class UniversalTrader:
             f"Exit sell {signature[:16]}... for {token_info.symbol} was not "
             f"confirmed; re-checking before deciding whether to sell again"
         )
-        status = await self.solana_client.verify_transaction_status(signature)
+        try:
+            status = await self.solana_client.verify_transaction_status(signature)
+        except Exception:
+            # The re-check is the only thing standing between an unresolved
+            # sell and a second one, so it must not throw its way past the
+            # decision. post_rpc contains the RPC errors it knows about, but
+            # nothing promises it contains all of them - and in the monitor
+            # loop an escape lands in the outer handler, which can call
+            # straight back into another exit attempt.
+            logger.exception(
+                f"Could not verify exit sell {signature[:16]}...; "
+                f"leaving it unresolved rather than selling again"
+            )
+            return ExitSellVerdict.STOP
 
         if status is ConfirmationStatus.SUCCESS:
             logger.info(
@@ -878,13 +891,21 @@ class UniversalTrader:
         # The last price actually read. A max_hold_time exit that fires while
         # the price feed is down still needs a slippage floor, and before the
         # first successful read the entry price is the only thing known.
+        # Only ever a positive price. entry_price is positive by construction,
+        # and a read of 0.0 never replaces it - see below.
         last_known_price = position.entry_price
 
         while position.is_active:
             try:
                 # Get current price from pool/curve
                 current_price = await curve_manager.calculate_price(pool_address)
-                last_known_price = current_price
+                # A curve with no virtual token reserves left prices at 0.0
+                # rather than raising, and the seller rejects a non-positive
+                # price with a ValueError raised before its own try block - so
+                # storing a 0.0 here would escape the bounded exit handling the
+                # next time the feed went down.
+                if current_price > 0:
+                    last_known_price = current_price
 
                 # Check if position should be exited
                 should_exit, exit_reason = position.should_exit(current_price)
@@ -893,12 +914,24 @@ class UniversalTrader:
                     logger.info(f"Exit condition met: {exit_reason.value}")
                     logger.info(f"Current price: {current_price:.8f} SOL")
 
+                    # 0.0 satisfies the stop-loss comparison, so the exit can
+                    # fire on a price the sell cannot be floored against. Sell
+                    # against the last real one instead.
+                    exit_price = (
+                        current_price if current_price > 0 else last_known_price
+                    )
+                    if exit_price != current_price:
+                        logger.warning(
+                            f"Curve priced {token_info.symbol} at 0; flooring the "
+                            f"exit sell at the last real price {exit_price:.8f} SOL"
+                        )
+
                     exit_sell_attempts += 1
                     if await self._run_exit_attempt(
                         token_info,
                         position,
                         exit_reason,
-                        current_price,
+                        exit_price,
                         exit_sell_attempts,
                     ):
                         break
@@ -1035,9 +1068,7 @@ class UniversalTrader:
             await self._cleanup_after_exit(token_info)
             return ExitSellVerdict.SOLD
 
-        logger.error(
-            f"Failed to exit position: {sell_result.error_message}"
-        )
+        logger.error(f"Failed to exit position: {sell_result.error_message}")
 
         verdict = await self._classify_failed_exit_sell(token_info, sell_result)
         if verdict is ExitSellVerdict.LATE_SUCCESS:

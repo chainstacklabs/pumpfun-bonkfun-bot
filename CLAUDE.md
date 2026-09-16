@@ -253,6 +253,25 @@ stops rather than reselling blind if it is still unresolved. **A missing
 `failure_reason` means "unknown", never "reverted"**: a stub seller simulating
 a revert has to say `TradeFailureReason.REVERTED` or the retry will not fire.
 
+**`SUBMIT_FAILED` means "no transaction ever reached the chain", and nothing
+else.** It is the one reason besides `REVERTED` that retries without asking the
+chain anything, so a post-submission throw must never be labelled with it — the
+seller declares `tx_signature = None` before its `try` and reports `UNCONFIRMED`
+with the signature if anything after `build_and_send_transaction` raises.
+Confirmation and status reads both run inside that handler. For the same reason
+the re-check itself is wrapped: `post_rpc` contains the RPC errors it knows
+about, but a malformed JSON body still raises `json.JSONDecodeError` straight
+through it, and in the monitor loop an escape lands in the outer handler, which
+can call directly back into another exit attempt.
+
+**`calculate_price` returns `0.0` for a curve with no virtual token reserves —
+it does not raise.** The seller rejects a non-positive price with a `ValueError`
+raised *before* its own `try`, so a `0.0` reaching it escapes the bounded exit
+handling entirely. The monitor loop therefore never stores a non-positive read
+as the last known price, and never floors a sell against one — note `0.0` also
+satisfies the stop-loss comparison, so the ordinary priced path can reach the
+seller with it, not just the blind one.
+
 **`confirm_transaction` and `verify_transaction_succeeded` deliberately stay
 bools.** Returning the enum from them would be silent: every enum member is
 truthy, so each existing `if await client.confirm_transaction(sig):` would
