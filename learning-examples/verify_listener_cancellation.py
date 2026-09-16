@@ -30,6 +30,8 @@ what the real library raises, against the real listeners:
   4. A routine 30-second read timeout is still tolerated in place.
   5. A frame that is not valid JSON is still tolerated in place.
   6. Cancelling a full `listen_for_tokens` run actually finishes the task.
+  7. The ping loop is cancelled on every exit from the read loop, not only on a
+     closed connection, so it cannot go on pinging a dead socket.
 
 Usage:
     uv run learning-examples/verify_listener_cancellation.py
@@ -44,6 +46,7 @@ from types import SimpleNamespace
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+import monitoring.universal_block_listener as block_listener_module  # noqa: E402
 from interfaces.core import Platform  # noqa: E402
 from monitoring.universal_block_listener import UniversalBlockListener  # noqa: E402
 from monitoring.universal_logs_listener import UniversalLogsListener  # noqa: E402
@@ -219,10 +222,8 @@ async def check_full_listen_loop_stops() -> bool:
         async def __aexit__(self, *_args: object) -> bool:
             return False
 
-    import monitoring.universal_block_listener as mod
-
-    original = mod.websockets.connect
-    mod.websockets.connect = lambda *_a, **_k: _Conn()
+    original = block_listener_module.websockets.connect
+    block_listener_module.websockets.connect = lambda *_a, **_k: _Conn()
     try:
         task = asyncio.create_task(listener.listen_for_tokens(_noop))
         await asyncio.sleep(0.1)
@@ -235,12 +236,66 @@ async def check_full_listen_loop_stops() -> bool:
         except TimeoutError:
             outcome = "hung"
     finally:
-        mod.websockets.connect = original
+        block_listener_module.websockets.connect = original
 
     return _check(
         "outcome of cancelling the listener",
         outcome == "cancelled",
         f"{outcome} — single-token mode can shut the listener down",
+    )
+
+
+async def check_ping_task_is_cancelled_on_any_exit() -> bool:
+    print("\n7. The ping loop is cancelled when a read error forces a reconnect")
+    listener = _make_block_listener()
+    ping_started = asyncio.Event()
+    ping_cancelled = asyncio.Event()
+
+    async def ping_loop(_websocket: object) -> None:
+        ping_started.set()
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            ping_cancelled.set()
+            raise
+
+    async def failing_read(*_args: object, **_kwargs: object) -> None:
+        await ping_started.wait()
+        # Not ConnectionClosed: the path that used to skip ping_task.cancel().
+        raise CORRUPT_STREAM
+
+    listener._ping_loop = ping_loop  # noqa: SLF001
+    listener._subscribe_to_programs = _noop  # noqa: SLF001
+    listener._wait_for_token_creation = failing_read  # noqa: SLF001
+
+    class _Conn:
+        async def __aenter__(self) -> SimpleNamespace:
+            return SimpleNamespace()
+
+        async def __aexit__(self, *_args: object) -> bool:
+            return False
+
+    original = block_listener_module.websockets.connect
+    block_listener_module.websockets.connect = lambda *_a, **_k: _Conn()
+    try:
+        task = asyncio.create_task(listener.listen_for_tokens(_noop))
+        # The listener sleeps 5s before reconnecting; one reconnect is enough.
+        try:
+            await asyncio.wait_for(ping_cancelled.wait(), timeout=CANCEL_TIMEOUT)
+        except TimeoutError:
+            pass
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, TimeoutError):
+            await asyncio.wait_for(task, timeout=CANCEL_TIMEOUT)
+    finally:
+        block_listener_module.websockets.connect = original
+
+    return _check(
+        "ping loop cancelled",
+        ping_cancelled.is_set(),
+        "yes"
+        if ping_cancelled.is_set()
+        else "no — it would keep pinging a dead socket for up to ping_interval",
     )
 
 
@@ -260,6 +315,7 @@ async def main() -> None:
         await check_read_timeout_is_tolerated(),
         await check_bad_json_is_tolerated(),
         await check_full_listen_loop_stops(),
+        await check_ping_task_is_cancelled_on_any_exit(),
     ]
 
     print("\n" + "=" * 72)

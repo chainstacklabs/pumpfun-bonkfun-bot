@@ -33,7 +33,9 @@ scripted `getTransaction` responses:
   5. A confirmed buy whose amounts never parse is reported successful, with the
      token amount taken from the wallet balance so the sell has a real figure.
   6. That fallback amount is the balance actually held, not the expected amount.
-  7. A buy whose transaction genuinely failed is still reported unsuccessful.
+  7. A balance that predates the buy is capped at what this buy asked for, so
+     the exit cannot liquidate holdings this trade never created.
+  8. A buy whose transaction genuinely failed is still reported unsuccessful.
 
 Usage:
     uv run learning-examples/verify_buy_result_not_lost.py
@@ -61,7 +63,8 @@ SIGNATURE = "5" * 88  # shape only; nothing decodes it in these checks
 MINT = Pubkey.from_string("So11111111111111111111111111111111111111113")
 CURVE = Pubkey.from_string("So11111111111111111111111111111111111111114")
 
-TOKENS_HELD_RAW = 3_374_396_272  # what the wallet really holds after the buy
+TOKENS_RECEIVED_RAW = 14_000_000  # what a 20-token dust buy actually delivers
+PRIOR_HOLDING_RAW = 3_374_396_272  # a balance that predates this buy entirely
 EXPECTED_TOKENS = 20.0  # what extreme_fast_mode asked for
 BUY_AMOUNT_SOL = 0.0001
 AMOUNT_TOLERANCE = 1e-9  # float round-trip through raw token units
@@ -120,7 +123,7 @@ class StubBuyClient:
         *,
         confirmed: bool,
         details: tuple[int | None, int | None],
-        balance_raw: int = TOKENS_HELD_RAW,
+        balance_raw: int = TOKENS_RECEIVED_RAW,
     ) -> None:
         self.confirmed = confirmed
         self.details = details
@@ -263,18 +266,33 @@ async def check_fallback_amount_is_the_balance_held() -> bool:
     print("\n6. The fallback sells the balance actually held, not the expected amount")
     client = StubBuyClient(confirmed=True, details=(None, None))
     result = await _run_buy(client)
-    expected = TOKENS_HELD_RAW / 10**TOKEN_DECIMALS
+    held = TOKENS_RECEIVED_RAW / 10**TOKEN_DECIMALS
     return _check(
         "TradeResult.amount",
-        result.success and abs(result.amount - expected) < AMOUNT_TOLERANCE,
-        f"{result.amount} tokens (wallet holds {expected}, "
+        result.success and abs(result.amount - held) < AMOUNT_TOLERANCE,
+        f"{result.amount} tokens (wallet holds {held}, "
         f"extreme_fast_mode expected {EXPECTED_TOKENS}), "
         f"{client.balance_reads} balance read(s)",
     )
 
 
+async def check_fallback_never_exceeds_what_was_bought() -> bool:
+    print("\n7. A balance predating the buy is capped at what this buy asked for")
+    client = StubBuyClient(
+        confirmed=True, details=(None, None), balance_raw=PRIOR_HOLDING_RAW
+    )
+    result = await _run_buy(client)
+    inflated = PRIOR_HOLDING_RAW / 10**TOKEN_DECIMALS
+    return _check(
+        "TradeResult.amount",
+        result.success and abs(result.amount - EXPECTED_TOKENS) < AMOUNT_TOLERANCE,
+        f"{result.amount} tokens, not the full {inflated} on the books — "
+        f"the exit cannot sell a position this trade never opened",
+    )
+
+
 async def check_failed_buy_still_fails() -> bool:
-    print("\n7. A buy whose transaction did not succeed is still a failure")
+    print("\n8. A buy whose transaction did not succeed is still a failure")
     client = StubBuyClient(confirmed=False, details=(None, None))
     result = await _run_buy(client)
     return _check(
@@ -296,6 +314,7 @@ async def main() -> None:
         await check_revert_still_fails(),
         await check_unparseable_buy_is_not_lost(),
         await check_fallback_amount_is_the_balance_held(),
+        await check_fallback_never_exceeds_what_was_bought(),
         await check_failed_buy_still_fails(),
     ]
 

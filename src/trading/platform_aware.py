@@ -383,13 +383,21 @@ class PlatformAwareBuyer(Trader):
                         f"quote_spent={quote_spent}) from tx {tx_signature}; "
                         f"the buy did land, falling back to the wallet balance"
                     )
-                    actual_amount = await self._read_token_balance(token_info)
-                    if actual_amount is not None and actual_amount > 0:
+                    balance = await self._read_token_balance(token_info)
+                    if balance is not None and balance > 0:
+                        # The balance is cumulative, so cap it at what this buy
+                        # asked for: anything above that was already held, and
+                        # selling it would liquidate an unrelated position.
+                        # Reading the balance *before* submitting would give an
+                        # exact delta, but that is an RPC call on every buy and
+                        # would break extreme_fast_mode's zero-RPC contract
+                        # between detection and submission — and this path only
+                        # runs when the transaction could not be read back.
                         logger.info(
-                            f"Token balance after buy: {actual_amount:.6f} "
-                            f"(expected: {token_amount:.6f})"
+                            f"Token balance after buy: {balance:.6f}, selling at "
+                            f"most the {token_amount:.6f} this buy asked for"
                         )
-                        token_amount = actual_amount
+                        token_amount = min(balance, token_amount)
                     else:
                         logger.warning(
                             f"Token balance unreadable too; holding the expected "
