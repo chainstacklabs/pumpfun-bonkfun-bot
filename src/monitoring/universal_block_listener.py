@@ -236,8 +236,12 @@ class UniversalBlockListener(BaseTokenListener):
             if "value" not in block_data or "block" not in block_data["value"]:
                 return None
 
+            # `block` is null for a skipped or unavailable slot — the key is
+            # present, the value is not. Without the null check the membership
+            # test below raises TypeError, the notification is dropped and the
+            # blocks listener quietly detects fewer coins than logs/geyser.
             block = block_data["value"]["block"]
-            if "transactions" not in block:
+            if not block or "transactions" not in block:
                 return None
 
             # Process all transactions in the block for token creations
