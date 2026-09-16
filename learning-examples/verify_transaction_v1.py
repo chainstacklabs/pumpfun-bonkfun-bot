@@ -23,7 +23,8 @@ it will hand a transaction to a parser, which is what
 Offline machine checks, no network and no funds moved:
 
   1. Every blockSubscribe/getBlock/getTransaction call site in `src/` and
-     `learning-examples/` asks for maxSupportedTransactionVersion >= 1.
+     `learning-examples/` asks for maxSupportedTransactionVersion >= 1 —
+     both the raw JSON key and solana-py's snake_case keyword argument.
   2. The committed fixture really is a v1 transaction (version 1, byte 129)
      carrying a successful create_v2.
   3. The pump.fun event parser reads it into a TokenInfo — mint, creator and
@@ -64,7 +65,13 @@ V1_VERSION_BYTE = 129
 MIN_SUPPORTED_VERSION = 1
 
 SCAN_ROOTS = ("src", "learning-examples")
-MSV_PATTERN = re.compile(r"[\"']maxSupportedTransactionVersion[\"']\s*:\s*(\d+)")
+# Two spellings reach the same RPC field: the raw JSON key used by hand-built
+# request bodies, and solana-py's snake_case keyword argument. A scan that knows
+# only the first one misses tx_status.py, which every example confirms through.
+MSV_PATTERN = re.compile(
+    r"[\"']maxSupportedTransactionVersion[\"']\s*:\s*(\d+)"
+    r"|max_supported_transaction_version\s*=\s*(\d+)"
+)
 
 
 class _OfflineClient(SolanaClient):
@@ -104,7 +111,8 @@ def check_every_call_site_accepts_v1() -> bool:
                 continue
             text = path.read_text()
             for match in MSV_PATTERN.finditer(text):
-                if int(match.group(1)) < MIN_SUPPORTED_VERSION:
+                value = match.group(1) or match.group(2)
+                if int(value) < MIN_SUPPORTED_VERSION:
                     line = text[: match.start()].count("\n") + 1
                     stale.append(f"{path.relative_to(PROJECT_ROOT)}:{line}")
     if stale:

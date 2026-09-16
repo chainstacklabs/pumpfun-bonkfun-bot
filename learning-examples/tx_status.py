@@ -52,7 +52,7 @@ async def assert_transaction_succeeded(
         RuntimeError: If it cannot be found or carries no execution metadata
     """
     result = await client.get_transaction(
-        signature, commitment=commitment, max_supported_transaction_version=0
+        signature, commitment=commitment, max_supported_transaction_version=1
     )
     value = result.value
     if value is None:
