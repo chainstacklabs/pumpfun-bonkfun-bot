@@ -384,6 +384,26 @@ class BondingCurveState:
     _CASHBACK_OFFSET = 82
     _QUOTE_MINT_OFFSET = 83
 
+    # Declared so type checkers and editors can see what a parsed curve
+    # carries; `_STRUCT` produces them and `__init__` assigns each one.
+    virtual_token_reserves: int
+    virtual_quote_reserves: int
+    real_token_reserves: int
+    real_quote_reserves: int
+    token_total_supply: int
+    complete: bool
+
+    # Aliases for the pre-rename SOL-named reserve fields.
+    virtual_sol_reserves: int
+    real_sol_reserves: int
+
+    # Read past the struct, so present only on accounts long enough for them.
+    creator: Pubkey | None
+    is_mayhem_mode: bool
+    is_cashback_coin: bool
+    quote_mint: Pubkey
+    is_sol_paired: bool
+
     def __init__(self, data: bytes) -> None:
         """Parse bonding curve account data.
 
@@ -398,7 +418,13 @@ class BondingCurveState:
         if data[:8] != BONDING_CURVE_DISCRIMINATOR:
             raise ValueError("Invalid curve state discriminator")
 
-        self.__dict__.update(self._STRUCT.parse(data[8:]))
+        parsed = self._STRUCT.parse(data[8:])
+        self.virtual_token_reserves = parsed.virtual_token_reserves
+        self.virtual_quote_reserves = parsed.virtual_quote_reserves
+        self.real_token_reserves = parsed.real_token_reserves
+        self.real_quote_reserves = parsed.real_quote_reserves
+        self.token_total_supply = parsed.token_total_supply
+        self.complete = parsed.complete
 
         # Aliases for the pre-rename field names.
         self.virtual_sol_reserves = self.virtual_quote_reserves
