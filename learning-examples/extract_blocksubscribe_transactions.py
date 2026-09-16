@@ -65,7 +65,7 @@ async def listen_for_transactions():
                         "encoding": "base64",
                         "showRewards": False,
                         "transactionDetails": "full",
-                        "maxSupportedTransactionVersion": 0,
+                        "maxSupportedTransactionVersion": 1,
                     },
                 ],
             },

@@ -787,10 +787,13 @@ class SolanaClient:
                 {
                     "encoding": "jsonParsed",
                     "commitment": "confirmed",
-                    # Without this the RPC rejects every versioned (v0)
+                    # Without this the RPC rejects every versioned
                     # transaction with -32015, so meta.err cannot be read and a
-                    # perfectly good trade reads back as unconfirmed.
-                    "maxSupportedTransactionVersion": 0,
+                    # perfectly good trade reads back as unconfirmed. It has to
+                    # cover v1 (live since 2026-09-15), not just v0: the bot
+                    # sends legacy transactions, but this method is also used to
+                    # read back signatures it did not send.
+                    "maxSupportedTransactionVersion": 1,
                 },
             ],
         }

@@ -270,7 +270,7 @@ async def listen_and_decode_create():
                         "encoding": "base64",
                         "showRewards": False,
                         "transactionDetails": "full",
-                        "maxSupportedTransactionVersion": 0,
+                        "maxSupportedTransactionVersion": 1,
                     },
                 ],
             }
@@ -288,15 +288,39 @@ async def listen_and_decode_create():
                         block_data = data["params"]["result"]
                         if "value" in block_data and "block" in block_data["value"]:
                             block = block_data["value"]["block"]
-                            if "transactions" in block:
+                            # `block` is null for a skipped or unavailable slot:
+                            # the key is present, the value is not. Without this
+                            # check the membership test below raises TypeError.
+                            if block and "transactions" in block:
                                 for tx in block["transactions"]:
                                     if isinstance(tx, dict) and "transaction" in tx:
                                         tx_data_decoded = base64.b64decode(
                                             tx["transaction"][0]
                                         )
-                                        transaction = VersionedTransaction.from_bytes(
-                                            tx_data_decoded
-                                        )
+                                        try:
+                                            transaction = (
+                                                VersionedTransaction.from_bytes(
+                                                    tx_data_decoded
+                                                )
+                                            )
+                                        except ValueError:
+                                            # Solana transaction v1 (live since
+                                            # 2026-09-15) starts with byte 129 and
+                                            # the installed solders cannot
+                                            # deserialize it. Report it instead of
+                                            # letting one transaction end the block
+                                            # — this example decodes the
+                                            # instruction from the envelope, so it
+                                            # has nothing else to fall back on.
+                                            # The bot's own blocks listener routes
+                                            # through meta.logMessages, which works
+                                            # for every version.
+                                            if tx_data_decoded[:1] == b"\x81":
+                                                print(
+                                                    "⚠️  Skipping a v1 transaction: "
+                                                    "solders cannot decode it yet"
+                                                )
+                                            continue
 
                                         # Extract loaded addresses from transaction metadata
                                         loaded_addresses = None

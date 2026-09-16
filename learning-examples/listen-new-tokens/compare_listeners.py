@@ -519,7 +519,7 @@ async def listen_block_subscription(wss_url, provider_name, tracker, known_token
                                 "encoding": "base64",
                                 "showRewards": False,
                                 "transactionDetails": "full",
-                                "maxSupportedTransactionVersion": 0,
+                                "maxSupportedTransactionVersion": 1,
                             },
                         ],
                     }
@@ -620,6 +620,12 @@ async def listen_block_subscription(wss_url, provider_name, tracker, known_token
                                                 f"[ERROR] Failed to process block instruction: {e}"
                                             )
                             except Exception as e:
+                                # A v1 transaction (Solana, live 2026-09-15)
+                                # lands here: solders cannot deserialize the
+                                # envelope, so this lane under-counts creates
+                                # by the v1 share while logs and geyser, which
+                                # read meta.logMessages, count them all. Do not
+                                # read that gap as a speed difference.
                                 print(f"[ERROR] Failed to process transaction: {e}")
 
                     except websockets.ConnectionClosed:

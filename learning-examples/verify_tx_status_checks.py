@@ -369,7 +369,7 @@ async def check_rpc_timeouts_are_retried_not_raised() -> None:
 async def check_versioned_transactions_are_requested() -> None:
     """getTransaction must opt in to versioned transactions.
 
-    Without `maxSupportedTransactionVersion` the RPC answers -32015 for every v0
+    Without `maxSupportedTransactionVersion` the RPC answers -32015 for every v0/v1
     transaction, so `meta.err` is unreadable and a successful trade reads back as
     unconfirmed. The bot currently sends legacy transactions, which is the only
     reason this was survivable.
@@ -386,7 +386,7 @@ async def check_versioned_transactions_are_requested() -> None:
 
     assert bodies, "no RPC issued"
     config = bodies[0]["params"][1]
-    assert config.get("maxSupportedTransactionVersion") == 0, (
+    assert config.get("maxSupportedTransactionVersion") == 1, (
         f"getTransaction omits maxSupportedTransactionVersion: {config}"
     )
 

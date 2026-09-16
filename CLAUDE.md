@@ -163,6 +163,55 @@ trailing option-typed args as unset — `verify_create_v2_optional_args.py`
 machine-checks that, and that mandatory args still fail the decode. The
 log/event path stays preferred for the canonical-creator reason above.
 
+### Verifying transaction v1 handling (Solana cutover 2026-09-15)
+
+```bash
+# Offline: every reader accepts v1, and the blocks listener detects a v1
+# create_v2 without decoding its envelope
+uv run learning-examples/verify_transaction_v1.py
+```
+
+Solana **transaction v1** (SIMD-0296 size, SIMD-0385 format) went live at epoch
+1035, ~01:04 UTC 2026-09-15. 4096-byte envelope, first byte `129`, signatures at
+the tail, **no address lookup tables** (every account inlined, 64 max), and the
+resource limits — priority fee in **total lamports**, CU limit,
+loaded-accounts-data-size, heap — moved out of ComputeBudget instructions into a
+fixed-offset config. ComputeBudget instructions in a v1 transaction are ignored
+for configuration and merely burn CU. Legacy and v0 both stay valid with no
+announced sunset, and the bot still **sends** legacy, so nothing on the trade
+path changed. Everything below is about reading other people's transactions.
+
+**`maxSupportedTransactionVersion` is a whole-frame setting, not a
+per-transaction filter.** Asking `blockSubscribe` for `0` does not skip the v1
+transactions in a block — the RPC nulls out `value.block` for the entire
+notification, which is indistinguishable from a skipped slot. Measured against
+mainnet 2026-09-16, 60s per run on the pump program: `0` delivered 1 block and
+177 nulls, `1` delivered 78 blocks and no nulls. `getBlock` is louder about the
+same thing, answering `-32015`. So `0` is not a conservative default any more,
+it is a near-total outage of the blocks listener. Every call site in `src/` and
+`learning-examples/` now sends `1`, and the verifier fails the build if one
+regresses.
+
+**solders 0.26 cannot deserialize a v1 transaction** —
+`VersionedTransaction.from_bytes` raises `ValueError: io error: unexpected end
+of file`. It does not need to: the RPC has already decoded the envelope by the
+time it emits `meta.logMessages`, and the platform parsers prefer the CreateEvent
+in those logs anyway, for the canonical creator. What broke was the *dispatch* —
+`UniversalBlockListener._process_block_transactions` decoded the bytes first only
+to learn which program the transaction touched, and swallowed the failure in a
+bare `except Exception: pass`. It now tries `_parse_from_logs` on every
+transaction first and keeps the byte decode as a fallback, so v1 coins arrive with
+`state_from_event=True` and `extreme_fast_mode` keeps its zero-RPC contract.
+Verified on two live v1 `create_v2` coins. A later bump to solders ≥0.28 (which
+adds `MessageV1`/`TransactionConfig`) would restore the byte path too, but it is
+gated behind `solana==0.36.6`, which pins `solders<0.27` — **not** required for
+detection, so don't reach for it to fix a listener.
+
+Measured the same day: pump.fun 21/100 and letsbonk 16/100 recent program
+transactions were v1, 10 of 10 sampled blocks contained at least one, and 2 of 13
+successful `create_v2` coins in one window were minted in v1 transactions. This
+is not a future problem.
+
 ### Verifying transaction-status handling
 
 ```bash
@@ -308,6 +357,11 @@ offline and only visible after a couple of minutes against mainnet.
   reconnect handler with its `sleep` is unreachable in that shape. A narrow
   `except TimeoutError` or `except json.JSONDecodeError` is fine to swallow —
   those are per-message, not per-connection.
+- **Never gate a listener's dispatch on decoding the transaction envelope.**
+  The envelope is the one part of a transaction whose format changes under you —
+  solders cannot read a v1 one at all. `meta.logMessages` is already decoded by
+  the RPC and is version-agnostic, so route on it and keep the byte decode as a
+  fallback. See "Verifying transaction v1 handling" above.
 - **Resolve v0 lookup-table accounts before indexing them.** An instruction's
   account indices can point past `message.account_keys` into the address lookup
   table, which geyser reports in `meta.loaded_writable_addresses` then
@@ -550,6 +604,12 @@ interface pump.fun maintains.
   checks this against committed fixtures, and `--live` re-checks it against the
   real feed. The bonk **trade** path past detection is still unverified — see
   issue #201.
+- **PumpPortal does not report coins created in a transaction v1.** Measured
+  2026-09-16 across two windows: 0 of 6 v1 creates pushed, against near-complete
+  coverage of v0 creates (104 of 105 in one 240s window). It is a third-party
+  feed, so no local change recovers them — the coin is never sent. This compounds
+  the thin-bonk-payload gap below, and it means `pumpportal` is a sampling feed
+  now, not a complete one. `bots/bot-sniper-4-pp.yaml` carries the same warning.
 - `config_loader.py` validates the platform/listener pairing before startup:
   pump.fun supports `logs`, `blocks`, `geyser`, `pumpportal`; letsbonk.fun
   supports `blocks`, `geyser`, `pumpportal` — **not `logs`**. Adding a listener

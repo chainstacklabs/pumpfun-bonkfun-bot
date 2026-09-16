@@ -350,7 +350,7 @@ async def listen_for_create_transaction():
                         "encoding": "base64",
                         "showRewards": False,
                         "transactionDetails": "full",
-                        "maxSupportedTransactionVersion": 0,
+                        "maxSupportedTransactionVersion": 1,
                     },
                 ],
             }
