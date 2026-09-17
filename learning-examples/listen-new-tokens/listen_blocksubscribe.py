@@ -204,7 +204,18 @@ def decode_create_v2_instruction(ix_data, ix_def, accounts):
 
     # Parse instruction arguments according to IDL definition.
     # CreateV2 args: name, symbol, uri, creator (pubkey), is_mayhem_mode (bool),
-    # is_cashback_enabled (OptionBool, serialized as 1 byte).
+    # is_cashback_enabled (OptionBool), creator_fee_bps (OptionU64),
+    # is_holder_reward (OptionBool). The last two arrived with the 2026-09-15
+    # program upgrade.
+    #
+    # OptionBool and OptionU64 are single-field Anchor structs with no presence
+    # tag: each serializes as its bare inner value, 1 and 8 bytes. They are also
+    # positional rather than independently optional, and the trailing ones are
+    # legally absent from the wire — three lengths are live on chain (no
+    # trailing args, is_cashback_enabled only, is_cashback_enabled plus
+    # creator_fee_bps). An absent one is reported as None, meaning unset, rather
+    # than as a fabricated default. Same rule as utils/idl_parser.py (issue
+    # #184); reading a fixed number of trailing bytes raises IndexError instead.
     for arg in ix_def["args"]:
         t = arg["type"]
         if t == "string":
@@ -221,8 +232,17 @@ def decode_create_v2_instruction(ix_data, ix_def, accounts):
         elif isinstance(t, dict) and "defined" in t:
             defined_name = t["defined"]["name"] if isinstance(t["defined"], dict) else t["defined"]
             if defined_name == "OptionBool":
-                value = bool(ix_data[offset]) if offset < len(ix_data) else False
-                offset += 1
+                if offset >= len(ix_data):
+                    value = None
+                else:
+                    value = bool(ix_data[offset])
+                    offset += 1
+            elif defined_name == "OptionU64":
+                if offset + 8 > len(ix_data):
+                    value = None
+                else:
+                    value = struct.unpack_from("<Q", ix_data, offset)[0]
+                    offset += 8
             else:
                 raise ValueError(f"Unsupported defined type: {defined_name}")
         else:
@@ -270,7 +290,7 @@ async def listen_and_decode_create():
                         "encoding": "base64",
                         "showRewards": False,
                         "transactionDetails": "full",
-                        "maxSupportedTransactionVersion": 0,
+                        "maxSupportedTransactionVersion": 1,
                     },
                 ],
             }
@@ -288,15 +308,39 @@ async def listen_and_decode_create():
                         block_data = data["params"]["result"]
                         if "value" in block_data and "block" in block_data["value"]:
                             block = block_data["value"]["block"]
-                            if "transactions" in block:
+                            # `block` is null for a skipped or unavailable slot:
+                            # the key is present, the value is not. Without this
+                            # check the membership test below raises TypeError.
+                            if block and "transactions" in block:
                                 for tx in block["transactions"]:
                                     if isinstance(tx, dict) and "transaction" in tx:
                                         tx_data_decoded = base64.b64decode(
                                             tx["transaction"][0]
                                         )
-                                        transaction = VersionedTransaction.from_bytes(
-                                            tx_data_decoded
-                                        )
+                                        try:
+                                            transaction = (
+                                                VersionedTransaction.from_bytes(
+                                                    tx_data_decoded
+                                                )
+                                            )
+                                        except ValueError:
+                                            # Solana transaction v1 (live since
+                                            # 2026-09-15) starts with byte 129 and
+                                            # the installed solders cannot
+                                            # deserialize it. Report it instead of
+                                            # letting one transaction end the block
+                                            # — this example decodes the
+                                            # instruction from the envelope, so it
+                                            # has nothing else to fall back on.
+                                            # The bot's own blocks listener routes
+                                            # through meta.logMessages, which works
+                                            # for every version.
+                                            if tx_data_decoded[:1] == b"\x81":
+                                                print(
+                                                    "⚠️  Skipping a v1 transaction: "
+                                                    "solders cannot decode it yet"
+                                                )
+                                            continue
 
                                         # Extract loaded addresses from transaction metadata
                                         loaded_addresses = None

@@ -179,7 +179,14 @@ class UniversalBlockListener(BaseTokenListener):
                             "encoding": "base64",
                             "showRewards": False,
                             "transactionDetails": "full",
-                            "maxSupportedTransactionVersion": 0,
+                            # Solana transaction v1 (SIMD-0296/0385) has been
+                            # live since epoch 1035, 2026-09-15. A version the
+                            # subscription does not accept does not just skip
+                            # that transaction: the RPC nulls out `value.block`
+                            # for the whole frame. Measured against mainnet on
+                            # 2026-09-16, 60s each: `0` delivered 1 block and
+                            # 177 nulls, `1` delivered 78 blocks and no nulls.
+                            "maxSupportedTransactionVersion": 1,
                         },
                     ],
                 }
@@ -302,6 +309,16 @@ class UniversalBlockListener(BaseTokenListener):
             if isinstance(meta, dict) and meta.get("err") is not None:
                 continue
 
+            # Route on the logs before touching the transaction itself. The
+            # decoding below exists only to learn which program the transaction
+            # touched, and solders cannot deserialize a v1 envelope at all — so
+            # gating the dispatch on it drops every v1 coin without raising
+            # anything the caller sees. The parsers prefer meta.log_messages
+            # anyway, for the canonical creator; this just lets them be reached.
+            token_info = self._parse_from_logs(tx)
+            if token_info:
+                return token_info
+
             tx_data = tx["transaction"]
 
             # Handle base64 encoded transaction data
@@ -357,8 +374,42 @@ class UniversalBlockListener(BaseTokenListener):
                         continue
 
         except Exception:
-            # Failed to decode transaction - skip it
-            pass
+            # A transaction the installed solders cannot deserialize — a v1
+            # one, for instance. Logged rather than swallowed: silence here is
+            # what made the v1 cutover look like a quiet drop in detections.
+            logger.debug("Could not decode a block transaction envelope")
+
+        return None
+
+    def _parse_from_logs(self, tx: dict) -> TokenInfo | None:
+        """Dispatch one transaction to its platform parser using its logs.
+
+        Works for any transaction version, because the RPC has already decoded
+        the envelope by the time the logs are emitted.
+
+        Args:
+            tx: Transaction wrapper from block, including its `meta`
+
+        Returns:
+            TokenInfo if a token creation is found, None otherwise
+        """
+        meta = tx.get("meta")
+        if not isinstance(meta, dict):
+            return None
+
+        logs = meta.get("logMessages") or meta.get("log_messages")
+        if not logs:
+            return None
+
+        for program_id, (_platform, parser) in self.program_id_to_parser.items():
+            if not any(program_id in line for line in logs):
+                continue
+            # parse_token_creation_from_block contains its own failures and
+            # answers None, so a parser that cannot read this transaction just
+            # hands the next one its turn.
+            token_info = parser.parse_token_creation_from_block({"transactions": [tx]})
+            if token_info:
+                return token_info
 
         return None
 

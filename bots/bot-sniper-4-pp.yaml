@@ -90,6 +90,12 @@ compute_units:
 filters:
   match_string: null # Only process tokens with this string in name/symbol
   bro_address: null # Only trade tokens created by this user address
+  # PumpPortal is a third-party feed, so it only reports what it indexes.
+  # Measured 2026-09-16: it reported 0 of 6 coins whose create landed in a
+  # Solana transaction v1 (live since 2026-09-15), against near-complete
+  # coverage of v0 creates. Nothing in this repo can recover those — the
+  # coin is simply never pushed. Use "geyser" or "logs" if you need every
+  # coin; see learning-examples/verify_transaction_v1.py.
   listener_type: "pumpportal" # Method for detecting new tokens: "logs", "blocks", "geyser", or "pumpportal"
   max_token_age: 0.001 # Maximum token age in seconds for processing
   marry_mode: false # Only buy tokens, skip selling

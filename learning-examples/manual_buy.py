@@ -312,9 +312,26 @@ def decode_create_instruction(ix_data, ix_def, accounts):
             value = bool(ix_data[offset])
             offset += 1
         elif isinstance(t, dict) and "defined" in t:
-            # OptionBool = struct { bool } = 1 byte
-            value = bool(ix_data[offset])
-            offset += 1
+            # OptionBool and OptionU64 are single-field Anchor structs with no
+            # presence tag: each serializes as its bare inner value, 1 and 8
+            # bytes. They are positional, and the trailing ones are legally
+            # absent from the wire — reading them unconditionally raises
+            # IndexError on the shorter forms, which is every coin whose
+            # create_v2 stops early. An absent one is reported as None, meaning
+            # unset, matching utils/idl_parser.py.
+            defined = t["defined"]
+            name = defined["name"] if isinstance(defined, dict) else defined
+            if name == "OptionU64":
+                if offset + 8 > len(ix_data):
+                    value = None
+                else:
+                    value = struct.unpack_from("<Q", ix_data, offset)[0]
+                    offset += 8
+            elif offset >= len(ix_data):
+                value = None
+            else:
+                value = bool(ix_data[offset])
+                offset += 1
         else:
             raise ValueError(f"Unsupported type: {t}")
 
@@ -350,7 +367,7 @@ async def listen_for_create_transaction():
                         "encoding": "base64",
                         "showRewards": False,
                         "transactionDetails": "full",
-                        "maxSupportedTransactionVersion": 0,
+                        "maxSupportedTransactionVersion": 1,
                     },
                 ],
             }
@@ -367,15 +384,28 @@ async def listen_for_create_transaction():
                     block_data = data["params"]["result"]
                     if "value" in block_data and "block" in block_data["value"]:
                         block = block_data["value"]["block"]
-                        if "transactions" in block:
+                        # `block` is null for a skipped or unavailable slot:
+                        # the key is present, the value is not.
+                        if block and "transactions" in block:
                             for tx in block["transactions"]:
                                 if isinstance(tx, dict) and "transaction" in tx:
                                     tx_data_decoded = base64.b64decode(
                                         tx["transaction"][0]
                                     )
-                                    transaction = VersionedTransaction.from_bytes(
-                                        tx_data_decoded
-                                    )
+                                    try:
+                                        transaction = (
+                                            VersionedTransaction.from_bytes(
+                                                tx_data_decoded
+                                            )
+                                        )
+                                    except ValueError:
+                                        # A Solana v1 transaction (first byte
+                                        # 129, live since 2026-09-15) that the
+                                        # installed solders cannot decode. Skip
+                                        # it rather than ending the listener —
+                                        # the create we are waiting for may be
+                                        # later in the same block.
+                                        continue
 
                                     for ix in transaction.message.instructions:
                                         if str(
