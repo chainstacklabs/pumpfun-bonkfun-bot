@@ -63,6 +63,9 @@ SELL_V2_DISCRIMINATOR = bytes([93, 246, 130, 60, 231, 233, 64, 178])
 # buy_exact_quote_in_v2 takes the same 27 accounts as buy_v2, in the same
 # order — only the discriminator and the two arguments differ.
 BUY_EXACT_QUOTE_IN_V2_DISCRIMINATOR = bytes([194, 171, 28, 70, 104, 77, 91, 47])
+# buy_exact_sol_in is SOL-only and pre-dates the v2 account list. The IDL
+# under-reports it at 16 accounts; on chain it needs 18 (see the builder).
+BUY_EXACT_SOL_IN_DISCRIMINATOR = bytes([56, 252, 116, 8, 158, 223, 205, 95])
 
 # Fee recipients: 8 normal (non-mayhem coins), 8 reserved (mayhem coins),
 # 8 buyback (every coin). See FEE_RECIPIENTS.md in the pump-fun public docs.
@@ -652,6 +655,106 @@ def build_buy_exact_quote_in_v2_instruction(
             include_global_volume_accumulator=True,
             quote_token_program_id=quote_token_program_id,
         ),
+    )
+
+
+def build_buy_exact_sol_in_instruction(
+    *,
+    mint: Pubkey,
+    creator: Pubkey,
+    user: Pubkey,
+    spendable_sol_in_lamports: int,
+    min_tokens_out_raw: int,
+    base_token_program: Pubkey = TOKEN_2022_PROGRAM,
+    is_mayhem_mode: bool = False,
+    track_volume: bool = True,
+) -> Instruction:
+    """Build a buy_exact_sol_in instruction.
+
+    SOL only. This one pre-dates non-SOL quote assets and has no quote accounts
+    at all, so it cannot trade a coin paired with USDC, another coin or a
+    tokenized equity — use `build_buy_exact_quote_in_v2_instruction` for those.
+
+    **The IDL lists 16 accounts and the program requires 18.** The two it omits
+    are the `bonding-curve-v2` PDA and a buyback fee recipient, both writable,
+    both appended after `fee_program`. Sending the IDL's 16 fails with
+    AnchorError 6062 (BuybackFeeRecipientMissing), which names the missing
+    account but not where it goes. Verified by simulateTransaction on mainnet,
+    2026-09-22: 16 accounts fails 6062, 18 succeeds.
+
+    Args:
+        mint: Coin to buy
+        creator: Coin creator, from bonding_curve.creator
+        user: Buyer / signer
+        spendable_sol_in_lamports: Exact lamports to spend, fees included
+        min_tokens_out_raw: Floor on base tokens received, in raw units
+        base_token_program: Token program owning the mint
+        is_mayhem_mode: Whether the coin is in mayhem mode, which selects the
+            reserved fee recipient set instead of the normal one
+        track_volume: Whether to credit the user's volume accumulator
+
+    Returns:
+        The buy_exact_sol_in instruction
+    """
+    bonding_curve = find_bonding_curve(mint)
+    accounts = [
+        AccountMeta(pubkey=PUMP_GLOBAL, is_signer=False, is_writable=False),
+        AccountMeta(
+            pubkey=pick_fee_recipient(is_mayhem_mode=is_mayhem_mode),
+            is_signer=False,
+            is_writable=True,
+        ),
+        AccountMeta(pubkey=mint, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=bonding_curve, is_signer=False, is_writable=True),
+        AccountMeta(
+            pubkey=find_associated_token_account(
+                bonding_curve, mint, base_token_program
+            ),
+            is_signer=False,
+            is_writable=True,
+        ),
+        AccountMeta(
+            pubkey=find_associated_token_account(user, mint, base_token_program),
+            is_signer=False,
+            is_writable=True,
+        ),
+        AccountMeta(pubkey=user, is_signer=True, is_writable=True),
+        AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=base_token_program, is_signer=False, is_writable=False),
+        AccountMeta(
+            pubkey=find_creator_vault(creator), is_signer=False, is_writable=True
+        ),
+        AccountMeta(pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
+        AccountMeta(
+            pubkey=find_global_volume_accumulator(), is_signer=False, is_writable=True
+        ),
+        AccountMeta(
+            pubkey=find_user_volume_accumulator(user), is_signer=False, is_writable=True
+        ),
+        AccountMeta(pubkey=find_fee_config(), is_signer=False, is_writable=False),
+        AccountMeta(pubkey=PUMP_FEE_PROGRAM, is_signer=False, is_writable=False),
+        # The two the IDL omits.
+        AccountMeta(
+            pubkey=Pubkey.find_program_address(
+                [b"bonding-curve-v2", bytes(mint)], PUMP_PROGRAM
+            )[0],
+            is_signer=False,
+            is_writable=True,
+        ),
+        AccountMeta(
+            pubkey=pick_buyback_fee_recipient(), is_signer=False, is_writable=True
+        ),
+    ]
+    return Instruction(
+        program_id=PUMP_PROGRAM,
+        data=BUY_EXACT_SOL_IN_DISCRIMINATOR
+        + struct.pack("<Q", spendable_sol_in_lamports)
+        + struct.pack("<Q", min_tokens_out_raw)
+        # OptionBool is a single-field Anchor struct with no presence tag, so
+        # it serializes as its bare inner bool.
+        + struct.pack("<?", track_volume),
+        accounts=accounts,
     )
 
 
