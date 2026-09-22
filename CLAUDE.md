@@ -79,7 +79,7 @@ Lint and format **the files you touched**, not the whole tree:
 uv run ruff check --fix <paths> && uv run ruff format <paths>
 ```
 
-A bare `uv run ruff check` reports ~1700 pre-existing errors across the repo.
+A bare `uv run ruff check` reports ~1660 pre-existing errors across the repo.
 That is the known baseline, not something your change caused — don't try to fix
 it wholesale, and don't read it as a failing build. Just don't add new ones in
 the files you edit.
@@ -99,251 +99,110 @@ is protoc — needed only to regenerate the `geyser_pb2` stubs in
 `sys.path` and importing `src.geyser.generated`. Don't add a second copy under
 `learning-examples/` — the last one drifted out of sync with the protos.
 
-### Verifying pump.fun v2 trade instructions
+### Verifying a change
+
+Every fix here ships with an offline verifier under `learning-examples/`. Each
+script's docstring carries the bug it guards and the checks it runs — read that
+before touching the code it covers, and run the ones your change reaches. None of
+them move funds.
+
+| Script | Checks |
+|---|---|
+| `verify_v2_account_layout.py` | buy_v2/sell_v2 account layouts, PDA/ATA derivations, encoding — against `idl/pump_fun_idl.json` |
+| `verify_curve_account_sizes.py` | 125/151/256-byte curves all decode, and nothing filters on account length |
+| `verify_create_v2_optional_args.py` | omitted trailing option-typed `create_v2` args decode as unset; mandatory args still fail |
+| `verify_transaction_v1.py` | every reader asks `maxSupportedTransactionVersion: 1`, and a v1 `create_v2` is detected without decoding its envelope |
+| `verify_block_null_guard.py` | a `blockSubscribe` frame with `value.block: null` is skipped, not logged as an error |
+| `verify_listener_cancellation.py` | a cancelled WebSocket listener stops, even when `websockets` reports cancellation as `AssertionError` |
+| `verify_pumpportal_buy_path.py` | curve derived from the mint, unreadable curve skips the buy, curve+mint read in one slot-consistent batch |
+| `verify_pumpportal_bonk_fields.py` | bonk payloads (no name/symbol/uri) still produce a `TokenInfo`; `--live` re-checks the real feed |
+| `verify_extreme_fast_zero_rpc.py` | zero RPC calls between detection and submission for CreateEvent-sourced tokens |
+| `verify_buy_result_not_lost.py` | a landed buy is never reported failed, and a reverted one never reported landed |
+| `verify_tx_status_checks.py` | every path reads `meta.err`; `--live` replays the reverted signatures from #175 |
+| `verify_tp_sl_exit_price.py` | the tp/sl exit prices off the trigger price, and a reverted sell is retried, bounded |
+| `verify_time_based_exit_retry.py` | the default `time_based` exit retries a reverted sell instead of stranding the position |
+| `verify_time_exit_without_price.py` | `max_hold_time` still fires when every price read fails |
+| `verify_exit_sell_confirmation.py` | an exit sell is retried only when retrying is provably safe |
+| `verify_rpc_deadline.py` | `post_rpc` bounds wall time, not just attempts (virtual clock) |
+
+Two mainnet simulations, also no funds moved:
 
 ```bash
-# Offline: cross-check buy_v2/sell_v2 account layouts, PDA/ATA derivations,
-# instruction encoding and quote-asset config against idl/pump_fun_idl.json
-uv run learning-examples/verify_v2_account_layout.py
-
-# Offline: 125/151/256-byte bonding curves all decode, and the graduating-
-# token examples don't filter on account length
-uv run learning-examples/verify_curve_account_sizes.py
-
-# Mainnet, no funds moved: simulate buy_v2/sell_v2 for one coin, report CU
-uv run learning-examples/simulate_v2_trades.py <MINT>
-
-# Mainnet, no funds moved: run the bot's whole buy path against a fresh coin
-uv run learning-examples/simulate_bot_buy_path.py
-uv run learning-examples/simulate_bot_buy_path.py --no-extreme-fast
+uv run learning-examples/simulate_v2_trades.py <MINT>   # buy_v2/sell_v2 for one coin, reports CU
+uv run learning-examples/simulate_bot_buy_path.py       # the bot's whole buy path, fresh coin
 ```
 
-Run all four after any pump.fun program upgrade. The simulations report
-`unitsConsumed`; use it to retune `get_buy_compute_unit_limit` /
-`get_sell_compute_unit_limit` in `platforms/pumpfun/instruction_builder.py`.
+After any pump.fun program upgrade run `verify_v2_account_layout`,
+`verify_curve_account_sizes` and both simulations, then retune
+`get_buy_compute_unit_limit` / `get_sell_compute_unit_limit` in
+`platforms/pumpfun/instruction_builder.py` from the reported `unitsConsumed`.
 
-### Verifying the listener-to-buy path (issue #170)
+### Invariants
 
-```bash
-# Offline: bonding curve derived from the mint (payload bondingCurveKey not
-# trusted), unreadable curve skips the buy instead of submitting with guessed
-# accounts, curve+mint read in one slot-consistent batch
-uv run learning-examples/verify_pumpportal_buy_path.py
+Rules that constrain code you might write next, rather than a bug already fixed.
+The reasoning behind each lives in the verifier named beside it.
 
-# Offline: extreme_fast_mode stays at ZERO RPC calls between detection and
-# submission for CreateEvent-sourced tokens; pumpportal still refreshes
-uv run learning-examples/verify_extreme_fast_zero_rpc.py
-```
+**Listeners and RPC**
 
-Fast listeners (pumpportal especially, but geyser too) can announce a token
-seconds before every node behind a load-balanced RPC endpoint can read its
-accounts — two back-to-back reads on the same endpoint may be served from
-nodes at different slots. `trade.curve_refresh_budget` (seconds, default 2.0)
-bounds the pre-buy curve read in `extreme_fast_mode`; when it expires the token
-is skipped, because a buy built from listener-guessed defaults reverts on-chain
-with `NotAuthorized` (6000), `ConstraintSeeds` (2006) or, on letsbonk,
-`AccountNotInitialized` (3012). The sell path deliberately keeps the opposite
-fallback — proceed with cached values — since skipping a sell strands the
-position.
+- `maxSupportedTransactionVersion` is a **whole-frame** setting. Asking
+  `blockSubscribe` for `0` does not skip the v1 transactions in a block, it nulls
+  `value.block` for the entire notification — indistinguishable from a skipped
+  slot, and a near-total outage of the blocks listener. Send `1` everywhere.
+- solders 0.26 cannot deserialize a v1 transaction and does not need to: route on
+  `meta.logMessages`, keep the byte decode as a fallback. solders ≥0.28 is gated
+  behind `solana==0.36.6` pinning `solders<0.27` — **not** a fix for a listener.
+- The bot still **sends** legacy transactions. Everything above is about reading
+  other people's, so the v1 cutover changed nothing on the trade path.
+- `post_rpc` must catch `asyncio.TimeoutError` alongside `aiohttp.ClientError` —
+  aiohttp raises the former on a request timeout, it is not a `ClientError`, and
+  `str()` on it is empty, so the caller logs a blank reason.
+- `post_rpc` bounds attempts; `deadline_seconds` (default `None`, the historical
+  behaviour) bounds wall time. Don't wrap a lookup in `asyncio.timeout` instead —
+  cutting off an in-flight `getTransaction` and returning None is the "can't see
+  it, so call it failed" conflation #206 removed.
+- `build_and_send_transaction` returns a solders `Signature`, not a `str`.
+  Normalize at the boundary: a `Signature` is neither JSON serializable nor
+  sliceable, and solana-py's `confirm_transaction` rejects a `str`.
 
-The refresh is skipped entirely — extreme_fast_mode's zero-RPC contract —
-when `TokenInfo.state_from_event` is set, i.e. the listener parsed the
-**CreateEvent** (geyser/logs/blocks), which carries the canonical creator,
-mayhem/cashback flags and quote_mint. Instruction `args.creator` is
-user-supplied and post-2026-04-28 may differ from the canonical `BC.creator`
-(PFEE PDA delegation), so instruction-parsed TokenInfo deliberately does
-**not** set the flag; the geyser parser prefers `meta.log_messages` over
-instruction decoding for exactly this reason. `trade.trust_create_event:
-false` is the escape hatch back to always-refresh. PumpPortal payloads carry
-none of these fields and always refresh. Related pitfall (fixed in #184): the
-IDL instruction decoder used to reject `create_v2` transactions that omit the
-trailing `is_cashback_enabled` OptionBool (a legal wire form), silently
-dropping those coins from the instruction path. It now reports omitted
-trailing option-typed args as unset — `verify_create_v2_optional_args.py`
-machine-checks that, and that mandatory args still fail the decode. The
-log/event path stays preferred for the canonical-creator reason above.
+**Buying**
 
-### Verifying transaction v1 handling (Solana cutover 2026-09-15)
+- `trade.curve_refresh_budget` (seconds, default 2.0) bounds the pre-buy curve
+  read in `extreme_fast_mode`; when it expires the token is **skipped**, because a
+  buy built from listener-guessed defaults reverts with `NotAuthorized` (6000),
+  `ConstraintSeeds` (2006) or, on letsbonk, `AccountNotInitialized` (3012). The
+  sell path keeps the opposite fallback — proceed with cached values — since
+  skipping a sell strands the position.
+- The refresh is skipped entirely when `TokenInfo.state_from_event` is set, i.e.
+  the listener parsed the **CreateEvent**. Instruction-parsed `TokenInfo`
+  deliberately does not set it: `args.creator` is user-supplied and post-2026-04-28
+  may differ from the canonical `BC.creator`. `trade.trust_create_event: false`
+  forces the refresh back on; PumpPortal payloads always refresh.
 
-```bash
-# Offline: every reader accepts v1, and the blocks listener detects a v1
-# create_v2 without decoding its envelope
-uv run learning-examples/verify_transaction_v1.py
-```
+**Selling**
 
-Solana **transaction v1** (SIMD-0296 size, SIMD-0385 format) went live at epoch
-1035, ~01:04 UTC 2026-09-15. 4096-byte envelope, first byte `129`, signatures at
-the tail, **no address lookup tables** (every account inlined, 64 max), and the
-resource limits — priority fee in **total lamports**, CU limit,
-loaded-accounts-data-size, heap — moved out of ComputeBudget instructions into a
-fixed-offset config. ComputeBudget instructions in a v1 transaction are ignored
-for configuration and merely burn CU. Legacy and v0 both stay valid with no
-announced sunset, and the bot still **sends** legacy, so nothing on the trade
-path changed. Everything below is about reading other people's transactions.
-
-**`maxSupportedTransactionVersion` is a whole-frame setting, not a
-per-transaction filter.** Asking `blockSubscribe` for `0` does not skip the v1
-transactions in a block — the RPC nulls out `value.block` for the entire
-notification, which is indistinguishable from a skipped slot. Measured against
-mainnet 2026-09-16, 60s per run on the pump program: `0` delivered 1 block and
-177 nulls, `1` delivered 78 blocks and no nulls. `getBlock` is louder about the
-same thing, answering `-32015`. So `0` is not a conservative default any more,
-it is a near-total outage of the blocks listener. Every call site in `src/` and
-`learning-examples/` now sends `1`, and the verifier fails the build if one
-regresses.
-
-**solders 0.26 cannot deserialize a v1 transaction** —
-`VersionedTransaction.from_bytes` raises `ValueError: io error: unexpected end
-of file`. It does not need to: the RPC has already decoded the envelope by the
-time it emits `meta.logMessages`, and the platform parsers prefer the CreateEvent
-in those logs anyway, for the canonical creator. What broke was the *dispatch* —
-`UniversalBlockListener._process_block_transactions` decoded the bytes first only
-to learn which program the transaction touched, and swallowed the failure in a
-bare `except Exception: pass`. It now tries `_parse_from_logs` on every
-transaction first and keeps the byte decode as a fallback, so v1 coins arrive with
-`state_from_event=True` and `extreme_fast_mode` keeps its zero-RPC contract.
-Verified on two live v1 `create_v2` coins. A later bump to solders ≥0.28 (which
-adds `MessageV1`/`TransactionConfig`) would restore the byte path too, but it is
-gated behind `solana==0.36.6`, which pins `solders<0.27` — **not** required for
-detection, so don't reach for it to fix a listener.
-
-Measured the same day: pump.fun 21/100 and letsbonk 16/100 recent program
-transactions were v1, 10 of 10 sampled blocks contained at least one, and 2 of 13
-successful `create_v2` coins in one window were minted in v1 transactions. This
-is not a future problem.
-
-### Verifying transaction-status handling
-
-```bash
-# Offline: stub checks plus a scan that every example verifies meta.err
-uv run learning-examples/verify_tx_status_checks.py
-
-# Adds a mainnet replay of the reverted signatures from issue #175
-uv run learning-examples/verify_tx_status_checks.py --live
-```
-
-`confirm_transaction` answers "did this land in a block?", never "did it
-succeed". A landed transaction can have reverted, and RPC reports that only in
-`meta.err`. Reporting success without reading it is issue #175: buys reverting
-with `BuybackFeeRecipientMissing` (6062) printed as confirmed buys.
-
-- Examples use `learning-examples/tx_status.py` — `confirm_and_assert` in place
-  of a bare `confirm_transaction`, or `assert_transaction_succeeded` after one.
-  The verifier above fails the build if a new example skips it.
-- The bot uses `SolanaClient.confirm_transaction`, which folds `meta.err` into
-  its return value. **Read the boolean** — discarding it is the same bug.
-- `_get_transaction_result` must send `maxSupportedTransactionVersion: 0` or the
-  RPC rejects every versioned (v0) transaction with `-32015`, and a good trade
-  reads back as unconfirmed.
-- `build_and_send_transaction` returns a solders `Signature`, not a `str`. A
-  `Signature` is not JSON serializable and does not support slicing; a `str` is
-  rejected by solana-py's `confirm_transaction`. Normalize at the boundary.
-- `post_rpc` must catch `asyncio.TimeoutError` alongside `aiohttp.ClientError`.
-  aiohttp raises the former when the request timeout fires and it is **not** a
-  `ClientError`, so leaving it out lets every RPC timeout escape unretried —
-  and `str()` on it is empty, so the caller logs a blank reason. A slow
-  `getAccountInfo` is enough to take down a whole listener run this way.
-
-### Verifying the tp/sl exit path (issue #189)
-
-```bash
-# Offline: the exit sell prices off the price that triggered it, a reverted
-# exit sell is retried, and the retry is bounded
-uv run learning-examples/verify_tp_sl_exit_price.py
-```
-
-`PlatformAwareSeller.execute` does not read a price — the `token_price` it is
-handed **is** the slippage floor (`min_quote_output = amount * price *
-(1 - slippage)`). So the caller owns the floor's correctness. A tp/sl exit fires
-precisely because price left `entry_price`, so pricing the sell off the entry
-sets a floor the pool cannot pay on a stop-loss and the sell reverts with 6003
-`TooLittleSolReceived` — during the drop the stop-loss exists to escape. On a
-take-profit the same mistake runs the other way and the floor protects nothing.
-`_monitor_position_until_exit` already fetches `current_price` at the top of
-each iteration, so passing it costs no extra RPC call; `_handle_time_based_exit`
-genuinely has nothing fresher and keeps passing the buy price.
-
-The seller's `max_retries` covers **transaction submission only**. An on-chain
-revert comes back as `success=False` and is not retried there, so the retry has
-to happen in the monitor loop, where the price is re-read first.
-`trade.max_exit_sell_attempts` (default 3, validated to 1..100) bounds it so a
-token that keeps reverting cannot pin the bot on one position, and the counter
-resets if the price recovers out of the exit band. After the last attempt the
-position is left open and unmonitored — logged loudly, since the tokens are
-still held. Watch the `break`: before #189 it sat outside both branches of
-`if sell_result.success:`, so a failed sell abandoned the position after a
-single try while leaving `is_active=True`.
-
-### Verifying exit-sell safety and RPC deadlines (issues #207, #208, #209)
-
-```bash
-# Offline: an exit sell is retried only when retrying is provably safe, and
-# confirm_transaction still returns a bool rather than a truthy enum
-uv run learning-examples/verify_exit_sell_confirmation.py
-
-# Offline: max_hold_time still fires when every price read fails
-uv run learning-examples/verify_time_exit_without_price.py
-
-# Offline: post_rpc bounds wall time, not just attempts (virtual clock)
-uv run learning-examples/verify_rpc_deadline.py
-```
-
-**An exit sell is not idempotent, so "it failed" is not enough to act on.**
-A sell that reverted changed nothing and should be retried; a sell whose
-confirmation never arrived may already have emptied the position, and another
-one spends a fee to act on a balance that no longer exists.
-`SolanaClient.confirm_transaction_detailed` / `verify_transaction_status`
-return `ConfirmationStatus` (`SUCCESS` / `REVERTED` / `UNCONFIRMED`) and the
-seller turns that into `TradeResult.failure_reason`, alongside the
-`tx_signature` its failure branch used to drop. `_classify_failed_exit_sell`
-retries a `REVERTED`, re-checks an `UNCONFIRMED` signature before deciding —
-`getTransaction` still answers after signature statuses have aged out — and
-stops rather than reselling blind if it is still unresolved. **A missing
-`failure_reason` means "unknown", never "reverted"**: a stub seller simulating
-a revert has to say `TradeFailureReason.REVERTED` or the retry will not fire.
-
-**`SUBMIT_FAILED` means "no transaction ever reached the chain", and nothing
-else.** It is the one reason besides `REVERTED` that retries without asking the
-chain anything, so a post-submission throw must never be labelled with it — the
-seller declares `tx_signature = None` before its `try` and reports `UNCONFIRMED`
-with the signature if anything after `build_and_send_transaction` raises.
-Confirmation and status reads both run inside that handler. For the same reason
-the re-check itself is wrapped: `post_rpc` contains the RPC errors it knows
-about, but a malformed JSON body still raises `json.JSONDecodeError` straight
-through it, and in the monitor loop an escape lands in the outer handler, which
-can call directly back into another exit attempt.
-
-**`calculate_price` returns `0.0` for a curve with no virtual token reserves —
-it does not raise.** The seller rejects a non-positive price with a `ValueError`
-raised *before* its own `try`, so a `0.0` reaching it escapes the bounded exit
-handling entirely. The monitor loop therefore never stores a non-positive read
-as the last known price, and never floors a sell against one — note `0.0` also
-satisfies the stop-loss comparison, so the ordinary priced path can reach the
-seller with it, not just the blind one.
-
-**`confirm_transaction` and `verify_transaction_succeeded` deliberately stay
-bools.** Returning the enum from them would be silent: every enum member is
-truthy, so each existing `if await client.confirm_transaction(sig):` would
-start passing unconditionally.
-
-**`position.should_exit()` cannot be asked anything without a price**, so a
-failed price read used to skip every exit check — including `max_hold_time`,
-which needs no price at all. With the read failing repeatedly the monitor loop
-span forever: `is_active` never changed and the position was never sold.
-`Position.should_exit_on_time()` is the price-free question, asked in the
-loop's exception handler; the blind exit is floored against the last price
-actually read, or the entry price if none ever was, and is still bounded by
-`trade.max_exit_sell_attempts`.
-
-**`post_rpc` bounds attempts, not wall time.** Three error retries backing off
-1, 2, 4 … 16s, or ten 429 retries waiting up to 30s each and honouring a
-`Retry-After` of any size, is minutes on one call — and on the trade path that
-holds up the whole bot. `deadline_seconds` is the separate bound; it defaults
-to `None`, which is exactly the historical behaviour. `_get_transaction_result`
-passes the time *it* has left on every lookup, so its `budget_seconds` is a real
-ceiling instead of `budget + one post_rpc worst case`. Don't reach for
-`asyncio.timeout` here: cutting off an in-flight `getTransaction` and returning
-None is the "can't see it, so call it failed" conflation that #206 removed.
+- `PlatformAwareSeller.execute` does not read a price — the `token_price` it is
+  handed **is** the slippage floor (`min_quote_output = amount * price *
+  (1 - slippage)`). The caller owns that floor, so an exit prices off the value
+  that triggered it, never the entry price.
+- The seller's `max_retries` covers **transaction submission only**. An on-chain
+  revert comes back as `success=False` and is retried in the monitor loop, where
+  the price is re-read first, bounded by `trade.max_exit_sell_attempts` (default
+  3, validated 1..100).
+- An exit sell is **not idempotent**, so "it failed" is not enough to act on.
+  `confirm_transaction_detailed` / `verify_transaction_status` return
+  `ConfirmationStatus` (`SUCCESS` / `REVERTED` / `UNCONFIRMED`); a `REVERTED`
+  retries, an `UNCONFIRMED` signature is re-checked first. A missing
+  `failure_reason` means "unknown", never "reverted".
+- `SUBMIT_FAILED` means "no transaction ever reached the chain", and nothing else
+  — it is the one reason besides `REVERTED` that retries without asking the chain.
+  A post-submission throw reports `UNCONFIRMED` with its signature.
+- `confirm_transaction` and `verify_transaction_succeeded` deliberately stay
+  bools. Returning the enum would be silent: every member is truthy, so every
+  `if await client.confirm_transaction(sig):` would start passing unconditionally.
+- `calculate_price` returns `0.0` for a curve with no virtual token reserves — it
+  does not raise, and the seller rejects it before its own error handling. Never
+  store a non-positive read as the last known price or floor a sell against one;
+  `0.0` also satisfies the stop-loss comparison.
 
 ### Listener and decoder pitfalls
 
@@ -361,7 +220,7 @@ offline and only visible after a couple of minutes against mainnet.
   The envelope is the one part of a transaction whose format changes under you —
   solders cannot read a v1 one at all. `meta.logMessages` is already decoded by
   the RPC and is version-agnostic, so route on it and keep the byte decode as a
-  fallback. See "Verifying transaction v1 handling" above.
+  fallback. See the Invariants above.
 - **Resolve v0 lookup-table accounts before indexing them.** An instruction's
   account indices can point past `message.account_keys` into the address lookup
   table, which geyser reports in `meta.loaded_writable_addresses` then
@@ -549,7 +408,7 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   `Cd4iC3Jn…` under Token2022 (matches chain) and `AhNzZsBp…` under SPL Token.
 - `extreme_fast_mode` skips the curve-state price fetch. Whether it also reads
   the curve for mayhem/cashback/creator/**quote_mint** depends on provenance
-  (see "Verifying the listener-to-buy path" above): CreateEvent-sourced tokens
+  (see the Invariants above): CreateEvent-sourced tokens
   (`state_from_event`) trade on the event data with zero RPC calls, while
   pumpportal/incomplete-event tokens refresh from chain — the wrong quote mint
   means spending the wrong balance entirely. Event parsers populate
@@ -610,7 +469,7 @@ interface pump.fun maintains.
   feed, so no local change recovers them — the coin is never sent. This compounds
   the thin-bonk-payload gap below, and it means `pumpportal` is a sampling feed
   now, not a complete one. `bots/bot-sniper-4-pp.yaml` carries the same warning.
-- `config_loader.py` validates the platform/listener pairing before startup:
+- `src/config_loader.py` (repo root of the package, not under `core/`) validates the platform/listener pairing before startup:
   pump.fun supports `logs`, `blocks`, `geyser`, `pumpportal`; letsbonk.fun
   supports `blocks`, `geyser`, `pumpportal` — **not `logs`**. Adding a listener
   means updating `PLATFORM_LISTENER_COMPATIBILITY` there too.
