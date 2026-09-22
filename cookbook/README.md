@@ -96,6 +96,7 @@ Racing the four listeners against each other is `tools/compare_listeners.py`.
 | Script | What it does |
 |---|---|
 | 💸 [`pumpfun/trade/pumpfun_buy_token_v2.py`](pumpfun/trade/pumpfun_buy_token_v2.py) | Buy a coin you name. `--dry-run` simulates instead of spending |
+| 💸 [`pumpfun/trade/pumpfun_buy_token_exact_quote_v2.py`](pumpfun/trade/pumpfun_buy_token_exact_quote_v2.py) | Spend an exact amount of the quote asset. `--dry-run` simulates |
 | 💸 [`pumpfun/trade/pumpfun_sell_token_v2.py`](pumpfun/trade/pumpfun_sell_token_v2.py) | Sell your whole position in a coin you name |
 | 💸 [`pumpfun/trade/pumpfun_create_token_v2.py`](pumpfun/trade/pumpfun_create_token_v2.py) | Create a coin with `create_v2`, buying none of it |
 | 💸 [`pumpfun/trade/pumpfun_create_and_buy_token_v2.py`](pumpfun/trade/pumpfun_create_and_buy_token_v2.py) | Create a coin and buy it |
@@ -104,6 +105,11 @@ Racing the four listeners against each other is `tools/compare_listeners.py`.
 
 Start at `pumpfun_buy_token_v2.py`. The two snipers are that same trade behind a
 listener, which is most of why they are four times longer.
+
+The two buys differ in which side you pin down — `buy_v2` fixes the tokens you
+receive and caps the spend, `buy_exact_quote_in_v2` fixes the spend and floors
+the tokens. Pin the spend when the quote asset is a budget you hold, which is
+usually the case once a coin is priced in something other than SOL.
 
 ### Graduation
 

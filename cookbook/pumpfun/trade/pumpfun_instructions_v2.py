@@ -60,6 +60,9 @@ BONDING_CURVE_DISCRIMINATOR = struct.pack("<Q", 6966180631402821399)
 # Instruction discriminators (first 8 bytes of sha256("global:<name>")).
 BUY_V2_DISCRIMINATOR = bytes([184, 23, 238, 97, 103, 197, 211, 61])
 SELL_V2_DISCRIMINATOR = bytes([93, 246, 130, 60, 231, 233, 64, 178])
+# buy_exact_quote_in_v2 takes the same 27 accounts as buy_v2, in the same
+# order — only the discriminator and the two arguments differ.
+BUY_EXACT_QUOTE_IN_V2_DISCRIMINATOR = bytes([194, 171, 28, 70, 104, 77, 91, 47])
 
 # Fee recipients: 8 normal (non-mayhem coins), 8 reserved (mayhem coins),
 # 8 buyback (every coin). See FEE_RECIPIENTS.md in the pump-fun public docs.
@@ -582,6 +585,63 @@ def build_buy_v2_instruction(
         data=BUY_V2_DISCRIMINATOR
         + struct.pack("<Q", token_amount_raw)
         + struct.pack("<Q", max_quote_cost_raw),
+        accounts=build_v2_accounts(
+            base_mint=base_mint,
+            creator=creator,
+            user=user,
+            quote_mint=quote_mint,
+            base_token_program=base_token_program,
+            is_mayhem_mode=is_mayhem_mode,
+            include_global_volume_accumulator=True,
+            quote_token_program_id=quote_token_program_id,
+        ),
+    )
+
+
+def build_buy_exact_quote_in_v2_instruction(
+    *,
+    base_mint: Pubkey,
+    creator: Pubkey,
+    user: Pubkey,
+    spendable_quote_in_raw: int,
+    min_tokens_out_raw: int,
+    quote_mint: Pubkey = WSOL_MINT,
+    base_token_program: Pubkey = TOKEN_2022_PROGRAM,
+    is_mayhem_mode: bool = False,
+    quote_token_program_id: Pubkey | None = None,
+) -> Instruction:
+    """Build a buy_exact_quote_in_v2 instruction.
+
+    The mirror of `buy_v2`. `buy_v2` fixes how many tokens you receive and caps
+    what you spend; this fixes what you spend and floors what you receive. The
+    second form is the natural one when the quote asset is the thing you hold a
+    budget of — a stablecoin, or a tokenized equity.
+
+    Fees come out of `spendable_quote_in_raw`, so the whole amount leaves the
+    wallet and the tokens arrive against what is left.
+
+    Args:
+        base_mint: Coin to buy
+        creator: Coin creator, from bonding_curve.creator
+        user: Buyer / signer
+        spendable_quote_in_raw: Exact amount to spend, in the quote mint's raw
+            units, fees included
+        min_tokens_out_raw: Floor on base tokens received, in raw units. This is
+            the slippage protection; the caller owns it.
+        quote_mint: Normalized quote mint
+        base_token_program: Token program owning base_mint
+        is_mayhem_mode: Whether the coin is in mayhem mode
+        quote_token_program_id: Token program owning quote_mint; see
+            `build_v2_accounts`
+
+    Returns:
+        The buy_exact_quote_in_v2 instruction
+    """
+    return Instruction(
+        program_id=PUMP_PROGRAM,
+        data=BUY_EXACT_QUOTE_IN_V2_DISCRIMINATOR
+        + struct.pack("<Q", spendable_quote_in_raw)
+        + struct.pack("<Q", min_tokens_out_raw),
         accounts=build_v2_accounts(
             base_mint=base_mint,
             creator=creator,
