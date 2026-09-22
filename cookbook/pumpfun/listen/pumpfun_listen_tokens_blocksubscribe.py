@@ -44,7 +44,9 @@ PUMP_PROGRAM_ID = Pubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6
 # and sha256("global:createV2") for Token2022 CreateV2
 # See: cookbook/solana/anchor_calculate_discriminator.py
 CREATE_DISCRIMINATOR = 8576854823835016728
-CREATE_V2_DISCRIMINATOR = struct.unpack("<Q", bytes([214, 144, 76, 236, 95, 139, 49, 180]))[0]
+CREATE_V2_DISCRIMINATOR = struct.unpack(
+    "<Q", bytes([214, 144, 76, 236, 95, 139, 49, 180])
+)[0]
 
 
 def print_token_info(token_data, signature=None):
@@ -118,13 +120,108 @@ def get_account_keys(transaction, instruction, loaded_addresses=None):
             if index < len(all_keys):
                 account_keys.append(str(all_keys[index]))
             else:
-                print(f"Warning: Account index {index} out of range (max: {len(all_keys)-1})")
+                print(
+                    f"Warning: Account index {index} out of range (max: {len(all_keys) - 1})"
+                )
                 return None
         except (IndexError, Exception) as e:
             print(f"Error resolving account at index {index}: {e}")
             return None
 
     return account_keys
+
+
+# First 8 bytes of sha256("event:CreateEvent"). Anchor emits the event as a
+# base64 "Program data:" log line, which the RPC has already decoded for us.
+CREATE_EVENT_DISCRIMINATOR = bytes([27, 114, 169, 77, 222, 235, 99, 118])
+
+# The CreateEvent layout, in order. Trailing fields were appended by later
+# upgrades, so a shorter payload stops early rather than failing.
+_CREATE_EVENT_FIELDS = [
+    ("name", "string"),
+    ("symbol", "string"),
+    ("uri", "string"),
+    ("mint", "publicKey"),
+    ("bondingCurve", "publicKey"),
+    ("user", "publicKey"),
+    ("creator", "publicKey"),
+    ("timestamp", "i64"),
+    ("virtual_token_reserves", "u64"),
+    ("virtual_sol_reserves", "u64"),
+    ("real_token_reserves", "u64"),
+    ("token_total_supply", "u64"),
+    ("token_program", "publicKey"),
+    ("is_mayhem_mode", "bool"),
+    ("is_cashback_enabled", "bool"),
+]
+
+
+def parse_create_event(data):
+    """Decode a CreateEvent payload into a dict.
+
+    This is the version-agnostic path. The event carries the mint, the curve and
+    the creator directly, so nothing here has to deserialize the transaction
+    envelope or resolve account indices against a lookup table.
+
+    Args:
+        data: Raw event bytes, discriminator included
+
+    Returns:
+        The decoded fields, or None if the payload is not a CreateEvent
+    """
+    if len(data) < 8 or data[:8] != CREATE_EVENT_DISCRIMINATOR:
+        return None
+
+    offset = 8
+    parsed = {}
+    for name, kind in _CREATE_EVENT_FIELDS:
+        try:
+            if kind == "string":
+                length = struct.unpack_from("<I", data, offset)[0]
+                offset += 4
+                parsed[name] = data[offset : offset + length].decode("utf-8", "replace")
+                offset += length
+            elif kind == "publicKey":
+                parsed[name] = str(Pubkey.from_bytes(data[offset : offset + 32]))
+                offset += 32
+            elif kind == "u64":
+                parsed[name] = struct.unpack_from("<Q", data, offset)[0]
+                offset += 8
+            elif kind == "i64":
+                parsed[name] = struct.unpack_from("<q", data, offset)[0]
+                offset += 8
+            elif kind == "bool":
+                parsed[name] = bool(data[offset])
+                offset += 1
+        except (struct.error, IndexError):
+            # A field the running program does not emit yet. Everything before
+            # it is still valid.
+            break
+    return parsed
+
+
+def find_create_event(logs):
+    """Pull the CreateEvent out of a transaction's log messages.
+
+    Args:
+        logs: `meta.logMessages` for one transaction
+
+    Returns:
+        The decoded event, or None if the transaction created no coin
+    """
+    if not any("Program log: Instruction: Create" in log for log in logs):
+        return None
+    for log in logs:
+        if "Program data:" not in log:
+            continue
+        try:
+            decoded = base64.b64decode(log.split(": ", 1)[1])
+        except (ValueError, IndexError):
+            continue
+        event = parse_create_event(decoded)
+        if event:
+            return event
+    return None
 
 
 def load_idl(file_path):
@@ -232,7 +329,9 @@ def decode_create_v2_instruction(ix_data, ix_def, accounts):
             value = bool(ix_data[offset]) if offset < len(ix_data) else False
             offset += 1
         elif isinstance(t, dict) and "defined" in t:
-            defined_name = t["defined"]["name"] if isinstance(t["defined"], dict) else t["defined"]
+            defined_name = (
+                t["defined"]["name"] if isinstance(t["defined"], dict) else t["defined"]
+            )
             if defined_name == "OptionBool":
                 if offset >= len(ix_data):
                     value = None
@@ -263,6 +362,101 @@ def decode_create_v2_instruction(ix_data, ix_def, accounts):
     args["token_standard"] = "token2022"
 
     return args
+
+
+def decode_from_envelope(tx, idl):
+    """Decode a coin creation straight from the transaction bytes.
+
+    The fallback for a block that arrives without `logMessages`. It is a
+    fallback and not the main path because the envelope is the one part of a
+    transaction whose format changes underneath you: solders 0.26 raises
+    `ValueError: io error: unexpected end of file` on a v1 transaction, and
+    solders only learned to read one in 0.29, which needs solana-py 0.40.
+
+    Args:
+        tx: One entry from a blockSubscribe notification's `transactions`
+        idl: The parsed pump.fun IDL
+
+    Returns:
+        True if a creation was found and printed
+    """
+    try:
+        transaction = VersionedTransaction.from_bytes(
+            base64.b64decode(tx["transaction"][0])
+        )
+    except (ValueError, KeyError, IndexError):
+        return False
+
+    meta = tx.get("meta") or {}
+    loaded_addresses = meta.get("loadedAddresses")
+    for ix in transaction.message.instructions:
+        program = transaction.message.account_keys[ix.program_id_index]
+        if str(program) != str(PUMP_PROGRAM_ID):
+            continue
+        ix_data = bytes(ix.data)
+        if len(ix_data) < 8:
+            continue
+        discriminator = struct.unpack("<Q", ix_data[:8])[0]
+        if discriminator not in (CREATE_DISCRIMINATOR, CREATE_V2_DISCRIMINATOR):
+            continue
+
+        is_v2 = discriminator == CREATE_V2_DISCRIMINATOR
+        wanted = "create_v2" if is_v2 else "create"
+        ix_def = next(
+            (instr for instr in idl["instructions"] if instr["name"] == wanted),
+            next(instr for instr in idl["instructions"] if instr["name"] == "create"),
+        )
+        account_keys = get_account_keys(transaction, ix, loaded_addresses)
+        if account_keys is None:
+            print("⚠️  Skipping transaction due to unresolved accounts")
+            continue
+
+        decode = decode_create_v2_instruction if is_v2 else decode_create_instruction
+        print("\n🔍 Found a creation by decoding the envelope (no logs in this block)")
+        print_token_info(decode(ix_data, ix_def, account_keys))
+        return True
+    return False
+
+
+def handle_transaction(tx, idl):
+    """Detect and print a coin creation in one transaction from a block.
+
+    Detection routes on `meta.logMessages`, which the RPC has already decoded
+    and which reads the same whatever version the transaction is. The envelope
+    is only opened afterwards, to report address lookup table use, and only when
+    the installed solders can read it — transaction v1 (live since 2026-09-15)
+    is not deserializable by solders 0.26, and gating detection on that decode
+    is what made this example blind to every v1 block.
+
+    Args:
+        tx: One entry from a blockSubscribe notification's `transactions`
+        idl: The parsed pump.fun IDL, kept for the envelope path
+    """
+    meta = tx.get("meta") or {}
+    logs = meta.get("logMessages")
+    version = tx.get("version", "legacy")
+
+    if logs:
+        event = find_create_event(logs)
+        if not event:
+            return
+        print(f"\n🔍 Found CreateEvent in a {version} transaction")
+        print_token_info(event)
+    else:
+        # Some providers return blocks without logMessages. The envelope is then
+        # the only route, and it only works for a version solders can read.
+        if not decode_from_envelope(tx, idl):
+            return
+
+    loaded_addresses = meta.get("loadedAddresses")
+    if loaded_addresses:
+        writable_count = len(loaded_addresses.get("writable", []))
+        readonly_count = len(loaded_addresses.get("readonly", []))
+        if writable_count or readonly_count:
+            print(
+                f"ℹ️  [ALT] Used Address Lookup Table: {writable_count} writable, "
+                f"{readonly_count} readonly\n"
+            )
 
 
 async def listen_and_decode_create():
@@ -315,113 +509,9 @@ async def listen_and_decode_create():
                             # check the membership test below raises TypeError.
                             if block and "transactions" in block:
                                 for tx in block["transactions"]:
-                                    if isinstance(tx, dict) and "transaction" in tx:
-                                        tx_data_decoded = base64.b64decode(
-                                            tx["transaction"][0]
-                                        )
-                                        try:
-                                            transaction = (
-                                                VersionedTransaction.from_bytes(
-                                                    tx_data_decoded
-                                                )
-                                            )
-                                        except ValueError:
-                                            # Solana transaction v1 (live since
-                                            # 2026-09-15) starts with byte 129 and
-                                            # the installed solders cannot
-                                            # deserialize it. Report it instead of
-                                            # letting one transaction end the block
-                                            # — this example decodes the
-                                            # instruction from the envelope, so it
-                                            # has nothing else to fall back on.
-                                            # The bot's own blocks listener routes
-                                            # through meta.logMessages, which works
-                                            # for every version.
-                                            if tx_data_decoded[:1] == b"\x81":
-                                                print(
-                                                    "⚠️  Skipping a v1 transaction: "
-                                                    "solders cannot decode it yet"
-                                                )
-                                            continue
-
-                                        # Extract loaded addresses from transaction metadata
-                                        loaded_addresses = None
-                                        if "meta" in tx and tx["meta"] and "loadedAddresses" in tx["meta"]:
-                                            loaded_addresses = tx["meta"]["loadedAddresses"]
-
-                                        for ix in transaction.message.instructions:
-                                            if str(
-                                                transaction.message.account_keys[
-                                                    ix.program_id_index
-                                                ]
-                                            ) == str(PUMP_PROGRAM_ID):
-                                                ix_data = bytes(ix.data)
-                                                discriminator = struct.unpack(
-                                                    "<Q", ix_data[:8]
-                                                )[0]
-
-                                                if discriminator == CREATE_DISCRIMINATOR:
-                                                    # Legacy Create instruction (Metaplex tokens)
-                                                    create_ix = next(
-                                                        instr
-                                                        for instr in idl["instructions"]
-                                                        if instr["name"] == "create"
-                                                    )
-                                                    account_keys = get_account_keys(
-                                                        transaction, ix, loaded_addresses
-                                                    )
-                                                    if account_keys is None:
-                                                        print("⚠️  Skipping transaction due to unresolved accounts")
-                                                        continue
-
-                                                    # Decode instruction data
-                                                    decoded_args = decode_create_instruction(
-                                                        ix_data,
-                                                        create_ix,
-                                                        account_keys,
-                                                    )
-
-                                                    # Print token information
-                                                    print_token_info(decoded_args)
-
-                                                    # Note if using Address Lookup Tables
-                                                    if loaded_addresses:
-                                                        writable_count = len(loaded_addresses.get("writable", []))
-                                                        readonly_count = len(loaded_addresses.get("readonly", []))
-                                                        if writable_count > 0 or readonly_count > 0:
-                                                            print(f"ℹ️  [ALT] Used Address Lookup Table: {writable_count} writable, {readonly_count} readonly\n")
-
-                                                elif discriminator == CREATE_V2_DISCRIMINATOR:
-                                                    # CreateV2 instruction (Token2022 tokens)
-                                                    create_v2_ix = next(
-                                                        (instr for instr in idl["instructions"]
-                                                         if instr["name"] == "create_v2"),
-                                                        next(instr for instr in idl["instructions"]
-                                                             if instr["name"] == "create")
-                                                    )
-                                                    account_keys = get_account_keys(
-                                                        transaction, ix, loaded_addresses
-                                                    )
-                                                    if account_keys is None:
-                                                        print("⚠️  Skipping transaction due to unresolved accounts")
-                                                        continue
-
-                                                    # Decode instruction data
-                                                    decoded_args = decode_create_v2_instruction(
-                                                        ix_data,
-                                                        create_v2_ix,
-                                                        account_keys,
-                                                    )
-
-                                                    # Print token information
-                                                    print_token_info(decoded_args)
-
-                                                    # Note if using Address Lookup Tables
-                                                    if loaded_addresses:
-                                                        writable_count = len(loaded_addresses.get("writable", []))
-                                                        readonly_count = len(loaded_addresses.get("readonly", []))
-                                                        if writable_count > 0 or readonly_count > 0:
-                                                            print(f"ℹ️  [ALT] Used Address Lookup Table: {writable_count} writable, {readonly_count} readonly\n")
+                                    if not isinstance(tx, dict):
+                                        continue
+                                    handle_transaction(tx, idl)
                 elif "result" in data:
                     print("Subscription confirmed")
                 else:

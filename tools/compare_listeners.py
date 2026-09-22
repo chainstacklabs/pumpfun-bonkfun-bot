@@ -47,7 +47,6 @@ import grpc
 import websockets
 from dotenv import load_dotenv
 from solders.pubkey import Pubkey
-from solders.transaction import VersionedTransaction
 
 # Reach the shared geyser stubs in src/geyser/generated (imported lazily below).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -399,16 +398,22 @@ def _parse_create_event(data, token_standard_hint):
         for field_name, field_type in _CREATE_EVENT_FIELDS:
             if field_type == "string":
                 if offset + 4 > len(data):
-                    raise ValueError(f"Not enough data for {field_name} length at offset {offset}")
+                    raise ValueError(
+                        f"Not enough data for {field_name} length at offset {offset}"
+                    )
                 length = struct.unpack("<I", data[offset : offset + 4])[0]
                 offset += 4
                 if offset + length > len(data):
-                    raise ValueError(f"Not enough data for {field_name} value (length={length}) at offset {offset}")
+                    raise ValueError(
+                        f"Not enough data for {field_name} value (length={length}) at offset {offset}"
+                    )
                 value = data[offset : offset + length].decode("utf-8")
                 offset += length
             elif field_type == "publicKey":
                 if offset + 32 > len(data):
-                    raise ValueError(f"Not enough data for {field_name} at offset {offset}")
+                    raise ValueError(
+                        f"Not enough data for {field_name} at offset {offset}"
+                    )
                 value = base58.b58encode(data[offset : offset + 32]).decode("utf-8")
                 offset += 32
             elif field_type == "u64":
@@ -447,51 +452,6 @@ def is_transaction_successful(logs):
 
 
 # ============ WEBSOCKET LISTENERS ============
-
-
-def get_account_keys(transaction, instruction, loaded_addresses=None):
-    """
-    Safely extract account keys for an instruction from a versioned transaction.
-    Handles both static account keys and loaded addresses from lookup tables.
-
-    Args:
-        transaction: VersionedTransaction object
-        instruction: Instruction object
-        loaded_addresses: Dict with 'writable' and 'readonly' loaded addresses from tx meta
-
-    Returns:
-        List of account keys as strings, or None if unable to resolve
-    """
-    account_keys = []
-    static_keys = transaction.message.account_keys
-
-    # Combine all available account keys: static + loaded
-    all_keys = list(static_keys)
-
-    if loaded_addresses:
-        # Add loaded writable addresses
-        if "writable" in loaded_addresses:
-            for addr in loaded_addresses["writable"]:
-                all_keys.append(Pubkey.from_string(addr))
-
-        # Add loaded readonly addresses
-        if "readonly" in loaded_addresses:
-            for addr in loaded_addresses["readonly"]:
-                all_keys.append(Pubkey.from_string(addr))
-
-    # Now resolve account indices
-    for index in instruction.accounts:
-        try:
-            if index < len(all_keys):
-                account_keys.append(str(all_keys[index]))
-            else:
-                print(f"Warning: Account index {index} out of range (max: {len(all_keys)-1})")
-                return None
-        except (IndexError, Exception) as e:
-            print(f"Error resolving account at index {index}: {e}")
-            return None
-
-    return account_keys
 
 
 async def listen_block_subscription(wss_url, provider_name, tracker, known_tokens=None):
@@ -555,81 +515,62 @@ async def listen_block_subscription(wss_url, provider_name, tracker, known_token
                             if not isinstance(tx, dict) or "transaction" not in tx:
                                 continue
 
-                            tx_data_b64 = tx["transaction"][0]
-                            tx_data = base64.b64decode(tx_data_b64)
+                            # Route on meta.logMessages, which the RPC has
+                            # already decoded and which reads the same for every
+                            # transaction version. Deserializing the envelope
+                            # here is what used to make this lane miss every v1
+                            # transaction (live since 2026-09-15) and report the
+                            # gap as a speed difference against logs and geyser.
+                            meta = tx.get("meta") or {}
+                            logs = meta.get("logMessages") or []
+                            if not any(
+                                "Program log: Instruction: Create" in log
+                                for log in logs
+                            ):
+                                continue
+
+                            decoded = None
+                            for log in logs:
+                                if "Program data:" not in log:
+                                    continue
+                                try:
+                                    payload = base64.b64decode(log.split(": ", 1)[1])
+                                except (ValueError, IndexError):
+                                    continue
+                                if payload[:8] != CREATE_EVENT_DISCRIMINATOR:
+                                    continue
+                                decoded = parse_create_event(payload)
+                                break
+
+                            if not decoded:
+                                continue
+
+                            mint = decoded.get("mint")
+                            if not mint or mint in known_tokens:
+                                continue
+
+                            is_v2 = any(
+                                "Program log: Instruction: CreateV2" in log
+                                for log in logs
+                            )
+                            kind = (
+                                "CreateV2 (Token2022)" if is_v2 else "Create (Legacy)"
+                            )
+                            print(f"[{provider_name}_block] Detected: {kind}")
 
                             try:
-                                transaction = VersionedTransaction.from_bytes(tx_data)
-
-                                # Extract loaded addresses from transaction metadata
-                                loaded_addresses = None
-                                if "meta" in tx and tx["meta"] and "loadedAddresses" in tx["meta"]:
-                                    loaded_addresses = tx["meta"]["loadedAddresses"]
-
-                                for ix in transaction.message.instructions:
-                                    if (
-                                        transaction.message.account_keys[
-                                            ix.program_id_index
-                                        ]
-                                        == PUMP_PROGRAM_ID
-                                    ):
-                                        data_bytes = bytes(ix.data)
-
-                                        # Check for both Create and CreateV2 instructions
-                                        is_create = data_bytes.startswith(PUMP_CREATE_PREFIX)
-                                        is_create_v2 = data_bytes.startswith(PUMP_CREATE_V2_PREFIX)
-
-                                        if not (is_create or is_create_v2):
-                                            continue
-
-                                        # Get account keys with ALT support
-                                        account_keys = get_account_keys(
-                                            transaction, ix, loaded_addresses
-                                        )
-                                        if account_keys is None:
-                                            print("Skipping transaction due to unresolved accounts")
-                                            continue
-
-                                        # Decode based on instruction type
-                                        if is_create_v2:
-                                            print(f"[{provider_name}_block] Detected: CreateV2 instruction (Token2022)")
-                                            decoded = decode_create_v2_instruction(data_bytes, account_keys)
-                                        else:
-                                            print(f"[{provider_name}_block] Detected: Create instruction (Legacy/Metaplex)")
-                                            decoded = decode_create_instruction(data_bytes, account_keys)
-
-                                        if not decoded:
-                                            continue
-
-                                        mint = decoded.get("mint")
-                                        if not mint:
-                                            continue
-
-                                        if mint in known_tokens:
-                                            continue
-
-                                        try:
-                                            ts = time.time()
-                                            tracker.add_token(
-                                                mint,
-                                                decoded["name"],
-                                                decoded["symbol"],
-                                                f"{provider_name}_block",
-                                                ts,
-                                            )
-                                            known_tokens.add(mint)
-                                        except Exception as e:
-                                            print(
-                                                f"[ERROR] Failed to process block instruction: {e}"
-                                            )
+                                tracker.add_token(
+                                    mint,
+                                    decoded["name"],
+                                    decoded["symbol"],
+                                    f"{provider_name}_block",
+                                    time.time(),
+                                )
+                                known_tokens.add(mint)
                             except Exception as e:
-                                # A v1 transaction (Solana, live 2026-09-15)
-                                # lands here: solders cannot deserialize the
-                                # envelope, so this lane under-counts creates
-                                # by the v1 share while logs and geyser, which
-                                # read meta.logMessages, count them all. Do not
-                                # read that gap as a speed difference.
-                                print(f"[ERROR] Failed to process transaction: {e}")
+                                print(
+                                    f"[ERROR] Failed to process block instruction: {e}"
+                                )
 
                     except websockets.ConnectionClosed:
                         # Break out so the outer loop reconnects. Without this the
@@ -693,12 +634,10 @@ async def listen_logs_subscription(wss_url, provider_name, tracker, known_tokens
 
                         # Detect both Create and CreateV2 instructions
                         is_create = any(
-                            "Program log: Instruction: Create" in log
-                            for log in logs
+                            "Program log: Instruction: Create" in log for log in logs
                         )
                         is_create_v2 = any(
-                            "Program log: Instruction: CreateV2" in log
-                            for log in logs
+                            "Program log: Instruction: CreateV2" in log for log in logs
                         )
 
                         if not (is_create or is_create_v2):
@@ -715,16 +654,23 @@ async def listen_logs_subscription(wss_url, provider_name, tracker, known_tokens
                                         continue
 
                                     event_discriminator = data_bytes[:8]
-                                    if event_discriminator != CREATE_EVENT_DISCRIMINATOR:
+                                    if (
+                                        event_discriminator
+                                        != CREATE_EVENT_DISCRIMINATOR
+                                    ):
                                         # Skip non-CreateEvent logs (e.g., TradeEvent, ExtendAccountEvent)
                                         continue
 
                                     # Parse based on instruction type
                                     if is_create_v2:
-                                        print(f"[{provider_name}_logs] Detected: CreateV2 instruction (Token2022)")
+                                        print(
+                                            f"[{provider_name}_logs] Detected: CreateV2 instruction (Token2022)"
+                                        )
                                         parsed = parse_create_v2_event(data_bytes)
                                     else:
-                                        print(f"[{provider_name}_logs] Detected: Create instruction (Legacy/Metaplex)")
+                                        print(
+                                            f"[{provider_name}_logs] Detected: Create instruction (Legacy/Metaplex)"
+                                        )
                                         parsed = parse_create_event(data_bytes)
 
                                     if not parsed:
@@ -833,7 +779,9 @@ async def listen_geyser_grpc(
                     for account_idx in ix.accounts:
                         if account_idx < len(msg.account_keys):
                             account_keys.append(
-                                base58.b58encode(bytes(msg.account_keys[account_idx])).decode()
+                                base58.b58encode(
+                                    bytes(msg.account_keys[account_idx])
+                                ).decode()
                             )
 
                     if len(account_keys) == 0:
@@ -845,10 +793,14 @@ async def listen_geyser_grpc(
 
                     # Decode based on instruction type
                     if is_create_v2:
-                        print(f"[{provider_name}_geyser] Detected: CreateV2 instruction (Token2022)")
+                        print(
+                            f"[{provider_name}_geyser] Detected: CreateV2 instruction (Token2022)"
+                        )
                         decoded = decode_create_v2_instruction(ix.data, account_keys)
                     else:
-                        print(f"[{provider_name}_geyser] Detected: Create instruction (Legacy/Metaplex)")
+                        print(
+                            f"[{provider_name}_geyser] Detected: Create instruction (Legacy/Metaplex)"
+                        )
                         decoded = decode_create_instruction(ix.data, account_keys)
 
                     if not decoded:

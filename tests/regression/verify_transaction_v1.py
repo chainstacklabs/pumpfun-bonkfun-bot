@@ -228,6 +228,39 @@ def check_listener_still_detects_a_pre_v1_create() -> bool:
     return True
 
 
+def check_examples_route_on_logs() -> bool:
+    """No cookbook or tools listener may detect by opening the envelope.
+
+    The envelope is the one part of a transaction whose format changes
+    underneath you, and the installed solders cannot read a v1 one. A script
+    that deserializes it is free to do so for enrichment, but it must also read
+    `logMessages`, or it goes blind the moment a version it cannot parse
+    arrives. The blocks example printed 30,080 "skipping a v1 transaction"
+    lines in 150 seconds before this rule existed, and compare_listeners
+    reported 601 decode errors as if they were a transport difference.
+    """
+    offenders = []
+    for directory in ("cookbook", "tools"):
+        for path in sorted((PROJECT_ROOT / directory).rglob("*.py")):
+            # The decoders are handed one saved payload and asked to take it
+            # apart. Opening the envelope is the exercise, and there is no live
+            # stream for them to go blind on.
+            if path.parent.name == "decode":
+                continue
+            source = path.read_text()
+            if "VersionedTransaction.from_bytes" not in source:
+                continue
+            if "logMessages" not in source:
+                offenders.append(str(path.relative_to(PROJECT_ROOT)))
+    if offenders:
+        print(
+            "     these decode the envelope without a log route: "
+            + ", ".join(offenders)
+        )
+        return False
+    return True
+
+
 def main() -> int:
     checks = [
         ("every call site accepts v1", check_every_call_site_accepts_v1),
@@ -239,6 +272,7 @@ def main() -> int:
             check_listener_still_detects_a_pre_v1_create,
         ),
         ("the log route is what detects v1", check_log_route_is_what_detects_v1),
+        ("examples route on logs too", check_examples_route_on_logs),
     ]
     failed = 0
     for label, check in checks:

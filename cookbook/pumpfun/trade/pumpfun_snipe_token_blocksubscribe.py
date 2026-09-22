@@ -22,7 +22,6 @@ Reference: https://www.anza.xyz/blog/cu-optimization-with-setloadedaccountsdatas
 import argparse
 import asyncio
 import base64
-import hashlib
 import json
 import os
 import struct
@@ -46,7 +45,7 @@ from solders.instruction import Instruction
 from solders.keypair import Keypair
 from solders.message import Message
 from solders.pubkey import Pubkey
-from solders.transaction import Transaction, VersionedTransaction
+from solders.transaction import Transaction
 from spl.token.instructions import (
     create_idempotent_associated_token_account,
 )
@@ -294,75 +293,106 @@ async def buy_token(
                     print("Max retries reached. Unable to complete the transaction.")
 
 
-def load_idl(file_path):
-    with open(file_path) as f:
-        return json.load(f)
+# First 8 bytes of sha256("event:CreateEvent"). Anchor emits the event as a
+# base64 "Program data:" log line, already decoded by the RPC, so reading it
+# works for every transaction version.
+CREATE_EVENT_DISCRIMINATOR = bytes([27, 114, 169, 77, 222, 235, 99, 118])
+
+_CREATE_EVENT_FIELDS = [
+    ("name", "string"),
+    ("symbol", "string"),
+    ("uri", "string"),
+    ("mint", "publicKey"),
+    ("bondingCurve", "publicKey"),
+    ("user", "publicKey"),
+    ("creator", "publicKey"),
+    ("timestamp", "i64"),
+    ("virtual_token_reserves", "u64"),
+    ("virtual_sol_reserves", "u64"),
+    ("real_token_reserves", "u64"),
+    ("token_total_supply", "u64"),
+    ("token_program", "publicKey"),
+]
 
 
-def calculate_discriminator(instruction_name):
-    sha = hashlib.sha256()
-    sha.update(instruction_name.encode("utf-8"))
-    return struct.unpack("<Q", sha.digest()[:8])[0]
+def parse_create_event(data):
+    """Decode a CreateEvent payload into a dict.
+
+    Args:
+        data: Raw event bytes, discriminator included
+
+    Returns:
+        The decoded fields, or None if this is not a CreateEvent
+    """
+    if len(data) < 8 or data[:8] != CREATE_EVENT_DISCRIMINATOR:
+        return None
+    offset = 8
+    parsed = {}
+    for name, kind in _CREATE_EVENT_FIELDS:
+        try:
+            if kind == "string":
+                length = struct.unpack_from("<I", data, offset)[0]
+                offset += 4
+                parsed[name] = data[offset : offset + length].decode("utf-8", "replace")
+                offset += length
+            elif kind == "publicKey":
+                parsed[name] = str(Pubkey.from_bytes(data[offset : offset + 32]))
+                offset += 32
+            elif kind == "u64":
+                offset += 8
+            elif kind == "i64":
+                offset += 8
+        except (struct.error, IndexError):
+            break
+    return parsed
 
 
-def decode_create_instruction(ix_data, ix_def, accounts):
-    args = {}
-    offset = 8  # Skip 8-byte discriminator
+def token_info_from_logs(logs):
+    """Build the sniper's token dict from a transaction's log messages.
 
-    for arg in ix_def["args"]:
-        t = arg["type"]
-        if t == "string":
-            length = struct.unpack_from("<I", ix_data, offset)[0]
-            offset += 4
-            value = ix_data[offset : offset + length].decode("utf-8")
-            offset += length
-        elif t == "pubkey":
-            value = base58.b58encode(ix_data[offset : offset + 32]).decode("utf-8")
-            offset += 32
-        elif t == "bool":
-            value = bool(ix_data[offset])
-            offset += 1
-        elif isinstance(t, dict) and "defined" in t:
-            # OptionBool and OptionU64 are single-field Anchor structs with no
-            # presence tag: each serializes as its bare inner value, 1 and 8
-            # bytes. They are positional, and the trailing ones are legally
-            # absent from the wire — reading them unconditionally raises
-            # IndexError on the shorter forms, which is every coin whose
-            # create_v2 stops early. An absent one is reported as None, meaning
-            # unset, matching utils/idl_parser.py.
-            defined = t["defined"]
-            name = defined["name"] if isinstance(defined, dict) else defined
-            if name == "OptionU64":
-                if offset + 8 > len(ix_data):
-                    value = None
-                else:
-                    value = struct.unpack_from("<Q", ix_data, offset)[0]
-                    offset += 8
-            elif offset >= len(ix_data):
-                value = None
-            else:
-                value = bool(ix_data[offset])
-                offset += 1
-        else:
-            raise ValueError(f"Unsupported type: {t}")
+    The version-agnostic route. The event carries the mint, the curve and the
+    creator; the associated bonding curve is an ordinary ATA of the curve, so it
+    is derived rather than read out of the instruction's account list.
 
-        args[arg["name"]] = value
+    Args:
+        logs: `meta.logMessages` for one transaction
 
-    # Add accounts
-    args["mint"] = str(accounts[0])
-    args["bondingCurve"] = str(accounts[2])
-    args["associatedBondingCurve"] = str(accounts[3])
-    args["user"] = str(accounts[7])
+    Returns:
+        The token fields the buy path needs, or None if no coin was created
+    """
+    if not any("Program log: Instruction: Create" in log for log in logs):
+        return None
+    for log in logs:
+        if "Program data:" not in log:
+            continue
+        try:
+            payload = base64.b64decode(log.split(": ", 1)[1])
+        except (ValueError, IndexError):
+            continue
+        event = parse_create_event(payload)
+        if not event or "bondingCurve" not in event:
+            continue
 
-    return args
+        token_program = Pubkey.from_string(
+            event.get("token_program", str(TOKEN_2022_PROGRAM))
+        )
+        mint = Pubkey.from_string(event["mint"])
+        curve = Pubkey.from_string(event["bondingCurve"])
+        event["associatedBondingCurve"] = str(
+            pump_v2.find_associated_token_account(curve, mint, token_program)
+        )
+        event["token_program"] = str(token_program)
+        event["is_token_2022"] = token_program == TOKEN_2022_PROGRAM
+        return event
+    return None
 
 
 async def listen_for_create_transaction():
-    idl_path = os.path.join(os.path.dirname(__file__), "..", "idl", "pump_fun_idl.json")
-    idl = load_idl(idl_path)
-    create_discriminator = calculate_discriminator("global:create")
-    create_v2_discriminator = calculate_discriminator("global:create_v2")
+    """Wait for the next coin creation and return what the buy path needs.
 
+    Returns:
+        The token fields decoded from the CreateEvent in a block's logs
+    """
     async with websockets.connect(
         RPC_WEBSOCKET, max_size=WEBSOCKET_MAX_MESSAGE_BYTES
     ) as websocket:
@@ -399,81 +429,18 @@ async def listen_for_create_transaction():
                         # the key is present, the value is not.
                         if block and "transactions" in block:
                             for tx in block["transactions"]:
-                                if isinstance(tx, dict) and "transaction" in tx:
-                                    tx_data_decoded = base64.b64decode(
-                                        tx["transaction"][0]
-                                    )
-                                    try:
-                                        transaction = VersionedTransaction.from_bytes(
-                                            tx_data_decoded
-                                        )
-                                    except ValueError:
-                                        # A Solana v1 transaction (first byte
-                                        # 129, live since 2026-09-15) that the
-                                        # installed solders cannot decode. Skip
-                                        # it rather than ending the listener —
-                                        # the create we are waiting for may be
-                                        # later in the same block.
-                                        continue
-
-                                    for ix in transaction.message.instructions:
-                                        if str(
-                                            transaction.message.account_keys[
-                                                ix.program_id_index
-                                            ]
-                                        ) == str(PUMP_PROGRAM):
-                                            ix_data = bytes(ix.data)
-                                            discriminator = struct.unpack(
-                                                "<Q", ix_data[:8]
-                                            )[0]
-
-                                            # Check which create instruction was used
-                                            instruction_name = None
-                                            token_program = None
-
-                                            if discriminator == create_discriminator:
-                                                instruction_name = "create"
-                                                token_program = SYSTEM_TOKEN_PROGRAM
-                                            elif (
-                                                discriminator == create_v2_discriminator
-                                            ):
-                                                instruction_name = "create_v2"
-                                                token_program = TOKEN_2022_PROGRAM
-
-                                            if instruction_name:
-                                                create_ix = next(
-                                                    instr
-                                                    for instr in idl["instructions"]
-                                                    if instr["name"] == instruction_name
-                                                )
-                                                # Skip txs that use Address Lookup Tables — their
-                                                # instruction account indices reference ALT-loaded keys
-                                                # not present in transaction.message.account_keys.
-                                                static_keys = (
-                                                    transaction.message.account_keys
-                                                )
-                                                if any(
-                                                    idx >= len(static_keys)
-                                                    for idx in ix.accounts
-                                                ):
-                                                    continue
-                                                account_keys = [
-                                                    str(static_keys[index])
-                                                    for index in ix.accounts
-                                                ]
-                                                decoded_args = (
-                                                    decode_create_instruction(
-                                                        ix_data, create_ix, account_keys
-                                                    )
-                                                )
-                                                # Add token program info to decoded args
-                                                decoded_args["token_program"] = str(
-                                                    token_program
-                                                )
-                                                decoded_args["is_token_2022"] = (
-                                                    token_program == TOKEN_2022_PROGRAM
-                                                )
-                                                return decoded_args
+                                if not isinstance(tx, dict):
+                                    continue
+                                # Route on logs. Deserializing the envelope
+                                # here skipped every v1 transaction (live since
+                                # 2026-09-15), so a coin created in one was
+                                # never sniped.
+                                meta = tx.get("meta") or {}
+                                token_data = token_info_from_logs(
+                                    meta.get("logMessages") or []
+                                )
+                                if token_data:
+                                    return token_data
 
 
 async def snipe(amount: float, slippage: float, *, cu_optimized: bool = False):

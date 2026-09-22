@@ -159,7 +159,7 @@ name individual scripts to run a subset.
 | `verify_v2_account_layout.py` | buy_v2/sell_v2 account layouts, PDA/ATA derivations, encoding — against `idl/pump_fun_idl.json` |
 | `verify_curve_account_sizes.py` | 125/151/256-byte curves all decode, and nothing filters on account length |
 | `verify_create_v2_optional_args.py` | omitted trailing option-typed `create_v2` args decode as unset; mandatory args still fail |
-| `verify_transaction_v1.py` | every reader asks `maxSupportedTransactionVersion: 1`, and a v1 `create_v2` is detected without decoding its envelope |
+| `verify_transaction_v1.py` | every reader asks `maxSupportedTransactionVersion: 1`, a v1 `create_v2` is detected without decoding its envelope, and no cookbook/tools listener detects by opening the envelope |
 | `verify_block_null_guard.py` | a `blockSubscribe` frame with `value.block: null` is skipped, not logged as an error |
 | `verify_listener_cancellation.py` | a cancelled WebSocket listener stops, even when `websockets` reports cancellation as `AssertionError` |
 | `verify_pumpportal_buy_path.py` | curve derived from the mint, unreadable curve skips the buy, curve+mint read in one slot-consistent batch |
@@ -199,9 +199,17 @@ The reasoning behind each lives in the verifier named beside it.
   `blockSubscribe` for `0` does not skip the v1 transactions in a block, it nulls
   `value.block` for the entire notification — indistinguishable from a skipped
   slot, and a near-total outage of the blocks listener. Send `1` everywhere.
-- solders 0.26 cannot deserialize a v1 transaction and does not need to: route on
-  `meta.logMessages`, keep the byte decode as a fallback. solders ≥0.28 is gated
-  behind `solana==0.36.6` pinning `solders<0.27` — **not** a fix for a listener.
+- solders cannot deserialize a v1 transaction until **0.29**, and a listener
+  should not depend on that either way: route on `meta.logMessages`, which the
+  RPC has already decoded and which reads the same for every version, and keep
+  the byte decode as a fallback. Measured across versions on 2026-09-22 with the
+  committed v1 fixture: 0.26, 0.27.1 and 0.28 all raise `ValueError: io error:
+  unexpected end of file`; 0.29 decodes it.
+- **Upgrading to solders 0.29 is a solana-py migration, not a bump.** It needs
+  `solana>=0.40`, which moved `TxOpts`, `MemcmpOpts` and `TokenAccountOpts` out
+  of `solana.rpc.types` (`TxOpts` is now `TxOptsModel` in `solana.rpc.core`) —
+  22 files here import them, including the trade path. Tried and reverted:
+  16 of 19 verifiers failed on the import alone. Route on logs instead.
 - The bot still **sends** legacy transactions. Everything above is about reading
   other people's, so the v1 cutover changed nothing on the trade path.
 - `post_rpc` must catch `asyncio.TimeoutError` alongside `aiohttp.ClientError` —
