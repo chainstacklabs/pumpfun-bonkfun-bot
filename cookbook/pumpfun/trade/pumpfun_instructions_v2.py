@@ -66,6 +66,10 @@ BUY_EXACT_QUOTE_IN_V2_DISCRIMINATOR = bytes([194, 171, 28, 70, 104, 77, 91, 47])
 # buy_exact_sol_in is SOL-only and pre-dates the v2 account list. The IDL
 # under-reports it at 16 accounts; on chain it needs 18 (see the builder).
 BUY_EXACT_SOL_IN_DISCRIMINATOR = bytes([56, 252, 116, 8, 158, 223, 205, 95])
+# Both payouts are permissionless: the IDL marks no account a signer, because
+# the funds can only move to the wallet they already belong to.
+COLLECT_CREATOR_FEE_V2_DISCRIMINATOR = bytes([207, 17, 138, 242, 4, 34, 19, 56])
+CLAIM_CASHBACK_V2_DISCRIMINATOR = bytes([122, 243, 204, 65, 94, 116, 29, 55])
 
 # Fee recipients: 8 normal (non-mayhem coins), 8 reserved (mayhem coins),
 # 8 buyback (every coin). See FEE_RECIPIENTS.md in the pump-fun public docs.
@@ -754,6 +758,116 @@ def build_buy_exact_sol_in_instruction(
         # OptionBool is a single-field Anchor struct with no presence tag, so
         # it serializes as its bare inner bool.
         + struct.pack("<?", track_volume),
+        accounts=accounts,
+    )
+
+
+def build_collect_creator_fee_v2_instruction(
+    *,
+    creator: Pubkey,
+    quote_mint: Pubkey = WSOL_MINT,
+    quote_token_program_id: Pubkey | None = None,
+) -> Instruction:
+    """Build a collect_creator_fee_v2 instruction.
+
+    Sweeps whatever has accrued in the creator's vault for one quote asset into
+    the creator's own token account. Takes no arguments and no signer — the
+    money can only go to the wallet it already belongs to, so anyone may run it.
+
+    A creator vault is per (creator, quote asset), so a creator whose coins are
+    priced in several assets collects each one separately.
+
+    Args:
+        creator: The coin creator whose vault to sweep
+        quote_mint: Quote asset to collect, normalized
+        quote_token_program_id: Token program owning quote_mint; resolved from
+            the cache when omitted
+
+    Returns:
+        The collect_creator_fee_v2 instruction
+    """
+    program = quote_token_program_id or quote_token_program(quote_mint)
+    vault = find_creator_vault(creator)
+    accounts = [
+        AccountMeta(pubkey=creator, is_signer=False, is_writable=True),
+        AccountMeta(
+            pubkey=find_associated_token_account(creator, quote_mint, program),
+            is_signer=False,
+            is_writable=True,
+        ),
+        AccountMeta(pubkey=vault, is_signer=False, is_writable=True),
+        AccountMeta(
+            pubkey=find_associated_token_account(vault, quote_mint, program),
+            is_signer=False,
+            is_writable=True,
+        ),
+        AccountMeta(pubkey=quote_mint, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=program, is_signer=False, is_writable=False),
+        AccountMeta(
+            pubkey=ASSOCIATED_TOKEN_PROGRAM, is_signer=False, is_writable=False
+        ),
+        AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
+    ]
+    return Instruction(
+        program_id=PUMP_PROGRAM,
+        data=COLLECT_CREATOR_FEE_V2_DISCRIMINATOR,
+        accounts=accounts,
+    )
+
+
+def build_claim_cashback_v2_instruction(
+    *,
+    user: Pubkey,
+    quote_mint: Pubkey = WSOL_MINT,
+    quote_token_program_id: Pubkey | None = None,
+) -> Instruction:
+    """Build a claim_cashback_v2 instruction.
+
+    Pays out the cashback accrued on the user's volume accumulator. `create_v2`
+    has refused to mint new cashback coins since 2026-09-15 (error 6082,
+    CashbackDeprecated), but coins created before that keep accruing and stay
+    claimable, so this path is still live.
+
+    Args:
+        user: Wallet whose cashback to pay out
+        quote_mint: Quote asset the cashback accrued in, normalized
+        quote_token_program_id: Token program owning quote_mint; resolved from
+            the cache when omitted
+
+    Returns:
+        The claim_cashback_v2 instruction
+    """
+    program = quote_token_program_id or quote_token_program(quote_mint)
+    accumulator = find_user_volume_accumulator(user)
+    accounts = [
+        AccountMeta(pubkey=user, is_signer=False, is_writable=True),
+        AccountMeta(pubkey=accumulator, is_signer=False, is_writable=True),
+        AccountMeta(pubkey=quote_mint, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=program, is_signer=False, is_writable=False),
+        AccountMeta(
+            pubkey=ASSOCIATED_TOKEN_PROGRAM, is_signer=False, is_writable=False
+        ),
+        AccountMeta(
+            pubkey=find_associated_token_account(accumulator, quote_mint, program),
+            is_signer=False,
+            is_writable=True,
+        ),
+        # Any token account of quote_mint owned by the user works here; the
+        # associated one is the obvious choice.
+        AccountMeta(
+            pubkey=find_associated_token_account(user, quote_mint, program),
+            is_signer=False,
+            is_writable=True,
+        ),
+        AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
+    ]
+    return Instruction(
+        program_id=PUMP_PROGRAM,
+        data=CLAIM_CASHBACK_V2_DISCRIMINATOR,
         accounts=accounts,
     )
 

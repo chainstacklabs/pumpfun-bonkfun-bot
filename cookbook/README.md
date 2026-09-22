@@ -103,6 +103,8 @@ Racing the four listeners against each other is `tools/compare_listeners.py`.
 | 💸 [`pumpfun/trade/pumpfun_create_and_buy_token_v2.py`](pumpfun/trade/pumpfun_create_and_buy_token_v2.py) | Create a coin and buy it |
 | 💸 [`pumpfun/trade/pumpfun_snipe_token_blocksubscribe.py`](pumpfun/trade/pumpfun_snipe_token_blocksubscribe.py) | Wait for the next coin created anywhere, then buy it |
 | 💸 [`pumpfun/trade/pumpfun_snipe_token_geyser.py`](pumpfun/trade/pumpfun_snipe_token_geyser.py) | The same snipe, detected over Geyser gRPC |
+| 💸 [`pumpfun/trade/pumpfun_collect_creator_fee_v2.py`](pumpfun/trade/pumpfun_collect_creator_fee_v2.py) | Sweep the creator fees your coins have accrued |
+| 💸 [`pumpfun/trade/pumpfun_claim_cashback_v2.py`](pumpfun/trade/pumpfun_claim_cashback_v2.py) | Pay out cashback accrued on a pre-2026-09-15 coin |
 
 Start at `pumpfun_buy_token_v2.py`. The two snipers are that same trade behind a
 listener, which is most of why they are four times longer.
@@ -143,8 +145,8 @@ Where a coin trades after it graduates.
 | Script | What it does |
 |---|---|
 | [`pumpswap/pumpswap_find_pool.py`](pumpswap/pumpswap_find_pool.py) | Find a coin's pool and decode it |
-| 💸 [`pumpswap/pumpswap_pumpfun_buy_token_v2.py`](pumpswap/pumpswap_pumpfun_buy_token_v2.py) | Buy against the AMM |
-| 💸 [`pumpswap/pumpswap_pumpfun_sell_token_v2.py`](pumpswap/pumpswap_pumpfun_sell_token_v2.py) | Sell against the AMM |
+| 💸 [`pumpswap/pumpswap_buy_token.py`](pumpswap/pumpswap_buy_token.py) | Buy against the AMM |
+| 💸 [`pumpswap/pumpswap_sell_token.py`](pumpswap/pumpswap_sell_token.py) | Sell against the AMM |
 
 ## letsbonk.fun
 
