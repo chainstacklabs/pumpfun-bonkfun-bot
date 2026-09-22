@@ -9,8 +9,8 @@ Uses the bot's own PlatformAwareBuyer / PlatformAwareSeller, so a pass here
 means the production path works end to end.
 
 Usage:
-    uv run learning-examples/live_v2_round_trip.py            # needs confirmation
-    uv run learning-examples/live_v2_round_trip.py --yes      # skip the prompt
+    uv run tools/live_v2_round_trip.py            # needs confirmation
+    uv run tools/live_v2_round_trip.py --yes      # skip the prompt
 """
 
 import asyncio

@@ -50,7 +50,7 @@ from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
 
 # Reach the shared geyser stubs in src/geyser/generated (imported lazily below).
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 load_dotenv(override=True)
 
@@ -67,7 +67,7 @@ PUMP_PROGRAM_ID = Pubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6
 # Instruction discriminators (8-byte identifiers for instruction types)
 # Calculated using the first 8 bytes of sha256("global:create") for legacy Create
 # and sha256("global:createV2") for Token2022 CreateV2
-# See: learning-examples/calculate_discriminator.py
+# See: cookbook/pumpfun/decode/calculate_discriminator.py
 PUMP_CREATE_PREFIX = struct.pack("<Q", 8576854823835016728)
 PUMP_CREATE_V2_PREFIX = bytes([214, 144, 76, 236, 95, 139, 49, 180])
 

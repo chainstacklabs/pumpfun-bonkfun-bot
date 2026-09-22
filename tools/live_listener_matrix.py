@@ -12,9 +12,9 @@ code, which is the point: pumpportal in particular carries no mayhem/cashback/
 quote_mint flags, so it relies entirely on the on-chain curve refresh.
 
 Usage:
-    uv run learning-examples/live_listener_matrix.py --yes
-    uv run learning-examples/live_listener_matrix.py --yes --listeners geyser,logs
-    uv run learning-examples/live_listener_matrix.py --cleanup-only <MINT> [<MINT>...]
+    uv run tools/live_listener_matrix.py --yes
+    uv run tools/live_listener_matrix.py --yes --listeners geyser,logs
+    uv run tools/live_listener_matrix.py --cleanup-only <MINT> [<MINT>...]
 """
 
 import asyncio

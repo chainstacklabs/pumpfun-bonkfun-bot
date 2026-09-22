@@ -11,10 +11,10 @@ with sigVerify disabled.
 
 Usage:
     # simulate against a specific coin
-    uv run learning-examples/simulate_v2_trades.py <MINT>
+    uv run tools/simulate_v2_trades.py <MINT>
 
     # discover a fresh coin via geyser, then simulate against it
-    uv run learning-examples/simulate_v2_trades.py
+    uv run tools/simulate_v2_trades.py
 """
 
 import asyncio

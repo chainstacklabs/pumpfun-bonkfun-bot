@@ -11,8 +11,8 @@ chain as a unit.
 No funds move: `build_and_send_transaction` is monkeypatched to simulate.
 
 Usage:
-    uv run learning-examples/simulate_bot_buy_path.py
-    uv run learning-examples/simulate_bot_buy_path.py --no-extreme-fast
+    uv run tools/simulate_bot_buy_path.py
+    uv run tools/simulate_bot_buy_path.py --no-extreme-fast
 """
 
 import asyncio
