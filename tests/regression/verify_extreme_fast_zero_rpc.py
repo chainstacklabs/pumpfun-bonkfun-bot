@@ -21,7 +21,7 @@ Offline machine checks, no network and no funds moved:
   9. trade.trust_create_event=false forces the refresh even for event data.
 
 Usage:
-    uv run learning-examples/verify_extreme_fast_zero_rpc.py
+    uv run tests/regression/verify_extreme_fast_zero_rpc.py
 """
 
 import asyncio
@@ -31,7 +31,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from solders.pubkey import Pubkey  # noqa: E402
@@ -50,8 +50,9 @@ from utils.idl_manager import get_idl_manager  # noqa: E402
 
 FIXTURE = (
     PROJECT_ROOT
-    / "learning-examples"
-    / "blocksubscribe-transactions"
+    / "cookbook"
+    / "pumpfun"
+    / "decode"
     / "raw_create_tx_from_blocksubscribe.json"
 )
 

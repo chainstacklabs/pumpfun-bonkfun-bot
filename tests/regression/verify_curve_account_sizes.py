@@ -19,7 +19,7 @@ import struct
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 CURVE_LEN_CREATED = 125
@@ -116,12 +116,8 @@ def check_no_datasize_filter() -> bool:
     """
     ok = True
     needles = {
-        "learning-examples/bonding-curve-progress/get_graduating_tokens.py": (
-            '"dataSize":'
-        ),
-        "learning-examples/bonding-curve-progress/get_graduating_tokens_geyser.py": (
-            ".datasize ="
-        ),
+        "cookbook/pumpfun/graduation/get_graduating_tokens.py": ('"dataSize":'),
+        "cookbook/pumpfun/graduation/get_graduating_tokens_geyser.py": (".datasize ="),
     }
     for rel, needle in needles.items():
         text = Path(rel).read_text()

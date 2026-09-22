@@ -30,7 +30,7 @@ against a stub session on a virtual clock, so a 30s backoff costs no real time:
   7. _get_transaction_result hands each lookup only the budget that is left.
 
 Usage:
-    uv run learning-examples/verify_rpc_deadline.py
+    uv run tests/regression/verify_rpc_deadline.py
 """
 
 import asyncio
@@ -38,7 +38,7 @@ import sys
 from itertools import pairwise
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import core.client as client_module  # noqa: E402

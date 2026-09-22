@@ -28,7 +28,7 @@ runs against a curve manager that fails on demand:
      the blind path or the ordinary one.
 
 Usage:
-    uv run learning-examples/verify_time_exit_without_price.py
+    uv run tests/regression/verify_time_exit_without_price.py
 """
 
 import asyncio
@@ -37,7 +37,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from solders.pubkey import Pubkey  # noqa: E402

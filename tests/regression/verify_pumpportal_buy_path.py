@@ -12,7 +12,7 @@ Offline machine checks, no network and no funds moved:
      cannot know it and guesses Token-2022; legacy coins are SPL Token).
 
 Usage:
-    uv run learning-examples/verify_pumpportal_buy_path.py
+    uv run tests/regression/verify_pumpportal_buy_path.py
 """
 
 import asyncio
@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from solders.pubkey import Pubkey  # noqa: E402

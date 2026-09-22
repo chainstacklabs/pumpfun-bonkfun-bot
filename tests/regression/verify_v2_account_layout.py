@@ -10,15 +10,15 @@ the seeds declared in the IDL.
 Runs entirely offline — no RPC, no keys, no transactions.
 
 Usage:
-    uv run learning-examples/verify_v2_account_layout.py
+    uv run tests/regression/verify_v2_account_layout.py
 """
 
 import json
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT / "learning-examples"))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "cookbook"))
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from solders.pubkey import Pubkey  # noqa: E402
@@ -387,7 +387,7 @@ def check_quote_config() -> list[str]:
 
 
 def check_examples_toolkit() -> list[str]:
-    """Check learning-examples/pump_v2.py agrees with the IDL and with src/.
+    """Check cookbook/pump_v2.py agrees with the IDL and with src/.
 
     The examples carry their own standalone copy of the v2 layout so they stay
     readable without importing src/. That copy is exactly the kind of thing that
@@ -535,7 +535,7 @@ def main() -> int:
     for name, check in (
         ("instruction encoding", check_instruction_encoding),
         ("quote config resolution", check_quote_config),
-        ("learning-examples pump_v2 toolkit", check_examples_toolkit),
+        ("cookbook pump_v2 toolkit", check_examples_toolkit),
     ):
         problems = check()
         status = "OK" if not problems else f"{len(problems)} PROBLEM(S)"

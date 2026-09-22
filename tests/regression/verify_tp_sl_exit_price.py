@@ -32,7 +32,7 @@ seller that records the price it is handed:
   8. The cap comes from trade.max_exit_sell_attempts and is wired end to end.
 
 Usage:
-    uv run learning-examples/verify_tp_sl_exit_price.py
+    uv run tests/regression/verify_tp_sl_exit_price.py
 """
 
 import asyncio
@@ -41,7 +41,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from solders.pubkey import Pubkey  # noqa: E402

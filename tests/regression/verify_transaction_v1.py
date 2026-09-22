@@ -23,7 +23,7 @@ it will hand a transaction to a parser, which is what
 Offline machine checks, no network and no funds moved:
 
   1. Every blockSubscribe/getBlock/getTransaction call site in `src/` and
-     `learning-examples/` asks for maxSupportedTransactionVersion >= 1 —
+     `cookbook/` asks for maxSupportedTransactionVersion >= 1 —
      both the raw JSON key and solana-py's snake_case keyword argument.
   2. The committed fixture really is a v1 transaction (version 1, byte 129)
      carrying a successful create_v2.
@@ -39,7 +39,7 @@ Offline machine checks, no network and no funds moved:
      be simplified.
 
 Usage:
-    uv run learning-examples/verify_transaction_v1.py
+    uv run tests/regression/verify_transaction_v1.py
 """
 
 import base64
@@ -48,7 +48,7 @@ import re
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from core.client import SolanaClient  # noqa: E402
@@ -57,14 +57,20 @@ from monitoring.universal_block_listener import UniversalBlockListener  # noqa: 
 from platforms import get_platform_implementations  # noqa: E402
 
 V1_FIXTURE = (
-    PROJECT_ROOT / "learning-examples" / "raw_create_v2_v1_from_gettransaction.json"
+    PROJECT_ROOT
+    / "cookbook"
+    / "pumpfun"
+    / "decode"
+    / "raw_create_v2_v1_from_gettransaction.json"
 )
 # A pre-v1 create, already committed for the optional-args verifier. Reused
 # rather than capturing another one: it only has to be a create the listener
 # still detects.
 V0_FIXTURE = (
     PROJECT_ROOT
-    / "learning-examples"
+    / "cookbook"
+    / "pumpfun"
+    / "decode"
     / "raw_create_v2_with_fee_bps_from_gettransaction.json"
 )
 
@@ -73,7 +79,7 @@ V1_VERSION_BYTE = 129
 
 MIN_SUPPORTED_VERSION = 1
 
-SCAN_ROOTS = ("src", "learning-examples")
+SCAN_ROOTS = ("src", "cookbook", "tools")
 # Two spellings reach the same RPC field: the raw JSON key used by hand-built
 # request bodies, and solana-py's snake_case keyword argument. A scan that knows
 # only the first one misses tx_status.py, which every example confirms through.

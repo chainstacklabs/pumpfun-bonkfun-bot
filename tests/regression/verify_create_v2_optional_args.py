@@ -25,7 +25,7 @@ Offline machine checks, no network and no funds moved:
      value back.
 
 Usage:
-    uv run learning-examples/verify_create_v2_optional_args.py
+    uv run tests/regression/verify_create_v2_optional_args.py
 """
 
 import base64
@@ -36,7 +36,7 @@ from pathlib import Path
 
 import base58
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from solders.transaction import VersionedTransaction  # noqa: E402
@@ -48,8 +48,9 @@ from utils.idl_parser import IDLParser  # noqa: E402
 
 FIXTURE = (
     PROJECT_ROOT
-    / "learning-examples"
-    / "blocksubscribe-transactions"
+    / "cookbook"
+    / "pumpfun"
+    / "decode"
     / "raw_create_tx_from_blocksubscribe.json"
 )
 # Post-upgrade (2026-09-15, program 8109141) getTransaction fixtures — real
@@ -60,12 +61,16 @@ FIXTURE = (
 # fixture above.
 FIXTURE_OMITTED_FEE_BPS = (
     PROJECT_ROOT
-    / "learning-examples"
+    / "cookbook"
+    / "pumpfun"
+    / "decode"
     / "raw_create_v2_omitted_fee_bps_from_gettransaction.json"
 )
 FIXTURE_WITH_FEE_BPS = (
     PROJECT_ROOT
-    / "learning-examples"
+    / "cookbook"
+    / "pumpfun"
+    / "decode"
     / "raw_create_v2_with_fee_bps_from_gettransaction.json"
 )
 IDL_PATH = PROJECT_ROOT / "idl" / "pump_fun_idl.json"

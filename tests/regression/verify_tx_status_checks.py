@@ -18,8 +18,8 @@ successfully and reject them on the strength of `meta.err`, not because the fetc
 failed.
 
 Usage:
-    uv run learning-examples/verify_tx_status_checks.py
-    uv run learning-examples/verify_tx_status_checks.py --live
+    uv run tests/regression/verify_tx_status_checks.py
+    uv run tests/regression/verify_tx_status_checks.py --live
 """
 
 import argparse
@@ -32,8 +32,8 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT / "learning-examples"))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "cookbook"))
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import tx_status  # noqa: E402
@@ -133,30 +133,23 @@ async def check_examples_call_a_status_check() -> None:
     Guards against a new example (or an edit to an existing one) reintroducing a
     bare `confirm_transaction` that prints success unconditionally.
     """
-    examples_dir = PROJECT_ROOT / "learning-examples"
+    # Both roots hold scripts that submit transactions: cookbook/ teaches the
+    # trade, tools/ exercises it.
+    scan_dirs = (PROJECT_ROOT / "cookbook", PROJECT_ROOT / "tools")
     # Files that confirm transactions without calling the helper, each for a
     # reason. Adding an entry here is a deliberate act; forgetting the check in a
     # new example is not.
     exempt = {
         # defines the helper
         "tx_status.py",
-        # this file
-        Path(__file__).name,
         # stubs confirm_transaction out; never sends a transaction
         "simulate_bot_buy_path.py",
-        # offline checks with a stub client; never sends a transaction
-        "verify_pumpportal_buy_path.py",
-        "verify_extreme_fast_zero_rpc.py",
-        "verify_buy_result_not_lost.py",
-        # asserts on confirm_transaction's own contract - that it returns a
-        # bool rather than a truthy enum - against a stub client
-        "verify_exit_sell_confirmation.py",
         # uses the bot's SolanaClient wrapper, which folds meta.err into its
         # return value; the boolean is read at the call site
         "cleanup_accounts.py",
     }
     offenders = []
-    for path in sorted(examples_dir.rglob("*.py")):
+    for path in sorted(p for d in scan_dirs for p in d.rglob("*.py")):
         if path.name in exempt or "__pycache__" in path.parts:
             continue
         source = path.read_text()
@@ -246,7 +239,7 @@ async def check_endpoint_logging_hides_userinfo() -> None:
     credential for providers that put the key there.
     """
     offenders = []
-    for path in sorted((PROJECT_ROOT / "learning-examples").rglob("*.py")):
+    for path in sorted((PROJECT_ROOT / "cookbook").rglob("*.py")):
         if "__pycache__" in path.parts or path.name == Path(__file__).name:
             continue
         for n, line in enumerate(path.read_text().splitlines(), 1):

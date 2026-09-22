@@ -26,7 +26,7 @@ a stub curve manager serving a scripted price series:
   6. A price re-read that fails does not abort the retry.
 
 Usage:
-    uv run learning-examples/verify_time_based_exit_retry.py
+    uv run tests/regression/verify_time_based_exit_retry.py
 """
 
 import asyncio
@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from solders.pubkey import Pubkey  # noqa: E402

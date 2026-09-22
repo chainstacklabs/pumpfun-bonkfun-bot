@@ -34,7 +34,7 @@ what the real library raises, against the real listeners:
      closed connection, so it cannot go on pinging a dead socket.
 
 Usage:
-    uv run learning-examples/verify_listener_cancellation.py
+    uv run tests/regression/verify_listener_cancellation.py
 """
 
 import asyncio
@@ -43,7 +43,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import monitoring.universal_block_listener as block_listener_module  # noqa: E402

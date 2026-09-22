@@ -31,8 +31,8 @@ moved. `--live` adds a read-only 90-second listen against the real feed:
      match_string cannot match it - a documented consequence, not an accident.
 
 Usage:
-    uv run learning-examples/verify_pumpportal_bonk_fields.py
-    uv run learning-examples/verify_pumpportal_bonk_fields.py --live
+    uv run tests/regression/verify_pumpportal_bonk_fields.py
+    uv run tests/regression/verify_pumpportal_bonk_fields.py --live
 """
 
 import asyncio
@@ -40,7 +40,7 @@ import json
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import websockets  # noqa: E402
@@ -54,7 +54,13 @@ from platforms.pumpfun.pumpportal_processor import (  # noqa: E402
     PumpFunPumpPortalProcessor,
 )
 
-FIXTURE = Path(__file__).parent / "raw_new_token_from_pumpportal.json"
+FIXTURE = (
+    PROJECT_ROOT
+    / "cookbook"
+    / "pumpfun"
+    / "listen"
+    / "raw_new_token_from_pumpportal.json"
+)
 PUMPPORTAL_WS_URL = "wss://pumpportal.fun/api/data"
 LIVE_LISTEN_SECONDS = 90
 
