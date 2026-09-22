@@ -63,6 +63,7 @@ Not specific to any of the launchpads below.
 |---|---|
 | [`solana/solana_read_balances.py`](solana/solana_read_balances.py) | Your SOL and every token you hold, across both token programs |
 | [`solana/solana_check_transaction.py`](solana/solana_check_transaction.py) | Whether a signature succeeded, reverted, or is not visible yet |
+| [`solana/solana_read_token2022_mint.py`](solana/solana_read_token2022_mint.py) | A Token-2022 mint's extensions, and which scaled-UI multiplier is really in force |
 | [`solana/anchor_calculate_discriminator.py`](solana/anchor_calculate_discriminator.py) | The 8-byte Anchor discriminator for any instruction or account name |
 
 ## pump.fun
@@ -88,6 +89,7 @@ Racing the four listeners against each other is `tools/compare_listeners.py`.
 | [`pumpfun/read/pumpfun_read_curve.py`](pumpfun/read/pumpfun_read_curve.py) | A curve's full state, decoded field by field |
 | [`pumpfun/read/pumpfun_watch_curve_progress.py`](pumpfun/read/pumpfun_watch_curve_progress.py) | How close a coin is to graduating, polled over time |
 | [`pumpfun/read/pumpfun_derive_curve_addresses.py`](pumpfun/read/pumpfun_derive_curve_addresses.py) | Derive a coin's curve and curve ATA offline, under both token programs |
+| [`pumpfun/read/pumpfun_read_quote_mints.py`](pumpfun/read/pumpfun_read_quote_mints.py) | Every asset a coin may be priced in, `--stocks` for the tokenized equities |
 
 ### Trade
 
