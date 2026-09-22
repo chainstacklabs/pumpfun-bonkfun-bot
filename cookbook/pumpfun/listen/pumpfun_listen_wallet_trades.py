@@ -1,9 +1,12 @@
-"""
-Listens for pump.fun bonding curve buy/sell transactions involving a specific wallet.
+"""Listens for pump.fun bonding curve buy/sell transactions involving a specific wallet.
 Filters transactions to show only buy/sell operations on pump.fun bonding curves,
 excluding pump AMM (migrated) transactions..
+
+Usage:
+    uv run cookbook/pumpfun/listen/pumpfun_listen_wallet_trades.py <WALLET>
 """
 
+import argparse
 import asyncio
 import base64
 import binascii
@@ -27,7 +30,6 @@ WSS_ENDPOINT = os.environ.get("SOLANA_NODE_WSS_ENDPOINT")
 # websockets' 1 MiB default, which kills the connection with a 1009 close
 # instead of delivering the message. Same value the bot's own listeners use.
 WEBSOCKET_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
-WALLET_TO_TRACK = sys.argv[1] if len(sys.argv) > 1 else "..."  # Pass wallet as argv[1] or hardcode
 
 # Pump.fun program constants
 PUMP_BONDING_CURVE_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
@@ -48,19 +50,19 @@ if not WSS_ENDPOINT:
     sys.exit(1)
 
 
-async def subscribe_to_wallet_logs(websocket):
+async def subscribe_to_wallet_logs(websocket, wallet: str):
     """Subscribe to logs mentioning our target wallet."""
     subscription_message = json.dumps(
         {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "logsSubscribe",
-            "params": [{"mentions": [WALLET_TO_TRACK]}, {"commitment": "processed"}],
+            "params": [{"mentions": [wallet]}, {"commitment": "processed"}],
         }
     )
 
     await websocket.send(subscription_message)
-    print(f"Subscribed to logs mentioning wallet: {WALLET_TO_TRACK}")
+    print(f"Subscribed to logs mentioning wallet: {wallet}")
 
     # Wait for subscription confirmation
     response = await websocket.recv()
@@ -268,13 +270,13 @@ def decode_trade_event(data):
     }
 
 
-def display_transaction_info(signature, logs):
+def display_transaction_info(signature, logs, wallet: str):
     """Display formatted transaction information."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     print(f"[{timestamp}] Pump.fun Bonding Curve Transaction:")
     print(f"  Signature: {signature}")
-    print(f"  Wallet: {WALLET_TO_TRACK}")
+    print(f"  Wallet: {wallet}")
 
     # Parse trade event data
     trade_data = parse_trade_event(logs)
@@ -363,7 +365,7 @@ def display_pump_logs(logs):
             print(f"    ... and {len(pump_logs) - MAX_LOGS_TO_SHOW} more logs")
 
 
-async def handle_transaction(log_data):
+async def handle_transaction(log_data, wallet: str):
     """Handle a transaction log notification."""
     signature = log_data.get("signature", "unknown")
     logs = log_data.get("logs", [])
@@ -372,10 +374,10 @@ async def handle_transaction(log_data):
     if not is_pump_bonding_curve_buysell(logs):
         return
 
-    display_transaction_info(signature, logs)
+    display_transaction_info(signature, logs, wallet)
 
 
-async def process_websocket_message(websocket):
+async def process_websocket_message(websocket, wallet: str):
     """Process incoming WebSocket messages."""
     try:
         response = await asyncio.wait_for(websocket.recv(), timeout=30)
@@ -385,7 +387,7 @@ async def process_websocket_message(websocket):
             return
 
         log_data = data["params"]["result"]["value"]
-        await handle_transaction(log_data)
+        await handle_transaction(log_data, wallet)
 
     except TimeoutError:
         print("No data received for 30 seconds")
@@ -396,9 +398,9 @@ async def process_websocket_message(websocket):
         print(f"Error processing message: {e}")
 
 
-async def listen_for_transactions():
+async def listen_for_transactions(wallet: str):
     """Main function to listen for wallet transactions."""
-    print(f"Starting to monitor wallet: {WALLET_TO_TRACK}")
+    print(f"Starting to monitor wallet: {wallet}")
     # Endpoint carries an API key. hostname, not netloc: netloc keeps any
         # user:pass@ userinfo, which would leak the credential anyway.
     print(f"Connecting to: {urlsplit(WSS_ENDPOINT).hostname or '<unset>'}")
@@ -410,12 +412,12 @@ async def listen_for_transactions():
             async with websockets.connect(
                 WSS_ENDPOINT, max_size=WEBSOCKET_MAX_MESSAGE_BYTES
             ) as websocket:
-                await subscribe_to_wallet_logs(websocket)
+                await subscribe_to_wallet_logs(websocket, wallet)
                 ping_task = asyncio.create_task(keep_connection_alive(websocket))
 
                 try:
                     while True:
-                        await process_websocket_message(websocket)
+                        await process_websocket_message(websocket, wallet)
                 except websockets.exceptions.ConnectionClosed:
                     print("WebSocket connection closed. Reconnecting...")
                     ping_task.cancel()
@@ -431,9 +433,15 @@ async def listen_for_transactions():
 
 
 def main():
-    """Main function to run the wallet transaction listener."""
+    """Parse the command line and run the wallet transaction listener."""
+    parser = argparse.ArgumentParser(
+        description="Watch one wallet's pump.fun bonding-curve trades"
+    )
+    parser.add_argument("wallet", help="The wallet address to follow")
+    args = parser.parse_args()
+
     try:
-        asyncio.run(listen_for_transactions())
+        asyncio.run(listen_for_transactions(args.wallet))
     except KeyboardInterrupt:
         print("\nStopping wallet transaction listener...")
     except (ValueError, RuntimeError) as e:

@@ -9,10 +9,10 @@ constant, because a mayhem coin can be launched with different virtual params
 (`set_mayhem_virtual_params`) and would otherwise show the wrong percentage.
 """
 
+import argparse
 import asyncio
 import os
 import struct
-import sys
 from typing import Final
 
 from dotenv import load_dotenv
@@ -241,11 +241,16 @@ async def track_curve(token_mint: str) -> None:
             await asyncio.sleep(POLL_INTERVAL)
 
 
+def main() -> None:
+    """Parse the command line and watch the curve."""
+    parser = argparse.ArgumentParser(
+        description="Watch a coin's progress toward graduation"
+    )
+    parser.add_argument("mint", help="The coin's mint address")
+    args = parser.parse_args()
+
+    asyncio.run(track_curve(args.mint))
+
+
 if __name__ == "__main__":
-    if len(sys.argv) < _MIN_ARGC:
-        print(
-            "Usage: uv run cookbook/pumpfun/read/"
-            "pumpfun_watch_curve_progress.py <MINT>"
-        )
-        sys.exit(1)
-    asyncio.run(track_curve(sys.argv[1]))
+    main()

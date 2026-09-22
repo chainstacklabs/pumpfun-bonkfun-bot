@@ -18,6 +18,7 @@ Two things to know before you run it:
   (TooLittleSolReceived), whatever slippage you allow.
 """
 
+import argparse
 import asyncio
 import os
 import sys
@@ -47,9 +48,8 @@ from spl.token.instructions import (
 # Here and later all the discriminators are precalculated. See cookbook/solana/anchor_calculate_discriminator.py
 EXPECTED_DISCRIMINATOR = pump_v2.BONDING_CURVE_DISCRIMINATOR
 TOKEN_DECIMALS = 6
-TOKEN_MINT = Pubkey.from_string(
-    sys.argv[1] if len(sys.argv) > 1 else "..."
-)  # Pass mint as argv[1] or hardcode here
+# Default for the command line below, not a fixed setting.
+DEFAULT_SLIPPAGE = 0.25
 
 # Global constants
 PUMP_PROGRAM = Pubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")
@@ -304,14 +304,19 @@ async def sell_token(
                     print("Max retries reached. Unable to complete the transaction.")
 
 
-async def main():
-    # Replace these with the actual values for the token you want to sell
-    async with AsyncClient(RPC_ENDPOINT) as client:
-        token_program_id = await get_token_program_id(client, TOKEN_MINT)
+async def run(mint: Pubkey, slippage: float) -> None:
+    """Sell the whole position in one coin.
 
-    bonding_curve, _ = get_bonding_curve_address(TOKEN_MINT)
+    Args:
+        mint: The coin to sell
+        slippage: Slippage tolerance
+    """
+    async with AsyncClient(RPC_ENDPOINT) as client:
+        token_program_id = await get_token_program_id(client, mint)
+
+    bonding_curve, _ = get_bonding_curve_address(mint)
     associated_bonding_curve = find_associated_bonding_curve(
-        TOKEN_MINT, bonding_curve, token_program_id
+        mint, bonding_curve, token_program_id
     )
 
     async with AsyncClient(RPC_ENDPOINT) as client:
@@ -319,12 +324,10 @@ async def main():
 
     creator_vault = find_creator_vault(curve_state.creator)
 
-    slippage = 0.25  # 25% slippage tolerance
-
     print(f"Bonding curve address: {bonding_curve}")
     print(f"Selling tokens with {slippage * 100:.1f}% slippage tolerance...")
     await sell_token(
-        TOKEN_MINT,
+        mint,
         bonding_curve,
         associated_bonding_curve,
         creator_vault,
@@ -333,5 +336,20 @@ async def main():
     )
 
 
+def main() -> None:
+    """Parse the command line and run the sell."""
+    parser = argparse.ArgumentParser(description="Sell a whole pump.fun position")
+    parser.add_argument("mint", help="The coin's mint address")
+    parser.add_argument(
+        "--slippage",
+        type=float,
+        default=DEFAULT_SLIPPAGE,
+        help=f"Slippage tolerance (default {DEFAULT_SLIPPAGE})",
+    )
+    args = parser.parse_args()
+
+    asyncio.run(run(Pubkey.from_string(args.mint), args.slippage))
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

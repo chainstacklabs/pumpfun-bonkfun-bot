@@ -1,6 +1,8 @@
-"""
-Monitors Solana for new Pump.fun token creations using Geyser gRPC.
+"""Monitors Solana for new Pump.fun token creations using Geyser gRPC.
 Decodes 'create' instructions to extract and display token details (name, symbol, mint, bonding curve).
+
+Usage:
+    uv run cookbook/pumpfun/listen/pumpfun_listen_tokens_geyser.py
 
 Performance: Proven to be the fastest listener method available.
 

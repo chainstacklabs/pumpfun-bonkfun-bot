@@ -1,6 +1,8 @@
-"""
-Listens to Solana blocks for Pump.fun 'create' instructions via WebSocket.
+"""Listens to Solana blocks for Pump.fun 'create' instructions via WebSocket.
 Decodes transaction data to extract mint, bonding curve, and user details.
+
+Usage:
+    uv run cookbook/pumpfun/listen/pumpfun_listen_tokens_blocksubscribe.py
 
 Performance: Usually slower than other listeners due to block-level processing.
 

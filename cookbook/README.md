@@ -38,6 +38,22 @@ the thing people actually ask for — and its name says so.
 Fixtures keep their own convention, `raw_<what>_from_<method>.json`, and sit beside
 the script that reads them.
 
+## Running them
+
+Every script takes its input on the command line, so you never edit a file to try it
+against your own coin:
+
+```bash
+uv run cookbook/pumpfun/read/pumpfun_read_price.py <CURVE>
+uv run cookbook/pumpfun/trade/pumpfun_buy_token_v2.py <MINT> 0.001 --slippage 0.3
+uv run cookbook/pumpswap/pumpswap_buy_token.py <MINT>          # amount defaults
+```
+
+`--help` works on all of them and lists the defaults. Required values are positional,
+everything tunable is an option, and the decode scripts default to the fixture beside
+them so they run with no arguments at all. Nothing is configured by editing a constant
+or setting an environment variable — `.env` holds only your endpoints and key.
+
 ## Shared helpers
 
 The scripts are deliberately repetitive: a script that derives an address inline is

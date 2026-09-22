@@ -12,11 +12,11 @@ Instructions are matched by their 8-byte discriminator against `idl/pump_fun_idl
 never by account count.
 """
 
+import argparse
 import base64
 import hashlib
 import json
 import struct
-import sys
 
 from solders.transaction import Transaction, VersionedTransaction
 
@@ -202,16 +202,26 @@ def decode_transaction(tx_data, idl):
     return decoded_instructions
 
 
-tx_file_path = ""
+DEFAULT_FIXTURE = "cookbook/pumpfun/decode/raw_create_tx_from_blocksubscribe.json"
 
-if len(sys.argv) != 2:
-    tx_file_path = "cookbook/pumpfun/decode/raw_create_tx_from_blocksubscribe.json"
-    print(f"No path provided, using the path: {tx_file_path}")
-else:
-    tx_file_path = sys.argv[1]
 
-idl = load_idl("idl/pump_fun_idl.json")
-tx_data = load_transaction(tx_file_path)
+def main() -> None:
+    """Parse the command line and decode the transaction."""
+    parser = argparse.ArgumentParser(
+        description="Decode the pump.fun instructions in a blockSubscribe frame"
+    )
+    parser.add_argument(
+        "transaction",
+        nargs="?",
+        default=DEFAULT_FIXTURE,
+        help=f"Saved blockSubscribe frame (default {DEFAULT_FIXTURE})",
+    )
+    args = parser.parse_args()
 
-decoded_instructions = decode_transaction(tx_data, idl)
-print(json.dumps(decoded_instructions, indent=2))
+    idl = load_idl("idl/pump_fun_idl.json")
+    tx_data = load_transaction(args.transaction)
+    print(json.dumps(decode_transaction(tx_data, idl), indent=2))
+
+
+if __name__ == "__main__":
+    main()

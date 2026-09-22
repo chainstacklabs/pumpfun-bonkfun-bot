@@ -13,6 +13,7 @@ methods and the only one that needs a separate endpoint — set `GEYSER_ENDPOINT
 Buying an existing coin, without the listener, is `pumpfun_buy_token_v2.py`.
 """
 
+import argparse
 import asyncio
 import json
 import os
@@ -69,6 +70,10 @@ SYSTEM_TOKEN_2022_PROGRAM = Pubkey.from_string(
 SYSTEM_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM = Pubkey.from_string(
     "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
 )
+# Defaults for the command line below, not fixed settings.
+DEFAULT_BUY_AMOUNT_SOL = 0.000_01
+DEFAULT_SLIPPAGE = 0.3
+
 SOL = Pubkey.from_string("So11111111111111111111111111111111111111112")
 LAMPORTS_PER_SOL = 1_000_000_000
 
@@ -381,7 +386,7 @@ async def buy_token(
                     print("Max retries reached. Unable to complete the transaction.")
 
 
-async def main():
+async def snipe(amount: float, slippage: float):
     print("Waiting for a new token creation...")
     token_data = await listen_for_create_transaction_geyser()
     print("New token created:")
@@ -407,8 +412,6 @@ async def main():
     #    token_price_sol = calculate_pump_curve_price(curve_state)
 
     # Amount of SOL to spend (adjust as needed)
-    amount = 0.000_01  # 0.00001 SOL
-    slippage = 0.3  # 30% slippage tolerance
 
     print(f"Bonding curve address: {bonding_curve}")
     print(
@@ -429,5 +432,28 @@ async def main():
     )
 
 
+def main() -> None:
+    """Parse the command line and snipe the next coin."""
+    parser = argparse.ArgumentParser(
+        description="Wait for the next pump.fun coin over Geyser, then buy it"
+    )
+    parser.add_argument(
+        "amount",
+        nargs="?",
+        type=float,
+        default=DEFAULT_BUY_AMOUNT_SOL,
+        help=f"SOL to spend (default {DEFAULT_BUY_AMOUNT_SOL})",
+    )
+    parser.add_argument(
+        "--slippage",
+        type=float,
+        default=DEFAULT_SLIPPAGE,
+        help=f"Slippage tolerance (default {DEFAULT_SLIPPAGE})",
+    )
+    args = parser.parse_args()
+
+    asyncio.run(snipe(args.amount, args.slippage))
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

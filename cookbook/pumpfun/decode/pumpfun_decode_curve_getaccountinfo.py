@@ -19,10 +19,10 @@ Two things the layout does not make obvious:
   the total.
 """
 
+import argparse
 import base64
 import json
 import struct
-import sys
 
 from construct import Bytes, Flag, Int64ul, Struct
 from solders.pubkey import Pubkey
@@ -134,35 +134,49 @@ def decode_bonding_curve_data(raw_data: str) -> BondingCurveState:
     return BondingCurveState(decoded_data)
 
 
-# Load the JSON data: pass a getAccountInfo response as argv[1], or use the fixture
-curve_file = (
-    sys.argv[1]
-    if len(sys.argv) > 1
-    else "cookbook/pumpfun/decode/raw_bonding_curve_from_getaccountinfo.json"
-)
-with open(curve_file) as file:
-    json_data = json.load(file)
+DEFAULT_FIXTURE = "cookbook/pumpfun/decode/raw_bonding_curve_from_getaccountinfo.json"
 
-# Extract the base64 encoded data
-encoded_data = json_data["result"]["value"]["data"][0]
 
-# Decode the data
-bonding_curve_state = decode_bonding_curve_data(encoded_data)
+def main() -> None:
+    """Parse the command line and decode the curve account."""
+    parser = argparse.ArgumentParser(
+        description="Decode a bonding curve account's raw bytes"
+    )
+    parser.add_argument(
+        "account",
+        nargs="?",
+        default=DEFAULT_FIXTURE,
+        help=f"Saved getAccountInfo response (default {DEFAULT_FIXTURE})",
+    )
+    args = parser.parse_args()
 
-# Calculate and print the token price
-token_price = calculate_bonding_curve_price(bonding_curve_state)
-symbol = bonding_curve_state.quote_symbol
+    with open(args.account) as file:
+        json_data = json.load(file)
 
-print("Bonding Curve State:")
-print(f"  Virtual Token Reserves: {bonding_curve_state.virtual_token_reserves}")
-print(
-    f"  Virtual Quote Reserves: {bonding_curve_state.virtual_sol_reserves} raw {symbol}"
-)
-print(f"  Real Token Reserves: {bonding_curve_state.real_token_reserves}")
-print(f"  Real Quote Reserves: {bonding_curve_state.real_sol_reserves} raw {symbol}")
-print(f"  Token Total Supply: {bonding_curve_state.token_total_supply}")
-print(f"  Complete: {bonding_curve_state.complete}")
-print(f"  Mayhem Mode: {bonding_curve_state.is_mayhem_mode}")
-print(f"  Cashback Coin: {bonding_curve_state.is_cashback_coin}")
-print(f"  Quote Mint: {bonding_curve_state.effective_quote_mint}")
-print(f"\nToken Price: {token_price:.10f} {symbol}")
+    # Extract the base64 encoded data
+    encoded_data = json_data["result"]["value"]["data"][0]
+
+    # Decode the data
+    bonding_curve_state = decode_bonding_curve_data(encoded_data)
+
+    # Calculate and print the token price
+    token_price = calculate_bonding_curve_price(bonding_curve_state)
+    symbol = bonding_curve_state.quote_symbol
+
+    print("Bonding Curve State:")
+    print(f"  Virtual Token Reserves: {bonding_curve_state.virtual_token_reserves}")
+    print(
+        f"  Virtual Quote Reserves: {bonding_curve_state.virtual_sol_reserves} raw {symbol}"
+    )
+    print(f"  Real Token Reserves: {bonding_curve_state.real_token_reserves}")
+    print(f"  Real Quote Reserves: {bonding_curve_state.real_sol_reserves} raw {symbol}")
+    print(f"  Token Total Supply: {bonding_curve_state.token_total_supply}")
+    print(f"  Complete: {bonding_curve_state.complete}")
+    print(f"  Mayhem Mode: {bonding_curve_state.is_mayhem_mode}")
+    print(f"  Cashback Coin: {bonding_curve_state.is_cashback_coin}")
+    print(f"  Quote Mint: {bonding_curve_state.effective_quote_mint}")
+    print(f"\nToken Price: {token_price:.10f} {symbol}")
+
+
+if __name__ == "__main__":
+    main()

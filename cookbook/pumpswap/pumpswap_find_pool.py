@@ -1,9 +1,12 @@
-"""
-This module provides functionality to:
+"""This module provides functionality to:
 1. Find market addresses by base mint
 2. Fetch and parse market data (including pool addresses) from Pump AMM program accounts
+
+Usage:
+    uv run cookbook/pumpswap/pumpswap_find_pool.py <MINT>
 """
 
+import argparse
 import asyncio
 import os
 import struct
@@ -18,9 +21,7 @@ load_dotenv()
 
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 PUMP_AMM_PROGRAM_ID = Pubkey.from_string("pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA")
-import sys
 
-TOKEN_MINT = Pubkey.from_string(sys.argv[1] if len(sys.argv) > 1 else "...")  # argv[1] or hardcode
 
 
 async def get_market_address_by_base_mint(
@@ -43,6 +44,10 @@ async def get_market_address_by_base_mint(
         )
 
         pool_addresses = [account.pubkey for account in response.value]
+        if not pool_addresses:
+            # No pool means the coin has not graduated off its bonding curve
+            # yet, which is the common case rather than an error.
+            return None
         return pool_addresses[0]
 
 
@@ -110,10 +115,22 @@ async def get_market_data(market_address: Pubkey):
         return parsed_data
 
 
-async def main():
+async def show_pool(token_mint: Pubkey) -> None:
+    """Find and print one coin's PumpSwap pool.
+
+    Args:
+        token_mint: The coin whose pool to look up
+    """
     market_address = await get_market_address_by_base_mint(
-        TOKEN_MINT, PUMP_AMM_PROGRAM_ID
+        token_mint, PUMP_AMM_PROGRAM_ID
     )
+    if market_address is None:
+        print(
+            f"No PumpSwap pool for {token_mint}.\n"
+            "It has not graduated off its bonding curve yet — trade it with\n"
+            "cookbook/pumpfun/trade/pumpfun_buy_token_v2.py instead."
+        )
+        return
     print(market_address)
 
     market_data = await get_market_data(market_address)
@@ -132,5 +149,14 @@ async def main():
         )
 
 
+def main() -> None:
+    """Parse the command line and print the pool."""
+    parser = argparse.ArgumentParser(description="Find a coin's PumpSwap pool")
+    parser.add_argument("mint", help="The coin's mint address")
+    args = parser.parse_args()
+
+    asyncio.run(show_pool(Pubkey.from_string(args.mint)))
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

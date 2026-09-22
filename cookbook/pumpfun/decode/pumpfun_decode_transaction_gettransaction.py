@@ -16,10 +16,10 @@ Two things this example exists to show, because both are easy to get wrong:
    pump.fun transactions there was 1 top-level pump instruction against 8 inner ones.
 """
 
+import argparse
 import hashlib
 import json
 import struct
-import sys
 from collections.abc import Iterator
 
 import base58
@@ -248,10 +248,18 @@ def describe(
 
 
 def main() -> None:
-    """Decode the pump.fun instructions of one saved transaction."""
-    tx_file_path = sys.argv[1] if len(sys.argv) == EXPECTED_ARGC else DEFAULT_TX
-    if len(sys.argv) != EXPECTED_ARGC:
-        print(f"No path provided, using the path: {tx_file_path}")
+    """Parse the command line and decode the transaction."""
+    parser = argparse.ArgumentParser(
+        description="Decode the pump.fun instructions in a getTransaction response"
+    )
+    parser.add_argument(
+        "transaction",
+        nargs="?",
+        default=DEFAULT_TX,
+        help=f"Saved getTransaction response (default {DEFAULT_TX})",
+    )
+    args = parser.parse_args()
+    tx_file_path = args.transaction
 
     with open(IDL_PATH) as f:
         idl = json.load(f)

@@ -16,6 +16,7 @@ atomic again would need an address lookup table.
 `pumpfun_create_token_v2.py` is the create half on its own, and `pumpfun_buy_token_v2.py` the buy half.
 """
 
+import argparse
 import asyncio
 import os
 import struct
@@ -45,19 +46,19 @@ from spl.token.instructions import (
 )
 
 # Configuration for the token to be created
-TOKEN_NAME = "Test Token V2"
-TOKEN_SYMBOL = "TEST2"
-TOKEN_URI = "https://example.com/token-v2.json"
-BUY_AMOUNT_SOL = 0.0001  # Amount of SOL to spend on buying
-MAX_SLIPPAGE = 0.3  # 30% slippage
+DEFAULT_TOKEN_NAME = "Test Token V2"
+DEFAULT_TOKEN_SYMBOL = "TEST2"
+DEFAULT_TOKEN_URI = "https://example.com/token-v2.json"
+DEFAULT_BUY_AMOUNT_SOL = 0.0001  # Amount of SOL to spend on buying
+DEFAULT_SLIPPAGE = 0.3  # 30% slippage
 PRIORITY_FEE_MICROLAMPORTS = 37_037  # Priority fee in microlamports
 COMPUTE_UNIT_LIMIT = 350_000  # Compute unit limit for the transaction
-ENABLE_MAYHEM_MODE = True  # Set to True to enable mayhem mode
+DEFAULT_MAYHEM = True  # Set to True to enable mayhem mode
 # Set to True to create a holder-reward coin: the creator fee is set aside for
 # holders instead of paid to a creator wallet. Cashback was deprecated
 # 2026-09-15 — create_v2 now rejects is_cashback_enabled=[true] with error
 # 6082 (CashbackDeprecated) — so this is the only trailing-args path left.
-ENABLE_HOLDER_REWARD = False
+DEFAULT_HOLDER_REWARD = False
 
 load_dotenv()
 
@@ -389,19 +390,28 @@ async def get_fee_recipient_for_mayhem(client: AsyncClient, is_mayhem: bool) -> 
     return reserved_fee_recipient
 
 
-async def main():
+async def run(  # noqa: PLR0913
+    name: str,
+    symbol: str,
+    uri: str,
+    buy_amount: float,
+    slippage: float,
+    *,
+    mayhem: bool,
+    holder_reward: bool,
+):
     """Create and buy pump.fun token (Token2022) in a single transaction."""
     private_key_bytes = base58.b58decode(PRIVATE_KEY)
     payer = Keypair.from_bytes(private_key_bytes)
     mint_keypair = Keypair()
 
     print("Creating Token2022 token with:")
-    print(f"  Name: {TOKEN_NAME}")
-    print(f"  Symbol: {TOKEN_SYMBOL}")
+    print(f"  Name: {name}")
+    print(f"  Symbol: {symbol}")
     print(f"  Mint: {mint_keypair.pubkey()}")
     print(f"  Creator: {payer.pubkey()}")
-    print(f"  Mayhem mode: {'Enabled' if ENABLE_MAYHEM_MODE else 'Disabled'}")
-    print(f"  Holder reward: {'Enabled' if ENABLE_HOLDER_REWARD else 'Disabled'}")
+    print(f"  Mayhem mode: {'Enabled' if mayhem else 'Disabled'}")
+    print(f"  Holder reward: {'Enabled' if holder_reward else 'Disabled'}")
 
     # Derive PDAs
     bonding_curve, _ = find_bonding_curve_address(mint_keypair.pubkey())
@@ -419,7 +429,7 @@ async def main():
     print(f"  User ATA: {user_ata}")
     print(f"  Creator vault: {creator_vault}")
 
-    if ENABLE_MAYHEM_MODE:
+    if mayhem:
         mayhem_state = find_mayhem_state(mint_keypair.pubkey())
         mayhem_token_vault = find_mayhem_token_vault(mint_keypair.pubkey())
         print(f"  Mayhem state: {mayhem_state}")
@@ -433,21 +443,21 @@ async def main():
 
     initial_price = initial_virtual_sol_reserves / initial_virtual_token_reserves
 
-    buy_amount_lamports = int(BUY_AMOUNT_SOL * LAMPORTS_PER_SOL)
+    buy_amount_lamports = int(buy_amount * LAMPORTS_PER_SOL)
     expected_tokens = int(
         (buy_amount_lamports * 0.99) / initial_price
     )  # 1% buffer for fees
-    max_sol_cost = int(buy_amount_lamports * (1 + MAX_SLIPPAGE))
+    max_sol_cost = int(buy_amount_lamports * (1 + slippage))
 
     print("\nBuy parameters:")
-    print(f"  Buy amount: {BUY_AMOUNT_SOL} SOL")
+    print(f"  Buy amount: {buy_amount} SOL")
     print(f"  Expected tokens: {expected_tokens / 10**TOKEN_DECIMALS:.6f}")
     print(f"  Max SOL cost: {max_sol_cost / LAMPORTS_PER_SOL:.6f} SOL")
 
     # Send transaction
     async with AsyncClient(RPC_ENDPOINT) as client:
         # Get correct fee recipient based on mayhem mode
-        fee_recipient = await get_fee_recipient_for_mayhem(client, ENABLE_MAYHEM_MODE)
+        fee_recipient = await get_fee_recipient_for_mayhem(client, mayhem)
 
         instructions = [
             # Priority fee instructions
@@ -462,11 +472,11 @@ async def main():
                 global_state=PUMP_GLOBAL,
                 user=payer.pubkey(),
                 creator=payer.pubkey(),
-                name=TOKEN_NAME,
-                symbol=TOKEN_SYMBOL,
-                uri=TOKEN_URI,
-                is_mayhem_mode=ENABLE_MAYHEM_MODE,
-                is_holder_reward=ENABLE_HOLDER_REWARD,
+                name=name,
+                symbol=symbol,
+                uri=uri,
+                is_mayhem_mode=mayhem,
+                is_holder_reward=holder_reward,
             ),
             # Extend bonding curve account (required for frontend visibility)
             create_extend_account_instruction(
@@ -498,7 +508,7 @@ async def main():
                 token_amount=expected_tokens,
                 max_sol_cost=max_sol_cost,
                 track_volume=True,
-                is_mayhem_mode=ENABLE_MAYHEM_MODE,
+                is_mayhem_mode=mayhem,
             ),
         ]
 
@@ -541,5 +551,50 @@ async def main():
             raise
 
 
+def main() -> None:
+    """Parse the command line and run the create-and-buy."""
+    parser = argparse.ArgumentParser(description="Create a pump.fun coin with create_v2 and buy it")
+    parser.add_argument("--name", default=DEFAULT_TOKEN_NAME, help="Coin name")
+    parser.add_argument("--symbol", default=DEFAULT_TOKEN_SYMBOL, help="Coin ticker")
+    parser.add_argument("--uri", default=DEFAULT_TOKEN_URI, help="Metadata URI")
+    parser.add_argument(
+        "--amount",
+        type=float,
+        default=DEFAULT_BUY_AMOUNT_SOL,
+        help=f"SOL to spend on the buy (default {DEFAULT_BUY_AMOUNT_SOL})",
+    )
+    parser.add_argument(
+        "--slippage",
+        type=float,
+        default=DEFAULT_SLIPPAGE,
+        help=f"Slippage tolerance (default {DEFAULT_SLIPPAGE})",
+    )
+    parser.add_argument(
+        "--mayhem",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_MAYHEM,
+        help=f"Enable mayhem mode (default {DEFAULT_MAYHEM})",
+    )
+    parser.add_argument(
+        "--holder-reward",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_HOLDER_REWARD,
+        help=f"Set the creator fee aside for holders (default {DEFAULT_HOLDER_REWARD})",
+    )
+    args = parser.parse_args()
+
+    asyncio.run(
+        run(
+            args.name,
+            args.symbol,
+            args.uri,
+            args.amount,
+            args.slippage,
+            mayhem=args.mayhem,
+            holder_reward=args.holder_reward,
+        )
+    )
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

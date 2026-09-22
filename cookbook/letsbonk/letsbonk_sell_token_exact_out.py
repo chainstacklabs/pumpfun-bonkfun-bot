@@ -1,5 +1,7 @@
-"""
-Manual Sell Exact Out Example for Raydium LaunchLab
+"""Manual Sell Exact Out Example for Raydium LaunchLab
+
+Usage:
+    uv run cookbook/letsbonk/letsbonk_sell_token_exact_out.py <MINT> [SOL_TO_RECEIVE] [--slippage 0.25]
 
 This script demonstrates how to sell tokens using the sell_exact_out instruction
 from the Raydium LaunchLab program. It follows the IDL structure.
@@ -14,6 +16,7 @@ Key features:
 - Uses idempotent ATA creation
 """
 
+import argparse
 import asyncio
 import os
 import struct
@@ -38,28 +41,21 @@ sys.path.append(
     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "solana")
 )
 
-import solana_transaction_status as tx_status  # noqa: E402
+import solana_transaction_status as tx_status
 
 # Initialize IDL parser for Raydium LaunchLab with verbose mode for debugging
 IDL_PARSER = load_idl_parser("idl/raydium_launchlab_idl.json", verbose=True)
 
 load_dotenv()
 
-# Token mint: pass as argv[1], or hardcode here.
-TOKEN_MINT_ADDRESS = Pubkey.from_string(
-    sys.argv[1] if len(sys.argv) > 1 else "YOUR_TOKEN_MINT_ADDRESS_HERE"
-)
-
 # Configuration constants
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 PRIVATE_KEY = base58.b58decode(os.environ.get("SOLANA_PRIVATE_KEY"))
 PAYER = Keypair.from_bytes(PRIVATE_KEY)
 
-# User configurable parameters
-SOL_AMOUNT_TO_RECEIVE = float(
-    os.environ.get("SOL_AMOUNT", "0.0001")
-)  # Amount of SOL to receive
-SLIPPAGE_TOLERANCE = float(os.environ.get("SLIPPAGE", "0.25"))
+# Defaults for the command line below, not fixed settings.
+DEFAULT_AMOUNT = 0.0001
+DEFAULT_SLIPPAGE = 0.25
 
 # Transaction parameters
 SHARE_FEE_RATE = 0
@@ -710,16 +706,18 @@ async def sell_exact_out(
         return None
 
 
-async def main():
-    """
-    Main function to execute the sell_exact_out example.
+async def run(token_mint: Pubkey, amount: float, slippage: float) -> None:
+    """Execute the sell_exact_out example.
 
-    Takes configuration from environment variables or uses defaults.
+    Args:
+        token_mint: The coin to trade
+        amount: SOL to receive
+        slippage: Slippage tolerance
     """
     try:
-        print(f"Starting sell_exact_out for token: {TOKEN_MINT_ADDRESS}")
-        print(f"Amount to receive: {SOL_AMOUNT_TO_RECEIVE} SOL")
-        print(f"Slippage tolerance: {SLIPPAGE_TOLERANCE * 100}%")
+        print(f"Starting sell_exact_out for token: {token_mint}")
+        print(f"Amount to receive: {amount} SOL")
+        print(f"Slippage tolerance: {slippage * 100}%")
         # Endpoint carries an API key. hostname, not netloc: netloc keeps any
         # user:pass@ userinfo, which would leak the credential anyway.
         print(f"Using RPC endpoint: {urlsplit(RPC_ENDPOINT).hostname or '<unset>'}")
@@ -732,7 +730,7 @@ async def main():
 
             # Check if user has the base token account and sufficient balance
             user_base_token = get_associated_token_address(
-                PAYER.pubkey(), TOKEN_MINT_ADDRESS
+                PAYER.pubkey(), token_mint
             )
             try:
                 token_account_info = await client.get_token_account_balance(
@@ -754,7 +752,7 @@ async def main():
                 print("Continuing anyway...")
 
             tx_signature = await sell_exact_out(
-                client, TOKEN_MINT_ADDRESS, SOL_AMOUNT_TO_RECEIVE, SLIPPAGE_TOLERANCE
+                client, token_mint, amount, slippage
             )
 
             if tx_signature:
@@ -774,5 +772,27 @@ async def main():
         sys.exit(1)
 
 
+def main() -> None:
+    """Parse the command line and run the trade."""
+    parser = argparse.ArgumentParser(description="Sell a letsbonk.fun coin for a fixed amount of SOL")
+    parser.add_argument("mint", help="The coin's mint address")
+    parser.add_argument(
+        "amount",
+        nargs="?",
+        type=float,
+        default=DEFAULT_AMOUNT,
+        help=f"SOL to receive (default {DEFAULT_AMOUNT})",
+    )
+    parser.add_argument(
+        "--slippage",
+        type=float,
+        default=DEFAULT_SLIPPAGE,
+        help=f"Slippage tolerance (default {DEFAULT_SLIPPAGE})",
+    )
+    args = parser.parse_args()
+
+    asyncio.run(run(Pubkey.from_string(args.mint), args.amount, args.slippage))
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

@@ -10,7 +10,7 @@ valid-looking address that does not exist on chain, so both are printed here —
 this script makes no RPC calls and cannot tell which one a given mint is.
 """
 
-import sys
+import argparse
 
 from solders.pubkey import Pubkey
 
@@ -58,15 +58,15 @@ def find_associated_bonding_curve(
 
 
 def main() -> None:
-    """Print the curve PDAs for the mint given on the command line."""
-    if len(sys.argv) < MIN_ARGC:
-        print(
-            "Usage: uv run cookbook/pumpfun/read/pumpfun_derive_curve_addresses.py <MINT>"
-        )
-        return
+    """Parse the command line and print the curve PDAs."""
+    parser = argparse.ArgumentParser(
+        description="Derive a coin's bonding curve and curve ATA, offline"
+    )
+    parser.add_argument("mint", help="The coin's mint address")
+    args = parser.parse_args()
 
     try:
-        mint = Pubkey.from_string(sys.argv[1])
+        mint = Pubkey.from_string(args.mint)
     except ValueError as e:
         print(f"Error: Invalid address format - {e!s}")
         return

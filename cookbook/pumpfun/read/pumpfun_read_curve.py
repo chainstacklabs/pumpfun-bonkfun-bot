@@ -1,6 +1,8 @@
-"""
-Module for checking the status of a token's bonding curve on the Solana network using
+"""Module for checking the status of a token's bonding curve on the Solana network using
 the Pump.fun program. It allows querying the bonding curve state and completion status.
+
+Usage:
+    uv run cookbook/pumpfun/read/pumpfun_read_curve.py <MINT>
 """
 
 import argparse
@@ -17,9 +19,6 @@ from solders.pubkey import Pubkey
 load_dotenv()
 
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
-
-# Change to token you want to query
-TOKEN_MINT = "..."
 
 # Constants
 PUMP_PROGRAM_ID: Final[Pubkey] = Pubkey.from_string(
@@ -280,7 +279,7 @@ def main() -> None:
     """Main entry point for the token status checker."""
     parser = argparse.ArgumentParser(description="Check token bonding curve status")
     parser.add_argument(
-        "mint_address", nargs="?", help="The token mint address", default=TOKEN_MINT
+        "mint_address", help="The token mint address"
     )
     args = parser.parse_args()
 

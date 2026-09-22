@@ -15,6 +15,7 @@ The buy half already uses `buy_v2`: the v2 trade instructions work against a
 legacy curve, and legacy `buy` is under-documented in the IDL.
 """
 
+import argparse
 import asyncio
 import os
 import struct
@@ -46,11 +47,11 @@ from spl.token.instructions import (
 )
 
 # Configuration for the token to be created
-TOKEN_NAME = "Test Token"
-TOKEN_SYMBOL = "TEST"
-TOKEN_URI = "https://example.com/token.json"
-BUY_AMOUNT_SOL = 0.001  # Amount of SOL to spend on buying
-MAX_SLIPPAGE = 0.3  # 30% slippage
+DEFAULT_TOKEN_NAME = "Test Token"
+DEFAULT_TOKEN_SYMBOL = "TEST"
+DEFAULT_TOKEN_URI = "https://example.com/token.json"
+DEFAULT_BUY_AMOUNT_SOL = 0.001  # Amount of SOL to spend on buying
+DEFAULT_SLIPPAGE = 0.3  # 30% slippage
 PRIORITY_FEE_MICROLAMPORTS = 37_037  # Priority fee in microlamports
 COMPUTE_UNIT_LIMIT = 250_000  # Compute unit limit for the transaction
 
@@ -271,15 +272,21 @@ def create_buy_instruction(
     )
 
 
-async def main():
+async def run(
+    name: str,
+    symbol: str,
+    uri: str,
+    buy_amount: float,
+    slippage: float,
+):
     """Create and buy pump.fun token in a single transaction."""
     private_key_bytes = base58.b58decode(PRIVATE_KEY)
     payer = Keypair.from_bytes(private_key_bytes)
     mint_keypair = Keypair()
 
     print("Creating token with:")
-    print(f"  Name: {TOKEN_NAME}")
-    print(f"  Symbol: {TOKEN_SYMBOL}")
+    print(f"  Name: {name}")
+    print(f"  Symbol: {symbol}")
     print(f"  Mint: {mint_keypair.pubkey()}")
     print(f"  Creator: {payer.pubkey()}")
 
@@ -307,14 +314,14 @@ async def main():
 
     initial_price = initial_virtual_sol_reserves / initial_virtual_token_reserves
 
-    buy_amount_lamports = int(BUY_AMOUNT_SOL * LAMPORTS_PER_SOL)
+    buy_amount_lamports = int(buy_amount * LAMPORTS_PER_SOL)
     expected_tokens = int(
         (buy_amount_lamports * 0.99) / initial_price
     )  # 1% buffer for fees
-    max_sol_cost = int(buy_amount_lamports * (1 + MAX_SLIPPAGE))
+    max_sol_cost = int(buy_amount_lamports * (1 + slippage))
 
     print("\nBuy parameters:")
-    print(f"  Buy amount: {BUY_AMOUNT_SOL} SOL")
+    print(f"  Buy amount: {buy_amount} SOL")
     print(f"  Expected tokens: {expected_tokens / 10**TOKEN_DECIMALS:.6f}")
     print(f"  Max SOL cost: {max_sol_cost / LAMPORTS_PER_SOL:.6f} SOL")
 
@@ -332,9 +339,9 @@ async def main():
             metadata=metadata,
             user=payer.pubkey(),
             creator=payer.pubkey(),
-            name=TOKEN_NAME,
-            symbol=TOKEN_SYMBOL,
-            uri=TOKEN_URI,
+            name=name,
+            symbol=symbol,
+            uri=uri,
         ),
         # Extend bonding curve account (required for frontend visibility)
         create_extend_account_instruction(
@@ -412,5 +419,36 @@ async def main():
             raise
 
 
+def main() -> None:
+    """Parse the command line and run the create-and-buy."""
+    parser = argparse.ArgumentParser(description="Create a coin with the legacy create instruction and buy it")
+    parser.add_argument("--name", default=DEFAULT_TOKEN_NAME, help="Coin name")
+    parser.add_argument("--symbol", default=DEFAULT_TOKEN_SYMBOL, help="Coin ticker")
+    parser.add_argument("--uri", default=DEFAULT_TOKEN_URI, help="Metadata URI")
+    parser.add_argument(
+        "--amount",
+        type=float,
+        default=DEFAULT_BUY_AMOUNT_SOL,
+        help=f"SOL to spend on the buy (default {DEFAULT_BUY_AMOUNT_SOL})",
+    )
+    parser.add_argument(
+        "--slippage",
+        type=float,
+        default=DEFAULT_SLIPPAGE,
+        help=f"Slippage tolerance (default {DEFAULT_SLIPPAGE})",
+    )
+    args = parser.parse_args()
+
+    asyncio.run(
+        run(
+            args.name,
+            args.symbol,
+            args.uri,
+            args.amount,
+            args.slippage,
+        )
+    )
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

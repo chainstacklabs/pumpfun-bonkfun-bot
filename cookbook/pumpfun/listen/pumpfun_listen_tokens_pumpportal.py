@@ -1,5 +1,7 @@
-"""
-Listens for new Pump.fun token creations via PumpPortal WebSocket.
+"""Listens for new Pump.fun token creations via PumpPortal WebSocket.
+
+Usage:
+    uv run cookbook/pumpfun/listen/pumpfun_listen_tokens_pumpportal.py
 
 Performance: Fast, real-time data via third-party API.
 

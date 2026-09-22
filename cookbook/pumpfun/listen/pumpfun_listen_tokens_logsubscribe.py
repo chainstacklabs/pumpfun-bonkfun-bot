@@ -1,6 +1,8 @@
-"""
-Listens for new Pump.fun token creations via Solana WebSocket.
+"""Listens for new Pump.fun token creations via Solana WebSocket.
 Monitors logs for 'Create' instructions, decodes and prints token details (name, symbol, mint, etc.).
+
+Usage:
+    uv run cookbook/pumpfun/listen/pumpfun_listen_tokens_logsubscribe.py
 
 Performance: Usually faster than blockSubscribe, but slower than Geyser.
 

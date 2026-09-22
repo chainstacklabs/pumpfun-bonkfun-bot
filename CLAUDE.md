@@ -88,6 +88,18 @@ platform-agnostic (`Universal*`); anything platform-shaped belongs under
   `gettransaction`, `pumpportal`. So `pumpfun_decode_transaction_gettransaction.py`,
   not `..._getTransaction.py`.
 - **Anything not specific to a launchpad belongs under `solana/`**, not `pumpfun/`.
+- **Input is a command-line argument, never a constant you edit.** Every script
+  builds an `ArgumentParser` in `main()`: required values are positionals, tunables
+  are `--options`, and anything the caller varies per run — mint, wallet, amount,
+  slippage, fixture path — is one of them. Constants named `DEFAULT_*` supply the
+  defaults and are the only place a literal belongs.
+  - A placeholder is not a default. `TOKEN_MINT = "..."` reads as optional but
+    `Pubkey.from_string("...")` raises at import, so the script dies before
+    printing its own usage. Nine scripts did this.
+  - Don't read config from environment variables either — `.env` is for
+    endpoints and keys, not for trade parameters no usage line mentions.
+  - `sys.argv` never appears at module level. The seven listeners take no input
+    at all and are exempt; they are listed in the verifier.
 - Fixtures keep their own form, `raw_<what>_from_<method>.json`, next to the script
   that reads them.
 - **A script that spends says so on the first line of its docstring**, and the
@@ -157,6 +169,7 @@ name individual scripts to run a subset.
 | `verify_exit_sell_confirmation.py` | an exit sell is retried only when retrying is provably safe |
 | `verify_rpc_deadline.py` | `post_rpc` bounds wall time, not just attempts (virtual clock) |
 | `verify_quote_decimals_resolved.py` | no trade path prices a coin before resolving its quote mint's decimals |
+| `verify_cookbook_arguments.py` | every cookbook script takes its input as a command-line argument |
 
 Two mainnet simulations, also no funds moved:
 

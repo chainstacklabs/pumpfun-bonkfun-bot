@@ -96,6 +96,10 @@ EXTEND_ACCOUNT_DISCRIMINATOR: Final[bytes] = bytes(
 COMPUTE_UNIT_LIMIT: Final[int] = 350_000
 PRIORITY_FEE_MICROLAMPORTS: Final[int] = 37_037
 
+# Defaults for the command line below, not fixed settings.
+DEFAULT_MAYHEM = False
+DEFAULT_HOLDER_REWARD = False
+
 
 def encode_string(value: str) -> bytes:
     """Encode a string the way Borsh does: a u32 length, then the bytes.
@@ -301,11 +305,17 @@ def main() -> None:
     parser.add_argument(
         "--uri", default="https://example.com/token.json", help="Metadata URI"
     )
-    parser.add_argument("--mayhem", action="store_true", help="Enable mayhem mode")
+    parser.add_argument(
+        "--mayhem",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_MAYHEM,
+        help=f"Enable mayhem mode (default {DEFAULT_MAYHEM})",
+    )
     parser.add_argument(
         "--holder-reward",
-        action="store_true",
-        help="Set the creator fee aside for holders instead of a creator wallet",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_HOLDER_REWARD,
+        help=f"Set the creator fee aside for holders (default {DEFAULT_HOLDER_REWARD})",
     )
     args = parser.parse_args()
 

@@ -1,6 +1,8 @@
-"""
-This standalone script demonstrates how to buy tokens on the PUMP AMM (pAMM) protocol.
+"""This standalone script demonstrates how to buy tokens on the PUMP AMM (pAMM) protocol.
 It covers the complete flow from finding markets to executing buys with mayhem mode support.
+
+Usage:
+    uv run cookbook/pumpswap/pumpswap_buy_token.py <MINT> [SOL_TO_SPEND] [--slippage 0.3]
 
 Key concepts demonstrated:
 - Finding AMM pool addresses by token mint
@@ -13,6 +15,7 @@ Key concepts demonstrated:
 - Slippage protection mechanisms
 """
 
+import argparse
 import asyncio
 import os
 import random
@@ -42,7 +45,7 @@ sys.path.append(
     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "solana")
 )
 
-import solana_transaction_status as tx_status  # noqa: E402
+import solana_transaction_status as tx_status
 
 load_dotenv()
 
@@ -52,10 +55,12 @@ load_dotenv()
 
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 
-TOKEN_MINT = Pubkey.from_string(sys.argv[1] if len(sys.argv) > 1 else "...")  # Pass mint as argv[1]
 PRIVATE_KEY = base58.b58decode(os.environ.get("SOLANA_PRIVATE_KEY"))
 PAYER = Keypair.from_bytes(PRIVATE_KEY)
-SLIPPAGE = 0.3  # 30% - maximum acceptable price movement during trade
+
+# Defaults for the command line below, not fixed settings.
+DEFAULT_SOL_AMOUNT = 0.001
+DEFAULT_SLIPPAGE = 0.3  # 30% - maximum acceptable price movement during trade
 
 # Token configuration
 TOKEN_DECIMALS = 6  # Standard for most pump.fun tokens
@@ -718,21 +723,25 @@ async def buy_pump_swap(
 # ============================================================================
 
 
-async def main() -> None:
-    """Execute the complete buy flow."""
-    sol_amount_to_spend = 0.001  # Amount of SOL to spend on the purchase
+async def buy(token_mint: Pubkey, sol_amount: float, slippage: float) -> None:
+    """Execute the complete buy flow.
 
+    Args:
+        token_mint: The coin to buy
+        sol_amount: SOL to spend
+        slippage: Maximum acceptable price movement
+    """
     async with AsyncClient(RPC_ENDPOINT, timeout=120) as client:
         # Step 1: Find the pool address for our token
         market_address = await get_market_address_by_base_mint(
-            client, TOKEN_MINT, PUMP_AMM_PROGRAM_ID
+            client, token_mint, PUMP_AMM_PROGRAM_ID
         )
 
         # Step 2: Parse pool data to get necessary accounts
         market_data = await get_market_data(client, market_address)
 
         # Determine token program ID for the base mint
-        token_program_id = await get_token_program_id(client, TOKEN_MINT)
+        token_program_id = await get_token_program_id(client, token_mint)
 
         # Step 3: Derive PDAs needed for the transaction
         coin_creator_vault_authority = find_coin_creator_vault(
@@ -747,17 +756,39 @@ async def main() -> None:
             client,
             market_address,
             PAYER,
-            TOKEN_MINT,
-            get_associated_token_address(PAYER.pubkey(), TOKEN_MINT, token_program_id),
+            token_mint,
+            get_associated_token_address(PAYER.pubkey(), token_mint, token_program_id),
             get_associated_token_address(PAYER.pubkey(), SOL, SYSTEM_TOKEN_PROGRAM),
             Pubkey.from_string(market_data["pool_base_token_account"]),
             Pubkey.from_string(market_data["pool_quote_token_account"]),
             coin_creator_vault_authority,
             coin_creator_vault_ata,
-            sol_amount_to_spend,
-            SLIPPAGE,
+            sol_amount,
+            slippage,
         )
 
 
+def main() -> None:
+    """Parse the command line and run the buy."""
+    parser = argparse.ArgumentParser(description="Buy a coin on the PumpSwap AMM")
+    parser.add_argument("mint", help="The coin's mint address")
+    parser.add_argument(
+        "amount",
+        nargs="?",
+        type=float,
+        default=DEFAULT_SOL_AMOUNT,
+        help=f"SOL to spend (default {DEFAULT_SOL_AMOUNT})",
+    )
+    parser.add_argument(
+        "--slippage",
+        type=float,
+        default=DEFAULT_SLIPPAGE,
+        help=f"Maximum acceptable price movement (default {DEFAULT_SLIPPAGE})",
+    )
+    args = parser.parse_args()
+
+    asyncio.run(buy(Pubkey.from_string(args.mint), args.amount, args.slippage))
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

@@ -19,6 +19,7 @@ MaxLoadedAccountsDataSizeExceeded on exactly those coins.
 Reference: https://www.anza.xyz/blog/cu-optimization-with-setloadedaccountsdatasizelimit
 """
 
+import argparse
 import asyncio
 import base64
 import hashlib
@@ -59,6 +60,10 @@ COMPUTE_BUDGET_PROGRAM = Pubkey.from_string(
 )
 # 16 MB. Enough for Token-2022 mints carrying extensions, and still 4x below the
 # 64 MB default; 4-8 MB is rejected with MaxLoadedAccountsDataSizeExceeded.
+# Defaults for the command line below, not fixed settings.
+DEFAULT_BUY_AMOUNT_SOL = 0.000_001
+DEFAULT_SLIPPAGE = 0.3
+
 LOADED_ACCOUNTS_DATA_SIZE_LIMIT = 16_384_000
 
 # Global constants
@@ -471,7 +476,7 @@ async def listen_for_create_transaction():
                                                 return decoded_args
 
 
-async def main(*, cu_optimized: bool = False):
+async def snipe(amount: float, slippage: float, *, cu_optimized: bool = False):
     if cu_optimized:
         print("Compute-unit optimization enabled (SetLoadedAccountsDataSizeLimit)")
     print("Waiting for a new token creation...")
@@ -497,8 +502,6 @@ async def main(*, cu_optimized: bool = False):
         token_price_sol = calculate_pump_curve_price(curve_state)
 
     # Amount of SOL to spend (adjust as needed)
-    amount = 0.000_001  # 0.00001 SOL
-    slippage = 0.3  # 30% slippage tolerance
 
     print(f"Bonding curve address: {bonding_curve}")
     print(
@@ -520,5 +523,33 @@ async def main(*, cu_optimized: bool = False):
     )
 
 
+def main() -> None:
+    """Parse the command line and snipe the next coin."""
+    parser = argparse.ArgumentParser(
+        description="Wait for the next pump.fun coin, then buy it"
+    )
+    parser.add_argument(
+        "amount",
+        nargs="?",
+        type=float,
+        default=DEFAULT_BUY_AMOUNT_SOL,
+        help=f"SOL to spend (default {DEFAULT_BUY_AMOUNT_SOL})",
+    )
+    parser.add_argument(
+        "--slippage",
+        type=float,
+        default=DEFAULT_SLIPPAGE,
+        help=f"Slippage tolerance (default {DEFAULT_SLIPPAGE})",
+    )
+    parser.add_argument(
+        "--cu-optimized",
+        action="store_true",
+        help="Add a SetLoadedAccountsDataSizeLimit instruction",
+    )
+    args = parser.parse_args()
+
+    asyncio.run(snipe(args.amount, args.slippage, cu_optimized=args.cu_optimized))
+
+
 if __name__ == "__main__":
-    asyncio.run(main(cu_optimized="--cu-optimized" in sys.argv))
+    main()

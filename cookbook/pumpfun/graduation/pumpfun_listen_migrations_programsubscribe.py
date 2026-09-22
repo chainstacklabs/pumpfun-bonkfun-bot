@@ -1,7 +1,9 @@
-"""
-Monitors Solana for new Pump AMM markets via WebSocket.
+"""Monitors Solana for new Pump AMM markets via WebSocket.
 Fetches existing markets to filter out already existing ones, parses market account data (e.g., mints, token accounts, creator),
 and excludes user-created markets. May also detect non-migration-based markets (if they created by a program).
+
+Usage:
+    uv run cookbook/pumpfun/graduation/pumpfun_listen_migrations_programsubscribe.py
 
 Note: this method consumes HUGE AMOUNT OF MESSAGES from a WebSocket.
 """

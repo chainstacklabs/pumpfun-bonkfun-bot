@@ -9,10 +9,10 @@ USDC. Dividing by a hardcoded 1e9 prints a USDC-paired coin's price 1000x too lo
 `quote_mint` is `Pubkey::default()` (all zeros) on SOL-paired coins.
 """
 
+import argparse
 import asyncio
 import os
 import struct
-import sys
 from typing import Final
 
 from construct import Bytes, Flag, Int64ul, Struct
@@ -235,15 +235,14 @@ def calculate_bonding_curve_price(
     )
 
 
-async def main() -> None:
-    """Print the price of the coin behind the bonding curve given on the CLI."""
-    if len(sys.argv) < 2:
-        print("Usage: uv run cookbook/pumpfun/read/pumpfun_read_price.py <BONDING_CURVE_ADDRESS>")
-        return
+async def show_price(curve_address: Pubkey) -> None:
+    """Print the price of the coin behind one bonding curve.
 
+    Args:
+        curve_address: The bonding curve to read
+    """
     try:
         async with AsyncClient(RPC_ENDPOINT) as conn:
-            curve_address = Pubkey.from_string(sys.argv[1])
             state = await get_bonding_curve_state(conn, curve_address)
             quote_mint = normalize_quote_mint(state.quote_mint)
             quote_decimals = await read_quote_decimals(conn, quote_mint)
@@ -263,5 +262,14 @@ async def main() -> None:
         print(f"An unexpected error occurred: {e}")
 
 
+def main() -> None:
+    """Parse the command line and print the price."""
+    parser = argparse.ArgumentParser(description="Print one coin's price")
+    parser.add_argument("curve", help="The coin's bonding curve address")
+    args = parser.parse_args()
+
+    asyncio.run(show_price(Pubkey.from_string(args.curve)))
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

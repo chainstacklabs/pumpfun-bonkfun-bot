@@ -1,6 +1,8 @@
-"""
-Listens for 'Migrate' instructions from Solana migration program via WebSocket.
+"""Listens for 'Migrate' instructions from Solana migration program via WebSocket.
 Parses and logs transaction details (e.g., mint, liquidity, token accounts) for successful migrations.
+
+Usage:
+    uv run cookbook/pumpfun/graduation/pumpfun_listen_migrations_logsubscribe.py
 
 Note: This uses a migration wrapper program (39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg)
 that emits a different event structure than the CompletePumpAmmMigrationEvent in pump_fun_idl.json.
