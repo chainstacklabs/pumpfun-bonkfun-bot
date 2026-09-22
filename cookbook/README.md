@@ -6,11 +6,15 @@ read `.env` directly, and most take the mint or curve address as the first argum
 
 They are deliberately repetitive. A script that derives an address inline is easier
 to read and copy than one that imports a helper you also have to open, so the same
-twenty lines appear in several files. Two exceptions live at the root of this
-directory — [`pump_v2.py`](pump_v2.py) (the 27- and 26-account `buy_v2`/`sell_v2`
-layouts) and [`tx_status.py`](tx_status.py) (did it actually succeed) — because
-both are the kind of thing that must never drift between copies. Scripts in a
-subdirectory put this directory on `sys.path` before importing them.
+twenty lines appear in several files. Two helpers are exempt, because both are the
+kind of thing that must never drift between copies:
+
+- [`tx_status.py`](tx_status.py) — did the transaction actually succeed. Every
+  platform here uses it, so it sits at the root, and scripts in a subdirectory put
+  this directory on `sys.path` before importing it.
+- [`pumpfun/trade/pump_v2.py`](pumpfun/trade/pump_v2.py) — the 27- and 26-account
+  `buy_v2`/`sell_v2` layouts. Only the pump.fun trade scripts need it, so it lives
+  with them.
 
 **Scripts marked 💸 submit real transactions and spend real funds.** Read the module
 docstring before running one. Everything else only reads.

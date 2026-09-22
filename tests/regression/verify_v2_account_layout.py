@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT / "cookbook"))
+sys.path.insert(0, str(PROJECT_ROOT / "cookbook" / "pumpfun" / "trade"))
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from solders.pubkey import Pubkey  # noqa: E402
@@ -387,7 +387,7 @@ def check_quote_config() -> list[str]:
 
 
 def check_examples_toolkit() -> list[str]:
-    """Check cookbook/pump_v2.py agrees with the IDL and with src/.
+    """Check cookbook/pumpfun/trade/pump_v2.py agrees with the IDL and with src/.
 
     The examples carry their own standalone copy of the v2 layout so they stay
     readable without importing src/. That copy is exactly the kind of thing that

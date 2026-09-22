@@ -22,8 +22,10 @@ import sys
 from pathlib import Path
 from typing import Final
 
-# pump_v2 and tx_status live one directory up, beside the current examples.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# tx_status.py is at the cookbook root; pump_v2.py lives with the current
+# pump.fun trade examples.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pumpfun" / "trade"))
 
 import base58
 import pump_v2

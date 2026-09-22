@@ -20,8 +20,8 @@ import struct
 import sys
 from pathlib import Path
 
-# pump_v2.py and tx_status.py are shared helpers at the cookbook root; the
-# generated geyser stubs live at src/geyser/generated off the repo root.
+# tx_status.py is the shared helper at the cookbook root; the generated geyser
+# stubs live at src/geyser/generated off the repo root.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 

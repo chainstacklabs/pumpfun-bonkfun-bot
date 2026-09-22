@@ -33,7 +33,7 @@ import sys
 from pathlib import Path
 from typing import Final
 
-# pump_v2.py and tx_status.py are shared helpers at the cookbook root.
+# tx_status.py is a shared helper at the cookbook root.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import base58

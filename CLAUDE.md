@@ -16,9 +16,10 @@ Solana trading bot for pump.fun and letsbonk.fun. Snipes newly created tokens an
 ```
 src/                 bot source — this dir is the import root (see below)
 cookbook/            standalone scripts; each runs on its own, no bot config
+  tx_status.py       the one cross-platform helper (see below)
   pumpfun/{listen,read,trade,graduation,decode}/
+    trade/pump_v2.py   the buy_v2/sell_v2 layouts, beside their callers
   pumpswap/  letsbonk/  legacy/
-  pump_v2.py  tx_status.py   the only two shared helpers (see below)
 tests/regression/    one offline verifier per fixed bug; imports src/
 tools/               dev harness — simulations, live round trips, benchmarks
 bots/                one YAML per bot instance
@@ -32,11 +33,13 @@ logs/                {bot_name}_{timestamp}.log
 scripts are deliberately self-contained and don't import from `src` at all.
 Don't "fix" one by rewiring it to import the bot — that is what `tools/` is for.
 
-The two exceptions are `cookbook/pump_v2.py` (the v2 account layouts) and
-`cookbook/tx_status.py` (the `meta.err` check), which must never drift between
-copies. A script in a subdirectory puts the cookbook root on `sys.path` before
-importing them; `manual_buy_geyser.py` and the two geyser scripts add the repo
-root as well, for `src.geyser.generated`.
+Two helpers are exempt, because both are things that must never drift between
+copies. `cookbook/tx_status.py` (the `meta.err` check) sits at the cookbook root
+because all four platforms use it, and a script in a subdirectory puts that root
+on `sys.path` before importing it. `cookbook/pumpfun/trade/pump_v2.py` (the
+buy_v2/sell_v2 account layouts) sits with its only callers, so they import it as
+a plain sibling; `legacy/` reaches into that directory for it. The geyser
+scripts add the repo root too, for `src.geyser.generated`.
 
 Dependency layers, low to high — don't introduce an upward import:
 

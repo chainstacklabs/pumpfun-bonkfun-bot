@@ -23,7 +23,8 @@ import os
 import sys
 from pathlib import Path
 
-# pump_v2.py and tx_status.py are shared helpers at the cookbook root.
+# tx_status.py is the shared helper at the cookbook root; pump_v2.py sits
+# beside this file.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import base58
