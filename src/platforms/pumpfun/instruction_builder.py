@@ -719,7 +719,7 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             return 100_000
         # buy_v2 touches 27 accounts, so it costs more than the legacy
         # 18-account buy. Mainnet simulation measured 106,677 CU on
-        # 2026-09-15 (`uv run learning-examples/simulate_v2_trades.py
+        # 2026-09-15 (`uv run tools/simulate_v2_trades.py
         # <MINT>`), so 180k keeps headroom for a non-SOL quote's extra ATA
         # init. Re-measure with that script after any program upgrade — the
         # exact figure varies with account state.
@@ -740,7 +740,7 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             # Sell operations: typically just sell instruction (ATA exists)
             return 60_000
         # sell_v2 touches 26 accounts. Measured at ~77,196 CU on 2026-09-15
-        # (`uv run learning-examples/simulate_v2_trades.py <MINT>`, via its
+        # (`uv run tools/simulate_v2_trades.py <MINT>`, via its
         # buy+sell combined estimate), so 120k keeps headroom. The exact
         # figure varies with account state — re-measure after any program
         # upgrade.

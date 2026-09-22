@@ -1,7 +1,7 @@
 """Decode the pump.fun instructions in a getTransaction response.
 
 Usage:
-    uv run learning-examples/decode_from_gettransaction.py [tx.json]
+    uv run cookbook/pumpfun/decode/decode_from_gettransaction.py [tx.json]
 
 Two things this example exists to show, because both are easy to get wrong:
 
@@ -25,7 +25,7 @@ from collections.abc import Iterator
 import base58
 
 PUMP_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
-DEFAULT_TX = "learning-examples/raw_buy_tx_from_gettransaction.json"
+DEFAULT_TX = "cookbook/pumpfun/decode/raw_buy_tx_from_gettransaction.json"
 IDL_PATH = "idl/pump_fun_idl.json"
 
 # Anchor's event-CPI prefix. Every emitted event shows up as an inner instruction

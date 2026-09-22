@@ -1,3 +1,19 @@
+"""Save live pump.fun transactions to disk, to build a decoder fixture.
+
+Usage:
+    uv run cookbook/pumpfun/listen/extract_blocksubscribe_transactions.py
+
+Subscribes to blocks mentioning the pump.fun program and writes each matching
+transaction to its own JSON file. That is where the `raw_*.json` fixtures under
+`../decode/` come from — they are captured from mainnet rather than hand-written,
+because a hand-edited fixture makes a working decoder look broken and a broken
+one look fine.
+
+Note the `maxSupportedTransactionVersion: 1`. Asking for 0 does not filter out
+the v1 transactions in a block — it nulls the whole notification, which looks
+exactly like a skipped slot.
+"""
+
 import asyncio
 import hashlib
 import json

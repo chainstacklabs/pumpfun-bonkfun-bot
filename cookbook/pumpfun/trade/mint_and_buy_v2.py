@@ -1,7 +1,30 @@
+"""Create a pump.fun coin with create_v2 and buy it, in two transactions.
+
+WARNING: this submits real transactions and spends real funds.
+
+Usage:
+    uv run cookbook/pumpfun/trade/mint_and_buy_v2.py
+
+Edit the constants below to change the coin's name, ticker, buy amount and
+whether it opts into mayhem mode or holder rewards.
+
+It is two transactions rather than one because `buy_v2` takes 27 accounts, which
+pushes a combined create+buy message past Solana's 1232-byte packet limit
+(measured at 1972 bytes). The legacy 18-account `buy` used to fit; making it
+atomic again would need an address lookup table.
+
+`create_token.py` is the create half on its own, and `buy_token.py` the buy half.
+"""
+
 import asyncio
 import os
 import struct
+import sys
+from pathlib import Path
 from typing import Final
+
+# pump_v2.py and tx_status.py are shared helpers at the cookbook root.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import base58
 import pump_v2
@@ -185,24 +208,23 @@ def create_pump_create_v2_instruction(
         ),
     ]
 
-    # Add mayhem accounts if enabled (must come before event_authority and program)
-    if is_mayhem_mode:
-        mayhem_state = find_mayhem_state(mint)
-        mayhem_token_vault = find_mayhem_token_vault(mint)
+    # The mayhem accounts are mandatory, not conditional: the IDL marks none of
+    # create_v2's 16 accounts optional, and sending only 11 fails with
+    # AnchorError 3005 (AccountNotEnoughKeys) on sol_vault whatever the
+    # is_mayhem_mode argument says. Verified by simulateTransaction against
+    # mainnet, 2026-09-22. They must come before event_authority and program.
+    mayhem_state = find_mayhem_state(mint)
+    mayhem_token_vault = find_mayhem_token_vault(mint)
 
-        accounts.extend(
-            [
-                AccountMeta(
-                    pubkey=MAYHEM_PROGRAM_ID, is_signer=False, is_writable=True
-                ),
-                AccountMeta(pubkey=GLOBAL_PARAMS, is_signer=False, is_writable=False),
-                AccountMeta(pubkey=SOL_VAULT, is_signer=False, is_writable=True),
-                AccountMeta(pubkey=mayhem_state, is_signer=False, is_writable=True),
-                AccountMeta(
-                    pubkey=mayhem_token_vault, is_signer=False, is_writable=True
-                ),
-            ]
-        )
+    accounts.extend(
+        [
+            AccountMeta(pubkey=MAYHEM_PROGRAM_ID, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=GLOBAL_PARAMS, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=SOL_VAULT, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=mayhem_state, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=mayhem_token_vault, is_signer=False, is_writable=True),
+        ]
+    )
 
     # Event authority and program come last
     accounts.extend(

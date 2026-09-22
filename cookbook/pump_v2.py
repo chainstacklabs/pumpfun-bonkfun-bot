@@ -7,7 +7,7 @@ example scripts from each carrying their own copy of the list, which is how they
 drift out of sync with the program.
 
 Deliberately standalone: it imports nothing from `src/`, so the examples stay
-readable on their own. `learning-examples/verify_v2_account_layout.py` checks the
+readable on their own. `tests/regression/verify_v2_account_layout.py` checks the
 layout below against `idl/pump_fun_idl.json`.
 
 Docs: BUY.md, SELL.md and COIN_CREATION.md under docs/instructions in
@@ -363,7 +363,7 @@ class BondingCurveState:
 
     The account is 125 bytes as created; an extend_account instruction (not
     always in a separate transaction from create_v2 — see
-    learning-examples/mint_and_buy_v2.py) can grow it to 151, 256, or any
+    cookbook/pumpfun/trade/mint_and_buy_v2.py) can grow it to 151, 256, or any
     other length the program allows. The struct below covers the leading
     fields, which are at the same offsets regardless of total length. The
     SOL-named reserve fields were renamed to quote fields when non-SOL quote

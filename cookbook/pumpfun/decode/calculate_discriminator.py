@@ -1,3 +1,18 @@
+"""Compute the 8-byte Anchor discriminator for an instruction or account.
+
+Usage:
+    uv run cookbook/pumpfun/decode/calculate_discriminator.py
+
+Edit `instruction_name` below. Anchor prefixes every instruction's data and every
+account's data with the first 8 bytes of `sha256("<namespace>:<name>")` — the
+namespace is `global` for instructions and `account` for account types. That
+prefix is how you identify what you are looking at, and the only reliable way:
+several pump.fun instructions take the same number of accounts, so counting them
+mislabels one as another.
+
+Docs: https://book.anchor-lang.com/anchor_bts/discriminator.html
+"""
+
 import hashlib
 import struct
 

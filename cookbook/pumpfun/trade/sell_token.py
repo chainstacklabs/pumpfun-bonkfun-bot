@@ -1,6 +1,30 @@
+"""Sell your whole position in a pump.fun coin, using sell_v2.
+
+WARNING: this submits a real transaction and spends real funds.
+
+Usage:
+    uv run cookbook/pumpfun/trade/sell_token.py <MINT>
+
+The mirror of `buy_token.py`. It reads how many tokens you hold, reads the curve
+for a price, and sells the lot with a slippage floor underneath.
+
+Two things to know before you run it:
+
+- **The floor is yours to set.** `min_sol_output` is computed here from the price
+  and the slippage, and the program enforces only that number. Passing a floor
+  derived from a stale price is how a sell goes through at a price you did not intend.
+- **A dust position may not be sellable at all.** Below a few thousand tokens the
+  output rounds to zero and the program rejects the sell with error 6003
+  (TooLittleSolReceived), whatever slippage you allow.
+"""
+
 import asyncio
 import os
 import sys
+from pathlib import Path
+
+# pump_v2.py and tx_status.py are shared helpers at the cookbook root.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import base58
 import pump_v2
@@ -20,7 +44,7 @@ from spl.token.instructions import (
     get_associated_token_address,
 )
 
-# Here and later all the discriminators are precalculated. See learning-examples/calculate_discriminator.py
+# Here and later all the discriminators are precalculated. See cookbook/pumpfun/decode/calculate_discriminator.py
 EXPECTED_DISCRIMINATOR = pump_v2.BONDING_CURVE_DISCRIMINATOR
 TOKEN_DECIMALS = 6
 TOKEN_MINT = Pubkey.from_string(

@@ -6,27 +6,37 @@ Solana trading bot for pump.fun and letsbonk.fun. Snipes newly created tokens an
 
 ## Ground rules
 
-- **Never run a bot with real funds** to test a change. Use `learning-examples/`, or the simulation scripts below, which move no funds.
+- **Never run a bot with real funds** to test a change. Use `cookbook/`, or the simulation scripts below, which move no funds.
 - **Never** touch `.env` or print its contents. `SOLANA_PRIVATE_KEY` is a live key.
 - Don't commit anything from `logs/`.
-- Test with a learning example before touching `src/`.
+- Test with a cookbook script before touching `src/`.
 
 ## Layout
 
 ```
-src/            bot source — this dir is the import root (see below)
-learning-examples/   standalone scripts; each runs on its own, no bot config
-bots/           one YAML per bot instance
-idl/            vendored Anchor IDLs
-logs/           {bot_name}_{timestamp}.log
+src/                 bot source — this dir is the import root (see below)
+cookbook/            standalone scripts; each runs on its own, no bot config
+  pumpfun/{listen,read,trade,graduation,decode}/
+  pumpswap/  letsbonk/  legacy/
+  pump_v2.py  tx_status.py   the only two shared helpers (see below)
+tests/regression/    one offline verifier per fixed bug; imports src/
+tools/               dev harness — simulations, live round trips, benchmarks
+bots/                one YAML per bot instance
+idl/                 vendored Anchor IDLs
+logs/                {bot_name}_{timestamp}.log
 ```
 
 **Imports are rooted at `src/`, not at the repo.** `uv pip install -e .` puts
 `src/` itself on `sys.path`, so it is `from core.client import SolanaClient` and
-`from utils.logger import get_logger` — **not** `from src.core...`. Learning
-examples are deliberately self-contained: they import siblings like `pump_v2`
-and `tx_status` as top-level modules and mostly don't import from `src` at all.
-Don't "fix" an example by rewiring it to import the bot.
+`from utils.logger import get_logger` — **not** `from src.core...`. Cookbook
+scripts are deliberately self-contained and don't import from `src` at all.
+Don't "fix" one by rewiring it to import the bot — that is what `tools/` is for.
+
+The two exceptions are `cookbook/pump_v2.py` (the v2 account layouts) and
+`cookbook/tx_status.py` (the `meta.err` check), which must never drift between
+copies. A script in a subdirectory puts the cookbook root on `sys.path` before
+importing them; `manual_buy_geyser.py` and the two geyser scripts add the repo
+root as well, for `src.geyser.generated`.
 
 Dependency layers, low to high — don't introduce an upward import:
 
@@ -43,26 +53,30 @@ registry in `platforms/__init__.py`. Listeners and the trader are
 platform-agnostic (`Universal*`); anything platform-shaped belongs under
 `platforms/<name>/`.
 
-### Naming inside `learning-examples/`
+### What belongs in `cookbook/`
 
-- **Directories are kebab-case** (`bonding-curve-progress`, `listen-new-tokens`,
-  `copy-trading`). A single-token product name stays one word (`pumpswap`).
-- **Files are snake_case, verb first** — `fetch_price.py`, `decode_from_*.py`,
-  `extract_blocksubscribe_transactions.py`, `verify_*.py`, `simulate_*.py`.
-  Exceptions are the shared helper modules `pump_v2.py` and `tx_status.py`, which
-  are libraries rather than runnable scripts.
+- **One script, one action.** A newcomer should be able to open a single file and
+  see the whole thing. Duplication across scripts is the accepted cost of that —
+  don't factor shared helpers out of them. `pump_v2.py` and `tx_status.py` are the
+  two deliberate exceptions and the list is closed.
+- **Every script runs on its own**: `uv run cookbook/<path>`, reading `.env`. No
+  bot config, no import from `src/`. Anything that needs the bot goes in `tools/`;
+  anything that asserts a past bug stays fixed goes in `tests/regression/`.
+- **Directories are single lowercase words** grouped by what you are doing —
+  `listen`, `read`, `trade`, `graduation`, `decode` — under a platform directory.
+- **Files are snake_case, verb first**: `fetch_price.py`, `buy_token.py`,
+  `decode_from_*.py`, `extract_blocksubscribe_transactions.py`.
 - **RPC and service names are lowercased into one token**, never camelCase:
   `blocksubscribe`, `logsubscribe`, `programsubscribe`, `getaccountinfo`,
   `gettransaction`, `pumpportal`. So `decode_from_gettransaction.py`, not
   `decode_from_getTransaction.py`.
-- Fixtures are `raw_<what>_from_<method>.json` next to the script that reads
-  them, under the same rules.
-- `simulate_*` and `verify_*` never move funds — that half of the naming is
-  load-bearing and machine-checked. The inverse is **not** true: `live_*` is not
-  the only prefix that spends. `manual_*` (including the `pumpswap/` and
-  `letsbonk-buy-sell/` ones), `mint_and_buy*` and `cleanup_accounts.py` all
-  submit real transactions. Read the module docstring before running anything
-  that is not `simulate_*` or `verify_*`.
+- Fixtures are `raw_<what>_from_<method>.json` next to the script that reads them,
+  under the same rules.
+- **A script that spends says so on the first line of its docstring**, and the
+  cookbook README marks it. Prefix conventions are not a safety signal: `manual_*`
+  (including the `pumpswap/` and `letsbonk/` ones), `mint_and_buy*`, `buy_token`,
+  `sell_token` and `create_token` all submit real transactions. Read the docstring
+  before running anything.
 
 ## Commands
 
@@ -97,14 +111,15 @@ is protoc — needed only to regenerate the `geyser_pb2` stubs in
 `src/geyser/generated/` from `src/geyser/proto/`, never at runtime. That is the
 **only** copy: the geyser examples reach it by putting the repo root on
 `sys.path` and importing `src.geyser.generated`. Don't add a second copy under
-`learning-examples/` — the last one drifted out of sync with the protos.
+`cookbook/` — the last one drifted out of sync with the protos.
 
 ### Verifying a change
 
-Every fix here ships with an offline verifier under `learning-examples/`. Each
+Every fix here ships with an offline verifier under `tests/regression/`. Each
 script's docstring carries the bug it guards and the checks it runs — read that
 before touching the code it covers, and run the ones your change reaches. None of
-them move funds.
+them move funds. `uv run tests/regression/run_all.py` runs the whole set, or
+name individual scripts to run a subset.
 
 | Script | Checks |
 |---|---|
@@ -128,8 +143,8 @@ them move funds.
 Two mainnet simulations, also no funds moved:
 
 ```bash
-uv run learning-examples/simulate_v2_trades.py <MINT>   # buy_v2/sell_v2 for one coin, reports CU
-uv run learning-examples/simulate_bot_buy_path.py       # the bot's whole buy path, fresh coin
+uv run tools/simulate_v2_trades.py <MINT>   # buy_v2/sell_v2 for one coin, reports CU
+uv run tools/simulate_bot_buy_path.py       # the bot's whole buy path, fresh coin
 ```
 
 After any pump.fun program upgrade run `verify_v2_account_layout`,
@@ -206,12 +221,12 @@ The reasoning behind each lives in the verifier named beside it.
 
 ### Listener and decoder pitfalls
 
-Each of these was a live bug in `learning-examples/`, all of them invisible
+Each of these was a live bug in the cookbook scripts, all of them invisible
 offline and only visible after a couple of minutes against mainnet.
 
 - **A `while True: recv()` loop must break out on `websockets.ConnectionClosed`.**
   Catching it in a broad `except Exception` that only logs makes the next `recv()`
-  raise immediately, forever: `listen-new-tokens/compare_listeners.py` produced **13,090,862 error
+  raise immediately, forever: `tools/compare_listeners.py` produced **13,090,862 error
   lines / 888 MB in 150 s** and never reached its own 30-second report. The outer
   reconnect handler with its `sleep` is unreachable in that shape. A narrow
   `except TimeoutError` or `except json.JSONDecodeError` is fine to swallow —
@@ -246,7 +261,8 @@ offline and only visible after a couple of minutes against mainnet.
   `limit` is a *scan* budget rather than a result count — a page can legally
   return zero accounts and a non-null `paginationKey`, so one filtered answer over
   the pump program costs ~1000 sequential pages. Reach for a filtered
-  subscription instead; see the two `get_graduating_tokens*.py` examples.
+  subscription instead; see the two `cookbook/pumpfun/graduation/get_graduating_tokens*.py`
+  examples.
 - **Filtered `programSubscribe` on the pump program is the portable way to find
   curves by state.** `dataSize` + `memcmp` are applied server-side, and it is
   accepted even by the public `api.mainnet-beta.solana.com`. `memcmp` only matches
@@ -310,7 +326,7 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   quote mint it's paired with, mayhem or not, cashback or not. `sell_v2` is
   `buy_v2` minus `global_volume_accumulator`. Layouts live in `_BUY_V2_ACCOUNTS` /
   `_SELL_V2_ACCOUNTS` in `platforms/pumpfun/instruction_builder.py` and are
-  machine-checked against the IDL by `learning-examples/verify_v2_account_layout.py`.
+  machine-checked against the IDL by `tests/regression/verify_v2_account_layout.py`.
 - v2 args carry **no `track_volume` OptionBool** (24-byte data: discriminator +
   two u64). Volume tracking is unconditional now that `user_volume_accumulator`
   is mandatory. `max_sol_cost`/`min_sol_output` are in the **quote mint's** raw
@@ -343,7 +359,7 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   | 151 bytes | The old allocation size; still reachable via `extend_account` |
   | 256 bytes | A rarer `extend_account` target, confirmed live 2026-09-15 |
 
-  `learning-examples/verify_curve_account_sizes.py` checks that all three
+  `tests/regression/verify_curve_account_sizes.py` checks that all three
   decode correctly and that the graduating-token examples don't filter on
   account length.
 - The SOL-named fields were **renamed**: `virtual_sol_reserves` →
@@ -392,7 +408,7 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   fixed number of trailing bytes raises `IndexError` on the shorter forms.
   Decode trailing args defensively and report a missing one as unset —
   `utils/idl_parser.py` does this for trailing option-typed args since #184
-  (`uv run learning-examples/verify_create_v2_optional_args.py` checks it).
+  (`uv run tests/regression/verify_create_v2_optional_args.py` checks it).
 - `create_v2` accounts 1-16 are in the IDL; accounts **17-19 are optional
   remaining accounts** (`quote_mint`, `associated_quote_bonding_curve`,
   `quote_token_program`). All three or none. This is the only way to read a new
@@ -459,7 +475,7 @@ interface pump.fun maintains.
   #200), so only `mint` and `traderPublicKey` are required; everything else the
   trade path needs is derived from the mint. Consequence worth knowing:
   `filters.match_string` matches on name/symbol, so it can never match a bonk
-  token from this feed. `learning-examples/verify_pumpportal_bonk_fields.py`
+  token from this feed. `tests/regression/verify_pumpportal_bonk_fields.py`
   checks this against committed fixtures, and `--live` re-checks it against the
   real feed. The bonk **trade** path past detection is still unverified — see
   issue #201.

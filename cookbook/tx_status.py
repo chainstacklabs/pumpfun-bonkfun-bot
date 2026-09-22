@@ -10,9 +10,9 @@ moves. That was issue #175 — buys reverting with `BuybackFeeRecipientMissing`
 (6062) reported as successful buys.
 
 Deliberately standalone: imports nothing from `src/`, so every example under
-`learning-examples/` (including the subdirectories) can use it.
+`cookbook/` (including the subdirectories) can use it.
 
-`learning-examples/verify_tx_status_checks.py` verifies the behaviour below.
+`tests/regression/verify_tx_status_checks.py` verifies the behaviour below.
 """
 
 from typing import Any, Protocol

@@ -40,7 +40,7 @@ PUMP_PROGRAM_ID = Pubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6
 # Instruction discriminators (8-byte identifiers for instruction types)
 # Calculated using the first 8 bytes of sha256("global:create") for legacy Create
 # and sha256("global:createV2") for Token2022 CreateV2
-# See: learning-examples/calculate_discriminator.py
+# See: cookbook/pumpfun/decode/calculate_discriminator.py
 CREATE_DISCRIMINATOR = 8576854823835016728
 CREATE_V2_DISCRIMINATOR = struct.unpack("<Q", bytes([214, 144, 76, 236, 95, 139, 49, 180]))[0]
 

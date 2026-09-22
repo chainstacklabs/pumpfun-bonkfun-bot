@@ -1,3 +1,24 @@
+"""Decode a bonding curve account's raw bytes into its fields and a price.
+
+Usage:
+    uv run cookbook/pumpfun/decode/decode_from_getaccountinfo.py [curve.json]
+
+Falls back to the fixture beside this file. `getAccountInfo` returns base64 bytes
+and nothing else — the layout is yours to know. This walks it field by field:
+reserves, the completion flag, the creator, the mayhem and cashback flags, and
+the quote mint.
+
+Two things the layout does not make obvious:
+
+- **`quote_mint` is all zeros on SOL-paired coins**, not wrapped SOL. The quote
+  reserves are always in that mint's own raw units — 1e9 for SOL, 1e6 for USDC —
+  so a price computed against a hardcoded 1e9 is 1000x off for a USDC pair.
+- **The account grows.** `create_v2` allocates 125 bytes and `extend_account` can
+  push it to 151, 256 or more. Every field below sits at a fixed offset from the
+  start, so decode any length at or above 125 the same way and never filter on
+  the total.
+"""
+
 import base64
 import json
 import struct
@@ -117,7 +138,7 @@ def decode_bonding_curve_data(raw_data: str) -> BondingCurveState:
 curve_file = (
     sys.argv[1]
     if len(sys.argv) > 1
-    else "learning-examples/raw_bonding_curve_from_getaccountinfo.json"
+    else "cookbook/pumpfun/decode/raw_bonding_curve_from_getaccountinfo.json"
 )
 with open(curve_file) as file:
     json_data = json.load(file)

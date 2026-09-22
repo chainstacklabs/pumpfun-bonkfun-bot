@@ -1,3 +1,17 @@
+"""Decode the pump.fun instructions in a blockSubscribe transaction.
+
+Usage:
+    uv run cookbook/pumpfun/decode/decode_from_blocksubscribe.py [tx.json]
+
+Falls back to the fixture beside this file. A `blockSubscribe` frame delivers
+transactions in the same shape `getTransaction` does, so the decoding is the
+same as `decode_from_gettransaction.py` — what differs is where the bytes came
+from, and that a block frame carries many transactions at once.
+
+Instructions are matched by their 8-byte discriminator against `idl/pump_fun_idl.json`,
+never by account count.
+"""
+
 import base64
 import hashlib
 import json
@@ -81,7 +95,9 @@ def decode_instruction(ix_data, ix_def):
             value = ix_data[offset : offset + length].decode("utf-8")
             offset += length
         elif isinstance(t, dict) and "defined" in t:
-            defined_name = t["defined"]["name"] if isinstance(t["defined"], dict) else t["defined"]
+            defined_name = (
+                t["defined"]["name"] if isinstance(t["defined"], dict) else t["defined"]
+            )
             if defined_name == "OptionBool":
                 value = bool(ix_data[offset])
                 offset += 1
@@ -189,7 +205,7 @@ def decode_transaction(tx_data, idl):
 tx_file_path = ""
 
 if len(sys.argv) != 2:
-    tx_file_path = "learning-examples/blocksubscribe-transactions/raw_create_tx_from_blocksubscribe.json"
+    tx_file_path = "cookbook/pumpfun/decode/raw_create_tx_from_blocksubscribe.json"
     print(f"No path provided, using the path: {tx_file_path}")
 else:
     tx_file_path = sys.argv[1]

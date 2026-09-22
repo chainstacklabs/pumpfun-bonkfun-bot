@@ -1,7 +1,29 @@
+"""Create a coin with the legacy `create` instruction, then buy it.
+
+WARNING: this submits real transactions and spends real funds.
+
+Usage:
+    uv run cookbook/legacy/mint_and_buy.py
+
+Kept for reference only. pump.fun creates coins with `create_v2` now, which mints
+under Token-2022 and takes the mayhem, cashback, creator-fee and holder-reward
+arguments this instruction has no room for — see `mint_and_buy_v2.py` for the
+current path. Legacy `create` still lands on chain, but a coin made this way is
+not the kind of coin the rest of these examples decode.
+
+The buy half already uses `buy_v2`: the v2 trade instructions work against a
+legacy curve, and legacy `buy` is under-documented in the IDL.
+"""
+
 import asyncio
 import os
 import struct
+import sys
+from pathlib import Path
 from typing import Final
+
+# pump_v2 and tx_status live one directory up, beside the current examples.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import base58
 import pump_v2

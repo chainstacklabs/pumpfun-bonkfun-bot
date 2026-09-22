@@ -1,23 +1,26 @@
-"""Watch for pump.fun coins approaching graduation, over Geyser gRPC.
+"""Watch for pump.fun coins approaching graduation, over plain WebSocket RPC.
 
 Usage:
-    uv run learning-examples/bonding-curve-progress/get_graduating_tokens_geyser.py
-    uv run learning-examples/bonding-curve-progress/get_graduating_tokens_geyser.py --min-progress 95
+    uv run cookbook/pumpfun/graduation/get_graduating_tokens.py
+    uv run cookbook/pumpfun/graduation/get_graduating_tokens.py --min-progress 95
 
-Needs GEYSER_ENDPOINT, GEYSER_API_TOKEN and GEYSER_AUTH_TYPE in .env, plus
-SOLANA_NODE_RPC_ENDPOINT for the two things the stream cannot answer: the Global
-baseline and each coin's mint. Geyser is a paid add-on, so `get_graduating_tokens.py`
-is the portable version of this report — it runs on any endpoint, including the public
-one. This variant exists because Geyser is common among traders and gives you the slot
-and transaction signature behind every update, which the WebSocket feed does not.
+Why a subscription and not `getProgramAccounts`: the pump.fun program now owns
+over 10 million accounts, and every provider refuses to scan it. Helius, Alchemy
+and dRPC reject with `Too many accounts requested (10000001 pubkeys)`; QuickNode
+and Chainstack time out. No filter set fixes that — the rejection is on program
+size, before filters apply. `getProgramAccountsV2` is a provider extension (Helius,
+Solana Tracker), not core Agave, and its `limit` is a *scan* budget rather than a
+result count, so answering this question with it means ~1000 sequential pages.
 
-Why a subscription and not `getProgramAccounts`: the pump.fun program now owns over
-10 million accounts, and every provider refuses to scan it — the rejection is on
-program size, before filters apply. A curve can only approach graduation by being
-traded, and every write pushes the full account — 125 bytes as `create_v2` allocates
-it, or 151 once `extend_account` has run on it — so each update carries everything
-needed to compute progress: no accumulated state, no cold start beyond the next
-trade.
+`programSubscribe` sidesteps the scan entirely. A curve can only approach
+graduation by being traded, and every write to it pushes the full account — 125
+bytes as `create_v2` allocates it, or 151 once `extend_account` has run on it —
+so each notification carries everything needed to compute progress — there is no
+state to accumulate and no cold start beyond the next trade. Verified accepted on
+both a paid endpoint and the public `api.mainnet-beta.solana.com`.
+
+See `get_graduating_tokens_geyser.py` for the same report over Geyser gRPC, which
+also gives you the transaction signature behind each update.
 
 Selecting a graduation threshold
 --------------------------------
@@ -47,75 +50,83 @@ migration want the 3-byte one, a wider funnel the 2-byte one.
 Checked against mainnet by running the filtered and unfiltered subscriptions side by
 side for a minute: same curves, nothing dropped, nothing extra.
 
-This script does **not** filter on `datasize`. Earlier it named two
-account-filter groups, one per enumerated length (125 and 151), because
-Geyser ORs across named groups and a single group ANDs its own filters
-together — there was no way to ask one group for "datasize 125 or 151".
-That shape stopped being enough once a third live length (256 bytes) turned
-up, and `extend_account` can grow a curve to any length the program allows,
-so no finite set of named groups closes the gap for good. Dropping `datasize`
-collapses back to the single group this script had before lengths were
-enumerated at all: the discriminator memcmp alone already restricts delivery
-to `BondingCurve` accounts, so nothing is lost by not naming a length. A
-client-side `MIN_CURVE_LEN` floor discards anything shorter than the
-smallest real struct, so a stray short/legacy account still can't reach the
+This script does **not** filter on `dataSize`. `create_v2` allocates the curve
+at exactly 125 bytes, an account grows to 151 once `extend_account` has run on
+it, and a rarer third length (256 bytes, confirmed live below) also exists.
+`extend_account` can grow a curve to any length — nothing enumerates every
+size it might produce — so a fixed `dataSize` allowlist is whack-a-mole: the
+next length silently drops curves again, and the failure mode is invisible,
+since the script just prints fewer results rather than an error. The
+discriminator `memcmp` alone already restricts delivery to `BondingCurve`
+accounts, so dropping `dataSize` costs no precision — only bandwidth (see the
+measurement below). A `MIN_CURVE_LEN` floor still discards anything shorter
+than the smallest real struct, so a stray short/legacy account can't reach the
 decoder.
 
-**Bandwidth trade-off, measured 2026-09-15 directly over Geyser** (not
-borrowed from the WebSocket script's measurement — Geyser reports slot and
-signature per update and its named-group model batches differently, so it
-gets its own number). Two *separate* concurrent gRPC streams over the same
-120s window, so both see the identical trade activity without the
-sequential-window volume-swing problem (a first attempt comparing sequential
-windows was unreliable for exactly that reason — see
-`get_graduating_tokens.py`'s module docstring): one stream subscribed with
-this script's old two named groups (`datasize` 125 and 151), the other with
-a single unfiltered group. The filtered stream took in 6,754 updates /
-2,340,863 proto bytes; the unfiltered stream took in 6,761 updates /
-2,337,304 proto bytes — a 1.001x update ratio and a 0.998x byte ratio,
-i.e. no measurable cost. The 7-update difference was the 256-byte curve
-(`EJpNsfxnTB6mtVdzrTcgQ9xfywobHSSsUtu1Gh1GFvEg`) that no enumerated length
-could ever match; the filtered stream structurally cannot see it at all.
-`getAccountInfo` on that same curve, run directly the same day, confirms it:
-still 256 bytes, discriminator intact, and it decodes cleanly through this
-repo's own IDL-driven decoder — the bytes past the documented fields are
-zero padding.
+Confirmed live on 2026-09-15 two ways. First, directly: `getAccountInfo` on
+`EJpNsfxnTB6mtVdzrTcgQ9xfywobHSSsUtu1Gh1GFvEg` (a 256-byte curve reported
+elsewhere) returned 256 bytes, discriminator matching, owned by the pump
+program, and it decoded cleanly through this repo's own IDL-driven decoder
+(`PumpFunCurveManager._decode_curve_state_with_idl`) with sane reserves —
+everything past the documented fields is zero padding. Second, over the
+wire: a 120s `programSubscribe` window with this script's own filters
+(discriminator + `complete = false`, no `dataSize`) took in 1,066 updates —
+207 at 125 bytes, 853 at 151, and 6 at that same 256 length, among ordinary
+traffic. None of the 1,066 were the legacy 49-byte layout (no `creator`
+field). UNVERIFIED: whether that layout still has any `complete = false`
+accounts left on chain, and whether anything still writes to them — not
+re-measured here.
 
-UNVERIFIED here: whether the original 49-byte layout (no `creator` field) is
-still written anywhere. None of the 6,761 unfiltered updates in the
-measurement above were that length, but that is one 120s window, not proof
-of absence.
+**Bandwidth trade-off, measured 2026-09-15.** A first attempt ran the
+`dataSize`-filtered shape and the unfiltered shape back to back, 90s each,
+and looked like unfiltered cost *less* (0.68x) — that was noise: pump.fun
+trading volume swings a lot minute to minute, and two sequential windows just
+land on different volume. Rerun with all three filter groups (`dataSize
+125`, `dataSize 151`, and no `dataSize`) subscribed **simultaneously on one
+connection**, so all three watch the identical trade stream over the same
+120s: the two enumerated lengths together took in 1,060 updates / 589,279
+bytes; the unfiltered subscription took in 1,066 updates / 593,509 bytes —
+6 extra updates, 4,230 extra bytes, all of it the 256-byte curve neither
+enumerated length can match. That is a **1.006x update ratio / 1.007x byte
+ratio** — under 1% either way, not the double subscription's worth intuition
+might suggest, because in this trade window virtually every update already
+lands on one of the two dataSize-filtered lengths (125 or 151), and 256 is
+rare. Dropping the filter is effectively free here; if a resize-happy period
+ever shifts that mix, the cost scales with however much traffic sits outside
+the two filtered lengths (125/151, i.e. the rarer 256-byte curves and
+beyond), not with total volume.
+
+UNVERIFIED: a curve was once observed going from 125 to 151 bytes, with
+several 125-byte trades logged in between, suggesting `extend_account` ran as
+its own later transaction rather than bundled into `create_v2` — not
+re-measured here. `extend_account` **can** land in the same transaction as
+`create_v2` — `cookbook/pumpfun/trade/mint_and_buy_v2.py` does exactly that,
+appending `create_extend_account_instruction` right after
+`create_pump_create_v2_instruction` in the same instruction list — so both
+orderings occur; how common a further-resized (256-byte) curve is remains
+unmeasured.
 """
 
 import argparse
 import asyncio
+import base64
+import json
 import os
 import struct
 import sys
-from pathlib import Path
 from typing import Any, Final
 
-import grpc
+import websockets
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.types import TokenAccountOpts
 from solders.pubkey import Pubkey
-from solders.signature import Signature
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from src.geyser.generated import (
-    geyser_pb2,
-    geyser_pb2_grpc,
-)
 
 load_dotenv()
 
 # Constants
 RPC_ENDPOINT: Final[str] = os.environ.get("SOLANA_NODE_RPC_ENDPOINT", "")
-GEYSER_ENDPOINT: Final[str] = os.environ.get("GEYSER_ENDPOINT", "")
-GEYSER_API_TOKEN: Final[str] = os.environ.get("GEYSER_API_TOKEN", "")
-GEYSER_AUTH_TYPE: Final[str] = os.environ.get("GEYSER_AUTH_TYPE", "x-token").lower()
-
+WSS_ENDPOINT: Final[str] = os.environ.get("SOLANA_NODE_WSS_ENDPOINT", "")
 PUMP_PROGRAM_ID: Final[Pubkey] = Pubkey.from_string(
     "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 )
@@ -123,8 +134,8 @@ PUMP_GLOBAL: Final[Pubkey] = Pubkey.from_string(
     "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"
 )
 
-# Coins created by `create_v2` are Token-2022, so that is tried first. Querying under
-# the wrong token program returns nothing at all.
+# Coins created by `create_v2` are Token-2022, so that is tried first. Querying
+# under the wrong token program returns nothing at all.
 TOKEN_2022_PROGRAM_ID: Final[Pubkey] = Pubkey.from_string(
     "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
 )
@@ -132,7 +143,7 @@ TOKEN_PROGRAM_ID: Final[Pubkey] = Pubkey.from_string(
     "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 )
 
-# See learning-examples/calculate_discriminator.py
+# See cookbook/pumpfun/decode/calculate_discriminator.py
 BONDING_CURVE_DISCRIMINATOR: Final[bytes] = bytes.fromhex("17b7f83760d8ac60")
 
 # create_v2 allocates the 125-byte struct; extend_account can grow it past
@@ -149,7 +160,6 @@ _QUOTE_MINT_OFFSET: Final[int] = 83
 _GLOBAL_INITIAL_REAL_TOKEN_RESERVES_OFFSET: Final[int] = 89
 
 _BAD_DISCRIMINATOR_MSG: Final[str] = "Invalid discriminator for bonding curve"
-_BAD_AUTH_TYPE_MSG: Final[str] = "GEYSER_AUTH_TYPE must be 'x-token' or 'basic'"
 
 # Quote assets. `quote_mint` is all zeros on SOL-paired coins, and the quote-side
 # reserves are in that mint's raw units — 1e9 for SOL, 1e6 for USDC.
@@ -195,76 +205,40 @@ def zero_prefix_gate(bound_raw: int) -> tuple[int, bytes] | None:
     return None
 
 
-def build_subscribe_request(bound_raw: int) -> geyser_pb2.SubscribeRequest:
-    """Build the Geyser account subscription for near-graduation curves.
+def build_filters(bound_raw: int) -> list[dict[str, Any]]:
+    """Assemble the server-side `programSubscribe` filters.
 
-    One named group, with no `datasize` filter: `extend_account` can grow a
-    curve past 125 bytes to any length the program allows, so there is no
-    fixed set of lengths to enumerate across multiple named groups. (An
-    earlier version of this script did use two named groups, one per
-    enumerated length, because `SubscribeRequest.accounts` ANDs the filters
-    *inside* a group and there was no way to ask one group for "datasize 125
-    or 151" — see the module docstring for why that stopped being enough and
-    what it costs in bandwidth to drop entirely.) The discriminator memcmp
-    alone already restricts delivery to `BondingCurve` accounts, so a single
-    group loses no precision by not naming a length.
+    No `dataSize` filter: `extend_account` can grow a curve past 125 bytes to
+    any length the program allows, so there is no fixed set of lengths to
+    match. The discriminator memcmp alone already restricts delivery to
+    `BondingCurve` accounts — see the module docstring for the bandwidth this
+    trades away and the client-side `MIN_CURVE_LEN` floor that replaces it.
 
     Args:
         bound_raw: Highest qualifying `real_token_reserves`, in raw units
 
     Returns:
-        The subscription request
+        Filter dicts in the shape the RPC expects
     """
-    request = geyser_pb2.SubscribeRequest()
+
+    def memcmp(offset: int, raw: bytes) -> dict[str, Any]:
+        return {
+            "memcmp": {
+                "offset": offset,
+                "bytes": base64.b64encode(raw).decode(),
+                "encoding": "base64",
+            }
+        }
+
+    filters: list[dict[str, Any]] = [
+        memcmp(0, BONDING_CURVE_DISCRIMINATOR),
+        memcmp(_COMPLETE_OFFSET, b"\x00"),  # Not graduated yet
+    ]
+
     gate = zero_prefix_gate(bound_raw)
-
-    accounts = request.accounts["graduating_curves"]
-    accounts.owner.append(str(PUMP_PROGRAM_ID))
-
-    discriminator = accounts.filters.add().memcmp
-    discriminator.offset = 0
-    discriminator.bytes = BONDING_CURVE_DISCRIMINATOR
-
-    not_complete = accounts.filters.add().memcmp
-    not_complete.offset = _COMPLETE_OFFSET
-    not_complete.bytes = b"\x00"  # Not graduated yet
-
     if gate:
-        reserves = accounts.filters.add().memcmp
-        reserves.offset, reserves.bytes = gate
-
-    request.commitment = geyser_pb2.CommitmentLevel.PROCESSED
-    return request
-
-
-def create_geyser_connection() -> tuple[Any, grpc.aio.Channel]:
-    """Open an authenticated gRPC channel to the Geyser endpoint.
-
-    Returns:
-        The Geyser stub and the channel backing it
-
-    Raises:
-        ValueError: If GEYSER_AUTH_TYPE is not a supported scheme
-    """
-    if GEYSER_AUTH_TYPE == "x-token":
-        auth = grpc.metadata_call_credentials(
-            lambda _, callback: callback((("x-token", GEYSER_API_TOKEN),), None)
-        )
-    elif GEYSER_AUTH_TYPE == "basic":
-        auth = grpc.metadata_call_credentials(
-            lambda _, callback: callback(
-                (("authorization", f"Basic {GEYSER_API_TOKEN}"),), None
-            )
-        )
-    else:
-        raise ValueError(_BAD_AUTH_TYPE_MSG)
-
-    creds = grpc.composite_channel_credentials(grpc.ssl_channel_credentials(), auth)
-    endpoint = (
-        GEYSER_ENDPOINT.replace("https://", "").replace("http://", "").rstrip("/")
-    )
-    channel = grpc.aio.secure_channel(endpoint, creds)
-    return geyser_pb2_grpc.GeyserStub(channel), channel
+        filters.append(memcmp(*gate))
+    return filters
 
 
 def parse_curve(data: bytes) -> dict[str, Any]:
@@ -333,9 +307,9 @@ async def resolve_mint(client: AsyncClient, curve: Pubkey) -> Pubkey | None:
 
     The curve account carries no mint field and `["bonding-curve", mint]` is not
     reversible, so this goes through the associated bonding curve — an ordinary ATA
-    owned by the curve. That ATA belongs to Token-2022 for `create_v2` coins, which is
-    every coin now being launched, so Token-2022 is tried first. The answer is checked
-    by re-deriving the curve PDA from the mint.
+    owned by the curve. That ATA belongs to Token-2022 for `create_v2` coins, which
+    is every coin now being launched, so Token-2022 is tried first. The answer is
+    checked by re-deriving the curve PDA from the mint.
 
     Args:
         client: Connected RPC client
@@ -366,19 +340,6 @@ async def resolve_mint(client: AsyncClient, curve: Pubkey) -> Pubkey | None:
     return None
 
 
-def progress_to_bound(baseline: float, min_progress: float) -> int:
-    """Convert a progress threshold into a raw `real_token_reserves` ceiling.
-
-    Args:
-        baseline: Launch-time real token reserves, in whole tokens
-        min_progress: Graduation progress threshold, as a percentage
-
-    Returns:
-        The highest raw reserves value that still qualifies
-    """
-    return int(baseline * (1 - min_progress / 100) * 10**TOKEN_DECIMALS)
-
-
 def print_banner(baseline: float, min_progress: float) -> None:
     """Describe the baseline and the filter that will be installed.
 
@@ -400,6 +361,19 @@ def print_banner(baseline: float, min_progress: float) -> None:
     else:
         print("Pre-filter: none, so every curve arrives and is checked here")
     print("Waiting for trades on qualifying curves...\n")
+
+
+def progress_to_bound(baseline: float, min_progress: float) -> int:
+    """Convert a progress threshold into a raw `real_token_reserves` ceiling.
+
+    Args:
+        baseline: Launch-time real token reserves, in whole tokens
+        min_progress: Graduation progress threshold, as a percentage
+
+    Returns:
+        The highest raw reserves value that still qualifies
+    """
+    return int(baseline * (1 - min_progress / 100) * 10**TOKEN_DECIMALS)
 
 
 class GraduationReporter:
@@ -431,7 +405,7 @@ class GraduationReporter:
         Args:
             curve: The bonding curve address
             data: Raw bonding curve account data
-            suffix: Extra provenance to append to the line
+            suffix: Extra provenance to append to the line, if the transport has any
         """
         try:
             state = parse_curve(data)
@@ -464,52 +438,79 @@ class GraduationReporter:
         )
 
 
-async def stream_once(reporter: GraduationReporter, bound_raw: int) -> None:
-    """Subscribe over Geyser and consume account updates until the stream ends.
+async def stream_once(
+    reporter: GraduationReporter, filters: list[dict[str, Any]]
+) -> None:
+    """Subscribe and consume notifications until the connection drops.
+
+    One subscription is enough now that there is no `dataSize` filter to
+    fan out over — a curve at any length is delivered on this single
+    filter set. Only the subscription id handed back by our own ack is
+    treated as ours, so a notification from an unrelated subscription on this
+    connection (there should not be one) is ignored rather than mishandled.
 
     Args:
         reporter: Sink for decoded curve updates
-        bound_raw: Highest qualifying `real_token_reserves`, in raw units
+        filters: The server-side filter list to install
+
+    Raises:
+        ConnectionRefusedError: If the endpoint rejects the subscription outright
     """
-    stub, channel = create_geyser_connection()
-    try:
-        request = build_subscribe_request(bound_raw)
-        async for update in stub.Subscribe(iter([request])):
-            if not update.HasField("account"):
+    async with websockets.connect(WSS_ENDPOINT, max_size=None) as ws:
+        await ws.send(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "programSubscribe",
+                    "params": [
+                        str(PUMP_PROGRAM_ID),
+                        {
+                            "encoding": "base64",
+                            "commitment": "processed",
+                            "filters": filters,
+                        },
+                    ],
+                }
+            )
+        )
+        ack = json.loads(await ws.recv())
+        if "error" in ack:
+            raise ConnectionRefusedError(str(ack["error"]))
+        subscription_id = ack["result"]
+
+        while True:
+            # ConnectionClosed deliberately propagates to the reconnect handler in
+            # watch(). Swallowing it here would make every further recv() raise
+            # instantly, forever. A JSONDecodeError is per-message rather than
+            # per-connection, so that one is safe to skip.
+            try:
+                message = json.loads(await ws.recv())
+            except json.JSONDecodeError:
                 continue
 
-            account = update.account.account
-            data = bytes(account.data)
+            if message.get("method") != "programNotification":
+                continue
+            if message["params"]["subscription"] != subscription_id:
+                continue
+
+            value = message["params"]["result"]["value"]
+            data = base64.b64decode(value["account"]["data"][0])
             if len(data) < MIN_CURVE_LEN:
                 # Shorter than the smallest real BondingCurve struct — not a
                 # shape the decoder should be trusted with. See MIN_CURVE_LEN.
                 continue
-
-            signature = (
-                str(Signature(bytes(account.txn_signature)))
-                if account.txn_signature
-                else "<none>"
-            )
-            await reporter.handle(
-                Pubkey.from_bytes(bytes(account.pubkey)),
-                data,
-                suffix=f"  slot={update.account.slot}  sig={signature}",
-            )
-    finally:
-        await channel.close()
+            await reporter.handle(Pubkey.from_string(value["pubkey"]), data)
 
 
 async def watch(min_progress: float) -> None:
-    """Stream curve updates over Geyser and report coins at or above `min_progress`.
+    """Stream curve updates and report coins at or above `min_progress`.
 
     Args:
         min_progress: Graduation progress threshold, as a percentage
     """
-    if not GEYSER_ENDPOINT or not GEYSER_API_TOKEN:
-        print("❌ Set GEYSER_ENDPOINT and GEYSER_API_TOKEN in .env")
-        return
-    if not RPC_ENDPOINT:
-        print("❌ Set SOLANA_NODE_RPC_ENDPOINT in .env (needed for Global and mints)")
+    if not WSS_ENDPOINT or not RPC_ENDPOINT:
+        print("❌ Set SOLANA_NODE_RPC_ENDPOINT and SOLANA_NODE_WSS_ENDPOINT in .env")
         return
 
     async with AsyncClient(RPC_ENDPOINT) as client:
@@ -517,20 +518,15 @@ async def watch(min_progress: float) -> None:
         print_banner(baseline, min_progress)
 
         bound_raw = progress_to_bound(baseline, min_progress)
+        filters = build_filters(bound_raw)
         reporter = GraduationReporter(client, baseline, min_progress)
 
         while True:
             try:
-                await stream_once(reporter, bound_raw)
-            except ValueError as e:
-                print(f"❌ {e}")
+                await stream_once(reporter, filters)
+            except ConnectionRefusedError as e:
+                print(f"❌ Subscription rejected: {e}")
                 return
-            except grpc.aio.AioRpcError as e:
-                print(
-                    f"⚠️ gRPC error ({e.code()}): {e.details()}; "
-                    f"reconnecting in {RECONNECT_DELAY}s"
-                )
-                await asyncio.sleep(RECONNECT_DELAY)
             except Exception as e:  # noqa: BLE001 - keep watching across hiccups
                 print(f"⚠️ {type(e).__name__}: {e}; reconnecting in {RECONNECT_DELAY}s")
                 await asyncio.sleep(RECONNECT_DELAY)
@@ -543,7 +539,7 @@ def main() -> None:
     sys.stdout.reconfigure(line_buffering=True)
 
     parser = argparse.ArgumentParser(
-        description="Report pump.fun coins approaching graduation, over Geyser gRPC"
+        description="Report pump.fun coins approaching graduation, over WebSocket RPC"
     )
     parser.add_argument(
         "--min-progress",
