@@ -2,23 +2,24 @@
 
 Usage:
     uv run cookbook/solana/anchor_calculate_discriminator.py
+    uv run cookbook/solana/anchor_calculate_discriminator.py global:buy_v2
+    uv run cookbook/solana/anchor_calculate_discriminator.py account:BondingCurve
 
-Edit `instruction_name` below. Anchor prefixes every instruction's data and every
-account's data with the first 8 bytes of `sha256("<namespace>:<name>")` — the
-namespace is `global` for instructions and `account` for account types. That
-prefix is how you identify what you are looking at, and the only reliable way:
-several pump.fun instructions take the same number of accounts, so counting them
-mislabels one as another.
+Anchor prefixes every instruction's data and every account's data with the first
+8 bytes of `sha256("<namespace>:<name>")` — the namespace is `global` for
+instructions and `account` for account types. That prefix is how you identify
+what you are looking at, and the only reliable way: several pump.fun
+instructions take the same number of accounts, so counting them mislabels one as
+another.
 
-Docs: https://book.anchor-lang.com/anchor_bts/discriminator.html
+Docs: https://www.anchor-lang.com/docs/basics/idl
 """
 
+import argparse
 import hashlib
 import struct
 
-# https://book.anchor-lang.com/anchor_bts/discriminator.html
-# Set the instruction name here
-instruction_name = "account:BondingCurve"
+DEFAULT_NAME = "account:BondingCurve"
 
 
 def calculate_discriminator(instruction_name):
@@ -37,12 +38,26 @@ def calculate_discriminator(instruction_name):
     return discriminator
 
 
-# Calculate the discriminator for the specified instruction
-discriminator = calculate_discriminator(instruction_name)
+def main() -> None:
+    """Parse the command line and print the discriminator."""
+    parser = argparse.ArgumentParser(
+        description="Compute an Anchor 8-byte discriminator"
+    )
+    parser.add_argument(
+        "name",
+        nargs="?",
+        default=DEFAULT_NAME,
+        help=f"Namespaced name, e.g. global:buy_v2 (default {DEFAULT_NAME})",
+    )
+    args = parser.parse_args()
 
-print(f"Discriminator for '{instruction_name}' instruction: {discriminator}")
+    discriminator = calculate_discriminator(args.name)
+    little_endian = discriminator.to_bytes(8, "little")
+    print(f"Discriminator for '{args.name}':")
+    print(f"  u64:   {discriminator}")
+    print(f"  bytes: {list(little_endian)}")
+    print(f"  hex:   {little_endian.hex()}")
 
-# global:buy discriminator - 16927863322537952870
-# global:sell discriminator - 12502976635542562355
-# global:create discriminator - 8576854823835016728
-# account:BondingCurve discriminator - 6966180631402821399
+
+if __name__ == "__main__":
+    main()

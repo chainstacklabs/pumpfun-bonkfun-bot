@@ -102,6 +102,10 @@ platform-agnostic (`Universal*`); anything platform-shaped belongs under
     at all and are exempt; they are listed in the verifier.
 - Fixtures keep their own form, `raw_<what>_from_<method>.json`, next to the script
   that reads them.
+- **Cite a URL only after checking it resolves.** Three rotted unnoticed by
+  2026-09-22 — Anchor restructured its docs and two Chainstack pages moved.
+  `uv run tests/regression/verify_documentation_links.py --live` fetches every URL
+  in the repo; run it when adding one.
 - **A script that spends says so on the first line of its docstring**, and the
   cookbook README marks it. The name is not a safety signal: every `*_buy_*`,
   `*_sell_*`, `*_create_*` and `*_snipe_*` script submits real transactions. Read
@@ -170,6 +174,7 @@ name individual scripts to run a subset.
 | `verify_rpc_deadline.py` | `post_rpc` bounds wall time, not just attempts (virtual clock) |
 | `verify_quote_decimals_resolved.py` | no trade path prices a coin before resolving its quote mint's decimals |
 | `verify_cookbook_arguments.py` | every cookbook script takes its input as a command-line argument |
+| `verify_documentation_links.py` | no known-dead URL is back; `--live` fetches every one and fails on 4xx/5xx |
 
 Two mainnet simulations, also no funds moved:
 

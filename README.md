@@ -8,7 +8,7 @@
   • <a target="_blank" href="https://chainstack.com/">Homepage</a> •
   <a target="_blank" href="https://chainstack.com/protocols/">Supported protocols</a> •
   <a target="_blank" href="https://chainstack.com/blog/">Chainstack blog</a> •
-  <a target="_blank" href="https://docs.chainstack.com/quickstart/">Blockchain API reference</a> • <br> 
+  <a target="_blank" href="https://docs.chainstack.com/reference/blockchain-apis">Blockchain API reference</a> • <br> 
   • <a target="_blank" href="https://console.chainstack.com/user/account/create">Start for free</a> •
 </p>
 
@@ -217,7 +217,7 @@ For Chainstack, the numbers you need are in the [throughput guidelines](https://
 
 The bot rate-limits itself with a token bucket: `node.max_rps` in the YAML (25 by default) smooths the request rate while allowing short bursts, and 429s are retried with exponential backoff.
 
-For faster execution, Chainstack offers [Solana Trader nodes](https://docs.chainstack.com/docs/trader-nodes) for transaction propagation and the [Yellowstone gRPC Geyser plugin](https://docs.chainstack.com/docs/yellowstone-grpc-geyser-plugin) for streaming updates.
+For faster execution, Chainstack offers [Solana Trader nodes](https://docs.chainstack.com/docs/solana-trader-nodes) for transaction propagation and the [Yellowstone gRPC Geyser plugin](https://docs.chainstack.com/docs/yellowstone-grpc-geyser-plugin) for streaming updates.
 
 ## IDLs
 
