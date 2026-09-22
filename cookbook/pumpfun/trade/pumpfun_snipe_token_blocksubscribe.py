@@ -192,24 +192,26 @@ async def buy_token(
     async with AsyncClient(RPC_ENDPOINT) as client:
         # Fetch bonding curve state for price, mayhem mode and quote asset.
         curve_state = await get_pump_curve_state(client, bonding_curve)
-        token_price_sol = calculate_pump_curve_price(curve_state)
 
         # Amounts are denominated in the curve's quote asset, which is not
         # necessarily SOL any more.
         quote_mint = pump_v2.normalize_quote_mint(
             getattr(curve_state, "quote_mint", None)
         )
-        quote_unit = pump_v2.quote_units(quote_mint)
-        token_amount = amount / token_price_sol
-        max_quote_cost = int(amount * quote_unit * (1 + slippage))
 
-        # The quote mint can be Token-2022-owned (verified 2026-09-15 upgrade
-        # note: error 6064 now accepts "SPL Token or Token-2022"), so its
-        # token program must be resolved rather than assumed. Free for WSOL
-        # and USDC (pre-seeded in pump_v2's cache); one RPC call otherwise.
+        # Resolve the quote mint before pricing. One read gives both the token
+        # program -- Token-2022 for every tokenized equity pump.fun admits as a
+        # quote asset -- and the decimals the price and cap below are in. Price
+        # first and resolve after, and both numbers are off by a power of ten,
+        # in the same direction, so they compound.
         quote_token_program_id = await pump_v2.resolve_quote_token_program(
             quote_mint, lambda pk: _get_account_info(client, pk)
         )
+        quote_unit = pump_v2.quote_units(quote_mint)
+
+        token_price_sol = calculate_pump_curve_price(curve_state)
+        token_amount = amount / token_price_sol
+        max_quote_cost = int(amount * quote_unit * (1 + slippage))
 
         print(f"Quote asset: {quote_mint}")
         print(f"Buying {token_amount:.6f} tokens, max cost {max_quote_cost} raw units")

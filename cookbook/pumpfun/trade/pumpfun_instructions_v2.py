@@ -165,16 +165,34 @@ _QUOTE_DECIMALS_CACHE = dict(QUOTE_DECIMALS)
 def quote_units(quote_mint: Pubkey) -> int:
     """Raw units per whole unit of a quote mint, from the warm cache.
 
-    Pre-seeded with WSOL (9) and USDC (6); any other quote mint is resolved
-    (and thus cached) by `resolve_quote_token_program` before it is traded.
+    Pre-seeded with WSOL (9) and USDC (6). Every other quote mint must be
+    resolved by `resolve_quote_token_program` first, which caches its decimals
+    off the same account read it already makes.
+
+    This raises rather than guessing, on purpose. pump.fun's `QuoteControl`
+    registry admits mints at 6, 8 and 9 decimals -- tokenized equities are 8
+    (xStocks) or 6 (Backpack Securities) -- so a default of 9 silently
+    overstates a slippage cap by 10x or 1000x, and overstates it in the same
+    direction as the price error it causes, so the two compound instead of
+    cancelling. A loud failure is the only safe answer.
 
     Args:
         quote_mint: Quote mint address
 
     Returns:
         10 ** decimals for the quote mint (1e9 for SOL, 1e6 for USDC)
+
+    Raises:
+        ValueError: If the mint's decimals have not been resolved yet
     """
-    return 10 ** _QUOTE_DECIMALS_CACHE.get(quote_mint, 9)
+    decimals = _QUOTE_DECIMALS_CACHE.get(quote_mint)
+    if decimals is None:
+        raise ValueError(
+            f"Decimals for quote mint {quote_mint} are unknown. Call "
+            f"resolve_quote_token_program() for it before pricing or sizing a "
+            f"trade -- guessing here misprices the trade by a power of ten."
+        )
+    return 10**decimals
 
 
 def quote_token_program(quote_mint: Pubkey) -> Pubkey:

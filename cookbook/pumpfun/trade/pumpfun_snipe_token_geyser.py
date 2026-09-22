@@ -33,6 +33,7 @@ from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
 from solana.rpc.types import TxOpts
+from solders.account import Account
 from solders.compute_budget import set_compute_unit_price
 from solders.keypair import Keypair
 from solders.message import Message
@@ -99,6 +100,28 @@ async def get_pump_curve_state(
         raise ValueError("Invalid curve state discriminator")
 
     return pump_v2.BondingCurveState(data)
+
+
+async def _get_mint_account_info(conn: AsyncClient, address: Pubkey) -> Account:
+    """Fetch an account, unwrapping solana-py's `.value` envelope.
+
+    Adapter for `pump_v2.resolve_quote_token_program`, which wants the account
+    object itself (with `.owner` and `.data`) rather than the RPC wrapper.
+
+    Args:
+        conn: Solana RPC client
+        address: Account to fetch
+
+    Returns:
+        The account object
+
+    Raises:
+        ValueError: If the account does not exist
+    """
+    response = await conn.get_account_info(address, encoding="base64")
+    if response.value is None:
+        raise ValueError(f"Could not fetch account info for {address}")
+    return response.value
 
 
 def calculate_pump_curve_price(curve_state: pump_v2.BondingCurveState) -> float:
@@ -259,16 +282,25 @@ async def buy_token(
     async with AsyncClient(RPC_ENDPOINT) as client:
         # Fetch bonding curve state for price, mayhem mode and quote asset.
         curve_state = await get_pump_curve_state(client, bonding_curve)
-        token_price_sol = calculate_pump_curve_price(curve_state)
-        token_amount = amount / token_price_sol
-
-        # buy_v2 takes 27 mandatory accounts in a fixed order for every coin.
         quote_mint = pump_v2.normalize_quote_mint(
             getattr(curve_state, "quote_mint", None)
         )
+
+        # Resolve the quote mint before pricing. One read gives the token
+        # program -- Token-2022 for every tokenized equity pump.fun admits as a
+        # quote asset, and passing SPL Token for one of those fails the
+        # instruction's account constraints -- and the decimals the price and
+        # cap below are denominated in.
+        quote_token_program_id = await pump_v2.resolve_quote_token_program(
+            quote_mint, lambda pk: _get_mint_account_info(client, pk)
+        )
         quote_unit = pump_v2.quote_units(quote_mint)
+
+        token_price_sol = calculate_pump_curve_price(curve_state)
+        token_amount = amount / token_price_sol
         print(f"Quote asset: {quote_mint}")
 
+        # buy_v2 takes 27 mandatory accounts in a fixed order for every coin.
         buy_ix = pump_v2.build_buy_v2_instruction(
             base_mint=mint,
             creator=curve_state.creator,
@@ -278,13 +310,28 @@ async def buy_token(
             quote_mint=quote_mint,
             base_token_program=token_program,
             is_mayhem_mode=curve_state.is_mayhem_mode,
+            quote_token_program_id=quote_token_program_id,
         )
-        idempotent_ata_ix = create_idempotent_associated_token_account(
-            payer.pubkey(), payer.pubkey(), mint, token_program
-        )
-        msg = Message(
-            [set_compute_unit_price(1_000), idempotent_ata_ix, buy_ix], payer.pubkey()
-        )
+        instructions = [
+            set_compute_unit_price(1_000),
+            create_idempotent_associated_token_account(
+                payer.pubkey(), payer.pubkey(), mint, token_program
+            ),
+        ]
+        # SOL-paired coins settle in native SOL and only seed-check the quote
+        # ATA, so creating it would burn rent for nothing. Any other quote --
+        # a stablecoin, another coin, a tokenized equity -- needs a real one.
+        if not pump_v2.is_sol_paired(quote_mint):
+            instructions.append(
+                create_idempotent_associated_token_account(
+                    payer.pubkey(),
+                    payer.pubkey(),
+                    quote_mint,
+                    token_program_id=quote_token_program_id,
+                )
+            )
+        instructions.append(buy_ix)
+        msg = Message(instructions, payer.pubkey())
         recent_blockhash = await client.get_latest_blockhash()
         opts = TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
 

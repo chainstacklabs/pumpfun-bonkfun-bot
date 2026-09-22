@@ -120,18 +120,25 @@ async def buy(
             print(f"{mint} has graduated to PumpSwap — see pumpswap/ instead.")
             return
 
-        price = curve.price_per_token()
-        if price <= 0:
-            raise ValueError("Curve has no virtual token reserves; nothing to price")
-
         # A curve's quote_mint is all zeros when the coin is SOL-paired, but the
         # v2 instructions still want wrapped SOL passed explicitly.
         quote_mint = curve.quote_mint
-        quote_unit = pump_v2.quote_units(quote_mint)
-        base_token_program = await resolve_base_token_program(client, mint)
+
+        # Resolve the quote mint before pricing anything. This one read gives
+        # both the token program and the decimals, and the price below is
+        # denominated in the quote asset — a coin paired with AAPLx is priced in
+        # 8-decimal units, one paired with a Backpack equity in 6. Pricing first
+        # and resolving after is how a buy ends up ten or a thousand times the
+        # size that was asked for.
         quote_token_program = await pump_v2.resolve_quote_token_program(
             quote_mint, lambda pk: get_account(client, pk)
         )
+        quote_unit = pump_v2.quote_units(quote_mint)
+        base_token_program = await resolve_base_token_program(client, mint)
+
+        price = curve.price_per_token()
+        if price <= 0:
+            raise ValueError("Curve has no virtual token reserves; nothing to price")
 
         token_amount = amount / price
         max_quote_cost = int(amount * quote_unit * (1 + slippage))

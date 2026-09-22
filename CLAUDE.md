@@ -156,6 +156,7 @@ name individual scripts to run a subset.
 | `verify_time_exit_without_price.py` | `max_hold_time` still fires when every price read fails |
 | `verify_exit_sell_confirmation.py` | an exit sell is retried only when retrying is provably safe |
 | `verify_rpc_deadline.py` | `post_rpc` bounds wall time, not just attempts (virtual clock) |
+| `verify_quote_decimals_resolved.py` | no trade path prices a coin before resolving its quote mint's decimals |
 
 Two mainnet simulations, also no funds moved:
 
@@ -198,6 +199,14 @@ The reasoning behind each lives in the verifier named beside it.
 
 **Buying**
 
+- **Resolve a coin's quote mint before pricing or sizing anything.**
+  `resolve_quote_token_program` returns the token program and caches the mint's
+  decimals off the same read; `quote_units` raises rather than guessing, because
+  a wrong power of ten inflates the price *and* the slippage cap in the same
+  direction, so they compound into an overspend instead of cancelling. pump.fun's
+  `QuoteControl` registry (PDA `["quote-control"]`) admits mints at 6, 8 and 9
+  decimals — 79 of the 170 admitted on 2026-09-22 are tokenized equities, and
+  coins paired with them trade live (8 of 124 curves in a 75s sample that day).
 - `trade.curve_refresh_budget` (seconds, default 2.0) bounds the pre-buy curve
   read in `extreme_fast_mode`; when it expires the token is **skipped**, because a
   buy built from listener-guessed defaults reverts with `NotAuthorized` (6000),

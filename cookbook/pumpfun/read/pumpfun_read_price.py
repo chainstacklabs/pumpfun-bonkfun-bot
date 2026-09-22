@@ -145,16 +145,42 @@ def normalize_quote_mint(quote_mint: Pubkey) -> Pubkey:
     return WSOL_MINT if quote_mint == DEFAULT_QUOTE_MINT else quote_mint
 
 
-def quote_units(quote_mint: Pubkey) -> int:
-    """Return the raw units per whole token of the quote mint.
+# The `decimals` byte sits at this offset in both SPL Token and Token-2022
+# mints; Token-2022 extensions are appended after the base struct and never
+# move it.
+_MINT_DECIMALS_OFFSET = 44
+
+
+async def read_quote_decimals(conn: AsyncClient, quote_mint: Pubkey) -> int:
+    """Read a quote mint's decimals from chain.
+
+    pump.fun's quote assets are not just SOL and USDC. Its `QuoteControl`
+    registry admits mints at 6, 8 and 9 decimals — tokenized equities are 8
+    (xStocks) or 6 (Backpack Securities) — so assuming 9 misreports the price
+    by a factor of ten or a thousand. One account read settles it.
 
     Args:
+        conn: Connected RPC client
         quote_mint: The effective quote mint
 
     Returns:
-        1e9 for SOL, 1e6 for USDC, defaulting to 1e9 for an unknown mint
+        The mint's decimal count
+
+    Raises:
+        ValueError: If the mint account is missing or too short to be a mint
     """
-    return 10 ** QUOTE_DECIMALS.get(quote_mint, 9)
+    if quote_mint in QUOTE_DECIMALS:
+        return QUOTE_DECIMALS[quote_mint]
+
+    response = await conn.get_account_info(quote_mint, encoding="base64")
+    if response.value is None:
+        raise ValueError(f"Quote mint {quote_mint} does not exist on chain")
+    data = bytes(response.value.data)
+    if len(data) <= _MINT_DECIMALS_OFFSET:
+        raise ValueError(
+            f"Account {quote_mint} is only {len(data)} bytes, too short to be a mint"
+        )
+    return data[_MINT_DECIMALS_OFFSET]
 
 
 async def get_bonding_curve_state(
@@ -183,11 +209,14 @@ async def get_bonding_curve_state(
     return BondingCurveState(data)
 
 
-def calculate_bonding_curve_price(curve_state: BondingCurveState) -> float:
+def calculate_bonding_curve_price(
+    curve_state: BondingCurveState, quote_decimals: int
+) -> float:
     """Price one token in the curve's quote asset.
 
     Args:
         curve_state: The parsed curve state
+        quote_decimals: Decimals of the curve's quote mint, read from chain
 
     Returns:
         Price per token, denominated in the quote mint
@@ -201,8 +230,7 @@ def calculate_bonding_curve_price(curve_state: BondingCurveState) -> float:
     ):
         raise ValueError("Invalid reserve state")
 
-    quote_mint = normalize_quote_mint(curve_state.quote_mint)
-    return (curve_state.virtual_quote_reserves / quote_units(quote_mint)) / (
+    return (curve_state.virtual_quote_reserves / 10**quote_decimals) / (
         curve_state.virtual_token_reserves / 10**TOKEN_DECIMALS
     )
 
@@ -217,14 +245,15 @@ async def main() -> None:
         async with AsyncClient(RPC_ENDPOINT) as conn:
             curve_address = Pubkey.from_string(sys.argv[1])
             state = await get_bonding_curve_state(conn, curve_address)
-            price = calculate_bonding_curve_price(state)
-
             quote_mint = normalize_quote_mint(state.quote_mint)
+            quote_decimals = await read_quote_decimals(conn, quote_mint)
+            price = calculate_bonding_curve_price(state, quote_decimals)
+
             symbol = QUOTE_SYMBOLS.get(quote_mint, str(quote_mint))
 
             print("Token price:")
             print(f"  {price:.10f} {symbol}")
-            print(f"\nquote mint:  {quote_mint}")
+            print(f"\nquote mint:  {quote_mint} ({quote_decimals} decimals)")
             print(f"mayhem:      {state.is_mayhem_mode}")
             print(f"cashback:    {state.is_cashback_coin}")
             print(f"complete:    {state.complete}")

@@ -213,25 +213,28 @@ async def sell_token(
 
         # Fetch bonding curve state to calculate price and determine fee recipient
         curve_state = await get_pump_curve_state(client, bonding_curve)
+        quote_mint = pump_v2.normalize_quote_mint(
+            getattr(curve_state, "quote_mint", None)
+        )
+
+        # Resolve the quote mint before pricing. The one read gives both the
+        # token program -- which can be Token-2022, and is for every tokenized
+        # equity pump.fun admits as a quote asset -- and the decimals the price
+        # and the slippage floor below are denominated in. Pricing first and
+        # resolving after floors the sell against a number that is off by a
+        # power of ten.
+        quote_token_program_id = await pump_v2.resolve_quote_token_program(
+            quote_mint, lambda pk: _get_mint_account_info(client, pk)
+        )
+        quote_unit = pump_v2.quote_units(quote_mint)
+
         token_price_sol = calculate_pump_curve_price(curve_state)
         print(f"Price per Token: {token_price_sol:.20f} SOL")
 
         # Minimum payout, in the curve's quote asset raw units.
-        quote_mint = pump_v2.normalize_quote_mint(
-            getattr(curve_state, "quote_mint", None)
-        )
-        quote_unit = pump_v2.quote_units(quote_mint)
         amount = token_balance
         expected_output = float(token_balance_decimal) * float(token_price_sol)
         min_quote_output = max(1, int(expected_output * (1 - slippage) * quote_unit))
-
-        # The quote mint can be Token-2022-owned (verified 2026-09-15 upgrade
-        # note: error 6064 now accepts "SPL Token or Token-2022"), so its
-        # token program must be resolved rather than assumed. Free for WSOL
-        # and USDC (pre-seeded in pump_v2's cache); one RPC call otherwise.
-        quote_token_program_id = await pump_v2.resolve_quote_token_program(
-            quote_mint, lambda pk: _get_mint_account_info(client, pk)
-        )
 
         print(f"Selling {token_balance_decimal} tokens")
         print(f"Quote asset: {quote_mint}")
