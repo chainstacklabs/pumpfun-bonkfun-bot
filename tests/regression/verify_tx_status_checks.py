@@ -33,10 +33,10 @@ from typing import Any
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT / "cookbook"))
+sys.path.insert(0, str(PROJECT_ROOT / "cookbook" / "solana"))
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-import tx_status  # noqa: E402
+import solana_transaction_status as tx_status  # noqa: E402
 
 from core.client import SolanaClient  # noqa: E402
 
@@ -141,7 +141,7 @@ async def check_examples_call_a_status_check() -> None:
     # new example is not.
     exempt = {
         # defines the helper
-        "tx_status.py",
+        "solana_transaction_status.py",
         # stubs confirm_transaction out; never sends a transaction
         "simulate_bot_buy_path.py",
         # uses the bot's SolanaClient wrapper, which folds meta.err into its

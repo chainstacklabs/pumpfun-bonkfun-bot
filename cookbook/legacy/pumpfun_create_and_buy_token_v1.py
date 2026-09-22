@@ -3,11 +3,11 @@
 WARNING: this submits real transactions and spends real funds.
 
 Usage:
-    uv run cookbook/legacy/mint_and_buy.py
+    uv run cookbook/legacy/pumpfun_create_and_buy_token_v1.py
 
 Kept for reference only. pump.fun creates coins with `create_v2` now, which mints
 under Token-2022 and takes the mayhem, cashback, creator-fee and holder-reward
-arguments this instruction has no room for — see `mint_and_buy_v2.py` for the
+arguments this instruction has no room for — see `pumpfun_create_and_buy_token_v2.py` for the
 current path. Legacy `create` still lands on chain, but a coin made this way is
 not the kind of coin the rest of these examples decode.
 
@@ -22,14 +22,14 @@ import sys
 from pathlib import Path
 from typing import Final
 
-# tx_status.py is at the cookbook root; pump_v2.py lives with the current
-# pump.fun trade examples.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions_v2.py lives with the
+# current pump.fun trade examples.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "solana"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pumpfun" / "trade"))
 
 import base58
-import pump_v2
-import tx_status
+import pumpfun_instructions_v2 as pump_v2
+import solana_transaction_status as tx_status
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed

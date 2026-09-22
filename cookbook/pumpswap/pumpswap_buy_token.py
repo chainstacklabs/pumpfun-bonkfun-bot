@@ -38,9 +38,11 @@ from spl.token.instructions import (
     sync_native,
 )
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "solana")
+)
 
-import tx_status  # noqa: E402
+import solana_transaction_status as tx_status  # noqa: E402
 
 load_dotenv()
 

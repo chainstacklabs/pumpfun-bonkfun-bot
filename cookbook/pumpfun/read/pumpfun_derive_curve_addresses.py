@@ -1,7 +1,7 @@
 """Derive a coin's bonding curve and associated bonding curve, offline.
 
 Usage:
-    uv run cookbook/pumpfun/read/compute_associated_bonding_curve.py <MINT>
+    uv run cookbook/pumpfun/read/pumpfun_derive_curve_addresses.py <MINT>
 
 The associated bonding curve is an ordinary ATA, so its address depends on which
 token program owns the mint. Coins created with `create_v2` are Token2022; older
@@ -61,7 +61,7 @@ def main() -> None:
     """Print the curve PDAs for the mint given on the command line."""
     if len(sys.argv) < MIN_ARGC:
         print(
-            "Usage: uv run cookbook/pumpfun/read/compute_associated_bonding_curve.py <MINT>"
+            "Usage: uv run cookbook/pumpfun/read/pumpfun_derive_curve_addresses.py <MINT>"
         )
         return
 

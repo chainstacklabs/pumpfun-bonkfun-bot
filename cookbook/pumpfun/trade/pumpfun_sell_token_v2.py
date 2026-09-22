@@ -3,9 +3,9 @@
 WARNING: this submits a real transaction and spends real funds.
 
 Usage:
-    uv run cookbook/pumpfun/trade/sell_token.py <MINT>
+    uv run cookbook/pumpfun/trade/pumpfun_sell_token_v2.py <MINT>
 
-The mirror of `buy_token.py`. It reads how many tokens you hold, reads the curve
+The mirror of `pumpfun_buy_token_v2.py`. It reads how many tokens you hold, reads the curve
 for a price, and sells the lot with a slippage floor underneath.
 
 Two things to know before you run it:
@@ -23,13 +23,12 @@ import os
 import sys
 from pathlib import Path
 
-# tx_status.py is the shared helper at the cookbook root; pump_v2.py sits
-# beside this file.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+# solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions_v2.py sits beside this file.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "solana"))
 
 import base58
-import pump_v2
-import tx_status
+import pumpfun_instructions_v2 as pump_v2
+import solana_transaction_status as tx_status
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
@@ -45,7 +44,7 @@ from spl.token.instructions import (
     get_associated_token_address,
 )
 
-# Here and later all the discriminators are precalculated. See cookbook/pumpfun/decode/calculate_discriminator.py
+# Here and later all the discriminators are precalculated. See cookbook/solana/anchor_calculate_discriminator.py
 EXPECTED_DISCRIMINATOR = pump_v2.BONDING_CURVE_DISCRIMINATOR
 TOKEN_DECIMALS = 6
 TOKEN_MINT = Pubkey.from_string(

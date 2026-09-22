@@ -1,7 +1,7 @@
 """Decode a bonding curve account's raw bytes into its fields and a price.
 
 Usage:
-    uv run cookbook/pumpfun/decode/decode_from_getaccountinfo.py [curve.json]
+    uv run cookbook/pumpfun/decode/pumpfun_decode_curve_getaccountinfo.py [curve.json]
 
 Falls back to the fixture beside this file. `getAccountInfo` returns base64 bytes
 and nothing else — the layout is yours to know. This walks it field by field:

@@ -3,7 +3,7 @@
 WARNING: this submits real transactions and spends real funds.
 
 Usage:
-    uv run cookbook/pumpfun/trade/mint_and_buy_v2.py
+    uv run cookbook/pumpfun/trade/pumpfun_create_and_buy_token_v2.py
 
 Edit the constants below to change the coin's name, ticker, buy amount and
 whether it opts into mayhem mode or holder rewards.
@@ -13,7 +13,7 @@ pushes a combined create+buy message past Solana's 1232-byte packet limit
 (measured at 1972 bytes). The legacy 18-account `buy` used to fit; making it
 atomic again would need an address lookup table.
 
-`create_token.py` is the create half on its own, and `buy_token.py` the buy half.
+`pumpfun_create_token_v2.py` is the create half on its own, and `pumpfun_buy_token_v2.py` the buy half.
 """
 
 import asyncio
@@ -23,13 +23,12 @@ import sys
 from pathlib import Path
 from typing import Final
 
-# tx_status.py is the shared helper at the cookbook root; pump_v2.py sits
-# beside this file.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+# solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions_v2.py sits beside this file.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "solana"))
 
 import base58
-import pump_v2
-import tx_status
+import pumpfun_instructions_v2 as pump_v2
+import solana_transaction_status as tx_status
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed

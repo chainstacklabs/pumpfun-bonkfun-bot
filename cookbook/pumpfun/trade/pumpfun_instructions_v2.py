@@ -363,7 +363,7 @@ class BondingCurveState:
 
     The account is 125 bytes as created; an extend_account instruction (not
     always in a separate transaction from create_v2 — see
-    cookbook/pumpfun/trade/mint_and_buy_v2.py) can grow it to 151, 256, or any
+    cookbook/pumpfun/trade/pumpfun_create_and_buy_token_v2.py) can grow it to 151, 256, or any
     other length the program allows. The struct below covers the leading
     fields, which are at the same offsets regardless of total length. The
     SOL-named reserve fields were renamed to quote fields when non-SOL quote

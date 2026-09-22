@@ -1,7 +1,7 @@
 """Read one pump.fun bonding curve and print the token price in its quote asset.
 
 Usage:
-    uv run cookbook/pumpfun/read/fetch_price.py <BONDING_CURVE_ADDRESS>
+    uv run cookbook/pumpfun/read/pumpfun_read_price.py <BONDING_CURVE_ADDRESS>
 
 pump.fun coins are not all SOL-paired. The curve carries a `quote_mint`, and the
 quote-side reserves are denominated in that mint's raw units — 1e9 for SOL, 1e6 for
@@ -33,7 +33,7 @@ DEFAULT_QUOTE_MINT: Final[Pubkey] = Pubkey.from_bytes(bytes(32))
 QUOTE_DECIMALS: Final[dict[Pubkey, int]] = {WSOL_MINT: 9, USDC_MINT: 6}
 QUOTE_SYMBOLS: Final[dict[Pubkey, str]] = {WSOL_MINT: "SOL", USDC_MINT: "USDC"}
 
-# Here and later all the discriminators are precalculated. See cookbook/pumpfun/decode/calculate_discriminator.py
+# Here and later all the discriminators are precalculated. See cookbook/solana/anchor_calculate_discriminator.py
 EXPECTED_DISCRIMINATOR: Final[bytes] = struct.pack("<Q", 6966180631402821399)
 
 # Data lengths, excluding the 8-byte discriminator: V2 stops after `creator`, V4
@@ -210,7 +210,7 @@ def calculate_bonding_curve_price(curve_state: BondingCurveState) -> float:
 async def main() -> None:
     """Print the price of the coin behind the bonding curve given on the CLI."""
     if len(sys.argv) < 2:
-        print("Usage: uv run cookbook/pumpfun/read/fetch_price.py <BONDING_CURVE_ADDRESS>")
+        print("Usage: uv run cookbook/pumpfun/read/pumpfun_read_price.py <BONDING_CURVE_ADDRESS>")
         return
 
     try:

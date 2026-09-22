@@ -3,8 +3,8 @@
 WARNING: this submits a real transaction and spends real funds.
 
 Usage:
-    uv run cookbook/pumpfun/trade/manual_buy.py
-    uv run cookbook/pumpfun/trade/manual_buy.py --cu-optimized
+    uv run cookbook/pumpfun/trade/pumpfun_snipe_token_blocksubscribe.py
+    uv run cookbook/pumpfun/trade/pumpfun_snipe_token_blocksubscribe.py --cu-optimized
 
 `--cu-optimized` adds a SetLoadedAccountsDataSizeLimit instruction. A transaction
 may load up to 64 MB of account data by default, which is billed at 16k CU toward
@@ -28,13 +28,12 @@ import struct
 import sys
 from pathlib import Path
 
-# tx_status.py is the shared helper at the cookbook root; pump_v2.py sits
-# beside this file.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+# solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions_v2.py sits beside this file.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "solana"))
 
 import base58
-import pump_v2
-import tx_status
+import pumpfun_instructions_v2 as pump_v2
+import solana_transaction_status as tx_status
 import websockets
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
@@ -51,7 +50,7 @@ from spl.token.instructions import (
     create_idempotent_associated_token_account,
 )
 
-# Here and later all the discriminators are precalculated. See cookbook/pumpfun/decode/calculate_discriminator.py
+# Here and later all the discriminators are precalculated. See cookbook/solana/anchor_calculate_discriminator.py
 EXPECTED_DISCRIMINATOR = pump_v2.BONDING_CURVE_DISCRIMINATOR
 TOKEN_DECIMALS = 6
 
@@ -92,7 +91,7 @@ WEBSOCKET_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
 
 
 # The bonding curve account and the v2 instruction layout live in pump_v2 so
-# every example shares one copy. See cookbook/pump_v2.py.
+# every example shares one copy. See cookbook/pumpfun/trade/pumpfun_instructions_v2.py.
 BondingCurveState = pump_v2.BondingCurveState
 
 

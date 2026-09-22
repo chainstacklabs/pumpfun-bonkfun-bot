@@ -4,11 +4,11 @@ WARNING: this submits a real transaction and spends real funds (transaction
 fees and account rent — no coins are bought).
 
 Usage:
-    uv run cookbook/pumpfun/trade/create_token.py
-    uv run cookbook/pumpfun/trade/create_token.py --name "My Coin" --symbol MINE
-    uv run cookbook/pumpfun/trade/create_token.py --mayhem --holder-reward
+    uv run cookbook/pumpfun/trade/pumpfun_create_token_v2.py
+    uv run cookbook/pumpfun/trade/pumpfun_create_token_v2.py --name "My Coin" --symbol MINE
+    uv run cookbook/pumpfun/trade/pumpfun_create_token_v2.py --mayhem --holder-reward
 
-`mint_and_buy_v2.py` does this and then buys the coin in a second transaction.
+`pumpfun_create_and_buy_token_v2.py` does this and then buys the coin in a second transaction.
 This script is the create half on its own, which is the part worth reading:
 everything about a coin — Token-2022, mayhem mode, holder rewards, the quote
 asset — is fixed here and cannot be changed afterwards.
@@ -33,11 +33,11 @@ import sys
 from pathlib import Path
 from typing import Final
 
-# tx_status.py is a shared helper at the cookbook root.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+# solana_transaction_status.py lives in cookbook/solana/.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "solana"))
 
 import base58
-import tx_status
+import solana_transaction_status as tx_status
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
@@ -290,7 +290,7 @@ async def create(
         print(f"\nSent: https://explorer.solana.com/tx/{signature}")
         await tx_status.confirm_and_assert(client, signature)
         print("Confirmed")
-        print(f"\nBuy it with:  uv run cookbook/pumpfun/trade/buy_token.py {mint}")
+        print(f"\nBuy it with:  uv run cookbook/pumpfun/trade/pumpfun_buy_token_v2.py {mint}")
 
 
 def main() -> None:

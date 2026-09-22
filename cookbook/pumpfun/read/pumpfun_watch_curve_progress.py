@@ -1,7 +1,7 @@
 """Track a pump.fun bonding curve's progress toward graduation.
 
 Usage:
-    uv run cookbook/pumpfun/read/poll_bonding_curve_progress.py <MINT>
+    uv run cookbook/pumpfun/read/pumpfun_watch_curve_progress.py <MINT>
 
 Polls the curve every POLL_INTERVAL seconds. Progress is measured against
 `Global.initial_real_token_reserves` read from chain rather than a hardcoded
@@ -244,8 +244,8 @@ async def track_curve(token_mint: str) -> None:
 if __name__ == "__main__":
     if len(sys.argv) < _MIN_ARGC:
         print(
-            "Usage: uv run cookbook/bonding-curve-progress/"
-            "poll_bonding_curve_progress.py <MINT>"
+            "Usage: uv run cookbook/pumpfun/read/"
+            "pumpfun_watch_curve_progress.py <MINT>"
         )
         sys.exit(1)
     asyncio.run(track_curve(sys.argv[1]))

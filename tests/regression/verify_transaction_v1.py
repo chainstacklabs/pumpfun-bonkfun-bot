@@ -82,7 +82,7 @@ MIN_SUPPORTED_VERSION = 1
 SCAN_ROOTS = ("src", "cookbook", "tools")
 # Two spellings reach the same RPC field: the raw JSON key used by hand-built
 # request bodies, and solana-py's snake_case keyword argument. A scan that knows
-# only the first one misses tx_status.py, which every example confirms through.
+# only the first one misses solana_transaction_status.py, which every example confirms through.
 MSV_PATTERN = re.compile(
     r"[\"']maxSupportedTransactionVersion[\"']\s*:\s*(\d+)"
     r"|max_supported_transaction_version\s*=\s*(\d+)"

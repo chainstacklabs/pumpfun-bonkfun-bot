@@ -1,7 +1,7 @@
 """Decode the pump.fun instructions in a getTransaction response.
 
 Usage:
-    uv run cookbook/pumpfun/decode/decode_from_gettransaction.py [tx.json]
+    uv run cookbook/pumpfun/decode/pumpfun_decode_transaction_gettransaction.py [tx.json]
 
 Two things this example exists to show, because both are easy to get wrong:
 

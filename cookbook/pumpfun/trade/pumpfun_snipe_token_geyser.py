@@ -3,14 +3,14 @@
 WARNING: this submits a real transaction and spends real funds.
 
 Usage:
-    uv run cookbook/pumpfun/trade/manual_buy_geyser.py
+    uv run cookbook/pumpfun/trade/pumpfun_snipe_token_geyser.py
 
-The same snipe as `manual_buy.py`, detected over a Yellowstone Geyser stream
+The same snipe as `pumpfun_snipe_token_blocksubscribe.py`, detected over a Yellowstone Geyser stream
 instead of a WebSocket subscription. Geyser is the fastest of the four detection
 methods and the only one that needs a separate endpoint — set `GEYSER_ENDPOINT`,
 `GEYSER_API_TOKEN` and `GEYSER_AUTH_TYPE` in `.env`.
 
-Buying an existing coin, without the listener, is `buy_token.py`.
+Buying an existing coin, without the listener, is `pumpfun_buy_token_v2.py`.
 """
 
 import asyncio
@@ -20,15 +20,15 @@ import struct
 import sys
 from pathlib import Path
 
-# tx_status.py is the shared helper at the cookbook root; the generated geyser
-# stubs live at src/geyser/generated off the repo root.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+# solana_transaction_status.py lives in cookbook/solana/; the generated geyser stubs live at
+# src/geyser/generated off the repo root.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "solana"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 import base58
 import grpc
-import pump_v2
-import tx_status
+import pumpfun_instructions_v2 as pump_v2
+import solana_transaction_status as tx_status
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
@@ -47,7 +47,7 @@ from src.geyser.generated import (
     geyser_pb2_grpc,
 )
 
-# Here and later all the discriminators are precalculated. See cookbook/pumpfun/decode/calculate_discriminator.py
+# Here and later all the discriminators are precalculated. See cookbook/solana/anchor_calculate_discriminator.py
 EXPECTED_DISCRIMINATOR = pump_v2.BONDING_CURVE_DISCRIMINATOR
 TOKEN_DECIMALS = 6
 

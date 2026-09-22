@@ -16,9 +16,9 @@ Solana trading bot for pump.fun and letsbonk.fun. Snipes newly created tokens an
 ```
 src/                 bot source — this dir is the import root (see below)
 cookbook/            standalone scripts; each runs on its own, no bot config
-  tx_status.py       the one cross-platform helper (see below)
+  solana/            chain-level basics + solana_transaction_status.py
   pumpfun/{listen,read,trade,graduation,decode}/
-    trade/pump_v2.py   the buy_v2/sell_v2 layouts, beside their callers
+    trade/pumpfun_instructions_v2.py   buy_v2/sell_v2 layouts, by their callers
   pumpswap/  letsbonk/  legacy/
 tests/regression/    one offline verifier per fixed bug; imports src/
 tools/               dev harness — simulations, live round trips, benchmarks
@@ -34,12 +34,14 @@ scripts are deliberately self-contained and don't import from `src` at all.
 Don't "fix" one by rewiring it to import the bot — that is what `tools/` is for.
 
 Two helpers are exempt, because both are things that must never drift between
-copies. `cookbook/tx_status.py` (the `meta.err` check) sits at the cookbook root
-because all four platforms use it, and a script in a subdirectory puts that root
-on `sys.path` before importing it. `cookbook/pumpfun/trade/pump_v2.py` (the
-buy_v2/sell_v2 account layouts) sits with its only callers, so they import it as
-a plain sibling; `legacy/` reaches into that directory for it. The geyser
-scripts add the repo root too, for `src.geyser.generated`.
+copies. `cookbook/solana/solana_transaction_status.py` (the `meta.err` check) is
+used by every platform, so it sits with the other chain-level scripts.
+`cookbook/pumpfun/trade/pumpfun_instructions_v2.py` (the buy_v2/sell_v2 account
+layouts) sits with its only callers, who import it as a plain sibling; `legacy/`
+reaches into that directory for it. Both are imported under a short alias
+(`as pump_v2`, `as tx_status`) so call sites stay readable. A script that needs
+one adds that directory to `sys.path` first; the geyser scripts add the repo root
+too, for `src.geyser.generated`.
 
 Dependency layers, low to high — don't introduce an upward import:
 
@@ -60,26 +62,38 @@ platform-agnostic (`Universal*`); anything platform-shaped belongs under
 
 - **One script, one action.** A newcomer should be able to open a single file and
   see the whole thing. Duplication across scripts is the accepted cost of that —
-  don't factor shared helpers out of them. `pump_v2.py` and `tx_status.py` are the
-  two deliberate exceptions and the list is closed.
+  don't factor shared helpers out of them. `pumpfun_instructions_v2.py` and
+  `solana_transaction_status.py` are the two deliberate exceptions and the list is
+  closed. Buy and sell never share a file; `pumpfun_create_and_buy_token_v2.py` is
+  the sole two-action script, because that pair is what people ask for.
 - **Every script runs on its own**: `uv run cookbook/<path>`, reading `.env`. No
   bot config, no import from `src/`. Anything that needs the bot goes in `tools/`;
   anything that asserts a past bug stays fixed goes in `tests/regression/`.
 - **Directories are single lowercase words** grouped by what you are doing —
   `listen`, `read`, `trade`, `graduation`, `decode` — under a platform directory.
-- **Files are snake_case, verb first**: `fetch_price.py`, `buy_token.py`,
-  `decode_from_*.py`, `extract_blocksubscribe_transactions.py`.
+- **Files are `<protocol>_<verb>_<noun>[_<variant>].py`**, all snake_case:
+  `pumpfun_buy_token_v2.py`, `pumpfun_listen_tokens_geyser.py`,
+  `letsbonk_sell_token_exact_out.py`, `solana_read_balances.py`. The protocol
+  repeats what the directory already says, on purpose — a basename is what shows
+  up in an editor tab, a grep hit or a docs link.
+  - protocol: `pumpfun`, `pumpswap`, `letsbonk`, `solana`, `anchor`
+  - verb: `buy`, `sell`, `create`, `snipe`, `listen`, `watch`, `read`, `derive`,
+    `decode`, `check`, `capture`, `find`
+  - noun: `token`, `price`, `curve`, `pool`, `balances`, `transaction`, `migrations`
+  - variant: instruction version (`v1`, `v2`, `exact_in`, `exact_out`) or transport
+  - the two non-runnable helpers take no verb, because they do nothing:
+    `pumpfun_instructions_v2.py`, `solana_transaction_status.py`
 - **RPC and service names are lowercased into one token**, never camelCase:
   `blocksubscribe`, `logsubscribe`, `programsubscribe`, `getaccountinfo`,
-  `gettransaction`, `pumpportal`. So `decode_from_gettransaction.py`, not
-  `decode_from_getTransaction.py`.
-- Fixtures are `raw_<what>_from_<method>.json` next to the script that reads them,
-  under the same rules.
+  `gettransaction`, `pumpportal`. So `pumpfun_decode_transaction_gettransaction.py`,
+  not `..._getTransaction.py`.
+- **Anything not specific to a launchpad belongs under `solana/`**, not `pumpfun/`.
+- Fixtures keep their own form, `raw_<what>_from_<method>.json`, next to the script
+  that reads them.
 - **A script that spends says so on the first line of its docstring**, and the
-  cookbook README marks it. Prefix conventions are not a safety signal: `manual_*`
-  (including the `pumpswap/` and `letsbonk/` ones), `mint_and_buy*`, `buy_token`,
-  `sell_token` and `create_token` all submit real transactions. Read the docstring
-  before running anything.
+  cookbook README marks it. The name is not a safety signal: every `*_buy_*`,
+  `*_sell_*`, `*_create_*` and `*_snipe_*` script submits real transactions. Read
+  the docstring before running anything.
 
 ## Commands
 
@@ -264,8 +278,8 @@ offline and only visible after a couple of minutes against mainnet.
   `limit` is a *scan* budget rather than a result count — a page can legally
   return zero accounts and a non-null `paginationKey`, so one filtered answer over
   the pump program costs ~1000 sequential pages. Reach for a filtered
-  subscription instead; see the two `cookbook/pumpfun/graduation/get_graduating_tokens*.py`
-  examples.
+  subscription instead; see the two
+  `cookbook/pumpfun/graduation/pumpfun_watch_graduating_*.py` examples.
 - **Filtered `programSubscribe` on the pump program is the portable way to find
   curves by state.** `dataSize` + `memcmp` are applied server-side, and it is
   accepted even by the public `api.mainnet-beta.solana.com`. `memcmp` only matches

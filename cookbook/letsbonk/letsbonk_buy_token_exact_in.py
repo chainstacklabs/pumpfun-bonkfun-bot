@@ -1,16 +1,16 @@
 """
-Manual Sell Exact In Example for Raydium LaunchLab
+Manual Buy Exact In Example for Raydium LaunchLab
 
-This script demonstrates how to sell tokens using the sell_exact_in instruction
+This script demonstrates how to buy tokens using the buy_exact_in instruction
 from the Raydium LaunchLab program. It follows the IDL structure.
 
 Key features:
-- Uses sell_exact_in instruction
+- Uses buy_exact_in instruction
 - Implements proper account ordering as per IDL
 - Includes slippage protection with minimum_amount_out
 - Handles WSOL wrapping/unwrapping automatically
-- Follows the exact transaction structure from the buy_exact_in example
-- User configurable token amount and slippage
+- Follows the exact transaction structure from the Solscan example
+- User configurable SOL amount and slippage
 - Uses idempotent ATA creation
 """
 
@@ -22,7 +22,7 @@ from urllib.parse import urlsplit
 
 import base58
 from dotenv import load_dotenv
-from idl_parser import load_idl_parser
+from letsbonk_idl_parser import load_idl_parser
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
 from solana.rpc.types import TxOpts
@@ -34,9 +34,11 @@ from solders.pubkey import Pubkey
 from solders.system_program import CreateAccountWithSeedParams, create_account_with_seed
 from solders.transaction import VersionedTransaction
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "solana")
+)
 
-import tx_status  # noqa: E402
+import solana_transaction_status as tx_status  # noqa: E402
 
 # Initialize IDL parser for Raydium LaunchLab with verbose mode for debugging
 IDL_PARSER = load_idl_parser("idl/raydium_launchlab_idl.json", verbose=True)
@@ -54,9 +56,7 @@ PRIVATE_KEY = base58.b58decode(os.environ.get("SOLANA_PRIVATE_KEY"))
 PAYER = Keypair.from_bytes(PRIVATE_KEY)
 
 # User configurable parameters
-TOKEN_AMOUNT_TO_SELL = int(
-    os.environ.get("TOKEN_AMOUNT", "1000000")
-)  # Amount of tokens to sell (in base units)
+SOL_AMOUNT_TO_SPEND = float(os.environ.get("SOL_AMOUNT", "0.001"))
 SLIPPAGE_TOLERANCE = float(os.environ.get("SLIPPAGE", "0.25"))
 
 # Transaction parameters
@@ -89,8 +89,8 @@ SYSTEM_RENT_PROGRAM_ID = Pubkey.from_string(
     "SysvarRent111111111111111111111111111111111"
 )
 
-# Instruction discriminator for sell_exact_in (from IDL)
-SELL_EXACT_IN_DISCRIMINATOR = bytes([149, 39, 222, 155, 211, 124, 152, 26])
+# Instruction discriminator for buy_exact_in (from IDL)
+BUY_EXACT_IN_DISCRIMINATOR = bytes([250, 234, 13, 123, 213, 156, 19, 236])
 
 # Compute budget settings
 COMPUTE_UNIT_LIMIT = 150_000
@@ -410,15 +410,14 @@ def calculate_minimum_amount_out_from_pool_state(
     Calculate the minimum amount out based on pool state data and slippage tolerance.
 
     Uses the actual pool reserves to calculate expected output using constant product formula.
-    This is for selling base tokens to get quote tokens (WSOL).
 
     Args:
         pool_state_data: Decoded pool state data containing reserves
-        amount_in: Amount of base tokens being sold
+        amount_in: Amount of quote tokens being swapped in (in lamports)
         slippage_tolerance: Slippage tolerance as a decimal (0.25 = 25%)
 
     Returns:
-        Minimum amount of quote tokens (WSOL) to receive
+        Minimum amount of base tokens to receive
     """
     try:
         # Extract pool reserves from decoded state
@@ -434,25 +433,21 @@ def calculate_minimum_amount_out_from_pool_state(
         print(f"  Real Quote: {real_quote:,}")
 
         # Use virtual reserves for bonding curve calculation
-        # For selling base tokens: amount_out = (amount_in * virtual_quote) / (virtual_base + amount_in)
+        # This follows the constant product AMM formula: x * y = k
+        # amount_out = (amount_in * virtual_base) / (virtual_quote + amount_in)
 
         # Calculate expected output using constant product formula
-        # Note: The program deducts fees before calculating output, so we need to account for that
-        # Trade fee is typically around 0.25% - 1%
-        # For safety, we'll calculate without fee adjustment and let slippage handle it
-        numerator = amount_in * virtual_quote
-        denominator = virtual_base + amount_in
+        numerator = amount_in * virtual_base
+        denominator = virtual_quote + amount_in
         expected_output = numerator // denominator
 
-        # Apply slippage tolerance (be more conservative for small amounts)
+        # Apply slippage tolerance
         minimum_with_slippage = int(expected_output * (1 - slippage_tolerance))
 
-        print(f"Amount in: {amount_in:,} tokens")
+        print(f"Amount in: {amount_in:,} lamports")
+        print(f"Expected output: {expected_output:,} tokens")
         print(
-            f"Expected output: {expected_output:,} lamports ({expected_output / LAMPORTS_PER_SOL:.6f} SOL)"
-        )
-        print(
-            f"Minimum with {slippage_tolerance * 100}% slippage: {minimum_with_slippage:,} lamports ({minimum_with_slippage / LAMPORTS_PER_SOL:.6f} SOL)"
+            f"Minimum with {slippage_tolerance * 100}% slippage: {minimum_with_slippage:,} tokens"
         )
 
         return minimum_with_slippage
@@ -462,28 +457,32 @@ def calculate_minimum_amount_out_from_pool_state(
         return None
 
 
-async def sell_exact_in(
+async def buy_exact_in(
     client: AsyncClient,
     base_token_mint: Pubkey,
-    amount_in_tokens: int,
+    amount_in_sol: float,
     slippage_tolerance: float,
 ) -> str | None:
     """
-    Execute a sell_exact_in transaction on Raydium LaunchLab.
+    Execute a buy_exact_in transaction on Raydium LaunchLab.
 
-    This function implements the exact transaction flow similar to buy_exact_in:
+    This function implements the exact transaction flow from the Solscan example:
     1. SetComputeUnitPrice
     2. SetComputeUnitLimit
-    3. Create WSOL account with seed
-    4. Initialize WSOL account
-    5. Execute sell_exact_in instruction
-    6. Close WSOL account
-    7. Optional: Transfer remaining SOL (as seen in the example)
+    3. Create Associated Token Account for base token (idempotent)
+    4. Create WSOL account with seed
+    5. Initialize WSOL account
+    6. Execute buy_exact_in instruction (15 main accounts + 3 remaining accounts)
+    7. Close WSOL account
+
+    The buy_exact_in instruction requires 18 total accounts:
+    - 15 main accounts (as per IDL)
+    - 3 remaining accounts: System Program, Creator Fee Vault, Platform Fee Vault
 
     Args:
         client: Solana RPC client
-        base_token_mint: Address of the token to sell
-        amount_in_tokens: Amount of tokens to sell
+        base_token_mint: Address of the token to buy
+        amount_in_sol: Amount of SOL to spend
         slippage_tolerance: Slippage tolerance as decimal
 
     Returns:
@@ -531,23 +530,21 @@ async def sell_exact_in(
         print(f"Platform fee vault: {platform_fee_vault}")
 
         # Calculate amounts using pool state data
+        amount_in = int(amount_in_sol * LAMPORTS_PER_SOL)
         minimum_amount_out = calculate_minimum_amount_out_from_pool_state(
-            pool_state_data, amount_in_tokens, slippage_tolerance
+            pool_state_data, amount_in, slippage_tolerance
         )
 
-        if minimum_amount_out is None or minimum_amount_out == 0:
-            print("Failed to calculate minimum amount out or amount is too small")
-            return None
+        print(f"Amount in: {amount_in} lamports ({amount_in_sol} SOL)")
+        print(f"Minimum amount out: {minimum_amount_out}")
 
-        print(f"Amount in: {amount_in_tokens:,} tokens")
-        print(
-            f"Minimum amount out: {minimum_amount_out:,} lamports ({minimum_amount_out / LAMPORTS_PER_SOL:.6f} SOL)"
-        )
-
-        # Get user's base token account (where tokens will be debited from)
+        # Step 1: Create Associated Token Account for base token (idempotent)
         user_base_token = get_associated_token_address(PAYER.pubkey(), base_token_mint)
+        create_ata_ix = create_associated_token_account_idempotent_instruction(
+            PAYER.pubkey(), PAYER.pubkey(), base_token_mint
+        )
 
-        # Step 1: Create WSOL account with seed (where WSOL will be received)
+        # Step 2: Create WSOL account with seed
         import hashlib
         import time
 
@@ -555,17 +552,18 @@ async def sell_exact_in(
         seed_data = f"{int(time.time())}{PAYER.pubkey()!s}"
         wsol_seed = hashlib.sha256(seed_data.encode()).hexdigest()[:32]
 
-        # Calculate required lamports (minimal amount for account creation)
+        # Calculate required lamports (amount + small buffer for account creation)
         account_creation_lamports = 2_039_280  # Standard account creation cost
+        total_lamports = amount_in + account_creation_lamports
 
         user_quote_token, create_wsol_ix, init_wsol_ix = create_wsol_account_with_seed(
-            PAYER.pubkey(), wsol_seed, account_creation_lamports
+            PAYER.pubkey(), wsol_seed, total_lamports
         )
 
         print(f"User base token account: {user_base_token}")
         print(f"User quote token account: {user_quote_token}")
 
-        # Step 2: Build the sell_exact_in instruction
+        # Step 3: Build the buy_exact_in instruction
         accounts = [
             AccountMeta(
                 pubkey=PAYER.pubkey(), is_signer=True, is_writable=False
@@ -584,16 +582,16 @@ async def sell_exact_in(
             ),  # pool_state
             AccountMeta(
                 pubkey=user_base_token, is_signer=False, is_writable=True
-            ),  # user_base_token (tokens being sold)
+            ),  # user_base_token
             AccountMeta(
                 pubkey=user_quote_token, is_signer=False, is_writable=True
-            ),  # user_quote_token (WSOL received)
+            ),  # user_quote_token
             AccountMeta(
                 pubkey=base_vault, is_signer=False, is_writable=True
-            ),  # base_vault (receives tokens)
+            ),  # base_vault
             AccountMeta(
                 pubkey=quote_vault, is_signer=False, is_writable=True
-            ),  # quote_vault (sends WSOL)
+            ),  # quote_vault
             AccountMeta(
                 pubkey=base_token_mint, is_signer=False, is_writable=False
             ),  # base_token_mint
@@ -628,34 +626,36 @@ async def sell_exact_in(
 
         # Instruction data: discriminator + amount_in + minimum_amount_out + share_fee_rate
         instruction_data = (
-            SELL_EXACT_IN_DISCRIMINATOR
-            + struct.pack("<Q", amount_in_tokens)  # amount_in (u64)
+            BUY_EXACT_IN_DISCRIMINATOR
+            + struct.pack("<Q", amount_in)  # amount_in (u64)
             + struct.pack("<Q", minimum_amount_out)  # minimum_amount_out (u64)
             + struct.pack("<Q", SHARE_FEE_RATE)  # share_fee_rate (u64): 0
         )
 
-        sell_exact_in_ix = Instruction(
+        buy_exact_in_ix = Instruction(
             program_id=RAYDIUM_LAUNCHLAB_PROGRAM_ID,
             data=instruction_data,
             accounts=accounts,
         )
 
-        # Step 3: Create close WSOL account instruction
+        # Step 4: Create close WSOL account instruction
         close_wsol_ix = create_close_account_instruction(
             user_quote_token, PAYER.pubkey(), PAYER.pubkey()
         )
 
-        # Step 4: Build complete transaction
+        # Step 5: Build complete transaction
         instructions = [
             set_compute_unit_price(COMPUTE_UNIT_PRICE),
             set_compute_unit_limit(COMPUTE_UNIT_LIMIT),
-            # Instruction #3: Create WSOL account with seed
+            # Instruction #3: Create Associated Token Account for base token (idempotent)
+            create_ata_ix,
+            # Instruction #4: Create WSOL account with seed
             create_wsol_ix,
-            # Instruction #4: Initialize WSOL account
+            # Instruction #5: Initialize WSOL account
             init_wsol_ix,
-            # Instruction #5: Execute sell_exact_in
-            sell_exact_in_ix,
-            # Instruction #6: Close WSOL account
+            # Instruction #6: Execute buy_exact_in
+            buy_exact_in_ix,
+            # Instruction #7: Close WSOL account
             close_wsol_ix,
         ]
 
@@ -699,7 +699,7 @@ async def sell_exact_in(
         return tx_signature
 
     except Exception as e:
-        print(f"Error executing sell_exact_in: {e}")
+        print(f"Error executing buy_exact_in: {e}")
         import traceback
 
         traceback.print_exc()
@@ -708,13 +708,13 @@ async def sell_exact_in(
 
 async def main():
     """
-    Main function to execute the sell_exact_in example.
+    Main function to execute the buy_exact_in example.
 
     Takes configuration from environment variables or uses defaults.
     """
     try:
-        print(f"Starting sell_exact_in for token: {TOKEN_MINT_ADDRESS}")
-        print(f"Amount to sell: {TOKEN_AMOUNT_TO_SELL:,} tokens")
+        print(f"Starting buy_exact_in for token: {TOKEN_MINT_ADDRESS}")
+        print(f"Amount to spend: {SOL_AMOUNT_TO_SPEND} SOL")
         print(f"Slippage tolerance: {SLIPPAGE_TOLERANCE * 100}%")
         # Endpoint carries an API key. hostname, not netloc: netloc keeps any
         # user:pass@ userinfo, which would leak the credential anyway.
@@ -726,32 +726,14 @@ async def main():
             balance_sol = balance_resp.value / LAMPORTS_PER_SOL
             print(f"Wallet balance: {balance_sol:.6f} SOL")
 
-            # Check if user has the base token account and sufficient balance
-            user_base_token = get_associated_token_address(
-                PAYER.pubkey(), TOKEN_MINT_ADDRESS
-            )
-            try:
-                token_account_info = await client.get_token_account_balance(
-                    user_base_token
-                )
-                if token_account_info.value:
-                    token_balance = int(token_account_info.value.amount)
-                    print(f"Token balance: {token_balance:,} tokens")
+            if (
+                balance_sol < SOL_AMOUNT_TO_SPEND + 0.001
+            ):  # Include some buffer for fees
+                print("Insufficient SOL balance!")
+                return
 
-                    if token_balance < TOKEN_AMOUNT_TO_SELL:
-                        print(
-                            f"Insufficient token balance! You have {token_balance:,} tokens but want to sell {TOKEN_AMOUNT_TO_SELL:,}"
-                        )
-                        return
-                else:
-                    print("Token account not found or has no balance!")
-                    return
-            except Exception as e:
-                print(f"Error checking token balance: {e}")
-                print("Continuing anyway...")
-
-            tx_signature = await sell_exact_in(
-                client, TOKEN_MINT_ADDRESS, TOKEN_AMOUNT_TO_SELL, SLIPPAGE_TOLERANCE
+            tx_signature = await buy_exact_in(
+                client, TOKEN_MINT_ADDRESS, SOL_AMOUNT_TO_SPEND, SLIPPAGE_TOLERANCE
             )
 
             if tx_signature:

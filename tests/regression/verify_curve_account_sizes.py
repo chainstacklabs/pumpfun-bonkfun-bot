@@ -116,8 +116,8 @@ def check_no_datasize_filter() -> bool:
     """
     ok = True
     needles = {
-        "cookbook/pumpfun/graduation/get_graduating_tokens.py": ('"dataSize":'),
-        "cookbook/pumpfun/graduation/get_graduating_tokens_geyser.py": (".datasize ="),
+        "cookbook/pumpfun/graduation/pumpfun_watch_graduating_programsubscribe.py": ('"dataSize":'),
+        "cookbook/pumpfun/graduation/pumpfun_watch_graduating_geyser.py": (".datasize ="),
     }
     for rel, needle in needles.items():
         text = Path(rel).read_text()

@@ -3,13 +3,13 @@
 WARNING: this submits a real transaction and spends real funds.
 
 Usage:
-    uv run cookbook/pumpfun/trade/buy_token.py <MINT>
-    uv run cookbook/pumpfun/trade/buy_token.py <MINT> 0.001
-    uv run cookbook/pumpfun/trade/buy_token.py <MINT> 0.001 --slippage 0.3
-    uv run cookbook/pumpfun/trade/buy_token.py <MINT> --dry-run   # spends nothing
+    uv run cookbook/pumpfun/trade/pumpfun_buy_token_v2.py <MINT>
+    uv run cookbook/pumpfun/trade/pumpfun_buy_token_v2.py <MINT> 0.001
+    uv run cookbook/pumpfun/trade/pumpfun_buy_token_v2.py <MINT> 0.001 --slippage 0.3
+    uv run cookbook/pumpfun/trade/pumpfun_buy_token_v2.py <MINT> --dry-run   # spends nothing
 
 This is the smallest complete buy: you hand it a mint, it derives everything
-else. `manual_buy.py` is the same trade wrapped in a listener that waits for a
+else. `pumpfun_snipe_token_blocksubscribe.py` is the same trade wrapped in a listener that waits for a
 brand-new coin — start here if you already know what you want to buy.
 
 Amounts are in the curve's own quote asset. Most coins are SOL-paired, but a
@@ -23,13 +23,12 @@ import os
 import sys
 from pathlib import Path
 
-# tx_status.py is the shared helper at the cookbook root; pump_v2.py sits
-# beside this file.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+# solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions_v2.py sits beside this file.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "solana"))
 
 import base58
-import pump_v2
-import tx_status
+import pumpfun_instructions_v2 as pump_v2
+import solana_transaction_status as tx_status
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed

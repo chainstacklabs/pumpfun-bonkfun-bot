@@ -1,7 +1,7 @@
 """Save live pump.fun transactions to disk, to build a decoder fixture.
 
 Usage:
-    uv run cookbook/pumpfun/listen/extract_blocksubscribe_transactions.py
+    uv run cookbook/pumpfun/listen/pumpfun_capture_transactions_blocksubscribe.py
 
 Subscribes to blocks mentioning the pump.fun program and writes each matching
 transaction to its own JSON file. That is where the `raw_*.json` fixtures under

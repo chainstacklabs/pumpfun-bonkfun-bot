@@ -1,7 +1,7 @@
 """Compute the 8-byte Anchor discriminator for an instruction or account.
 
 Usage:
-    uv run cookbook/pumpfun/decode/calculate_discriminator.py
+    uv run cookbook/solana/anchor_calculate_discriminator.py
 
 Edit `instruction_name` below. Anchor prefixes every instruction's data and every
 account's data with the first 8 bytes of `sha256("<namespace>:<name>")` — the

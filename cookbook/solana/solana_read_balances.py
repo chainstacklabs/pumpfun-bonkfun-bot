@@ -1,8 +1,8 @@
 """Print the wallet's SOL balance and every token it holds.
 
 Usage:
-    uv run cookbook/pumpfun/read/get_balances.py              # the wallet from .env
-    uv run cookbook/pumpfun/read/get_balances.py <PUBKEY>     # any wallet
+    uv run cookbook/solana/solana_read_balances.py              # the wallet from .env
+    uv run cookbook/solana/solana_read_balances.py <PUBKEY>     # any wallet
 
 Run this before your first buy and after your first sell — most "the trade did
 nothing" reports turn out to be a wallet that never had the SOL, or a sell that

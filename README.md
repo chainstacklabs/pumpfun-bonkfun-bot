@@ -153,10 +153,11 @@ create one, watch for new ones, decode a transaction. Each runs on its own with
 | Directory | What is in it |
 |---|---|
 | `cookbook/pumpfun/listen/` | One script per detection method — `logs`, `blocks`, `geyser`, `pumpportal` — plus wallet watching |
-| `cookbook/pumpfun/read/` | Price, curve state, graduation progress, address derivation, balances, transaction status |
+| `cookbook/pumpfun/read/` | Price, curve state, graduation progress, address derivation |
 | `cookbook/pumpfun/trade/` | Buy, sell, create, and the two sniping variants |
 | `cookbook/pumpfun/graduation/` | Coins approaching graduation, and migrations to PumpSwap |
-| `cookbook/pumpfun/decode/` | Account data, transactions, and Anchor discriminators, against committed fixtures |
+| `cookbook/pumpfun/decode/` | Account data and transactions, against committed fixtures |
+| `cookbook/solana/` | Chain-level basics: balances, transaction status, Anchor discriminators |
 | `cookbook/pumpswap/` | Pool discovery and manual buy/sell on the AMM |
 | `cookbook/letsbonk/` | Exact-in / exact-out buys and sells on letsbonk.fun |
 | `cookbook/legacy/` | Instructions pump.fun has moved on from |
@@ -164,15 +165,17 @@ create one, watch for new ones, decode a transaction. Each runs on its own with
 The quickest way in:
 
 ```bash
-uv run cookbook/pumpfun/read/get_balances.py                 # what you hold
-uv run cookbook/pumpfun/read/fetch_price.py <CURVE>          # what it costs
-uv run cookbook/pumpfun/trade/buy_token.py <MINT> --dry-run  # the buy, simulated
+uv run cookbook/solana/solana_read_balances.py               # what you hold
+uv run cookbook/pumpfun/read/pumpfun_read_price.py <CURVE>   # what it costs
+uv run cookbook/pumpfun/trade/pumpfun_buy_token_v2.py <MINT> --dry-run
 ```
 
-Scripts that spend real funds say so on the first line of their docstring. The
-`decode_from_*.py` scripts fall back to the fixtures beside them (`raw_*.json`),
-which are recaptured from mainnet rather than hand-edited — a stale fixture makes a
-working decoder look broken and a broken one look fine.
+Filenames follow `<protocol>_<verb>_<noun>[_<variant>].py`, so a name tells you which
+chain, what it does and which instruction version before you open it. Scripts that
+spend real funds say so on the first line of their docstring. The decode scripts fall
+back to the fixtures beside them (`raw_*.json`), which are recaptured from mainnet
+rather than hand-edited — a stale fixture makes a working decoder look broken and a
+broken one look fine.
 
 Related docs: [Listening to pump.fun migrations](https://docs.chainstack.com/docs/solana-listening-to-pumpfun-migrations-to-raydium) · [Sniping with only logsSubscribe](https://docs.chainstack.com/docs/solana-listening-to-pumpfun-token-mint-using-only-logssubscribe)
 
@@ -208,7 +211,7 @@ uv run tools/live_listener_matrix.py --yes   # real round trip per listener — 
 
 Every node provider has its own limits — method availability, requests per second, plan-specific caps. Consult your provider's docs before running the bot, and don't expect public RPC nodes to hold up.
 
-One case worth knowing about: `getProgramAccounts` over the whole pump.fun program is no longer served by anyone. That program owns more than 10 million accounts, so providers reject the request or time out no matter which filters you pass. Use a filtered subscription instead — `cookbook/pumpfun/graduation/get_graduating_tokens.py` shows the pattern.
+One case worth knowing about: `getProgramAccounts` over the whole pump.fun program is no longer served by anyone. That program owns more than 10 million accounts, so providers reject the request or time out no matter which filters you pass. Use a filtered subscription instead — `cookbook/pumpfun/graduation/pumpfun_watch_graduating_programsubscribe.py` shows the pattern.
 
 For Chainstack, the numbers you need are in the [throughput guidelines](https://docs.chainstack.com/docs/limits), kept up to date.
 

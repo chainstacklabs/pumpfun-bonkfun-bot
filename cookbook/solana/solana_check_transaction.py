@@ -1,7 +1,7 @@
 """Tell whether a transaction succeeded, reverted, or is not visible yet.
 
 Usage:
-    uv run cookbook/pumpfun/read/check_tx_status.py <SIGNATURE>
+    uv run cookbook/solana/solana_check_transaction.py <SIGNATURE>
 
 "Confirmed" and "succeeded" are different questions, and conflating them is the
 single most expensive mistake in a trading script. `confirmTransaction` answers

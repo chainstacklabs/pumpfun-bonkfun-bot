@@ -1,11 +1,11 @@
 """Decode the pump.fun instructions in a blockSubscribe transaction.
 
 Usage:
-    uv run cookbook/pumpfun/decode/decode_from_blocksubscribe.py [tx.json]
+    uv run cookbook/pumpfun/decode/pumpfun_decode_transaction_blocksubscribe.py [tx.json]
 
 Falls back to the fixture beside this file. A `blockSubscribe` frame delivers
 transactions in the same shape `getTransaction` does, so the decoding is the
-same as `decode_from_gettransaction.py` — what differs is where the bytes came
+same as `pumpfun_decode_transaction_gettransaction.py` — what differs is where the bytes came
 from, and that a block frame carries many transactions at once.
 
 Instructions are matched by their 8-byte discriminator against `idl/pump_fun_idl.json`,

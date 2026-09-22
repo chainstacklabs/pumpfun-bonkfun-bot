@@ -387,7 +387,7 @@ def check_quote_config() -> list[str]:
 
 
 def check_examples_toolkit() -> list[str]:
-    """Check cookbook/pumpfun/trade/pump_v2.py agrees with the IDL and with src/.
+    """Check cookbook/pumpfun/trade/pumpfun_instructions_v2.py agrees with the IDL and with src/.
 
     The examples carry their own standalone copy of the v2 layout so they stay
     readable without importing src/. That copy is exactly the kind of thing that
@@ -396,7 +396,7 @@ def check_examples_toolkit() -> list[str]:
     Returns:
         List of problems (empty if the toolkit agrees)
     """
-    import pump_v2
+    import pumpfun_instructions_v2 as pump_v2
 
     from platforms.pumpfun.address_provider import PumpFunAddresses
 
