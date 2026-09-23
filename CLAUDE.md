@@ -6,7 +6,14 @@ Solana trading bot for pump.fun and letsbonk.fun. Snipes newly created tokens an
 
 ## Ground rules
 
-- **Never run a bot with real funds** to test a change. Use `cookbook/`, or the simulation scripts below, which move no funds.
+- **Running a bot with real funds is how a change gets verified** — but only with
+  explicit approval for that session, and only after saying what will run and what
+  it costs. Iterate with `cookbook/` and the simulation scripts below, which move
+  no funds; they exercise the builders and listeners but skip `bot_runner`, config
+  loading, the trader loop, the exit strategy and cleanup, so they cannot close the
+  question on their own. A verification run covers every mode the change reaches —
+  each listener, `extreme_fast_mode` on *and* off, each `exit_strategy` — and ends
+  with the wallet holding SOL only.
 - **Never** touch `.env` or print its contents. `SOLANA_PRIVATE_KEY` is a live key.
 - Don't commit anything from `logs/`.
 - Test with a cookbook script before touching `src/`.
@@ -574,3 +581,7 @@ interface pump.fun maintains.
   means updating `PLATFORM_LISTENER_COMPATIBILITY` there too.
 - Bots with `separate_process: true` run in their own process. One log file per
   bot instance.
+- `pump_bot` runs **every** `bots/*.yaml`, and three of the four committed configs
+  ship `enabled: false`. With all of them disabled it prints nothing and exits 0,
+  which is indistinguishable from a clean run — check that
+  `logs/<name>_<timestamp>.log` appeared before reading anything into a run.
