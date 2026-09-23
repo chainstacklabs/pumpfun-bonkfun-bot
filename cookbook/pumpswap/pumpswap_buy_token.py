@@ -63,7 +63,6 @@ DEFAULT_SOL_AMOUNT = 0.001
 DEFAULT_SLIPPAGE = 0.3  # 30% - maximum acceptable price movement during trade
 
 # Token configuration
-TOKEN_DECIMALS = 6  # Standard for most pump.fun tokens
 
 # Program instruction discriminators (first 8 bytes identify the instruction)
 BUY_DISCRIMINATOR = bytes.fromhex("66063d1201daebea")
@@ -305,6 +304,9 @@ def find_fee_config() -> Pubkey:
     return derived_address
 
 
+DEFAULT_COIN_CREATOR = Pubkey.default()
+
+
 def find_pool_v2(base_mint: Pubkey) -> Pubkey:
     """Derive the PDA for the pool-v2 account (per-base-mint), required as the
     last "pre-upgrade" account on every pump-swap buy/sell."""
@@ -454,23 +456,49 @@ async def calculate_token_pool_price(
 # ============================================================================
 
 
-async def get_token_program_id(client: AsyncClient, mint_address: Pubkey) -> Pubkey:
-    """Determines if a mint uses TokenProgram or Token2022Program."""
+# The `decimals` byte sits at this offset in both SPL Token and Token-2022 mints;
+# Token-2022 appends its extensions after the base struct and never moves it.
+MINT_DECIMALS_OFFSET = 44
+
+
+async def get_mint_info(client: AsyncClient, mint_address: Pubkey) -> tuple[Pubkey, int]:
+    """Read a mint's token program and decimals from one account fetch.
+
+    Both come off the same `getAccountInfo`, so resolving the decimals costs
+    nothing extra — and guessing them is not survivable. Every coin that
+    graduated from a pump.fun bonding curve has 6, which is why a hardcoded 6
+    held for so long, but a pool that was never a bonding-curve coin routinely
+    has 9. Getting it wrong by a factor of 1000 scales the quote and the
+    slippage floor together, so the sell reverts `ExceededSlippage` (6004)
+    instead of merely mispricing. Observed 2026-09-23: `Left: 2990`,
+    `Right: 1500000`.
+
+    Args:
+        client: Connected RPC client
+        mint_address: The mint to inspect
+
+    Returns:
+        (token program that owns the mint, the mint's decimals)
+
+    Raises:
+        ValueError: If the mint is missing or owned by an unknown program
+    """
     mint_info = await client.get_account_info(mint_address)
 
     if not mint_info.value:
         raise ValueError(f"Could not fetch mint info for {mint_address}")
 
     owner = mint_info.value.owner
-
-    if owner == SYSTEM_TOKEN_PROGRAM:
-        return SYSTEM_TOKEN_PROGRAM
-    elif owner == TOKEN_2022_PROGRAM:
-        return TOKEN_2022_PROGRAM
-    else:
+    if owner not in (SYSTEM_TOKEN_PROGRAM, TOKEN_2022_PROGRAM):
         raise ValueError(
             f"Mint account {mint_address} is owned by an unknown program: {owner}"
         )
+
+    data = mint_info.value.data
+    if len(data) <= MINT_DECIMALS_OFFSET:
+        raise ValueError(f"Mint account {mint_address} is too short to hold decimals")
+
+    return owner, data[MINT_DECIMALS_OFFSET]
 
 
 async def buy_pump_swap(
@@ -484,6 +512,7 @@ async def buy_pump_swap(
     pool_quote_token_account: Pubkey,
     coin_creator_vault_authority: Pubkey,
     coin_creator_vault_ata: Pubkey,
+    coin_creator: Pubkey,
     sol_amount_to_spend: float,
     slippage: float = 0.25,
 ) -> str | None:
@@ -516,7 +545,7 @@ async def buy_pump_swap(
     Returns:
         Transaction signature if successful, None otherwise
     """
-    token_program_id = await get_token_program_id(client, base_mint)
+    token_program_id, base_decimals = await get_mint_info(client, base_mint)
     token_price_sol = await calculate_token_pool_price(
         client,
         pool_base_token_account,
@@ -526,10 +555,10 @@ async def buy_pump_swap(
     print(f"Token price in SOL: {token_price_sol:.10f} SOL")
 
     # Calculate expected token amount and maximum SOL we're willing to spend
-    base_amount_out = int((sol_amount_to_spend / token_price_sol) * 10**TOKEN_DECIMALS)
+    base_amount_out = int((sol_amount_to_spend / token_price_sol) * 10**base_decimals)
     max_sol_input = int((sol_amount_to_spend * (1 + slippage)) * LAMPORTS_PER_SOL)
 
-    print(f"Buying {base_amount_out / (10**TOKEN_DECIMALS):.10f} tokens")
+    print(f"Buying {base_amount_out / (10**base_decimals):.10f} tokens")
     print(f"Maximum SOL input: {max_sol_input / LAMPORTS_PER_SOL:.10f} SOL")
 
     # Derive volume accumulator PDAs for incentive tracking
@@ -600,13 +629,26 @@ async def buy_pump_swap(
                 is_writable=True,
             )
         )
-    # pool-v2 PDA (per-base-mint) — the last "pre-upgrade" account.
-    accounts.append(
-        AccountMeta(pubkey=find_pool_v2(base_mint), is_signer=False, is_writable=False)
-    )
+    # pool-v2 belongs only to a *canonical* pool — one that graduated from a
+    # pump.fun bonding curve. `Pool.coin_creator` is the discriminator: it is set
+    # for canonical pools and left at `Pubkey::default()` for every other pool
+    # (upstream PUMP_SWAP_CREATOR_FEE_README.md). The two buyback accounts below
+    # are required either way, and they are read *positionally* from the end, so
+    # on a non-canonical pool sending pool-v2 shifts the pair by one and the
+    # program rejects the pool-v2 PDA with `BuybackFeeRecipientNotAuthorized`
+    # (6053). Confirmed 2026-09-23 against live trades on both kinds of pool, and
+    # against BREAKING_FEE_RECIPIENT.md, which qualifies the "after pool-v2"
+    # ordering with "for coins that graduate from bonding curve".
+    if coin_creator != DEFAULT_COIN_CREATOR:
+        accounts.append(
+            AccountMeta(
+                pubkey=find_pool_v2(base_mint), is_signer=False, is_writable=False
+            )
+        )
     # 2 accounts required by the 2026-04-28 pump-swap upgrade, appended AFTER
     # pool-v2: breaking-fee recipient (readonly) + its quote-mint ATA (mutable).
-    # Buy counts: 26 non-cashback / 27 cashback.
+    # Buy counts on a canonical pool: 26 non-cashback / 27 cashback. One fewer
+    # on a non-canonical pool, which carries no pool-v2: 25 / 26.
     # Doc: github.com/pump-fun/pump-public-docs/blob/main/docs/BREAKING_FEE_RECIPIENT.md
     breaking_fee_recipient = random.choice(BREAKING_FEE_RECIPIENTS)
     breaking_fee_quote_ata = get_associated_token_address(
@@ -744,7 +786,7 @@ async def buy(token_mint: Pubkey, sol_amount: float, slippage: float) -> None:
         market_data = await get_market_data(client, market_address)
 
         # Determine token program ID for the base mint
-        token_program_id = await get_token_program_id(client, token_mint)
+        token_program_id, _ = await get_mint_info(client, token_mint)
 
         # Step 3: Derive PDAs needed for the transaction
         coin_creator_vault_authority = find_coin_creator_vault(
@@ -766,6 +808,7 @@ async def buy(token_mint: Pubkey, sol_amount: float, slippage: float) -> None:
             Pubkey.from_string(market_data["pool_quote_token_account"]),
             coin_creator_vault_authority,
             coin_creator_vault_ata,
+            Pubkey.from_string(market_data["coin_creator"]),
             sol_amount,
             slippage,
         )

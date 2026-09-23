@@ -206,6 +206,7 @@ name individual scripts to run a subset.
 | `verify_cookbook_arguments.py` | every cookbook script takes its input as a command-line argument |
 | `verify_documentation_links.py` | no known-dead URL is back; `--live` fetches every one and fails on 4xx/5xx |
 | `verify_no_rpc_credentials_logged.py` | credentials are masked in every log record, including a URL passed as a non-`str` argument, and every site that installs a root handler installs the redaction first |
+| `verify_pumpswap_account_layout.py` | pump-amm's `pool-v2` account is gated on `coin_creator`, the buyback pair stays last, and base-token decimals are resolved rather than assumed; `--live` re-reads the authorized recipients from `GlobalConfig` |
 
 Two mainnet simulations, also no funds moved:
 
@@ -468,6 +469,26 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   work only while the high half is zero.
 - pump-amm has **no** `buy_v2`/`sell_v2`. The AMM instruction names are
   unchanged; only the pool layout and quoting moved.
+- **`Pool.coin_creator` tells you whether a pool is canonical**, i.e. graduated
+  from a pump.fun bonding curve. It is `Pubkey::default()` on every other pool.
+  Two things follow, and they hid each other until 2026-09-23:
+  - `pool-v2` is sent **only for a canonical pool**. The buyback fee recipient
+    and its quote ATA are always the last two accounts and are read
+    positionally, so adding `pool-v2` on a non-canonical pool shifts them and
+    the program rejects the `pool-v2` PDA with `BuybackFeeRecipientNotAuthorized`
+    (6053). Upstream's BREAKING_FEE_RECIPIENT.md says the pair goes after
+    `pool-v2` "for coins that graduate from bonding curve", and separately that
+    the pair is needed either way — the qualifier is the whole rule. Account
+    counts: buy 26/27 canonical, 25/26 not; sell 24/26 canonical, 23/25 not.
+  - **Do not assume 6 base-token decimals.** Every graduated coin has 6, but
+    non-canonical pools routinely carry 9, and a factor of 1000 scales the quote
+    and the slippage floor together, so a sell reverts `ExceededSlippage` (6004)
+    rather than just mispricing. Resolve the mint's owner and its decimals from
+    the same `getAccountInfo`, as `get_mint_info` does.
+- The vendored `pump_swap_idl.json` **under-reports these accounts** and is
+  byte-identical to upstream (checked 2026-09-23), so it cannot be the
+  reference: it lists 23 for `buy` against 25-26 on chain, and 21 for `sell`
+  against 23-26.
 
 ### Coin creation
 
