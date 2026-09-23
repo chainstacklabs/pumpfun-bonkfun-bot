@@ -14,15 +14,25 @@ Two things this example exists to show, because both are easy to get wrong:
    trades reach the program as a CPI from an aggregator or router, so a decoder
    that only walks the top level sees almost nothing — in a sample of 40 consecutive
    pump.fun transactions there was 1 top-level pump instruction against 8 inner ones.
+
+3. Accept whichever encoding the response was captured in. `getTransaction`
+   answers in `jsonParsed`, `json` or `base64` depending on what was asked for,
+   and the three look nothing alike: `json` gives account *indices* where
+   `jsonParsed` gives addresses, and `base64` gives the raw envelope and nothing
+   else. `normalize_result` folds all three into the jsonParsed shape, so the
+   rest of the file only ever sees one layout. The fixtures next to this script
+   cover all three on purpose.
 """
 
 import argparse
+import base64
 import hashlib
 import json
 import struct
 from collections.abc import Iterator
 
 import base58
+from solders.transaction import VersionedTransaction
 
 PUMP_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 DEFAULT_TX = "cookbook/pumpfun/decode/raw_buy_tx_from_gettransaction.json"
@@ -184,6 +194,118 @@ DECODERS = {
 }
 
 
+def _account_keys(result: dict) -> list[str]:
+    """Return every account the transaction can index, in index order.
+
+    An instruction's account indices run past `message.accountKeys` into the
+    address lookup tables, and the writable ones come before the readonly ones.
+    Ignoring them makes a v0 transaction index out of range. getTransaction
+    reports them as `meta.loadedAddresses.{writable,readonly}`; geyser splits
+    the same two lists into `meta.loadedWritableAddresses` and
+    `meta.loadedReadonlyAddresses`, so both spellings are read here.
+
+    Args:
+        result: A getTransaction result, jsonParsed or json encoded
+
+    Returns:
+        Static keys followed by the writable then readonly loaded addresses
+    """
+    keys = result["transaction"]["message"]["accountKeys"]
+    static = [k["pubkey"] if isinstance(k, dict) else k for k in keys]
+    meta = result.get("meta") or {}
+    loaded = meta.get("loadedAddresses") or {}
+    return [
+        *static,
+        *(loaded.get("writable") or meta.get("loadedWritableAddresses") or []),
+        *(loaded.get("readonly") or meta.get("loadedReadonlyAddresses") or []),
+    ]
+
+
+def _resolve_indices(instructions: list[dict], keys: list[str]) -> list[dict]:
+    """Rewrite json-encoded instructions into the jsonParsed shape.
+
+    Args:
+        instructions: Instructions carrying `programIdIndex` and index accounts
+        keys: Account addresses in index order, from `_account_keys`
+
+    Returns:
+        The same instructions, with `programId` and address accounts
+    """
+    return [
+        {
+            **ix,
+            "programId": keys[ix["programIdIndex"]],
+            "accounts": [keys[i] for i in ix.get("accounts", [])],
+        }
+        if "programIdIndex" in ix
+        else ix
+        for ix in instructions
+    ]
+
+
+def normalize_result(payload: dict) -> dict:
+    """Fold any getTransaction response into the jsonParsed shape.
+
+    Handles the JSON-RPC envelope or a bare result, and all three encodings:
+    `jsonParsed` passes through, `json` has its account indices resolved, and
+    `base64` is deserialized. solders can only read a base64 **v1** transaction
+    from 0.29 on; earlier versions raise `ValueError: io error: unexpected end
+    of file`.
+
+    Args:
+        payload: A parsed getTransaction response, with or without the envelope
+
+    Returns:
+        A result whose instructions all carry `programId` and address accounts
+    """
+    result = payload["result"] if "result" in payload else payload
+    transaction = result["transaction"]
+
+    # base64: ["<encoded>", "base64"], and the envelope is all there is.
+    if isinstance(transaction, list):
+        decoded = VersionedTransaction.from_bytes(base64.b64decode(transaction[0]))
+        message = decoded.message
+        result = {
+            **result,
+            "transaction": {
+                "message": {
+                    "accountKeys": [str(key) for key in message.account_keys],
+                    "recentBlockhash": str(message.recent_blockhash),
+                    "instructions": [
+                        {
+                            "programIdIndex": ix.program_id_index,
+                            "accounts": list(ix.accounts),
+                            "data": base58.b58encode(bytes(ix.data)).decode(),
+                        }
+                        for ix in message.instructions
+                    ],
+                },
+                "signatures": [str(sig) for sig in decoded.signatures],
+            },
+        }
+
+    keys = _account_keys(result)
+    message = result["transaction"]["message"]
+    meta = result.get("meta") or {}
+    return {
+        **result,
+        "transaction": {
+            **result["transaction"],
+            "message": {
+                **message,
+                "instructions": _resolve_indices(message.get("instructions", []), keys),
+            },
+        },
+        "meta": {
+            **meta,
+            "innerInstructions": [
+                {**group, "instructions": _resolve_indices(group["instructions"], keys)}
+                for group in meta.get("innerInstructions") or []
+            ],
+        },
+    }
+
+
 def iter_pump_instructions(result: dict) -> Iterator[tuple[str, dict]]:
     """Yield every pump.fun instruction in a getTransaction result.
 
@@ -267,7 +389,7 @@ def main() -> None:
     events = build_event_index(idl)
 
     with open(tx_file_path) as f:
-        result = json.load(f)["result"]
+        result = normalize_result(json.load(f))
 
     found = 0
     for location, ix in iter_pump_instructions(result):
@@ -283,9 +405,10 @@ def main() -> None:
     message = result["transaction"]["message"]
     print("\nTransaction Information:")
     print(f"Blockhash: {message['recentBlockhash']}")
-    print(f"Fee payer: {message['accountKeys'][0]['pubkey']}")
+    print(f"Fee payer: {_account_keys(result)[0]}")
     print(f"Signature: {result['transaction']['signatures'][0]}")
     print(f"Slot: {result.get('slot')}")
+    print(f"Transaction version: {result.get('version', 'legacy')}")
 
 
 if __name__ == "__main__":

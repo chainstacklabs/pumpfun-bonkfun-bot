@@ -98,7 +98,7 @@ from typing import Any, Final
 import grpc
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
-from solana.rpc.types import TokenAccountOpts
+from solana.rpc.core import TokenAccountOpts
 from solders.pubkey import Pubkey
 from solders.signature import Signature
 

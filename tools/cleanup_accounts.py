@@ -5,7 +5,8 @@ import sys
 
 from dotenv import load_dotenv
 from solders.pubkey import Pubkey
-from spl.token.instructions import BurnParams, CloseAccountParams, burn, close_account
+from spl.token.instructions import burn, close_account
+from spl.token.models import BurnParams, CloseAccountParams
 
 from core.client import SolanaClient
 from core.pubkeys import SystemAddresses

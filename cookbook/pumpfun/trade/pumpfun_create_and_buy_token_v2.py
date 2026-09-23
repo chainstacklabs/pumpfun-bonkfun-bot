@@ -33,13 +33,13 @@ import solana_transaction_status as tx_status
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
-from solana.rpc.types import TxOpts
+from solana.rpc.core import TxOptsModel
 from solders.compute_budget import set_compute_unit_limit, set_compute_unit_price
 from solders.instruction import AccountMeta, Instruction
 from solders.keypair import Keypair
-from solders.message import Message
+from solders.message import MessageV0
 from solders.pubkey import Pubkey
-from solders.transaction import Transaction
+from solders.transaction import VersionedTransaction
 from spl.token.instructions import (
     create_idempotent_associated_token_account,
     get_associated_token_address,
@@ -513,34 +513,35 @@ async def run(  # noqa: PLR0913
         ]
 
         recent_blockhash = await client.get_latest_blockhash()
-        message = Message(instructions, payer.pubkey())
-        transaction = Transaction(
-            [payer, mint_keypair], message, recent_blockhash.value.blockhash
+        message = MessageV0.try_compile(
+            payer.pubkey(), instructions, [], recent_blockhash.value.blockhash
         )
+        transaction = VersionedTransaction(message, [payer, mint_keypair])
 
         print("\nSending create transaction...")
-        opts = TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
+        opts = TxOptsModel(skip_preflight=True, preflight_commitment=Confirmed)
 
         try:
             response = await client.send_transaction(transaction, opts)
             tx_hash = response.value
             print(f"Create sent: https://solscan.io/tx/{tx_hash}")
             print("Waiting for confirmation...")
-            await client.confirm_transaction(tx_hash, commitment="confirmed")
+            await client.confirm_transaction(tx_hash, commitment=Confirmed)
             await tx_status.assert_transaction_succeeded(client, tx_hash)
             print("Create confirmed!")
 
             buy_blockhash = await client.get_latest_blockhash()
-            buy_tx = Transaction(
+            buy_tx = VersionedTransaction(
+                MessageV0.try_compile(
+                    payer.pubkey(), buy_instructions, [], buy_blockhash.value.blockhash
+                ),
                 [payer],
-                Message(buy_instructions, payer.pubkey()),
-                buy_blockhash.value.blockhash,
             )
             print("\nSending buy transaction (buy_v2)...")
             buy_response = await client.send_transaction(buy_tx, opts)
             buy_hash = buy_response.value
             print(f"Buy sent: https://solscan.io/tx/{buy_hash}")
-            await client.confirm_transaction(buy_hash, commitment="confirmed")
+            await client.confirm_transaction(buy_hash, commitment=Confirmed)
             await tx_status.assert_transaction_succeeded(client, buy_hash)
             print("Buy confirmed!")
 

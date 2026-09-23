@@ -33,13 +33,13 @@ import solana_transaction_status as tx_status
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
-from solana.rpc.types import TxOpts
+from solana.rpc.core import TxOptsModel
 from solders.account import Account
 from solders.compute_budget import set_compute_unit_price
 from solders.keypair import Keypair
-from solders.message import Message
+from solders.message import MessageV0
 from solders.pubkey import Pubkey
-from solders.transaction import Transaction
+from solders.transaction import VersionedTransaction
 from spl.token.instructions import (
     create_idempotent_associated_token_account,
 )
@@ -336,19 +336,20 @@ async def buy_token(
                 )
             )
         instructions.append(buy_ix)
-        msg = Message(instructions, payer.pubkey())
         recent_blockhash = await client.get_latest_blockhash()
-        opts = TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
+        # The blockhash is fixed for every attempt, so the transaction is built
+        # once: each retry resubmits identical bytes.
+        transaction = VersionedTransaction(
+            MessageV0.try_compile(
+                payer.pubkey(), instructions, [], recent_blockhash.value.blockhash
+            ),
+            [payer],
+        )
+        opts = TxOptsModel(skip_preflight=True, preflight_commitment=Confirmed)
 
         print("Simulating transaction...")
         try:
-            sim_result = await client.simulate_transaction(
-                Transaction(
-                    [payer],
-                    msg,
-                    recent_blockhash.value.blockhash,
-                ),
-            )
+            sim_result = await client.simulate_transaction(transaction)
             print(f"Simulation result: {sim_result}")
             if sim_result.value.err:
                 print(f"Simulation error: {sim_result.value.err}")
@@ -357,23 +358,17 @@ async def buy_token(
 
         for attempt in range(max_retries):
             try:
-                tx_buy = await client.send_transaction(
-                    Transaction(
-                        [payer],
-                        msg,
-                        recent_blockhash.value.blockhash,
-                    ),
-                    opts=opts,
-                )
+                tx_buy = await client.send_transaction(transaction, opts=opts)
                 tx_hash = tx_buy.value
                 print(f"Transaction sent: https://explorer.solana.com/tx/{tx_hash}")
                 await tx_status.confirm_and_assert(client, tx_hash)
                 print("Transaction confirmed")
                 return  # Success, exit the function
             except tx_status.TransactionRevertedError as e:
-                # The signature is already on chain and reverted. The message and
-                # blockhash below are fixed, so a retry would resubmit identical
-                # bytes and revert identically — stop instead of burning attempts.
+                # The signature is already on chain and reverted. The
+                # transaction above is fixed, so a retry would resubmit
+                # identical bytes and revert identically — stop instead of
+                # burning attempts.
                 print(f"Transaction reverted on-chain, not retrying: {e}")
                 return
             except Exception as e:

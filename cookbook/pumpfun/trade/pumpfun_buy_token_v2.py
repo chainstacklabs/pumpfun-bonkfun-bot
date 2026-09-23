@@ -32,13 +32,13 @@ import solana_transaction_status as tx_status
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
-from solana.rpc.types import TxOpts
+from solana.rpc.core import TxOptsModel
 from solders.account import Account
 from solders.compute_budget import set_compute_unit_price
 from solders.keypair import Keypair
-from solders.message import Message
+from solders.message import MessageV0
 from solders.pubkey import Pubkey
-from solders.transaction import Transaction
+from solders.transaction import VersionedTransaction
 from spl.token.instructions import create_idempotent_associated_token_account
 
 load_dotenv()
@@ -185,8 +185,8 @@ async def buy(
         )
 
         blockhash = (await client.get_latest_blockhash()).value.blockhash
-        transaction = Transaction(
-            [payer], Message(instructions, payer.pubkey()), blockhash
+        transaction = VersionedTransaction(
+            MessageV0.try_compile(payer.pubkey(), instructions, [], blockhash), [payer]
         )
 
         if dry_run:
@@ -198,7 +198,7 @@ async def buy(
         signature = (
             await client.send_transaction(
                 transaction,
-                opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed),
+                opts=TxOptsModel(skip_preflight=True, preflight_commitment=Confirmed),
             )
         ).value
 
