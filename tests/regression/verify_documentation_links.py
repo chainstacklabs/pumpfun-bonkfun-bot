@@ -34,9 +34,10 @@ EXTRA_FILES = ("README.md", "CLAUDE.md")
 
 URL = re.compile(r"https?://[^\s'\"()<>\]`,]+")
 
-# Hosts that are not meant to resolve. The offline verifiers point a stub client
-# at unroutable addresses on purpose, and example.com is the domain RFC 2606
-# reserves for exactly the placeholder metadata URI a test coin is created with.
+# Hosts that are not meant to resolve, matched on the host and any subdomain of
+# it. The offline verifiers point a stub client at unroutable addresses on
+# purpose, and example.com is the domain RFC 2606 reserves for exactly the
+# placeholder metadata URI a test coin is created with.
 STUB_HOSTS = {
     "127.0.0.1",
     "dummy",
@@ -101,7 +102,7 @@ def is_checkable(url: str) -> bool:
     if "{" in url:  # f-string template, e.g. an explorer link
         return False
     host = urlparse(url).hostname or ""
-    return host not in STUB_HOSTS
+    return not any(host == stub or host.endswith(f".{stub}") for stub in STUB_HOSTS)
 
 
 def check_urls_well_formed(found: dict[str, list[str]]) -> None:
