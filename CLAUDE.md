@@ -6,7 +6,14 @@ Solana trading bot for pump.fun and letsbonk.fun. Snipes newly created tokens an
 
 ## Ground rules
 
-- **Never run a bot with real funds** to test a change. Use `cookbook/`, or the simulation scripts below, which move no funds.
+- **Running a bot with real funds is how a change gets verified** — but only with
+  explicit approval for that session, and only after saying what will run and what
+  it costs. Iterate with `cookbook/` and the simulation scripts below, which move
+  no funds; they exercise the builders and listeners but skip `bot_runner`, config
+  loading, the trader loop, the exit strategy and cleanup, so they cannot close the
+  question on their own. A verification run covers every mode the change reaches —
+  each listener, `extreme_fast_mode` on *and* off, each `exit_strategy` — and ends
+  with the wallet holding SOL only.
 - **Never** touch `.env` or print its contents. `SOLANA_PRIVATE_KEY` is a live key.
 - Don't commit anything from `logs/`.
 - Test with a cookbook script before touching `src/`.
@@ -126,7 +133,8 @@ Lint and format **the files you touched**, not the whole tree:
 uv run ruff check --fix <paths> && uv run ruff format <paths>
 ```
 
-A bare `uv run ruff check` reports ~1660 pre-existing errors across the repo.
+A bare `uv run ruff check` reports ~1710 pre-existing errors across the repo
+(ruff 0.16.8; 0.12.4 counted ~1680, the rules moved, not the code).
 That is the known baseline, not something your change caused — don't try to fix
 it wholesale, and don't read it as a failing build. Just don't add new ones in
 the files you edit.
@@ -146,6 +154,28 @@ is protoc — needed only to regenerate the `geyser_pb2` stubs in
 `sys.path` and importing `src.geyser.generated`. Don't add a second copy under
 `cookbook/` — the last one drifted out of sync with the protos.
 
+The committed stubs are protobuf gencode **6.31.1** running against runtime
+7.36.2, which `ValidateProtobufRuntimeVersion` still accepts. Regenerating is
+not a plain `protoc` run: the committed files import each other absolutely
+(`from geyser.generated.solana_storage_pb2 import *`), which the compiler does
+not emit on its own, so the output needs rewriting. Verified live under
+grpcio 1.84 / protobuf 7.36.2 on 2026-09-23.
+
+Where the Solana libraries live, since solana-py 0.40 moved most of them
+(upgraded 2026-09-23 from solders 0.26 / solana 0.36.6):
+
+- `TxOpts` is **`TxOptsModel`**, and it, `MemcmpOpts` and `TokenAccountOpts` are
+  in `solana.rpc.core`, not `solana.rpc.types`.
+- spl-token's `*Params` (`BurnParams`, `CloseAccountParams`, `SyncNativeParams`,
+  …) are in `spl.token.models`, not `spl.token.instructions`, which still holds
+  the instruction builders.
+- All of those are **pydantic models now**, so they are keyword-only and they
+  validate: `MemcmpOpts(bytes=...)` wants the base58 **str** a Pubkey's `str()`
+  already gives, and raw `bytes` raises `ValidationError`. Nothing in this class
+  of break shows up offline — an import sweep passes and the call fails against
+  mainnet.
+- A bare `commitment="processed"` string still works; `Commitment` is a str enum.
+
 ### Verifying a change
 
 Every fix here ships with an offline verifier under `tests/regression/`. Each
@@ -159,7 +189,7 @@ name individual scripts to run a subset.
 | `verify_v2_account_layout.py` | buy_v2/sell_v2 account layouts, PDA/ATA derivations, encoding — against `idl/pump_fun_idl.json` |
 | `verify_curve_account_sizes.py` | 125/151/256-byte curves all decode, and nothing filters on account length |
 | `verify_create_v2_optional_args.py` | omitted trailing option-typed `create_v2` args decode as unset; mandatory args still fail |
-| `verify_transaction_v1.py` | every reader asks `maxSupportedTransactionVersion: 1`, a v1 `create_v2` is detected without decoding its envelope, and no cookbook/tools listener detects by opening the envelope |
+| `verify_transaction_v1.py` | every reader asks `maxSupportedTransactionVersion: 1`, a v1 `create_v2` is detected from its logs alone with the envelope made unreadable, the envelope decode still works as the fallback, and no cookbook/tools listener detects by opening the envelope |
 | `verify_block_null_guard.py` | a `blockSubscribe` frame with `value.block: null` is skipped, not logged as an error |
 | `verify_listener_cancellation.py` | a cancelled WebSocket listener stops, even when `websockets` reports cancellation as `AssertionError` |
 | `verify_pumpportal_buy_path.py` | curve derived from the mint, unreadable curve skips the buy, curve+mint read in one slot-consistent batch |
@@ -175,6 +205,7 @@ name individual scripts to run a subset.
 | `verify_quote_decimals_resolved.py` | no trade path prices a coin before resolving its quote mint's decimals |
 | `verify_cookbook_arguments.py` | every cookbook script takes its input as a command-line argument |
 | `verify_documentation_links.py` | no known-dead URL is back; `--live` fetches every one and fails on 4xx/5xx |
+| `verify_no_rpc_credentials_logged.py` | credentials are masked in every log record, including a URL passed as a non-`str` argument, and every site that installs a root handler installs the redaction first |
 
 Two mainnet simulations, also no funds moved:
 
@@ -199,19 +230,17 @@ The reasoning behind each lives in the verifier named beside it.
   `blockSubscribe` for `0` does not skip the v1 transactions in a block, it nulls
   `value.block` for the entire notification — indistinguishable from a skipped
   slot, and a near-total outage of the blocks listener. Send `1` everywhere.
-- solders cannot deserialize a v1 transaction until **0.29**, and a listener
-  should not depend on that either way: route on `meta.logMessages`, which the
-  RPC has already decoded and which reads the same for every version, and keep
-  the byte decode as a fallback. Measured across versions on 2026-09-22 with the
-  committed v1 fixture: 0.26, 0.27.1 and 0.28 all raise `ValueError: io error:
-  unexpected end of file`; 0.29 decodes it.
-- **Upgrading to solders 0.29 is a solana-py migration, not a bump.** It needs
-  `solana>=0.40`, which moved `TxOpts`, `MemcmpOpts` and `TokenAccountOpts` out
-  of `solana.rpc.types` (`TxOpts` is now `TxOptsModel` in `solana.rpc.core`) —
-  22 files here import them, including the trade path. Tried and reverted:
-  16 of 19 verifiers failed on the import alone. Route on logs instead.
-- The bot still **sends** legacy transactions. Everything above is about reading
-  other people's, so the v1 cutover changed nothing on the trade path.
+- **A listener routes on `meta.logMessages`, never on the envelope decode.**
+  The RPC has already decoded the envelope by the time it emits the logs, and
+  they read the same for every transaction version; the byte decode is the
+  fallback. The repo now runs solders 0.29, which *does* read a v1 envelope
+  (0.26, 0.27.1 and 0.28 all raise `ValueError: io error: unexpected end of
+  file` on the committed v1 fixture, measured 2026-09-22) — that does not make
+  the log route redundant, because the next version byte will be unreadable in
+  its turn. `verify_transaction_v1.py` pins both routes separately.
+- The bot **sends** v0 transactions (`MessageV0.try_compile` +
+  `VersionedTransaction`, no lookup tables), as of the 2026-09-23 dependency
+  upgrade. Nothing else builds a legacy `Message`.
 - `post_rpc` must catch `asyncio.TimeoutError` alongside `aiohttp.ClientError` —
   aiohttp raises the former on a request timeout, it is not a `ClientError`, and
   `str()` on it is empty, so the caller logs a blank reason.
@@ -219,6 +248,14 @@ The reasoning behind each lives in the verifier named beside it.
   behaviour) bounds wall time. Don't wrap a lookup in `asyncio.timeout` instead —
   cutting off an in-flight `getTransaction` and returning None is the "can't see
   it, so call it failed" conflation #206 removed.
+- **The endpoints carry their API key in the URL, so any log line holding one
+  is a leak.** `install_secret_redaction` (`utils/logger.py`) masks the value at
+  log-record creation and every entry point calls it before attaching a handler.
+  Silencing the HTTP clients by name is a convenience on top, not the control:
+  `tools/cleanup_accounts.py` silenced `httpx` and `httpcore` and leaked anyway
+  once solana-py 0.40 switched to httpx2. Redact the **rendered** message, not
+  `record.msg` plus the string arguments — httpx2 passes its URL as a `URL`
+  object, so a type check skips the one argument that matters.
 - `build_and_send_transaction` returns a solders `Signature`, not a `str`.
   Normalize at the boundary: a `Signature` is neither JSON serializable nor
   sliceable, and solana-py's `confirm_transaction` rejects a `str`.
@@ -284,8 +321,9 @@ offline and only visible after a couple of minutes against mainnet.
   `except TimeoutError` or `except json.JSONDecodeError` is fine to swallow —
   those are per-message, not per-connection.
 - **Never gate a listener's dispatch on decoding the transaction envelope.**
-  The envelope is the one part of a transaction whose format changes under you —
-  solders cannot read a v1 one at all. `meta.logMessages` is already decoded by
+  The envelope is the one part of a transaction whose format changes under you,
+  and the installed solders is only ever one version behind that.
+  `meta.logMessages` is already decoded by
   the RPC and is version-agnostic, so route on it and keep the byte decode as a
   fallback. See the Invariants above.
 - **Resolve v0 lookup-table accounts before indexing them.** An instruction's
@@ -543,3 +581,7 @@ interface pump.fun maintains.
   means updating `PLATFORM_LISTENER_COMPATIBILITY` there too.
 - Bots with `separate_process: true` run in their own process. One log file per
   bot instance.
+- `pump_bot` runs **every** `bots/*.yaml`, and three of the four committed configs
+  ship `enabled: false`. With all of them disabled it prints nothing and exits 0,
+  which is indistinguishable from a clean run — check that
+  `logs/<name>_<timestamp>.log` appeared before reading anything into a run.

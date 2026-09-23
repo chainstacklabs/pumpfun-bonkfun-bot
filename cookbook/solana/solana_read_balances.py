@@ -26,7 +26,7 @@ import os
 import base58
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
-from solana.rpc.types import TokenAccountOpts
+from solana.rpc.core import TokenAccountOpts
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 

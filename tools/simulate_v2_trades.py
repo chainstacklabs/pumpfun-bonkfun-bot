@@ -28,9 +28,9 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from dotenv import load_dotenv  # noqa: E402
 from solders.compute_budget import set_compute_unit_limit  # noqa: E402
-from solders.message import Message  # noqa: E402
+from solders.message import MessageV0  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
-from solders.transaction import Transaction  # noqa: E402
+from solders.transaction import VersionedTransaction  # noqa: E402
 
 from core.client import SolanaClient  # noqa: E402
 from core.pubkeys import (  # noqa: E402
@@ -160,12 +160,13 @@ async def simulate(
         True if the simulation reported no program error
     """
     blockhash = await client.get_latest_blockhash()
-    message = Message.new_with_blockhash(
-        [set_compute_unit_limit(SIMULATION_CU_LIMIT), *instructions],
+    message = MessageV0.try_compile(
         wallet.pubkey,
+        [set_compute_unit_limit(SIMULATION_CU_LIMIT), *instructions],
+        [],
         blockhash,
     )
-    transaction = Transaction([wallet.keypair], message, blockhash)
+    transaction = VersionedTransaction(message, [wallet.keypair])
 
     response = await client.post_rpc(
         {

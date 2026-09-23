@@ -12,13 +12,18 @@ on 2026-09-16, 60s per run: `0` delivered 1 block and 177 nulls, `1` delivered
 78 blocks and no nulls — the blocks listener was roughly 99% blind, silently,
 because a null frame looks exactly like a skipped slot.
 
-The installed solders cannot deserialize a v1 transaction (they begin with byte
-129 and put the signatures at the tail). That is survivable, because the RPC has
-already decoded the envelope by the time it emits `meta.logMessages`, and the
-platform parsers prefer the CreateEvent in those logs anyway — for the canonical
-creator. It is only fatal if the listener insists on decoding the bytes *before*
-it will hand a transaction to a parser, which is what
+solders could not deserialize a v1 transaction (they begin with byte 129 and
+put the signatures at the tail) until 0.29. That was survivable, because the RPC
+has already decoded the envelope by the time it emits `meta.logMessages`, and
+the platform parsers prefer the CreateEvent in those logs anyway — for the
+canonical creator. It is only fatal if the listener insists on decoding the
+bytes *before* it will hand a transaction to a parser, which is what
 `_process_block_transactions` used to do.
+
+solders 0.29 reads a v1 envelope, so the byte decode works again — but it stays
+the fallback, not the route. The next version byte will be unreadable in its
+turn, and a listener that has quietly come to depend on the decode goes blind
+again on the day it lands. Both routes are pinned below, separately.
 
 Offline machine checks, no network and no funds moved:
 
@@ -33,10 +38,13 @@ Offline machine checks, no network and no funds moved:
      regression that matters: it must not depend on the envelope decoding.
   5. The listener still reads a pre-v1 create, so nothing regressed for the
      coins that already worked.
-  6. With the logs removed, the v1 create is NOT detected — which is what makes
-     the log route load-bearing rather than decorative. If this check starts
-     failing, solders has learned to decode a v1 envelope and the routing could
-     be simplified.
+  6. With the envelope replaced by bytes solders cannot read, the v1 create is
+     still detected — which is what makes the log route load-bearing rather
+     than decorative.
+  7. With the logs removed, the installed solders reads the v1 create straight
+     off the envelope. This is the fallback, and it only works from solders
+     0.29; a failure here means the decode has regressed and the log route is
+     carrying the whole load again.
 
 Usage:
     uv run tests/regression/verify_transaction_v1.py
@@ -194,20 +202,44 @@ def check_listener_detects_the_v1_create() -> bool:
     return True
 
 
-def check_log_route_is_what_detects_v1() -> bool:
-    """Strip the logs and the v1 create must vanish.
+def check_log_route_detects_without_the_envelope() -> bool:
+    """Make the envelope unreadable and the v1 create must still arrive.
 
-    Proves the log route is doing the work, rather than passing because some
-    other path happens to cope. solders cannot decode a v1 envelope, so with
-    no logs there is nothing left to parse.
+    Proves the log route is doing the work on its own, rather than passing
+    because the byte decode happens to cope. Until solders 0.29 that was proved
+    the other way round — strip the logs and nothing was left to parse — but a
+    solders that reads v1 makes the absence of a result prove nothing. Breaking
+    the envelope instead pins the invariant whether or not the installed solders
+    can decode the version in hand.
+    """
+    listener = UniversalBlockListener("wss://offline.invalid", [Platform.PUMP_FUN])
+    result = _load(V1_FIXTURE)
+    tx = _as_block_transaction(result)
+    # Valid base64, not a transaction: the decode raises and the fallback has
+    # nothing to offer, so only the logs can answer.
+    tx["transaction"] = [base64.b64encode(b"not a transaction").decode(), "base64"]
+    token_info = listener._process_block_transactions([tx])  # noqa: SLF001
+    if token_info is None:
+        print("     a v1 create with unreadable bytes was missed — the logs are not the route")
+        return False
+    return True
+
+
+def check_envelope_fallback_reads_v1() -> bool:
+    """Strip the logs and the installed solders must read the v1 envelope.
+
+    The fallback, not the route. It only works from solders 0.29 — 0.26, 0.27.1
+    and 0.28 all raise `ValueError: io error: unexpected end of file` on this
+    same fixture. A failure here is a decode regression, not a routing bug: the
+    bot keeps detecting v1 coins through the logs either way.
     """
     listener = UniversalBlockListener("wss://offline.invalid", [Platform.PUMP_FUN])
     result = _load(V1_FIXTURE)
     tx = _as_block_transaction(result)
     tx["meta"] = {**tx["meta"], "logMessages": []}
     token_info = listener._process_block_transactions([tx])  # noqa: SLF001
-    if token_info is not None:
-        print("     a v1 create parsed without its logs — routing may have changed")
+    if token_info is None:
+        print("     the installed solders cannot decode a v1 envelope")
         return False
     return True
 
@@ -271,7 +303,11 @@ def main() -> int:
             "block listener still detects a pre-v1 create",
             check_listener_still_detects_a_pre_v1_create,
         ),
-        ("the log route is what detects v1", check_log_route_is_what_detects_v1),
+        (
+            "the log route detects v1 without the envelope",
+            check_log_route_detects_without_the_envelope,
+        ),
+        ("the envelope fallback reads v1 too", check_envelope_fallback_reads_v1),
         ("examples route on logs too", check_examples_route_on_logs),
     ]
     failed = 0

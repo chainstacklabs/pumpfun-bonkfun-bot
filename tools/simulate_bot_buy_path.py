@@ -29,8 +29,8 @@ from solders.compute_budget import (  # noqa: E402
     set_compute_unit_limit,
     set_compute_unit_price,
 )
-from solders.message import Message  # noqa: E402
-from solders.transaction import Transaction  # noqa: E402
+from solders.message import MessageV0  # noqa: E402
+from solders.transaction import VersionedTransaction  # noqa: E402
 
 from core.client import SolanaClient  # noqa: E402
 from core.priority_fee.manager import PriorityFeeManager  # noqa: E402
@@ -118,10 +118,10 @@ def install_simulation_hook(client: SolanaClient) -> dict:
             preamble.append(set_compute_unit_price(priority_fee))
 
         blockhash = await client.get_latest_blockhash()
-        message = Message.new_with_blockhash(
-            [*preamble, *instructions], signer_keypair.pubkey(), blockhash
+        message = MessageV0.try_compile(
+            signer_keypair.pubkey(), [*preamble, *instructions], [], blockhash
         )
-        transaction = Transaction([signer_keypair], message, blockhash)
+        transaction = VersionedTransaction(message, [signer_keypair])
 
         response = await client.post_rpc(
             {

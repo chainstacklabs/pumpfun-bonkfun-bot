@@ -14,7 +14,7 @@ import struct
 import base58
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
-from solana.rpc.types import MemcmpOpts
+from solana.rpc.core import MemcmpOpts
 from solders.pubkey import Pubkey
 
 load_dotenv()
@@ -28,13 +28,12 @@ async def get_market_address_by_base_mint(
     base_mint_address: Pubkey, amm_program_id: Pubkey
 ):
     async with AsyncClient(RPC_ENDPOINT, timeout=120) as client:
-        base_mint_bytes = bytes(base_mint_address)
-
         # Define the offset for base_mint field
         offset = 43
 
-        # Create the filter to match the base_mint
-        filters = [MemcmpOpts(offset=offset, bytes=base_mint_bytes)]
+        # Create the filter to match the base_mint. MemcmpOpts takes the bytes
+        # base58-encoded, which is what a Pubkey's str already is.
+        filters = [MemcmpOpts(offset=offset, bytes=str(base_mint_address))]
 
         # Retrieve the accounts that match the filter
         response = await client.get_program_accounts(

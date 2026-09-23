@@ -28,11 +28,11 @@ from dotenv import load_dotenv
 from letsbonk_idl_parser import load_idl_parser
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
-from solana.rpc.types import TxOpts
+from solana.rpc.core import TxOptsModel
 from solders.compute_budget import set_compute_unit_limit, set_compute_unit_price
 from solders.instruction import AccountMeta, Instruction
 from solders.keypair import Keypair
-from solders.message import Message
+from solders.message import MessageV0
 from solders.pubkey import Pubkey
 from solders.system_program import CreateAccountWithSeedParams, create_account_with_seed
 from solders.transaction import VersionedTransaction
@@ -662,8 +662,8 @@ async def sell_exact_out(
         blockhash_resp = await client.get_latest_blockhash()
         recent_blockhash = blockhash_resp.value.blockhash
 
-        message = Message.new_with_blockhash(
-            instructions, PAYER.pubkey(), recent_blockhash
+        message = MessageV0.try_compile(
+            PAYER.pubkey(), instructions, [], recent_blockhash
         )
 
         transaction = VersionedTransaction(message, [PAYER])
@@ -686,7 +686,7 @@ async def sell_exact_out(
         print("Sending transaction...")
         result = await client.send_transaction(
             transaction,
-            opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed),
+            opts=TxOptsModel(skip_preflight=True, preflight_commitment=Confirmed),
         )
 
         tx_signature = result.value

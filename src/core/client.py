@@ -11,16 +11,16 @@ from typing import Any
 import aiohttp
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Processed
-from solana.rpc.types import TxOpts
+from solana.rpc.core import TxOptsModel
 from solders.account import Account
 from solders.compute_budget import set_compute_unit_limit, set_compute_unit_price
 from solders.hash import Hash
 from solders.instruction import Instruction
 from solders.keypair import Keypair
-from solders.message import Message
+from solders.message import MessageV0
 from solders.pubkey import Pubkey
 from solders.signature import Signature
-from solders.transaction import Transaction
+from solders.transaction import VersionedTransaction
 
 from core.pubkeys import is_sol_paired
 from core.rpc_rate_limiter import TokenBucketRateLimiter
@@ -444,13 +444,16 @@ class SolanaClient:
             instructions = fee_instructions + instructions
 
         recent_blockhash = await self.get_cached_blockhash()
-        message = Message(instructions, signer_keypair.pubkey())
-        transaction = Transaction([signer_keypair], message, recent_blockhash)
+        # No address lookup tables: the bot builds every account list itself.
+        message = MessageV0.try_compile(
+            signer_keypair.pubkey(), instructions, [], recent_blockhash
+        )
+        transaction = VersionedTransaction(message, [signer_keypair])
 
         for attempt in range(max_retries):
             try:
                 await self._rate_limiter.acquire()
-                tx_opts = TxOpts(
+                tx_opts = TxOptsModel(
                     skip_preflight=skip_preflight, preflight_commitment=Processed
                 )
                 response = await client.send_transaction(transaction, tx_opts)

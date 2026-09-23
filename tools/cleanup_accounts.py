@@ -5,22 +5,25 @@ import sys
 
 from dotenv import load_dotenv
 from solders.pubkey import Pubkey
-from spl.token.instructions import BurnParams, CloseAccountParams, burn, close_account
+from spl.token.instructions import burn, close_account
+from spl.token.models import BurnParams, CloseAccountParams
 
 from core.client import SolanaClient
 from core.pubkeys import SystemAddresses
 from core.wallet import Wallet
-from utils.logger import get_logger
+from utils.logger import get_logger, install_secret_redaction
 
 load_dotenv()
 # get_logger attaches no handler — the bot installs one at startup, but a
 # standalone example has to do it itself or every line below goes nowhere. This
 # script ran completely silently, success or failure, without it.
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-# httpx logs each request at INFO, and the RPC endpoint carries an API key in
-# its path — keep it out of the console.
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
+# The HTTP clients log each request at INFO and the RPC endpoint carries an API
+# key, so raising the root logger to INFO is what leaks it. Naming the clients
+# here is not enough — solana-py 0.40 renamed httpx to httpx2 and this script
+# went on printing the key for four runs. install_secret_redaction masks the
+# value itself, whichever logger emits it.
+install_secret_redaction()
 logger = get_logger(__name__)
 
 RPC_ENDPOINT = os.getenv("SOLANA_NODE_RPC_ENDPOINT")

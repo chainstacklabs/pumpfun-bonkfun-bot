@@ -26,20 +26,20 @@ import base58
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
-from solana.rpc.types import MemcmpOpts, TxOpts
+from solana.rpc.core import MemcmpOpts, TxOptsModel
 from solders.compute_budget import set_compute_unit_limit, set_compute_unit_price
 from solders.instruction import AccountMeta, Instruction
 from solders.keypair import Keypair
-from solders.message import Message
+from solders.message import MessageV0
 from solders.pubkey import Pubkey
 from solders.system_program import TransferParams, transfer
 from solders.transaction import VersionedTransaction
 from spl.token.instructions import (
-    SyncNativeParams,
     create_idempotent_associated_token_account,
     get_associated_token_address,
     sync_native,
 )
+from spl.token.models import SyncNativeParams
 
 sys.path.append(
     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "solana")
@@ -164,7 +164,8 @@ async def get_market_address_by_base_mint(
     Returns:
         Address of the AMM pool (market) for the token
     """
-    filters = [MemcmpOpts(offset=POOL_BASE_MINT_OFFSET, bytes=bytes(base_mint_address))]
+    # MemcmpOpts takes the bytes base58-encoded, which a Pubkey's str already is.
+    filters = [MemcmpOpts(offset=POOL_BASE_MINT_OFFSET, bytes=str(base_mint_address))]
     response = await client.get_program_accounts(
         amm_program_id, encoding="base64", filters=filters
     )
@@ -654,9 +655,10 @@ async def buy_pump_swap(
         )
     )
     sync_native_ix = sync_native(
+        # WSOL always uses the standard Token program
         SyncNativeParams(
-            SYSTEM_TOKEN_PROGRAM, user_quote_token_account
-        )  # WSOL always uses standard Token program
+            program_id=SYSTEM_TOKEN_PROGRAM, account=user_quote_token_account
+        )
     )
 
     # Create token account for receiving purchased tokens
@@ -671,7 +673,8 @@ async def buy_pump_swap(
 
     # Build and sign transaction
     blockhash_resp = await client.get_latest_blockhash()
-    msg = Message.new_with_blockhash(
+    msg = MessageV0.try_compile(
+        payer.pubkey(),
         [
             compute_limit_ix,
             compute_price_ix,
@@ -681,7 +684,7 @@ async def buy_pump_swap(
             create_token_ata_ix,
             buy_ix,
         ],
-        payer.pubkey(),
+        [],
         blockhash_resp.value.blockhash,
     )
     tx = VersionedTransaction(message=msg, keypairs=[payer])
@@ -705,7 +708,7 @@ async def buy_pump_swap(
     try:
         # Skip preflight since we already simulated (faster execution)
         tx_sig = await client.send_transaction(
-            tx, opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
+            tx, opts=TxOptsModel(skip_preflight=True, preflight_commitment=Confirmed)
         )
         tx_hash = tx_sig.value
         print(f"Transaction sent: https://explorer.solana.com/tx/{tx_hash}")
