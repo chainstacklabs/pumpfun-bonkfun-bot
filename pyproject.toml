@@ -7,24 +7,24 @@ requires-python = ">=3.11"
 
 dependencies = [
     "base58>=2.1.1",
-    "construct>=2.10.67",
+    "construct>=2.10.70",
     "solana>=0.40.3",
     "solders>=0.29.0",
-    "websockets>=15.0",
-    "python-dotenv>=1.2.2",
+    "websockets>=17.1",
+    "python-dotenv>=1.2.3",
     "aiohttp>=3.14.3",
-    "grpcio>=1.71.0",
-    "protobuf>=5.29.4",
-    "pyyaml>=6.0.2",
-    "uvloop>=0.21.0; sys_platform != 'win32'",
+    "grpcio>=1.84.0",
+    "protobuf>=7.36.2",
+    "pyyaml>=6.0.3",
+    "uvloop>=0.22.1; sys_platform != 'win32'",
     "winloop>=0.1.0; sys_platform == 'win32'",
 ]
 
 [dependency-groups]
 dev = [
-    "ruff>=0.10.0",
+    "ruff>=0.16.8",
     # protoc; only needed to regenerate src/geyser/generated from src/geyser/proto
-    "grpcio-tools>=1.71.0",
+    "grpcio-tools>=1.84.0",
 ]
 
 [project.scripts]

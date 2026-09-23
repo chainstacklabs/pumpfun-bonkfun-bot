@@ -126,7 +126,8 @@ Lint and format **the files you touched**, not the whole tree:
 uv run ruff check --fix <paths> && uv run ruff format <paths>
 ```
 
-A bare `uv run ruff check` reports ~1660 pre-existing errors across the repo.
+A bare `uv run ruff check` reports ~1710 pre-existing errors across the repo
+(ruff 0.16.8; 0.12.4 counted ~1680, the rules moved, not the code).
 That is the known baseline, not something your change caused — don't try to fix
 it wholesale, and don't read it as a failing build. Just don't add new ones in
 the files you edit.
@@ -145,6 +146,13 @@ is protoc — needed only to regenerate the `geyser_pb2` stubs in
 **only** copy: the geyser examples reach it by putting the repo root on
 `sys.path` and importing `src.geyser.generated`. Don't add a second copy under
 `cookbook/` — the last one drifted out of sync with the protos.
+
+The committed stubs are protobuf gencode **6.31.1** running against runtime
+7.36.2, which `ValidateProtobufRuntimeVersion` still accepts. Regenerating is
+not a plain `protoc` run: the committed files import each other absolutely
+(`from geyser.generated.solana_storage_pb2 import *`), which the compiler does
+not emit on its own, so the output needs rewriting. Verified live under
+grpcio 1.84 / protobuf 7.36.2 on 2026-09-23.
 
 Where the Solana libraries live, since solana-py 0.40 moved most of them
 (upgraded 2026-09-23 from solders 0.26 / solana 0.36.6):
