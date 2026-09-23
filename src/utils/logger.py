@@ -28,8 +28,8 @@ _NOISY_HTTP_LOGGERS = (
     "websockets.client",
 )
 
-# Query parameters that carry a credential. Providers differ: Helius uses
-# `api-key`, others `apiKey` or `token`. Matched case-insensitively.
+# Query parameters that carry a credential. Providers spell it differently —
+# `api-key`, `apiKey`, `token` — so match the lot, case-insensitively.
 _SECRET_QUERY_KEYS = ("api-key", "api_key", "apikey", "token", "auth", "key", "secret")
 
 _SECRET_QUERY = re.compile(
