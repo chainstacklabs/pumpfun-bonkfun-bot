@@ -198,6 +198,7 @@ name individual scripts to run a subset.
 | `verify_quote_decimals_resolved.py` | no trade path prices a coin before resolving its quote mint's decimals |
 | `verify_cookbook_arguments.py` | every cookbook script takes its input as a command-line argument |
 | `verify_documentation_links.py` | no known-dead URL is back; `--live` fetches every one and fails on 4xx/5xx |
+| `verify_no_rpc_credentials_logged.py` | credentials are masked in every log record, including a URL passed as a non-`str` argument, and every site that installs a root handler installs the redaction first |
 
 Two mainnet simulations, also no funds moved:
 
@@ -240,6 +241,14 @@ The reasoning behind each lives in the verifier named beside it.
   behaviour) bounds wall time. Don't wrap a lookup in `asyncio.timeout` instead —
   cutting off an in-flight `getTransaction` and returning None is the "can't see
   it, so call it failed" conflation #206 removed.
+- **The endpoints carry their API key in the URL, so any log line holding one
+  is a leak.** `install_secret_redaction` (`utils/logger.py`) masks the value at
+  log-record creation and every entry point calls it before attaching a handler.
+  Silencing the HTTP clients by name is a convenience on top, not the control:
+  `tools/cleanup_accounts.py` silenced `httpx` and `httpcore` and leaked anyway
+  once solana-py 0.40 switched to httpx2. Redact the **rendered** message, not
+  `record.msg` plus the string arguments — httpx2 passes its URL as a `URL`
+  object, so a type check skips the one argument that matters.
 - `build_and_send_transaction` returns a solders `Signature`, not a `str`.
   Normalize at the boundary: a `Signature` is neither JSON serializable nor
   sliceable, and solana-py's `confirm_transaction` rejects a `str`.

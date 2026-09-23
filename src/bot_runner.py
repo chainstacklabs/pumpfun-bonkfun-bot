@@ -33,7 +33,7 @@ from trading.universal_trader import (
     DEFAULT_MAX_EXIT_SELL_ATTEMPTS,
     UniversalTrader,
 )
-from utils.logger import setup_file_logging
+from utils.logger import install_secret_redaction, setup_file_logging
 
 
 def setup_logging(bot_name: str):
@@ -274,6 +274,10 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
+    # Turning the root logger up to INFO is what makes the HTTP clients start
+    # printing request URLs, and those URLs carry the provider API key. Redact
+    # before the first line is emitted, not after.
+    install_secret_redaction()
 
     # Log supported platforms and listeners
     try:
