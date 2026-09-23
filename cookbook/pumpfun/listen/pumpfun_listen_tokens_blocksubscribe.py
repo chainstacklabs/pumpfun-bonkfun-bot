@@ -38,6 +38,11 @@ WSS_ENDPOINT = os.environ.get("SOLANA_NODE_WSS_ENDPOINT")
 # instead of delivering the message. Same value the bot's own listeners use.
 WEBSOCKET_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
 PUMP_PROGRAM_ID = Pubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")
+TOKEN_PROGRAM = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+TOKEN_2022_PROGRAM = Pubkey.from_string("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
+ASSOCIATED_TOKEN_PROGRAM = Pubkey.from_string(
+    "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+)
 
 # Instruction discriminators (8-byte identifiers for instruction types)
 # Calculated using the first 8 bytes of sha256("global:create") for legacy Create
@@ -219,8 +224,29 @@ def find_create_event(logs):
         except (ValueError, IndexError):
             continue
         event = parse_create_event(decoded)
-        if event:
-            return event
+        if not event or "bondingCurve" not in event:
+            continue
+
+        # The event names the token program. The associated bonding curve is an
+        # ordinary ATA of the curve under that program, so it is derived rather
+        # than read out of the instruction's account list.
+        token_program = Pubkey.from_string(
+            event.get("token_program") or str(TOKEN_2022_PROGRAM)
+        )
+        event["token_standard"] = (
+            "token2022" if token_program == TOKEN_2022_PROGRAM else "legacy"
+        )
+        event["associatedBondingCurve"] = str(
+            Pubkey.find_program_address(
+                [
+                    bytes(Pubkey.from_string(event["bondingCurve"])),
+                    bytes(token_program),
+                    bytes(Pubkey.from_string(event["mint"])),
+                ],
+                ASSOCIATED_TOKEN_PROGRAM,
+            )[0]
+        )
+        return event
     return None
 
 
@@ -440,13 +466,13 @@ def handle_transaction(tx, idl):
         event = find_create_event(logs)
         if not event:
             return
-        print(f"\n🔍 Found CreateEvent in a {version} transaction")
+        label = "legacy" if version == "legacy" else f"v{version}"
+        print(f"\n🔍 Found CreateEvent in a {label} transaction")
         print_token_info(event)
-    else:
-        # Some providers return blocks without logMessages. The envelope is then
-        # the only route, and it only works for a version solders can read.
-        if not decode_from_envelope(tx, idl):
-            return
+    # Some providers return blocks without logMessages. The envelope is then
+    # the only route, and it only works for a version solders can read.
+    elif not decode_from_envelope(tx, idl):
+        return
 
     loaded_addresses = meta.get("loadedAddresses")
     if loaded_addresses:
