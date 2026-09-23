@@ -90,12 +90,15 @@ Not specific to any of the launchpads below.
 |---|---|
 | [`pumpfun/listen/pumpfun_listen_tokens_logsubscribe.py`](pumpfun/listen/pumpfun_listen_tokens_logsubscribe.py) | New coins over `logsSubscribe` — works on every provider |
 | [`pumpfun/listen/pumpfun_listen_tokens_blocksubscribe.py`](pumpfun/listen/pumpfun_listen_tokens_blocksubscribe.py) | New coins over `blockSubscribe` — whole blocks, slower, not on every provider |
-| [`pumpfun/listen/pumpfun_listen_tokens_geyser.py`](pumpfun/listen/pumpfun_listen_tokens_geyser.py) | New coins over Geyser gRPC — the fastest of the four |
+| [`pumpfun/listen/pumpfun_listen_tokens_geyser.py`](pumpfun/listen/pumpfun_listen_tokens_geyser.py) | New coins over Geyser gRPC — the fastest of the four executed-stream listeners |
+| [`pumpfun/listen/pumpfun_listen_tokens_deshred.py`](pumpfun/listen/pumpfun_listen_tokens_deshred.py) | New coins over Geyser `SubscribeDeshred` — ~6ms earlier, but pre-execution: no logs, no CreateEvent, no outcome, and router-created coins are invisible |
 | [`pumpfun/listen/pumpfun_listen_tokens_pumpportal.py`](pumpfun/listen/pumpfun_listen_tokens_pumpportal.py) | New coins from PumpPortal's feed — third party, misses some coins |
 | [`pumpfun/listen/pumpfun_listen_wallet_trades.py`](pumpfun/listen/pumpfun_listen_wallet_trades.py) | One wallet's bonding-curve buys and sells — copy trading |
 | [`pumpfun/listen/pumpfun_capture_transactions_blocksubscribe.py`](pumpfun/listen/pumpfun_capture_transactions_blocksubscribe.py) | Save live transactions to disk, to build a fixture |
 
 Racing the four listeners against each other is `tools/compare_listeners.py`.
+Racing the deshred stream against the executed one — and sizing its blind spot —
+is `tools/compare_deshred_latency.py`.
 
 ### Read state
 

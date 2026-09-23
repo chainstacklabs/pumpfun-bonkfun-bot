@@ -1,5 +1,6 @@
 """Monitors Solana for new Pump.fun token creations using Geyser gRPC.
-Decodes 'create' instructions to extract and display token details (name, symbol, mint, bonding curve).
+Decodes 'create' instructions to extract and display token details (name, symbol, mint, bonding curve),
+and reports which transaction format each coin was created in, with its inline budget for v1.
 
 Usage:
     uv run cookbook/pumpfun/listen/pumpfun_listen_tokens_geyser.py
@@ -51,13 +52,14 @@ PUMP_CREATE_PREFIX = struct.pack("<Q", 8576854823835016728)
 PUMP_CREATE_V2_PREFIX = bytes([214, 144, 76, 236, 95, 139, 49, 180])
 
 
-def print_token_info(token_data, signature=None):
+def print_token_info(token_data, signature=None, envelope: dict | None = None):
     """
     Print token information in a consistent, user-friendly format.
 
     Args:
         token_data: Dictionary containing token fields
         signature: Optional transaction signature
+        envelope: Optional envelope summary from `describe_envelope`
     """
     print("\n" + "=" * 80)
     print("🎯 NEW TOKEN DETECTED")
@@ -82,6 +84,12 @@ def print_token_info(token_data, signature=None):
         print(f"URI:              {token_data['uri']}")
     if signature:
         print(f"Signature:        {signature}")
+    if envelope:
+        print(f"Tx version:       {envelope['version']}")
+        if envelope["config"]:
+            print(f"Tx config:        {envelope['config']}")
+        if envelope["cost_units"] is not None:
+            print(f"Cost units:       {envelope['cost_units']}")
 
     print("=" * 80 + "\n")
 
@@ -136,6 +144,55 @@ def resolve_account_keys(
         keys.extend(meta.loaded_writable_addresses)
         keys.extend(meta.loaded_readonly_addresses)
     return keys
+
+
+def describe_envelope(tx: geyser_pb2.SubscribeUpdateTransactionInfo) -> dict:
+    """Summarise which transaction format a coin was created in, and its budget.
+
+    Transaction v1 (SIMD-0385, live since 2026-09-15) carries its compute budget
+    inline on the message as `config`, instead of as separate ComputeBudget
+    instructions. Geyser sets that field only for v1, so its presence is how you
+    tell a v1 transaction from a legacy or v0 one here: the `versioned` flag is
+    true for both v0 and v1 and cannot separate them.
+
+    Args:
+        tx: A geyser `SubscribeUpdateTransactionInfo`
+
+    Returns:
+        Dict with the detected `version`, a readable `config` string (empty for
+        legacy/v0) and `cost_units` when the validator reported it
+    """
+    msg = tx.transaction.message
+    is_v1 = msg.HasField("config")
+
+    config = ""
+    if is_v1:
+        cfg = msg.config
+        parts = []
+        # Every field is optional, and an unset one means zero rather than a
+        # default: a v1 transaction that omits the compute unit limit budgets
+        # 0 CU and dies at account loading.
+        if cfg.HasField("priority_fee"):
+            # v1 states a total in lamports, not micro-lamports per CU as v0 does.
+            parts.append(f"priority_fee={cfg.priority_fee} lamports")
+        if cfg.HasField("compute_unit_limit"):
+            parts.append(f"cu_limit={cfg.compute_unit_limit}")
+        if cfg.HasField("loaded_accounts_data_size_limit"):
+            parts.append(f"data_size={cfg.loaded_accounts_data_size_limit}")
+        if cfg.HasField("heap_size"):
+            parts.append(f"heap={cfg.heap_size}")
+        config = ", ".join(parts) or "all fields unset"
+
+    meta = getattr(tx, "meta", None)
+    cost_units = None
+    if meta is not None and meta.HasField("cost_units"):
+        cost_units = meta.cost_units
+
+    return {
+        "version": "v1" if is_v1 else ("v0" if msg.versioned else "legacy"),
+        "config": config,
+        "cost_units": cost_units,
+    }
 
 
 def decode_create_instruction(ix_data: bytes, keys, accounts) -> dict:
@@ -303,7 +360,11 @@ async def monitor_pump():
             ).decode()
 
             # Print token information in consistent format
-            print_token_info(info, signature=signature)
+            print_token_info(
+                info,
+                signature=signature,
+                envelope=describe_envelope(update.transaction.transaction),
+            )
 
 
 if __name__ == "__main__":

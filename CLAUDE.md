@@ -154,12 +154,65 @@ is protoc — needed only to regenerate the `geyser_pb2` stubs in
 `sys.path` and importing `src.geyser.generated`. Don't add a second copy under
 `cookbook/` — the last one drifted out of sync with the protos.
 
-The committed stubs are protobuf gencode **6.31.1** running against runtime
-7.36.2, which `ValidateProtobufRuntimeVersion` still accepts. Regenerating is
-not a plain `protoc` run: the committed files import each other absolutely
+The vendored protos are pinned to yellowstone **`v16.0.0-rc10+solana.4.3.0`**
+(commit `301e9cf`, `yellowstone-grpc-proto` 13.0.0-rc4), which is the build the
+endpoint itself reports from `GetVersion` — ask it before assuming, and pin to
+what it answers. Not `master`: master has diverged and is *missing* things the
+tag has (`block_footer`, `bank_id`, `VATDebit`). The committed stubs are
+protobuf gencode **7.35.1** against runtime 7.36.2. Regenerating is not a plain
+`protoc` run: the committed files import each other absolutely
 (`from geyser.generated.solana_storage_pb2 import *`), which the compiler does
 not emit on its own, so the output needs rewriting. Verified live under
 grpcio 1.84 / protobuf 7.36.2 on 2026-09-23.
+
+What the 13.0.0-rc4 protos changed, all verified live on 2026-09-23:
+
+- **`Message.config` (field 7) is the only way to spot a transaction v1 over
+  geyser.** There is no version number on the wire and `versioned` is true for
+  v0 and v1 alike. The field is set only for v1 and carries the inline budget
+  (priority fee in **total lamports**, CU limit, loaded-accounts data size,
+  heap) that v1 moved off the ComputeBudget instructions — so a v1 coin has no
+  ComputeBudget instructions to read a budget from at all. Measured share of
+  pump.fun traffic: 660 of 4,215 transactions (15.7%) in a 90s window.
+- Protos older than this **skipped `config` as an unknown field rather than
+  failing**, so the stale stubs degraded in silence: frames still decoded, only
+  the budget went missing. `verify_transaction_v1.py` now pins the geyser route
+  on its own committed frame so a rollback fails loudly.
+- `TransactionStatusMeta.cost_units` and `Reward.commission_bps` are new too.
+- **`CommitmentLevel` lost members 3-6**; they moved to a separate `SlotStatus`
+  enum. Nothing here sent anything but `PROCESSED`, so this cost nothing — but
+  it is the one breaking change in the upgrade.
+- A yellowstone build **older than 15.1.1 silently downgrades v1 to v0 on the
+  wire**, which no local change can recover. Check `GetVersion` before
+  debugging a v1 gap.
+
+`SubscribeDeshred` is a separate RPC delivering transactions **before
+execution**, when entries form from shreds. It is **deliberately not wired into
+the bot**, for two reasons, the second of which is disqualifying.
+
+Raced against `Subscribe` on the pump.fun filter, 300s on 2026-09-23: identical
+signature sets, no orphans either way. On creates deshred is first 92% of the
+time, median **+6.4ms**, p90 +21.5ms; on general traffic 79%, median +4.0ms.
+`tools/compare_deshred_latency.py` reproduces it — the far tail swings a lot
+between runs, the median does not.
+
+- There is no `TransactionStatusMeta`, so no `meta.log_messages`, so no
+  CreateEvent. That leaves `state_from_event` unset on every coin and silently
+  demotes `extreme_fast_mode` to a curve refresh.
+- **A coin created through a router is invisible on it.** The create arrives as
+  a CPI, and inner instructions are produced *by* execution, so a pre-execution
+  stream never carries them. Measured 4 of 118 creates (3.4%) in one window and
+  3 of 101 in another — every one present on the stream and undetectable, not
+  dropped, so no decoding recovers them. Note this inverts the CPI note under
+  *Listener and decoder pitfalls*: **trades** are overwhelmingly inner
+  instructions, **creates** are overwhelmingly top-level (114:4), which is why
+  deshred looks nearly complete until you count.
+
+Trading a permanent few-percent miss rate on new coins for a 6ms median is not
+a trade this bot should take.
+`cookbook/pumpfun/listen/pumpfun_listen_tokens_deshred.py` demonstrates the
+stream and that trade-off; it decodes instructions because it has no logs to
+route on.
 
 Where the Solana libraries live, since solana-py 0.40 moved most of them
 (upgraded 2026-09-23 from solders 0.26 / solana 0.36.6):
@@ -189,7 +242,7 @@ name individual scripts to run a subset.
 | `verify_v2_account_layout.py` | buy_v2/sell_v2 account layouts, PDA/ATA derivations, encoding — against `idl/pump_fun_idl.json` |
 | `verify_curve_account_sizes.py` | 125/151/256-byte curves all decode, and nothing filters on account length |
 | `verify_create_v2_optional_args.py` | omitted trailing option-typed `create_v2` args decode as unset; mandatory args still fail |
-| `verify_transaction_v1.py` | every reader asks `maxSupportedTransactionVersion: 1`, a v1 `create_v2` is detected from its logs alone with the envelope made unreadable, the envelope decode still works as the fallback, and no cookbook/tools listener detects by opening the envelope |
+| `verify_transaction_v1.py` | every reader asks `maxSupportedTransactionVersion: 1`, a v1 `create_v2` is detected from its logs alone with the envelope made unreadable, the envelope decode still works as the fallback, and no cookbook/tools listener detects by opening the envelope; same two routes pinned again over geyser, on a committed v1 `SubscribeUpdate`, plus the inline v1 budget staying readable |
 | `verify_block_null_guard.py` | a `blockSubscribe` frame with `value.block: null` is skipped, not logged as an error |
 | `verify_listener_cancellation.py` | a cancelled WebSocket listener stops, even when `websockets` reports cancellation as `AssertionError` |
 | `verify_pumpportal_buy_path.py` | curve derived from the mint, unreadable curve skips the buy, curve+mint read in one slot-consistent batch |
