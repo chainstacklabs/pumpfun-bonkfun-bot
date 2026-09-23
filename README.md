@@ -58,7 +58,7 @@ Fill in `.env`:
 | `SOLANA_NODE_RPC_ENDPOINT` | HTTPS RPC endpoint |
 | `SOLANA_NODE_WSS_ENDPOINT` | WebSocket endpoint (for `logs` / `blocks` listeners) |
 | `SOLANA_PRIVATE_KEY` | Base58 private key of the trading wallet |
-| `GEYSER_ENDPOINT`, `GEYSER_API_TOKEN`, `GEYSER_AUTH_TYPE` | Only for the `geyser` listener |
+| `GEYSER_ENDPOINT`, `GEYSER_API_TOKEN`, `GEYSER_AUTH_TYPE` | For the `geyser` and `shreds` listeners (same endpoint, different RPC) |
 
 Public RPC nodes will not work for this workload — see [throughput](#throughput-and-rate-limits) below.
 
@@ -72,10 +72,11 @@ Each YAML file in `bots/` is one bot instance. They ship with commented defaults
 | `bot-sniper-2-logs.yaml` | `logs` — `logsSubscribe`, supported everywhere | `pump_fun` |
 | `bot-sniper-3-blocks.yaml` | `blocks` — `blockSubscribe`, not supported by every provider | `pump_fun` |
 | `bot-sniper-4-pp.yaml` | `pumpportal` — third-party aggregator, misses some coins | `lets_bonk` |
+| `bot-sniper-5-shreds.yaml` | `shreds` — pre-execution, ahead of `geyser`, cannot see router-created coins | `pump_fun` |
 
-Set `platform: "pump_fun"` or `platform: "lets_bonk"`. pump.fun supports all four listeners; letsbonk.fun supports `blocks`, `geyser`, and `pumpportal` but **not** `logs`. The bot validates the pairing at startup and refuses to run an invalid one.
+Set `platform: "pump_fun"` or `platform: "lets_bonk"`. pump.fun supports all five listeners; letsbonk.fun supports `blocks`, `geyser`, and `pumpportal` but **not** `logs` or `shreds`. The bot validates the pairing at startup and refuses to run an invalid one.
 
-`pumpportal` is a third-party feed and only reports what it indexes. As of 2026-09-16 it does not push coins whose creation landed in a Solana transaction v1 (a format live since 2026-09-15), so it sees a sample rather than everything. `geyser` and `logs` read the chain directly and are unaffected; `blocks` needs `maxSupportedTransactionVersion: 1`, which it now sends.
+`pumpportal` is a third-party feed and only reports what it indexes. It does not push coins whose creation landed in a Solana transaction v1 (a format live since 2026-09-15), so it sees a sample rather than everything. `geyser` and `logs` read the chain directly and are unaffected; `blocks` needs `maxSupportedTransactionVersion: 1`, which it now sends.
 
 Set `enabled: false` to keep a config around without running it. Every bot with `enabled: true` starts when you run the bot.
 

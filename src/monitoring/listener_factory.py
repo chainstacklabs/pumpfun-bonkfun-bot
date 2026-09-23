@@ -25,10 +25,11 @@ class ListenerFactory:
         """Create a token listener based on the specified type.
 
         Args:
-            listener_type: Type of listener ('logs', 'blocks', 'geyser', or 'pumpportal')
+            listener_type: Type of listener ('logs', 'blocks', 'geyser',
+                'shreds' or 'pumpportal')
             wss_endpoint: WebSocket endpoint URL (for logs/blocks listeners)
-            geyser_endpoint: Geyser gRPC endpoint URL (for geyser listener)
-            geyser_api_token: Geyser API token (for geyser listener)
+            geyser_endpoint: Geyser gRPC endpoint URL (geyser/shreds listeners)
+            geyser_api_token: Geyser API token (geyser/shreds listeners)
             geyser_auth_type: Geyser authentication type
             pumpportal_url: PumpPortal WebSocket URL (for pumpportal listener)
             platforms: List of platforms to monitor (if None, monitor all)
@@ -56,6 +57,23 @@ class ListenerFactory:
                 platforms=platforms,
             )
             logger.info("Created Universal Geyser listener for token monitoring")
+            return listener
+
+        elif listener_type == "shreds":
+            if not geyser_endpoint or not geyser_api_token:
+                raise ValueError(
+                    "Geyser endpoint and API token are required for shreds listener"
+                )
+
+            from monitoring.universal_shreds_listener import UniversalShredsListener
+
+            listener = UniversalShredsListener(
+                geyser_endpoint=geyser_endpoint,
+                geyser_api_token=geyser_api_token,
+                geyser_auth_type=geyser_auth_type,
+                platforms=platforms,
+            )
+            logger.info("Created Universal Shreds listener for token monitoring")
             return listener
 
         elif listener_type == "logs":
@@ -124,7 +142,8 @@ class ListenerFactory:
         else:
             raise ValueError(
                 f"Invalid listener type '{listener_type}'. "
-                f"Must be one of: 'logs', 'blocks', 'geyser', 'pumpportal'"
+                f"Must be one of: 'logs', 'blocks', 'geyser', 'shreds', "
+                f"'pumpportal'"
             )
 
     @staticmethod
@@ -134,7 +153,7 @@ class ListenerFactory:
         Returns:
             List of supported listener type strings
         """
-        return ["logs", "blocks", "geyser", "pumpportal"]
+        return ["logs", "blocks", "geyser", "shreds", "pumpportal"]
 
     @staticmethod
     def get_platform_compatible_listeners(platform: Platform) -> list[str]:
@@ -147,7 +166,7 @@ class ListenerFactory:
             List of compatible listener types
         """
         if platform == Platform.PUMP_FUN:
-            return ["logs", "blocks", "geyser", "pumpportal"]
+            return ["logs", "blocks", "geyser", "shreds", "pumpportal"]
         elif platform == Platform.LETS_BONK:
             return ["blocks", "geyser", "pumpportal"]  # Added pumpportal support
         else:

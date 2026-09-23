@@ -7,10 +7,9 @@ v1 traffic. Two things break a reader that ignores it.
 
 `maxSupportedTransactionVersion` is a whole-frame setting, not a per-transaction
 one. Asking `blockSubscribe` for 0 does not skip the v1 transactions in a block,
-it nulls out `value.block` for the entire notification. Measured against mainnet
-on 2026-09-16, 60s per run: `0` delivered 1 block and 177 nulls, `1` delivered
-78 blocks and no nulls — the blocks listener was roughly 99% blind, silently,
-because a null frame looks exactly like a skipped slot.
+it nulls out `value.block` for the entire notification. Asking for `0` leaves
+the blocks listener almost entirely blind, silently, because a null frame looks
+exactly like a skipped slot.
 
 solders could not deserialize a v1 transaction (they begin with byte 129 and
 put the signatures at the tail) until 0.29. That was survivable, because the RPC

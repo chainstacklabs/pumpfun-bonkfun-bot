@@ -61,30 +61,26 @@ client-side `MIN_CURVE_LEN` floor discards anything shorter than the
 smallest real struct, so a stray short/legacy account still can't reach the
 decoder.
 
-**Bandwidth trade-off, measured 2026-09-15 directly over Geyser** (not
-borrowed from the WebSocket script's measurement — Geyser reports slot and
-signature per update and its named-group model batches differently, so it
-gets its own number). Two *separate* concurrent gRPC streams over the same
-120s window, so both see the identical trade activity without the
-sequential-window volume-swing problem (a first attempt comparing sequential
-windows was unreliable for exactly that reason — see
-`pumpfun_watch_graduating_programsubscribe.py`'s module docstring): one stream subscribed with
-this script's old two named groups (`datasize` 125 and 151), the other with
-a single unfiltered group. The filtered stream took in 6,754 updates /
-2,340,863 proto bytes; the unfiltered stream took in 6,761 updates /
-2,337,304 proto bytes — a 1.001x update ratio and a 0.998x byte ratio,
-i.e. no measurable cost. The 7-update difference was the 256-byte curve
-(`EJpNsfxnTB6mtVdzrTcgQ9xfywobHSSsUtu1Gh1GFvEg`) that no enumerated length
-could ever match; the filtered stream structurally cannot see it at all.
-`getAccountInfo` on that same curve, run directly the same day, confirms it:
-still 256 bytes, discriminator intact, and it decodes cleanly through this
-repo's own IDL-driven decoder — the bytes past the documented fields are
-zero padding.
+**Bandwidth trade-off, checked directly over Geyser** (not borrowed from the
+WebSocket script's comparison — Geyser reports slot and signature per update
+and its named-group model batches differently, so it gets its own). Two
+*separate* concurrent gRPC streams over the same window, so both see the
+identical trade activity without the sequential-window volume-swing problem
+(a first attempt comparing sequential windows was unreliable for exactly that
+reason — see `pumpfun_watch_graduating_programsubscribe.py`'s module
+docstring): one stream subscribed with this script's old two named groups
+(`datasize` 125 and 151), the other with a single unfiltered group. They took
+in effectively the same volume, i.e. filtering bought nothing. The difference
+was the 256-byte curve (`EJpNsfxnTB6mtVdzrTcgQ9xfywobHSSsUtu1Gh1GFvEg`) that
+no enumerated length could ever match; the filtered stream structurally
+cannot see it at all. `getAccountInfo` on that same curve confirms it: still
+256 bytes, discriminator intact, and it decodes cleanly through this repo's
+own IDL-driven decoder — the bytes past the documented fields are zero
+padding.
 
 UNVERIFIED here: whether the original 49-byte layout (no `creator` field) is
-still written anywhere. None of the 6,761 unfiltered updates in the
-measurement above were that length, but that is one 120s window, not proof
-of absence.
+still written anywhere. Nothing in the unfiltered stream was that length, but
+that is one window, not proof of absence.
 """
 
 import argparse

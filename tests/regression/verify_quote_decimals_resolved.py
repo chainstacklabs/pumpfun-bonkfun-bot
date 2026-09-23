@@ -1,10 +1,9 @@
 """Verify no trade path prices a coin before resolving its quote mint.
 
 pump.fun's quote assets are not just SOL and USDC. The `QuoteControl` registry
-(PDA `["quote-control"]`) admits mints at 6, 8 and 9 decimals — 79 of the 170
-admitted on 2026-09-22 are tokenized equities, 8 decimals for Backed's xStocks
-and 6 for Backpack Securities — and coins paired with them trade live: a 75s
-sample of curve updates that day caught 8 stock-paired curves out of 124.
+(PDA `["quote-control"]`) admits mints at 6, 8 and 9 decimals — many of them
+tokenized equities, 8 decimals for Backed's xStocks and 6 for Backpack
+Securities — and coins paired with them trade live.
 
 `quote_units()` used to default to 9 decimals for an unresolved mint. Every
 cookbook trade script called it *before* `resolve_quote_token_program()` warmed

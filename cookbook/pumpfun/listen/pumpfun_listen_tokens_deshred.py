@@ -9,22 +9,19 @@ executed stream. The two are different RPCs on the same endpoint and the trade-o
 between them is the point of this example.
 
 `SubscribeDeshred` delivers a transaction when entries are formed from shreds,
-BEFORE any execution. Measured head-to-head against `Subscribe` on the pump.fun
-program, 300s on 2026-09-23: identical signature sets, no orphans either way.
-On token creations -- the number that matters here -- deshred arrived first in
-92% of cases, median +6.4ms, p75 +10.1ms, p90 +21.5ms. General traffic does
-worse (79% first, median +4.0ms), and the far tail is volatile between runs.
-`tools/compare_deshred_latency.py` reproduces all of this.
+BEFORE any execution. Raced head-to-head against `Subscribe` on the pump.fun
+program it carries the same signatures with no orphans either way, and on token
+creations -- the case that matters here -- it usually arrives first, by a small
+margin. `tools/compare_deshred_latency.py` reproduces that comparison.
 
 What you give up for those milliseconds:
 
   - **It cannot see a coin created through a router, at all.** The create then
     reaches the program as a CPI, and inner instructions are produced *by*
     execution, so a pre-execution stream never carries them: the transaction
-    arrives on deshred with the create invisible. Measured 4 of 118 creates
-    (3.4%) in one 300s window and 3 of 101 in another -- every one of them
-    present on the stream and undetectable, not dropped. No decoding recovers
-    them, and this script misses them too. The executed listeners walk
+    arrives on deshred with the create invisible -- present on the stream and
+    undetectable, not dropped. No decoding recovers them, and this script
+    misses them too. The executed listeners walk
     `meta.innerInstructions` and do not have this blind spot.
   - No TransactionStatusMeta, so no meta.log_messages, so no CreateEvent. This
     script therefore decodes the create instruction, which is the fallback route

@@ -8,11 +8,11 @@ built, which showed up only as a repeating
 
     Missing required fields in PumpPortal LetsBonk token data
 
-Captured from the live feed on 2026-09-16: over 90 seconds it carried 24 pump
-creates and 7 bonk creates, and the two payloads are not the same shape. A bonk
+Captured from the live feed, which carries both pump creates and bonk creates,
+and the two payloads are not the same shape. A bonk
 create carries no `name`, no `symbol` and no `uri`, where a pump create has all
 three. Requiring name and symbol therefore rejected every bonk token that ever
-arrived - 100% of them, which matches the field report on the original run.
+arrived, which matches the field report on the original run.
 
 Only `mint` and `traderPublicKey` cannot be derived from something else, so only
 those two are required now. `name` and `symbol` are used for logging and for the

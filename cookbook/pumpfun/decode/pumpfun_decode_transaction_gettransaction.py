@@ -12,8 +12,8 @@ Two things this example exists to show, because both are easy to get wrong:
 
 2. Read `meta.innerInstructions` as well as `message.instructions`. Most pump.fun
    trades reach the program as a CPI from an aggregator or router, so a decoder
-   that only walks the top level sees almost nothing — in a sample of 40 consecutive
-   pump.fun transactions there was 1 top-level pump instruction against 8 inner ones.
+   that only walks the top level sees almost nothing — top-level pump
+   instructions are heavily outnumbered by inner ones.
 
 3. Accept whichever encoding the response was captured in. `getTransaction`
    answers in `jsonParsed`, `json` or `base64` depending on what was asked for,

@@ -45,7 +45,7 @@ EXTREME_FAST_TOKEN_AMOUNT = 20
 HOLD_SECONDS = 5
 PRIORITY_FEE = 1_000_000
 # This harness verifies plumbing, not profitability. Brand-new coins routinely
-# lose 90% of their curve SOL within seconds of creation, and a realistic
+# lose most of their curve SOL within seconds of creation, and a realistic
 # sell_slippage of 0.3 then makes the program reject the sell with
 # TooLittleSolReceived (6003) — a correct guard, but it stops us proving the
 # 26-account sell_v2 actually lands. Accept almost any payout instead; the

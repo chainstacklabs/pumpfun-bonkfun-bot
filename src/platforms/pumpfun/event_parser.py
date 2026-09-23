@@ -31,8 +31,35 @@ logger = get_logger(__name__)
 # pump-fun public docs repository.
 _CREATE_V2_QUOTE_MINT_ACCOUNT_INDEX = 16
 
+# Index of the `user` account, which differs per instruction version: create_v2
+# dropped the four metaplex accounts legacy `create` carries between the global
+# account and the user, so the same wallet sits four places earlier. Reading
+# create_v2's account 7 yields the token program instead.
+_CREATE_USER_ACCOUNT_INDEX = 7
+_CREATE_V2_USER_ACCOUNT_INDEX = 5
+
 # Length of a Solana public key in bytes.
 PUBKEY_BYTE_LENGTH = 32
+
+
+def _option_bool(value: object) -> bool:
+    """Read an Anchor OptionBool argument.
+
+    OptionBool is a single-field struct with no presence tag, so the IDL parser
+    decodes it as {"field_0": bool}; a trailing argument the caller omitted
+    arrives as None. Omission is not ambiguity: create_v2's trailing arguments
+    are positional, so a truncated instruction cannot have set a later one, and
+    reporting it unset is correct rather than a guess.
+
+    Args:
+        value: Decoded argument, a dict, a bool, or None when absent
+
+    Returns:
+        The flag's value, False when the argument was not sent
+    """
+    if isinstance(value, dict):
+        return bool(value.get("field_0", False))
+    return bool(value) if value is not None else False
 
 
 def _coerce_pubkey(value: object) -> Pubkey | None:
@@ -398,21 +425,38 @@ class PumpFunEventParser(EventParser):
 
             args = decoded.get("args", {})
 
-            # Extract account information based on IDL account order
+            # Extract account information based on IDL account order. `user`
+            # sits at a different index per instruction version: create_v2
+            # dropped the four metaplex accounts legacy `create` carries, so
+            # its account 7 is the token program, not the launcher's wallet.
             mint = get_account_key(0)
             bonding_curve = get_account_key(2)
             associated_bonding_curve = get_account_key(3)
-            user = get_account_key(7)
+            user = get_account_key(
+                _CREATE_V2_USER_ACCOUNT_INDEX
+                if is_create_v2
+                else _CREATE_USER_ACCOUNT_INDEX
+            )
 
             if not all([mint, bonding_curve, associated_bonding_curve, user]):
                 return None
 
-            # Create creator vault
-            creator = (
-                Pubkey.from_string(args.get("creator", str(user)))
-                if args.get("creator")
-                else user
-            )
+            # Holder-reward flag first: it decides where the creator comes from.
+            # Safe to trust from instruction args even though `creator` is not —
+            # the program rejects the request when the feature is globally
+            # disabled, so a landed create carrying `true` is proof. The args
+            # are positional, so a truncated trailing form cannot have set this
+            # and reads as False, which is correct by construction.
+            is_holder_reward = _option_bool(args.get("is_holder_reward"))
+
+            # On a holder-reward coin the program ignores args.creator and
+            # writes its own per-coin PDA into BondingCurve.creator, so
+            # creator_vault must derive from that instead. args.creator is
+            # otherwise copied to the curve verbatim at create time.
+            if is_holder_reward:
+                creator = PumpFunAddresses.find_holder_reward_creator(mint)
+            else:
+                creator = _coerce_pubkey(args.get("creator")) or user
             creator_vault = self._derive_creator_vault(creator)
 
             # Determine token program based on instruction type
@@ -422,35 +466,11 @@ class PumpFunEventParser(EventParser):
                 else SystemAddresses.TOKEN_PROGRAM
             )
 
-            # Extract cashback flag from OptionBool struct (decoded as
-            # {"field_0": bool}). Cashback creation was deprecated 2026-09-15
-            # (create_v2 rejects a new true here with 6082 CashbackDeprecated),
-            # but older create_v2 instructions still carry it and existing
-            # cashback coins still trade, so it's still decoded here.
-            is_cashback_raw = args.get("is_cashback_enabled")
-            is_cashback = (
-                is_cashback_raw.get("field_0", False)
-                if isinstance(is_cashback_raw, dict)
-                else bool(is_cashback_raw)
-                if is_cashback_raw is not None
-                else False
-            )
-
-            # Extract the holder-reward flag from its OptionBool struct, same
-            # wrapper shape as is_cashback_enabled above. Unlike `creator`,
-            # this one is safe to trust from instruction args: a succeeded
-            # create_v2 carrying `true` here means the coin genuinely is a
-            # holder-reward coin -- the program itself rejects the request
-            # when the feature is globally disabled, so a landed transaction
-            # is proof, not merely an unverified claim.
-            is_holder_reward_raw = args.get("is_holder_reward")
-            is_holder_reward = (
-                is_holder_reward_raw.get("field_0", False)
-                if isinstance(is_holder_reward_raw, dict)
-                else bool(is_holder_reward_raw)
-                if is_holder_reward_raw is not None
-                else False
-            )
+            # Cashback creation was deprecated 2026-09-15 (create_v2 rejects a
+            # new true here with 6082 CashbackDeprecated), but older create_v2
+            # instructions still carry it and existing cashback coins still
+            # trade, so it's still decoded here.
+            is_cashback = _option_bool(args.get("is_cashback_enabled"))
 
             # `creator_fee_bps` is deliberately left at TokenInfo's default
             # (0) rather than decoded from args here. Upstream documents it
@@ -559,13 +579,35 @@ class PumpFunEventParser(EventParser):
         """
         return PumpFunAddresses.PROGRAM
 
+    def get_creation_filter_accounts(self) -> list[Pubkey]:
+        """Subscribe on the mint authority rather than the whole program.
+
+        `mint_authority` (PDA ["mint-authority"], a constant) is account 1 of
+        both `create` and `create_v2`, and appears in no trade instruction --
+        buy_v2/sell_v2 never reference it. Filtering on it therefore yields
+        creations only, server-side, instead of every pump.fun transaction.
+
+        Returns:
+            The pump.fun mint authority
+        """
+        return [PumpFunAddresses.MINT_AUTHORITY]
+
     def get_instruction_discriminators(self) -> list[bytes]:
         """Get instruction discriminators for token creation.
+
+        Both creation instructions, newest first: `create_v2` is what pump.fun
+        issues now, and legacy `create` still appears. A caller uses these to
+        reject an instruction before paying for a full IDL decode, so leaving
+        `create_v2` out would make the gate reject every current coin.
 
         Returns:
             List of discriminator bytes to match
         """
-        return [self._create_instruction_discriminator_bytes]
+        discriminators = []
+        if self._create_v2_instruction_discriminator_bytes:
+            discriminators.append(self._create_v2_instruction_discriminator_bytes)
+        discriminators.append(self._create_instruction_discriminator_bytes)
+        return discriminators
 
     def get_event_discriminators(self) -> list[bytes]:
         """Get event discriminators for token creation.

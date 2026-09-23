@@ -16,9 +16,6 @@ stream on the same endpoint and reports two things:
      amount of decoding recovers them. This classifies every create as
      top-level or inner to size that blind spot.
 
-Measured 2026-09-23 over 300s: creates led by a 6.4ms median (92% of the time),
-while 4 of 118 creates were CPI-shaped and therefore undetectable on deshred.
-
 Usage:
     uv run tools/compare_deshred_latency.py
     uv run tools/compare_deshred_latency.py --duration 600

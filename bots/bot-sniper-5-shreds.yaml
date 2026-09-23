@@ -1,8 +1,25 @@
+# Shreds mode: reads transactions from the geyser SubscribeDeshred stream
+# BEFORE they execute, which is earlier than the ordinary geyser listener.
+#
+# A few notes:
+#
+#   1. A coin created through a router is INVISIBLE. The create then arrives as
+#      a CPI, and inner instructions are produced by execution, so no
+#      pre-execution stream carries them. No setting recovers those coins -- if
+#      you need every coin, use listener_type "geyser".
+#   2. Outcomes are unknown at detection. Nothing has executed, so a create that
+#      goes on to revert looks exactly like one that lands, and the buy against
+#      it costs a fee for nothing.
+#
+# extreme_fast_mode below is deliberately true: with it off the bot waits for
+# the curve to stabilize, which spends the latency advantage and leaves only
+# the costs above.
+
 # This file defines comprehensive parameters and settings for the trading bot.
 # Carefully review and adjust values to match your trading strategy and risk tolerance.
 
 # Bot identification and connection settings
-name: "bot-sniper-pumpportal"
+name: "bot-sniper-5"
 env_file: ".env"
 rpc_endpoint: "${SOLANA_NODE_RPC_ENDPOINT}"
 wss_endpoint: "${SOLANA_NODE_WSS_ENDPOINT}"
@@ -12,11 +29,15 @@ enabled: false # You can turn off the bot w/o removing its config
 separate_process: true
 
 # Options: "pump_fun" (default), "lets_bonk"
-platform: "lets_bonk"
+platform: "pump_fun"
 
-# PumpPortal configuration (optional - uses default URL if not specified)
-pumpportal:
-  url: "wss://pumpportal.fun/api/data" # Default PumpPortal WebSocket URL
+# Geyser connection. Shreds mode uses the same endpoint and credentials as the
+# geyser listener -- SubscribeDeshred is a separate RPC on it, not a separate
+# service.
+geyser:
+  endpoint: "${GEYSER_ENDPOINT}"
+  api_token: "${GEYSER_API_TOKEN}"
+  auth_type: "x-token" # or "basic"
 
 # Trading parameters
 # Control trade execution: amount of SOL per trade and acceptable price deviation
@@ -25,40 +46,48 @@ trade:
   buy_slippage: 0.3 # Maximum acceptable price deviation (0.3 = 30%)
   sell_slippage: 0.3
 
+  # Spend amounts for coins paired against a non-SOL quote asset.
+  # pump.fun now supports quote mints other than SOL (USDC first). Amounts are
+  # in that mint's own whole units, so "usdc: 1.0" means one USDC — it is NOT
+  # comparable to buy_amount above. Keys accept the aliases "sol"/"usdc" or a
+  # raw base58 mint address. A coin whose quote mint has no entry here is
+  # skipped rather than bought with a SOL-sized amount.
+  # SOL always uses buy_amount above and needs no entry.
+  #quote_amounts:
+  #  usdc: 1.0
+
   # Exit strategy configuration
   exit_strategy: "time_based" # Options: "time_based", "tp_sl", "manual"
-  take_profit_percentage: 0.1 # Take profit at 10% gain (0.1 = 10%)
-  stop_loss_percentage: 0.1 # Stop loss at 10% loss (0.1 = 10%)
-  max_hold_time: 15 # Maximum hold time in seconds for TP/SL strategy, for time_based - see wait_after_buy
-  price_check_interval: 2 # Check price every 2 seconds
+  #take_profit_percentage: 0.1 # Take profit at 10% gain (0.1 = 10%)
+  #stop_loss_percentage: 0.1 # Stop loss at 10% loss (0.1 = 10%)
+  max_hold_time: 5 # Maximum hold time in seconds for TP/SL strategy, for time_based - see wait_after_buy
+  #price_check_interval: 2 # Check price every 2 seconds
   # A tp/sl exit sell that reverts on-chain (slippage, curve moved under it) is
   # retried on the next price check, re-reading the price first so the slippage
   # floor matches the market. After this many attempts the bot gives up and
   # leaves the position open - tokens are still held.
-  max_exit_sell_attempts: 3
+  #max_exit_sell_attempts: 3
 
   # EXTREME FAST mode configuration
   # When enabled, skips waiting for the bonding curve to stabilize and RPC price check.
   # The bot buys the specified number of tokens directly, making the process faster but less precise.
-  # For geyser/logs/blocks listeners the buy is built entirely from the on-chain
-  # CreateEvent — ZERO RPC calls between detection and submission (see
-  # trust_create_event below). pumpportal payloads lack the needed fields, so
-  # that listener does one batched read first (see curve_refresh_budget).
+  # For the shreds listener the buy is built entirely from the create
+  # instruction — ZERO RPC calls between detection and submission. The curve
+  # account does not exist yet at that point, so this is not merely faster:
+  # it is the only way shreds mode can trade at all (see trust_create_event).
   extreme_fast_mode: true
   extreme_fast_token_amount: 20 # Amount of tokens to buy
 
-  # Pre-buy curve refresh (issue #170). The buyer re-reads the bonding curve /
-  # pool at `processed` before building the buy so fee_recipient, creator_vault,
-  # quote_mint and the token program are current. If the account is not readable
-  # within this budget (seconds), the token is SKIPPED instead of submitting a
-  # buy built from listener-guessed defaults, which tends to revert on-chain.
+  # Pre-buy curve refresh (issue #170). Unused in shreds mode while
+  # trust_create_event is true, and kept here for when you switch this bot to
+  # another listener.
   curve_refresh_budget: 2.0
 
-  # When the create event carried the canonical creator, mayhem/cashback flags
-  # and quote_mint (geyser/logs/blocks listeners), skip the pre-buy read
-  # entirely: extreme_fast_mode then submits with ZERO RPC calls after
-  # detection. pumpportal events never carry these, so they always refresh.
-  # Set false to force the refresh for every listener.
+  # Skip the pre-buy curve read when the listener resolved the creator,
+  # mayhem/cashback flags and quote_mint itself. Setting this false does NOT
+  # make shreds mode safer — the bonding curve has not been created yet, so
+  # the refresh can only time out and skip the coin. Leave it true here and
+  # use listener_type "geyser" if you want the curve read.
   trust_create_event: true
 
 # Priority fee configuration
@@ -67,9 +96,9 @@ trade:
 priority_fees:
   enable_dynamic: false # Use latest transactions to estimate required fee (getRecentPrioritizationFees)
   enable_fixed: true # Use fixed amount below
-  fixed_amount: 200_000 # Base fee in microlamports
+  fixed_amount: 1_000_000 # Base fee in microlamports
   extra_percentage: 0.0 # Percentage increase on riority fee regardless of the calculation method (0.1 = 10%)
-  hard_cap: 200_000 # Maximum allowable fee in microlamports to prevent excessive spending
+  hard_cap: 1_000_000 # Maximum allowable fee in microlamports to prevent excessive spending
 
 # Compute unit limits for transaction processing
 # Operation-specific defaults are used if not specified: buy=100K, sell=60K
@@ -90,13 +119,12 @@ compute_units:
 filters:
   match_string: null # Only process tokens with this string in name/symbol
   bro_address: null # Only trade tokens created by this user address
-  # PumpPortal is a third-party feed, so it only reports what it indexes.
-  # It does not report coins whose create landed in a Solana transaction v1
-  # (live since 2026-09-15), while its coverage of v0 creates is
-  # near-complete. Nothing in this repo can recover those — the
-  # coin is simply never pushed. Use "geyser" or "logs" if you need every
-  # coin; see tests/regression/verify_transaction_v1.py.
-  listener_type: "pumpportal" # Method for detecting new tokens: "logs", "blocks", "geyser", or "pumpportal"
+  # Restrict which quote assets to trade. Omit (or set null) to allow any quote
+  # mint that has an amount configured under trade.quote_amounts.
+  # Accepts "sol"/"usdc" aliases or raw mint addresses.
+  #allowed_quote_mints: ["sol"]
+  listener_type: "shreds" # Pre-execution detection; see the header of this file.
+  # Supported on pump_fun only. Other options: "logs", "blocks", "geyser", "pumpportal".
   max_token_age: 0.001 # Maximum token age in seconds for processing
   marry_mode: false # Only buy tokens, skip selling
   yolo_mode: false # Continuously trade tokens
@@ -105,7 +133,7 @@ filters:
 retries:
   max_attempts: 1 # Number of attempts for transaction submission
   wait_after_creation: 15 # Seconds to wait after token creation (only if EXTREME FAST is disabled)
-  wait_after_buy: 15 # Holding period after buy transaction
+  wait_after_buy: 5 # Holding period after buy transaction
   wait_before_new_token: 15 # Pause between token trades
 
 # Token and account management
