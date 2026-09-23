@@ -7,23 +7,20 @@ Usage:
     uv run cookbook/pumpfun/trade/pumpfun_collect_creator_fee_v2.py --quote <QUOTE_MINT>
     uv run cookbook/pumpfun/trade/pumpfun_collect_creator_fee_v2.py --creator <PUBKEY>
 
-Every trade on a coin pays its creator a fee, and that fee accumulates in a
-`creator-vault` PDA rather than landing in the creator's wallet. It sits there
+Every trade on a coin pays its creator a fee, which accumulates in a
+`creator-vault` PDA rather than landing in the creator's wallet, and sits there
 until somebody runs this.
 
-Two things about it that catch people out:
-
-- **A vault is per creator and per quote asset.** If your coins are priced in
-  SOL and in USDC, that is two vaults and two runs, one `--quote` each. The
-  default is SOL.
-- **There is no signer.** The IDL marks no account as a signer, because the
-  money can only ever move to the wallet it already belongs to — so anyone can
-  run this for anyone, and `--creator` collects on someone else's behalf. They
-  get the funds; you pay the network fee.
+- **A vault is per creator and per quote asset.** Coins priced in SOL and in USDC
+  mean two vaults and two runs, one `--quote` each. The default is SOL.
+- **There is no signer.** The IDL marks no account as a signer, because the money
+  can only move to the wallet it already belongs to — so anyone can run this for
+  anyone, and `--creator` collects on someone else's behalf. They get the funds;
+  you pay the network fee.
 
 On a holder-reward coin the curve's `creator` is a `holder-rewards` PDA rather
-than a person, so the fees collect onto that PDA and are paid out separately
-with `distribute_fee_to_holders`.
+than a person, so the fees collect onto that PDA and are paid out separately with
+`distribute_fee_to_holders`.
 """
 
 import argparse

@@ -7,16 +7,14 @@ call going for minutes: three error retries backing off 1, 2, 4 ... 16s, or ten
 size. Every caller inherits that, and on the trade path a buy confirmation that
 blocks for minutes holds up the whole bot.
 
-`_get_transaction_result` is the caller that showed it. It takes a
-`budget_seconds` and checks the deadline *between* attempts, so the check only
-runs once `post_rpc` has returned — making the real worst case
-`budget_seconds + one post_rpc worst case` rather than the budget it advertises.
+`_get_transaction_result` showed it: it takes a `budget_seconds` and checks the
+deadline *between* attempts, so the check only runs once `post_rpc` has returned
+and the real worst case is `budget_seconds + one post_rpc worst case`.
 
 The fix belongs in `post_rpc` itself, as an overall deadline separate from the
-attempt count, so a caller can say how long an answer is worth waiting for.
-Wrapping the lookup in `asyncio.timeout` would instead cut off an in-flight
-`getTransaction` and report None, which is the same "can't see it, so call it
-failed" conflation that #206 removed.
+attempt count. Wrapping the lookup in `asyncio.timeout` would instead cut off an
+in-flight `getTransaction` and report None, which is the "can't see it, so call
+it failed" conflation.
 
 Offline machine checks, no network and no funds moved. The real `post_rpc` runs
 against a stub session on a virtual clock, so a 30s backoff costs no real time:

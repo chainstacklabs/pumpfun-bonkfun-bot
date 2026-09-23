@@ -6,21 +6,19 @@ and the IDL is byte-identical to upstream, so the IDL cannot be the reference:
 The extras are, in order, an optional `pool-v2` PDA, a buyback fee recipient, and
 that recipient's quote-mint ATA.
 
-The pair is read *positionally* from the end, and `pool-v2` only belongs to a
+The pair is read *positionally* from the end, and `pool-v2` belongs only to a
 **canonical** pool — one that graduated from a pump.fun bonding curve.
 `Pool.coin_creator` is the discriminator: set for canonical pools, left at
 `Pubkey::default()` otherwise (upstream PUMP_SWAP_CREATOR_FEE_README.md). Sending
 `pool-v2` on a non-canonical pool shifts the pair by one, so the program reads the
 pool-v2 PDA as the buyback recipient and rejects it with
-`BuybackFeeRecipientNotAuthorized` (6053). That was every non-canonical pool
-before the fix; they simulate cleanly after it.
+`BuybackFeeRecipientNotAuthorized` (6053).
 
-Unblocking those pools then exposed a second bug they had been hiding. The scripts
-hardcoded `TOKEN_DECIMALS = 6`, "standard for most pump.fun tokens" — true for
-every coin that graduated from a bonding curve, and wrong for the non-canonical
-pools, which routinely carry 9. Being out by a factor of 1000 scales the quote and
-the slippage floor together, so a sell reverts `ExceededSlippage` (6004) rather
-than merely mispricing: observed `Left: 2990`, `Right: 1500000`.
+Unblocking those pools exposed a second bug they had been hiding: the scripts
+hardcoded 6 base-token decimals, true for every coin that graduated from a
+bonding curve and wrong for non-canonical pools, which routinely carry 9. A
+factor of 1000 scales the quote and the slippage floor together, so a sell
+reverts `ExceededSlippage` (6004) rather than merely mispricing.
 
 Offline machine checks, no network and no funds moved:
 

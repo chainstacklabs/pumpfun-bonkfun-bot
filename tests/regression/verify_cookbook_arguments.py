@@ -8,9 +8,9 @@ to carry it as a module-level constant instead:
 
 which reads as "optional", but `Pubkey.from_string("...")` raises at import, so
 running the script the way its own usage line describes it — with no argument —
-died on `ValueError: Invalid Base58 string` before printing anything. Nine
-scripts did this. Others took their amount and slippage from environment
-variables, which no usage line mentioned at all.
+died on `ValueError: Invalid Base58 string` before printing anything. Others took
+their amount and slippage from environment variables, which no usage line
+mentioned at all.
 
 The rule is that a value the caller would vary per run is an argument. A default
 is fine, and encouraged; a default that is not a real value is not a default.

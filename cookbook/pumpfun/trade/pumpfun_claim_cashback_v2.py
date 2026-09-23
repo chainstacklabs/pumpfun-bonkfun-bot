@@ -10,12 +10,10 @@ Usage:
 Trading a cashback coin credits your `user_volume_accumulator`, and this moves
 what has built up there into your token account.
 
-Cashback is a closing door, not a dead one. `create_v2` has rejected
-`is_cashback_enabled = true` since the 2026-09-15 upgrade — error 6082,
-`CashbackDeprecated` — so no new cashback coin can be minted. Coins created
-before that keep trading, keep accruing, and stay claimable indefinitely, which
-is why this path still exists and why none of the cashback handling elsewhere in
-this repo is dead code.
+`create_v2` rejects `is_cashback_enabled = true` with error 6082
+`CashbackDeprecated`, so no new cashback coin can be minted. Coins created
+earlier keep trading, keep accruing and stay claimable, which is why this path
+and the cashback handling elsewhere in this repo are not dead code.
 
 As with creator fees, the accumulator is per quote asset, and the instruction
 takes no signer: the funds can only reach the wallet they belong to, so anyone

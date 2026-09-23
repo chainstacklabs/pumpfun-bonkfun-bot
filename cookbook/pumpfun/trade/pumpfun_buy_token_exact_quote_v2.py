@@ -12,11 +12,9 @@ which side of the trade you pin down:
     buy_v2                 "give me exactly N tokens, spend at most X"
     buy_exact_quote_in_v2  "spend exactly X, give me at least N tokens"
 
-Pin the spend when the quote asset is a budget you hold rather than a number you
-derived. pump.fun coins can be priced in USDC, in another coin, or in a tokenized
-equity, and "spend exactly one AAPLx" is a thing you can mean directly, whereas
-"buy 41,238.9 tokens" is a number you had to compute from a price that moved
-while you were computing it.
+Pin the spend when the quote asset is a budget you hold — "spend exactly one
+AAPLx" is something you can mean directly, where "buy 41,238.9 tokens" is a
+number you had to compute from a price that moved while you computed it.
 
 Fees come out of the amount you name, so the whole of it leaves your wallet.
 `--slippage` sets how far below the quoted token count you will still accept;
@@ -63,9 +61,6 @@ async def get_account(client: AsyncClient, address: Pubkey) -> Account:
     Args:
         client: Solana RPC client
         address: Account to fetch
-
-    Returns:
-        The account object
 
     Raises:
         ValueError: If the account does not exist

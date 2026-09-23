@@ -1,5 +1,4 @@
-"""
-IDL Parser module for Solana programs.
+"""IDL Parser module for Solana programs.
 Provides functionality to load and parse Anchor IDL files and decode instruction data.
 """
 
@@ -40,8 +39,7 @@ class IDLParser:
     }
 
     def __init__(self, idl_path: str, verbose: bool = False):
-        """
-        Initialize the IDL parser.
+        """Initialize the IDL parser.
 
         Args:
             idl_path: Path to the IDL JSON file
@@ -147,8 +145,7 @@ class IDLParser:
         account_type_name: str,
         skip_discriminator: bool = True,
     ) -> dict[str, Any] | None:
-        """
-        Decode account data using a specific account type from the IDL.
+        """Decode account data using a specific account type from the IDL.
 
         Args:
             account_data: Raw account data bytes.
@@ -378,8 +375,7 @@ class IDLParser:
 
 
 def load_idl_parser(idl_path: str, verbose: bool = False) -> IDLParser:
-    """
-    Convenience function to load an IDL parser.
+    """Convenience function to load an IDL parser.
 
     Args:
         idl_path: Path to the IDL JSON file

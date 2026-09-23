@@ -1,9 +1,4 @@
-"""
-LetsBonk implementation of CurveManager interface.
-
-This module handles LetsBonk (Raydium LaunchLab) specific pool operations
-by implementing the CurveManager interface using IDL-based decoding.
-"""
+"""letsbonk.fun CurveManager: pool reads and pricing, IDL-decoded."""
 
 from typing import Any
 
@@ -228,8 +223,6 @@ class LetsBonkCurveManager(CurveManager):
             True if structure is valid, False otherwise
         """
         try:
-            # This would be used during development/testing to ensure
-            # the IDL parsing is working correctly
             pool_state = await self.get_pool_state(pool_address)
 
             required_fields = [

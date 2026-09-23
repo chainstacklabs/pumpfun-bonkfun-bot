@@ -1,25 +1,23 @@
 """Create a pump.fun coin with create_v2, without buying any of it.
 
-WARNING: this submits a real transaction and spends real funds (transaction
-fees and account rent — no coins are bought).
+WARNING: this submits a real transaction and spends real funds (transaction fees
+and account rent — no coins are bought).
 
 Usage:
     uv run cookbook/pumpfun/trade/pumpfun_create_token_v2.py
     uv run cookbook/pumpfun/trade/pumpfun_create_token_v2.py --name "My Coin" --symbol MINE
     uv run cookbook/pumpfun/trade/pumpfun_create_token_v2.py --mayhem --holder-reward
 
-`pumpfun_create_and_buy_token_v2.py` does this and then buys the coin in a second transaction.
-This script is the create half on its own, which is the part worth reading:
-everything about a coin — Token-2022, mayhem mode, holder rewards, the quote
-asset — is fixed here and cannot be changed afterwards.
+`pumpfun_create_and_buy_token_v2.py` does this and then buys the coin in a second
+transaction. This is the create half on its own: everything about a coin —
+Token-2022, mayhem mode, holder rewards, the quote asset — is fixed here and
+cannot be changed afterwards.
 
-Two things that surprise people:
-
-- The mint is a **keypair you generate**, not something pump.fun hands back.
-  It signs the create transaction alongside your wallet.
+- The mint is a **keypair you generate**, not something pump.fun hands back. It
+  signs the create transaction alongside your wallet.
 - `create_v2` mints under **Token-2022**, so the associated bonding curve is a
-  Token-2022 ATA. Deriving it with SPL Token gives a valid-looking address
-  that does not exist on chain.
+  Token-2022 ATA. Deriving it with SPL Token gives a valid-looking address that
+  does not exist on chain.
 
 The `extend_account` instruction that follows the create is what makes the coin
 visible on pump.fun's own frontend. The coin trades without it.
@@ -165,8 +163,6 @@ def build_create_v2_instruction(  # noqa: PLR0913
     # coin — the IDL marks none of them optional, and omitting them fails with
     # AnchorError 3005 (AccountNotEnoughKeys) on sol_vault. The is_mayhem_mode
     # argument below, not the account list, is what makes a coin a mayhem coin.
-    # Verified by simulateTransaction against mainnet, 2026-09-22: 11 accounts
-    # fails 3005, 16 accounts succeeds with the argument either way.
     mayhem_state = Pubkey.find_program_address(
         [b"mayhem-state", bytes(mint)], MAYHEM_PROGRAM
     )[0]
@@ -201,12 +197,12 @@ def build_create_v2_instruction(  # noqa: PLR0913
     if is_holder_reward:
         # The three trailing args are positional, not independently optional:
         # reaching is_holder_reward means sending is_cashback_enabled and
-        # creator_fee_bps first, even though both are unused here. Neither is
-        # a discriminated Option — each serializes as its bare inner value,
-        # one byte and a little-endian u64.
+        # creator_fee_bps first, even though both are unused here. Neither is a
+        # discriminated Option — each serializes as its bare inner value, one
+        # byte and a little-endian u64.
         #
-        # is_cashback_enabled is always False: create_v2 has rejected [true]
-        # with error 6082 (CashbackDeprecated) since 2026-09-15.
+        # is_cashback_enabled is always False: create_v2 rejects [true] with
+        # error 6082 (CashbackDeprecated).
         is_cashback_enabled = False
         creator_fee_bps = 0
         data += struct.pack("<?", is_cashback_enabled)
@@ -224,9 +220,6 @@ def build_extend_account_instruction(
     Args:
         bonding_curve: The coin's bonding curve
         user: Wallet paying for the extra account space
-
-    Returns:
-        The extend_account instruction
     """
     accounts = [
         AccountMeta(pubkey=bonding_curve, is_signer=False, is_writable=True),

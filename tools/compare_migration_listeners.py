@@ -1,19 +1,15 @@
-"""
-This script compares two methods of detecting migrations:
+"""Race the two ways of detecting pump.fun migrations to PumpSwap.
 
-1. Migration Program Listener - Listens to migration wrapper program (39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg)
-   which emits detailed migration events via logsSubscribe
+1. Migration wrapper program (`39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg`),
+   which emits detailed migration events over `logsSubscribe`. Its event
+   structure differs from `CompletePumpAmmMigrationEvent` in
+   `idl/pump_fun_idl.json`.
+2. New `Pool` accounts on pump-amm (`pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA`)
+   over `programSubscribe`.
 
-2. Direct Pool Account Listener - Listens to pump_amm program (pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA)
-   for new Pool account creations via programSubscribe
-
-Note: The migration wrapper program emits a different event structure than
-CompletePumpAmmMigrationEvent in pump_fun_idl.json.
-
-The script tracks which method detects new migrations first and provides detailed performance
-statistics including message counts, detection timing, provider latency comparison.
-
-Configure multiple RPC endpoints in .env file to test provider performance.
+Reports which method sees each migration first, with message counts, detection
+timing and per-provider latency. Configure multiple RPC endpoints in `.env` to
+compare providers.
 """
 
 import asyncio
@@ -93,7 +89,6 @@ class DetectionTracker:
         """Print detailed summary statistics of the comparison test"""
         test_duration = time.time() - self.start_time
 
-        # Count total messages
         total_migration_messages = sum(self.migration_messages.values())
         total_market_messages = sum(self.market_messages.values())
 
@@ -287,8 +282,7 @@ class DetectionTracker:
 
 
 async def fetch_existing_market_pubkeys():
-    """
-    Fetch existing AMM market accounts from the blockchain
+    """Fetch existing AMM market accounts from the blockchain
 
     Used to filter out already existing markets when detecting new ones
     """
@@ -318,8 +312,7 @@ async def fetch_existing_market_pubkeys():
 
 
 def parse_market_account_data(data):
-    """
-    Parse binary Pool account data according to pump_swap_idl.json structure
+    """Parse binary Pool account data according to pump_swap_idl.json structure
 
     Total 11 fields including is_mayhem_mode field added with mayhem update
     """
@@ -374,8 +367,7 @@ def parse_market_account_data(data):
 
 
 def parse_migrate_instruction(data):
-    """
-    Parse migration event from the migration wrapper program
+    """Parse migration event from the migration wrapper program
 
     Note: This parses the event emitted by the migration wrapper program
     (39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg), which has a different
@@ -452,8 +444,7 @@ def is_transaction_successful(logs):
 
 
 async def listen_for_migrations(wss_url, provider_name, tracker, known_events=None):
-    """
-    Listen for migration instructions via WebSocket
+    """Listen for migration instructions via WebSocket
 
     Args:
         wss_url: WebSocket URL to connect to
@@ -558,8 +549,7 @@ async def listen_for_migrations(wss_url, provider_name, tracker, known_events=No
 
 
 async def listen_for_markets(wss_url, provider_name, tracker, known_markets):
-    """
-    Listen for new market accounts via WebSocket
+    """Listen for new market accounts via WebSocket
 
     Args:
         wss_url: WebSocket URL to connect to
@@ -683,8 +673,7 @@ async def listen_for_markets(wss_url, provider_name, tracker, known_markets):
 async def run_comparison_test(
     migration_wss_endpoints, market_wss_endpoints, test_duration=600
 ):
-    """
-    Run the comparison test with multiple WebSocket endpoints
+    """Run the comparison test with multiple WebSocket endpoints
 
     Args:
         migration_wss_endpoints: Dict of {provider_name: wss_url} for migration listeners

@@ -1,6 +1,4 @@
-"""
-Factory for creating platform-aware token listeners.
-"""
+"""Factory for creating platform-aware token listeners."""
 
 from interfaces.core import Platform
 from monitoring.base_listener import BaseTokenListener
@@ -30,7 +28,6 @@ class ListenerFactory:
             wss_endpoint: WebSocket endpoint URL (for logs/blocks listeners)
             geyser_endpoint: Geyser gRPC endpoint URL (geyser/shreds listeners)
             geyser_api_token: Geyser API token (geyser/shreds listeners)
-            geyser_auth_type: Geyser authentication type
             pumpportal_url: PumpPortal WebSocket URL (for pumpportal listener)
             platforms: List of platforms to monitor (if None, monitor all)
 
@@ -103,7 +100,6 @@ class ListenerFactory:
             return listener
 
         elif listener_type == "pumpportal":
-            # Import the new universal PumpPortal listener
             from monitoring.universal_pumpportal_listener import (
                 UniversalPumpPortalListener,
             )
@@ -161,9 +157,6 @@ class ListenerFactory:
 
         Args:
             platform: Platform to check compatibility for
-
-        Returns:
-            List of compatible listener types
         """
         if platform == Platform.PUMP_FUN:
             return ["logs", "blocks", "geyser", "shreds", "pumpportal"]
@@ -174,9 +167,5 @@ class ListenerFactory:
 
     @staticmethod
     def get_pumpportal_supported_platforms() -> list[Platform]:
-        """Get list of platforms that support PumpPortal listener.
-
-        Returns:
-            List of platforms with PumpPortal support
-        """
+        """Get list of platforms that support PumpPortal listener."""
         return [Platform.PUMP_FUN, Platform.LETS_BONK]

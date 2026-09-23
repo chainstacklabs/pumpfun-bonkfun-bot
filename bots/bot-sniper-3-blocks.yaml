@@ -1,5 +1,4 @@
-# This file defines comprehensive parameters and settings for the trading bot.
-# Carefully review and adjust values to match your trading strategy and risk tolerance.
+# Parameters for one bot instance. Review the values before running.
 
 # Bot identification and connection settings
 name: "bot-sniper-3"
@@ -20,8 +19,7 @@ geyser:
   api_token: "${GEYSER_API_TOKEN}"
   auth_type: "basic" # or "x-token"
 
-# Trading parameters
-# Control trade execution: amount of SOL per trade and acceptable price deviation
+# Trade execution: amount per trade and acceptable price deviation
 trade:
   buy_amount: 0.0001 # Amount of SOL to spend when buying (in SOL)
   buy_slippage: 0.3 # Maximum acceptable price deviation (0.3 = 30%)
@@ -33,39 +31,29 @@ trade:
   #stop_loss_percentage: 0.1 # Stop loss at 10% loss (0.1 = 10%)
   max_hold_time: 15 # Maximum hold time in seconds for TP/SL strategy, for time_based - see wait_after_buy
   #price_check_interval: 2 # Check price every 2 seconds
-  # A tp/sl exit sell that reverts on-chain (slippage, curve moved under it) is
-  # retried on the next price check, re-reading the price first so the slippage
-  # floor matches the market. After this many attempts the bot gives up and
-  # leaves the position open - tokens are still held.
+  # A tp/sl exit sell can revert when the price moves under it. The bot re-reads
+  # the price and retries; after this many attempts it gives up and leaves the
+  # position open, tokens still held.
   #max_exit_sell_attempts: 3
 
-  # EXTREME FAST mode configuration
-  # When enabled, skips waiting for the bonding curve to stabilize and RPC price check.
-  # The bot buys the specified number of tokens directly, making the process faster but less precise.
-  # For geyser/logs/blocks listeners the buy is built entirely from the on-chain
-  # CreateEvent — ZERO RPC calls between detection and submission (see
-  # trust_create_event below). pumpportal payloads lack the needed fields, so
-  # that listener does one batched read first (see curve_refresh_budget).
+  # EXTREME FAST mode: skip the curve-stabilization wait and the price check,
+  # buying a fixed token amount instead. Faster, but you don't learn the price
+  # you paid. With geyser/logs/blocks the bot makes no RPC call at all between
+  # detecting the coin and sending the buy; pumpportal needs one read first.
   extreme_fast_mode: true
   extreme_fast_token_amount: 20 # Amount of tokens to buy
 
-  # Pre-buy curve refresh (issue #170). The buyer re-reads the bonding curve /
-  # pool at `processed` before building the buy so fee_recipient, creator_vault,
-  # quote_mint and the token program are current. If the account is not readable
-  # within this budget (seconds), the token is SKIPPED instead of submitting a
-  # buy built from listener-guessed defaults, which tends to revert on-chain.
+  # How long that read may take, in seconds, before the coin is SKIPPED. Raise
+  # it to buy more coins on a slow endpoint, lower it to skip faster. Buying
+  # without it reverts on-chain and still costs the fee.
   curve_refresh_budget: 2.0
 
-  # When the create event carried the canonical creator, mayhem/cashback flags
-  # and quote_mint (geyser/logs/blocks listeners), skip the pre-buy read
-  # entirely: extreme_fast_mode then submits with ZERO RPC calls after
-  # detection. pumpportal events never carry these, so they always refresh.
-  # Set false to force the refresh for every listener.
+  # Set false to make every listener do the pre-buy read, giving up the
+  # zero-RPC path above.
   trust_create_event: true
 
-# Priority fee configuration
-# Manage transaction speed and cost on the Solana network.
-# Note: dynamic mode requires an additional RPC call, which slows down the buying process.
+# Priority fees: transaction speed vs cost.
+# Note: dynamic mode costs an extra RPC call, which slows the buy.
 priority_fees:
   enable_dynamic: false # Use latest transactions to estimate required fee (getRecentPrioritizationFees)
   enable_fixed: true # Use fixed amount below

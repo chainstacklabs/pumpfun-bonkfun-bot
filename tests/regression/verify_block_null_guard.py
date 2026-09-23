@@ -7,10 +7,10 @@ the key existed, so the next line ran a membership test against `None`:
 
     TypeError: argument of type 'NoneType' is not iterable
 
-The per-message handler catches it, so the listener keeps running — but the
+The per-message handler catches it, so the listener keeps running, but the
 notification is dropped and logged as an ERROR with a traceback. Any coin created
 in that slot is never detected, which reads as the `blocks` listener quietly
-finding fewer coins than `logs` or `geyser` over the same window (issue #196).
+finding fewer coins than `logs` or `geyser` over the same window.
 
 Offline machine checks, no network and no funds moved. A stub websocket replays
 scripted frames into the real `_wait_for_token_creation`:
@@ -174,7 +174,7 @@ async def check_real_block_is_still_processed() -> bool:
 
 async def main() -> None:
     print("=" * 72)
-    print("Verifying the blocks listener null-block guard (issue #196)")
+    print("Verifying the blocks listener null-block guard")
     print("=" * 72)
 
     results = [

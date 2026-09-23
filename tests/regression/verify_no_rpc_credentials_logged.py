@@ -1,14 +1,13 @@
 """Verify no RPC credential can reach a log line.
 
 The provider endpoints in `.env` carry their API key inside the URL, and the
-HTTP clients log a full request URL at INFO. Anything that raises the root
-logger to INFO therefore prints the key — `tools/cleanup_accounts.py` did,
-for four runs on 2026-09-23, in a terminal and into `logs/`.
+HTTP clients log a full request URL at INFO, so anything that raises the root
+logger to INFO prints the key — to the terminal and into `logs/`.
 
-That script was already silencing `httpx` and `httpcore` by name. It leaked
-anyway, because solana-py 0.40 swapped httpx for httpx2 and the rename took the
-guard with it. So naming the clients is a convenience, not the control: these
-checks prove the value is masked whichever logger emits it.
+Silencing `httpx` and `httpcore` by name did not stop it: solana-py 0.40 swapped
+httpx for httpx2 and the rename took the guard with it. Naming the clients is a
+convenience, not the control; these checks prove the value is masked whichever
+logger emits it.
 
 Offline machine checks, no network and no funds moved:
 
@@ -19,7 +18,6 @@ Offline machine checks, no network and no funds moved:
   3. A logger this repo has never heard of, logging at INFO, comes out
      redacted — including when the URL is a non-`str` argument, which is how
      httpx2 passes it and how the first version of this guard was defeated.
-     This is the check that would have caught the httpx -> httpx2 rename.
   4. Importing `core.client` installs the redaction: every module that logs
      calls `get_logger` at import, and that is where it is installed.
   5. `setup_file_logging` installs it before attaching the handler, so nothing

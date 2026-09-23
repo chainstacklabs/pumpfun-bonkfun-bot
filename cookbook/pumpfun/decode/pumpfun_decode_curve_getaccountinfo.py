@@ -156,7 +156,6 @@ def main() -> None:
     # Extract the base64 encoded data
     encoded_data = json_data["result"]["value"]["data"][0]
 
-    # Decode the data
     bonding_curve_state = decode_bonding_curve_data(encoded_data)
 
     # Calculate and print the token price

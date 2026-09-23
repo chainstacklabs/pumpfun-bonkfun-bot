@@ -1,23 +1,19 @@
 """Verify the PumpPortal listener accepts lets_bonk tokens.
 
-`listener_type: "pumpportal"` on `platform: "lets_bonk"` detected nothing at all,
-while the same feed kept the pump.fun side busy. The tokens were arriving and
-the frames were being parsed - they were failing a required-field check in
-`LetsBonkPumpPortalProcessor.process_token_data` before a `TokenInfo` was ever
-built, which showed up only as a repeating
+`listener_type: "pumpportal"` on `platform: "lets_bonk"` detected nothing, while
+the same feed kept the pump.fun side busy. The tokens were arriving and parsing
+fine; they failed a required-field check in
+`LetsBonkPumpPortalProcessor.process_token_data` before a `TokenInfo` was built,
+showing up only as a repeating "Missing required fields".
 
-    Missing required fields in PumpPortal LetsBonk token data
-
-Captured from the live feed, which carries both pump creates and bonk creates,
-and the two payloads are not the same shape. A bonk
-create carries no `name`, no `symbol` and no `uri`, where a pump create has all
-three. Requiring name and symbol therefore rejected every bonk token that ever
-arrived, which matches the field report on the original run.
+The two payloads are not the same shape: a bonk create carries no `name`, no
+`symbol` and no `uri`, where a pump create has all three, so requiring name and
+symbol rejected every bonk token that ever arrived.
 
 Only `mint` and `traderPublicKey` cannot be derived from something else, so only
-those two are required now. `name` and `symbol` are used for logging and for the
+those two are required. `name` and `symbol` feed logging and the
 `filters.match_string` filter, so a bonk token gets a mint-derived placeholder
-symbol and an empty name - see the check below that pins that consequence down.
+symbol and an empty name — pinned by the last check below.
 
 Offline machine checks against committed fixtures, no network and no funds
 moved. `--live` adds a read-only 90-second listen against the real feed:

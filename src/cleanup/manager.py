@@ -24,10 +24,9 @@ class AccountCleanupManager:
         use_priority_fee: bool = False,
         force_burn: bool = False,
     ):
-        """
-        Args:
-            client: Solana RPC client
-            wallet: Wallet for signing transactions
+        """Args:
+        client: Solana RPC client
+        wallet: Wallet for signing transactions
         """
         self.client = client
         self.wallet = wallet
@@ -38,8 +37,7 @@ class AccountCleanupManager:
     async def cleanup_ata(
         self, mint: Pubkey, token_program_id: Pubkey | None = None
     ) -> None:
-        """
-        Attempt to burn any remaining tokens and close the ATA.
+        """Attempt to burn any remaining tokens and close the ATA.
         Skips if account doesn't exist or is already empty/closed.
 
         Args:

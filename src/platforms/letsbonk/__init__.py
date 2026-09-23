@@ -1,9 +1,4 @@
-"""
-LetsBonk platform exports.
-
-This module provides convenient imports for the LetsBonk platform implementations.
-Platform registration is now handled by the main platform factory.
-"""
+"""letsbonk.fun platform exports. Registration is handled by the platform factory."""
 
 from .address_provider import LetsBonkAddressProvider
 from .curve_manager import LetsBonkCurveManager

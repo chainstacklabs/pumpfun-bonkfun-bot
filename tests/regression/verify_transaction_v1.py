@@ -1,28 +1,26 @@
 """Verify the bot still detects coins after the Solana transaction v1 cutover.
 
-Transaction v1 (SIMD-0296 size, SIMD-0385 format) activated at epoch 1035 on
-2026-09-15. It is not an opt-in: other people's creates and trades arrive in
-whatever version they chose, and both pump.fun and letsbonk.fun already carry
-v1 traffic. Two things break a reader that ignores it.
+Transaction v1 (SIMD-0296 size, SIMD-0385 format) is not an opt-in: other
+people's creates and trades arrive in whatever version they chose, and both
+pump.fun and letsbonk.fun carry v1 traffic. Two things break a reader that
+ignores it.
 
 `maxSupportedTransactionVersion` is a whole-frame setting, not a per-transaction
-one. Asking `blockSubscribe` for 0 does not skip the v1 transactions in a block,
-it nulls out `value.block` for the entire notification. Asking for `0` leaves
-the blocks listener almost entirely blind, silently, because a null frame looks
-exactly like a skipped slot.
+one. Asking `blockSubscribe` for 0 does not skip a block's v1 transactions, it
+nulls `value.block` for the entire notification — which looks exactly like a
+skipped slot, so the blocks listener goes almost entirely blind, silently.
 
-solders could not deserialize a v1 transaction (they begin with byte 129 and
-put the signatures at the tail) until 0.29. That was survivable, because the RPC
-has already decoded the envelope by the time it emits `meta.logMessages`, and
-the platform parsers prefer the CreateEvent in those logs anyway — for the
-canonical creator. It is only fatal if the listener insists on decoding the
-bytes *before* it will hand a transaction to a parser, which is what
-`_process_block_transactions` used to do.
+solders could not deserialize a v1 envelope (they begin with byte 129 and put
+the signatures at the tail) until 0.29. That was survivable, because the RPC has
+already decoded the envelope by the time it emits `meta.logMessages` and the
+parsers prefer the CreateEvent in those logs anyway; it is fatal only for a
+listener that insists on decoding the bytes *before* handing a transaction to a
+parser.
 
-solders 0.29 reads a v1 envelope, so the byte decode works again — but it stays
-the fallback, not the route. The next version byte will be unreadable in its
-turn, and a listener that has quietly come to depend on the decode goes blind
-again on the day it lands. Both routes are pinned below, separately.
+solders 0.29 reads a v1 envelope, but the byte decode stays the fallback, not
+the route: the next version byte will be unreadable in its turn, and a listener
+that has come to depend on the decode goes blind on the day it lands. Both
+routes are pinned below, separately.
 
 Offline machine checks, no network and no funds moved:
 
@@ -48,13 +46,12 @@ Offline machine checks, no network and no funds moved:
 The geyser route decodes protobuf rather than transaction bytes, so it goes
 blind differently and is pinned on its own frame:
 
-  8. The committed geyser frame really is a v1 create_v2 — over geyser there is
-     no version number, so `Message.config` is the test. It exists only in the
-     stubs regenerated from yellowstone-grpc-proto 13.0.0-rc4; the previous
-     vendored proto stopped at field 6 and this check fails on a rollback.
+  8. The committed geyser frame really is a v1 create_v2. Over geyser there is
+     no version number, so `Message.config` is the test; it exists only in the
+     stubs from yellowstone-grpc-proto 13.0.0-rc4, so a rollback fails here.
   9. The pump.fun parser reads that frame into a usable TokenInfo. A missing
      proto field is skipped rather than raised on, so a stale proto degrades in
-     silence here — which is exactly why it is pinned.
+     silence — which is why it is pinned.
  10. With the logs stripped from the frame, the instruction decode still finds
      the coin, and still leaves state_from_event False: `args.creator` is
      user-supplied, so the curve must be read.
@@ -98,7 +95,7 @@ V0_FIXTURE = (
     / "decode"
     / "raw_create_v2_with_fee_bps_from_gettransaction.json"
 )
-# One geyser SubscribeUpdate carrying a v1 create_v2, captured 2026-09-23. The
+# One geyser SubscribeUpdate carrying a v1 create_v2. The
 # geyser route has its own decode path and its own stubs, so it needs its own
 # fixture: the getTransaction JSON above cannot exercise a protobuf frame.
 GEYSER_V1_FIXTURE = (
@@ -387,7 +384,7 @@ def check_geyser_instruction_fallback_reads_v1() -> bool:
     Same split as the block listener: logs are the route, instruction decoding
     is the fallback, and each is pinned separately so neither can quietly start
     carrying the other's load. The fallback must *not* set state_from_event —
-    `args.creator` is user-supplied and post-2026-04-28 may differ from the
+    `args.creator` is user-supplied and may differ from the
     canonical `BondingCurve.creator`, so the curve still has to be read.
     """
     update = _geyser_update()

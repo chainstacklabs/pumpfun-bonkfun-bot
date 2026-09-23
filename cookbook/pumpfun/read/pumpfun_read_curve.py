@@ -58,8 +58,7 @@ def resolve_quote_asset(quote_mint: Pubkey) -> tuple[Pubkey, str, int]:
 
 
 class BondingCurveState:
-    """
-    Represents the state of a bonding curve account.
+    """Represents the state of a bonding curve account.
 
     Attributes:
         virtual_token_reserves: Virtual token reserves in the curve
@@ -107,10 +106,9 @@ class BondingCurveState:
         "is_cashback_coin" / Flag,
     )
 
-    # V5: V4 + quote_mint. Live accounts are 125 bytes as created; extend_account
-    # can grow one to 151, 256, or any other length the program allows — this
-    # struct covers the fields needed here at the same offsets regardless of
-    # total length, and anything past it is left unread. The quote-side
+    # V5: V4 + quote_mint. Accounts are 125 bytes as created and extend_account
+    # can grow one to any length the program allows; this struct covers the
+    # leading fields, which sit at the same offsets regardless. Quote-side
     # reserves are in the quote mint's raw units, so a non-SOL coin must not be
     # scaled by 1e9.
     _STRUCT_V5 = Struct(
@@ -163,8 +161,7 @@ class BondingCurveState:
 
 
 def get_bonding_curve_address(mint: Pubkey, program_id: Pubkey) -> tuple[Pubkey, int]:
-    """
-    Derives the associated bonding curve address for a given mint.
+    """Derives the associated bonding curve address for a given mint.
 
     Args:
         mint: The token mint address
@@ -179,8 +176,7 @@ def get_bonding_curve_address(mint: Pubkey, program_id: Pubkey) -> tuple[Pubkey,
 async def get_bonding_curve_state(
     conn: AsyncClient, curve_address: Pubkey
 ) -> BondingCurveState:
-    """
-    Fetches and validates the state of a bonding curve account.
+    """Fetches and validates the state of a bonding curve account.
 
     Args:
         conn: AsyncClient connection to Solana RPC
@@ -204,8 +200,7 @@ async def get_bonding_curve_state(
 
 
 async def check_token_status(mint_address: str) -> None:
-    """
-    Checks and prints the status of a token and its bonding curve.
+    """Checks and prints the status of a token and its bonding curve.
 
     Args:
         mint_address: The token mint address as a string

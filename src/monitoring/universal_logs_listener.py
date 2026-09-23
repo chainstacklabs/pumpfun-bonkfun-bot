@@ -1,6 +1,4 @@
-"""
-Universal logs listener that works with any platform through the interface system.
-"""
+"""Universal logsSubscribe listener, platform-agnostic via the interfaces."""
 
 import asyncio
 import json
@@ -143,11 +141,9 @@ class UniversalLogsListener(BaseTokenListener):
                         logger.warning("WebSocket connection closed. Reconnecting...")
                     finally:
                         # Every exit from the read loop leaves this connection
-                        # behind, not just a closed one: an unexpected read
-                        # error now reconnects too, and cancellation unwinds
-                        # through here. An uncancelled ping loop would go on
-                        # pinging a dead socket for up to ping_interval before
-                        # dying on its own, logging a spurious "Ping error".
+                        # behind, including read errors and cancellation. An
+                        # uncancelled ping loop would keep pinging a dead socket
+                        # for up to ping_interval and log a spurious "Ping error".
                         ping_task.cancel()
 
             except Exception:

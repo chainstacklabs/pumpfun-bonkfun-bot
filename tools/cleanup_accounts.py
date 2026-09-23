@@ -1,3 +1,11 @@
+"""Burn any leftover balance in a token account and close it, reclaiming rent.
+
+WARNING: this submits real transactions and spends real funds.
+
+Usage:
+    uv run tools/cleanup_accounts.py [MINT]
+"""
+
 import asyncio
 import logging
 import os
@@ -14,23 +22,21 @@ from core.wallet import Wallet
 from utils.logger import get_logger, install_secret_redaction
 
 load_dotenv()
-# get_logger attaches no handler — the bot installs one at startup, but a
-# standalone example has to do it itself or every line below goes nowhere. This
-# script ran completely silently, success or failure, without it.
+# get_logger attaches no handler: the bot installs one at startup, but a
+# standalone script has to do it itself or every line below goes nowhere.
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 # The HTTP clients log each request at INFO and the RPC endpoint carries an API
 # key, so raising the root logger to INFO is what leaks it. Naming the clients
-# here is not enough — solana-py 0.40 renamed httpx to httpx2 and this script
-# went on printing the key for four runs. install_secret_redaction masks the
-# value itself, whichever logger emits it.
+# here is not enough — solana-py 0.40 renamed httpx to httpx2 and the guard went
+# with it. install_secret_redaction masks the value itself, whichever logger
+# emits it.
 install_secret_redaction()
 logger = get_logger(__name__)
 
 RPC_ENDPOINT = os.getenv("SOLANA_NODE_RPC_ENDPOINT")
 PRIVATE_KEY = os.getenv("SOLANA_PRIVATE_KEY")
 
-# Update this address to MINT address of a token you want to close
-# Mint of the token account to close: pass as argv[1], or hardcode here.
+# Mint of the token account to close: pass as argv[1], or change the default.
 MINT_ADDRESS = Pubkey.from_string(
     sys.argv[1] if len(sys.argv) > 1 else "9WHpYbqG6LJvfCYfMjvGbyo1wHXgroCrixPb33s2pump"
 )
@@ -51,7 +57,6 @@ async def resolve_token_program(client: SolanaClient, mint: Pubkey) -> Pubkey:
 
     Args:
         client: Solana RPC client
-        mint: Mint address
 
     Returns:
         TOKEN_PROGRAM or TOKEN_2022_PROGRAM
@@ -87,11 +92,10 @@ async def close_account_if_exists(
         instructions = []
         balance = await client.get_token_account_balance(account)
         if balance > 0 and mint == SystemAddresses.WSOL_MINT:
-            # Wrapped SOL cannot be burned — the token program rejects it with
-            # NativeNotSupported (error 10) and the whole transaction reverts, so
-            # the account can never be closed. Closing a WSOL account already
-            # returns both the wrapped lamports and the rent to the owner, so
-            # there is nothing to burn first. Matches AccountCleanupManager.
+            # Wrapped SOL cannot be burned: the token program rejects it with
+            # NativeNotSupported (error 10) and the transaction reverts. Closing
+            # a WSOL account already returns both the wrapped lamports and the
+            # rent, so there is nothing to burn first.
             logger.info(
                 f"Unwrapping {balance} lamports of wrapped SOL from {account} "
                 f"by closing it (burn skipped)"
@@ -151,7 +155,6 @@ async def main():
         token_program = await resolve_token_program(client, MINT_ADDRESS)
         logger.info(f"Mint {MINT_ADDRESS} uses token program {token_program}")
 
-        # Get user's ATA for the token
         ata = wallet.get_associated_token_address(MINT_ADDRESS, token_program)
         await close_account_if_exists(client, wallet, ata, MINT_ADDRESS, token_program)
 

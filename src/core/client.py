@@ -1,6 +1,4 @@
-"""
-Solana client abstraction for blockchain operations.
-"""
+"""Solana client abstraction for blockchain operations."""
 
 import asyncio
 import random
@@ -33,16 +31,12 @@ logger = get_logger(__name__)
 HTTP_TOO_MANY_REQUESTS = 429
 
 # Length of the `[instruction_index, error_detail]` pair inside
-# `{"InstructionError": [...]}` -- fixed by the RPC's `meta.err` shape, not a
-# tunable.
+# `{"InstructionError": [...]}` -- fixed by the RPC's `meta.err` shape.
 INSTRUCTION_ERROR_PAIR_LEN = 2
 
-# How long getTransaction keeps retrying a signature the node has not caught
-# up to yet, and the pause between attempts. A null result means "I cannot
-# see this transaction", which on a load-balanced endpoint is not the same
-# as "it failed": the node that serves getTransaction is not necessarily the
-# one that just confirmed the signature. Treating the two as one reported
-# landed buys as failed buys, leaving the tokens held and unsold.
+# How long getTransaction keeps retrying a signature the node has not caught up
+# to yet, and the pause between attempts. A null result means "I cannot see this
+# transaction", which on a load-balanced endpoint is not the same as "it failed".
 TX_RESULT_RETRY_BUDGET = 5.0
 TX_RESULT_RETRY_DELAY = 0.4
 
@@ -50,9 +44,8 @@ TX_RESULT_RETRY_DELAY = 0.4
 class _Deadline:
     """An optional wall-clock budget shared by every attempt of one RPC call.
 
-    Attempts and elapsed time are different bounds, and post_rpc has always had
-    only the first. This carries the second, so a caller can say how long an
-    answer is worth waiting for without touching the retry counts.
+    Attempts and elapsed time are different bounds; this carries the second, so a
+    caller can cap waiting without touching the retry counts.
     """
 
     def __init__(self, seconds: float | None) -> None:
@@ -73,10 +66,7 @@ class _Deadline:
         return self._expires_at is not None and monotonic() >= self._expires_at
 
     def allows(self, wait: float) -> bool:
-        """Check whether a backoff fits in what is left.
-
-        A sleep longer than the remaining time would overshoot the budget the
-        caller asked for, so it is not taken at all.
+        """Check whether a backoff fits in what is left of the budget.
 
         Args:
             wait: How long the next backoff would sleep, in seconds
@@ -119,19 +109,14 @@ def _retry_after_seconds(header: str | None, attempt: int) -> float:
 
 
 def set_loaded_accounts_data_size_limit(bytes_limit: int) -> Instruction:
-    """
-    Create SetLoadedAccountsDataSizeLimit instruction to reduce CU consumption.
+    """Create a SetLoadedAccountsDataSizeLimit instruction to reduce CU cost.
 
-    By default, Solana transactions can load up to 64MB of account data,
-    costing 16k CU (8 CU per 32KB). Setting a lower limit reduces CU
-    consumption and improves transaction priority.
-
-    NOTE: CU savings are NOT visible in "consumed CU" metrics, which only
-    show execution CU. The 16k CU loaded accounts overhead is counted
-    separately for transaction priority/cost calculation.
+    A transaction may load up to 64MB of account data by default, costing 16k CU
+    (8 CU per 32KB); a lower limit reduces that and improves priority. The saving
+    is not visible in "consumed CU", which only counts execution CU.
 
     Args:
-        bytes_limit: Max account data size in bytes (e.g., 512_000 = 512KB)
+        bytes_limit: Max account data size in bytes
 
     Returns:
         Compute Budget instruction with discriminator 4
@@ -150,36 +135,22 @@ def set_loaded_accounts_data_size_limit(bytes_limit: int) -> Instruction:
 def _describe_program_error(err: object) -> str | None:
     """Best-effort human name for an Anchor `Custom(N)` error in `meta.err`.
 
-    Digs `{"InstructionError": [idx, {"Custom": n}]}` out of `meta.err` and
-    looks the code up in pump.fun's IDL error table. `SolanaClient` is shared
-    across pump.fun and letsbonk.fun and carries no record of which program a
-    given transaction actually invoked, so this only ever checks pump.fun's
-    table (`idl/pump_fun_idl.json`) -- the program the bot's own `buy_v2` /
-    `sell_v2` call directly, and the source of issue #175's
-    `BuybackFeeRecipientMissing`. A revert on a different program (letsbonk's
-    Raydium LaunchLab program, or one raised inside a pump-amm or pump-fees
-    CPI) is described against the wrong table if its numeric code happens to
-    also be defined there, and left unnamed otherwise -- picking the right
-    table per invoked program id is not attempted here.
-
-    Any shape this does not recognize (a non-Anchor failure such as compute
-    budget exhaustion, `MaxLoadedAccountsDataSizeExceeded`, or a top-level
-    string error) is reported as `None`, never raised.
+    Digs `{"InstructionError": [idx, {"Custom": n}]}` out of `meta.err` and looks
+    the code up in pump.fun's IDL error table. `SolanaClient` is shared across
+    platforms and carries no record of which program a transaction invoked, so
+    only pump.fun's table (`idl/pump_fun_idl.json`) is ever checked. A revert on
+    another program is described against the wrong table if its numeric code is
+    also defined there, and left unnamed otherwise. An unrecognized shape returns
+    None, never raises.
 
     Args:
         err: The raw `meta.err` value from a `getTransaction` response.
 
     Returns:
-        A description like "pump.fun IDL: 6062 BuybackFeeRecipientMissing"
-        for a code pump.fun's IDL defines (the IDL error entry's own `msg`,
-        if it has one, follows after a colon — 6062 has none, so there's no
-        suffix here), or None if the shape doesn't match or the code is not
-        in that table. The "pump.fun IDL:" prefix is
-        deliberate: it is the only table checked, so it must stay visible in
-        the rendered string, not just in this docstring -- a reader looking
-        at a log line, not this source file, still needs to know the name is
-        pump.fun's interpretation and not a fact about whichever program
-        actually reverted.
+        A description like "pump.fun IDL: 6062 BuybackFeeRecipientMissing", or
+        None. The "pump.fun IDL:" prefix must stay in the rendered string: a
+        reader of a log line needs to know the name is pump.fun's interpretation,
+        not a fact about whichever program actually reverted.
     """
     if not isinstance(err, dict):
         return None
@@ -242,11 +213,7 @@ class SolanaClient:
             return self._cached_blockhash
 
     async def get_client(self) -> AsyncClient:
-        """Get or create the AsyncClient instance.
-
-        Returns:
-            AsyncClient instance
-        """
+        """Get or create the AsyncClient instance."""
         if self._client is None:
             self._client = AsyncClient(self.rpc_endpoint)
         return self._client
@@ -303,10 +270,8 @@ class SolanaClient:
                 fresh state right after a geyser event; default "confirmed")
 
         Returns:
-            The solders `Account` (verified 2026-09-15: `response.value` from
-            `AsyncClient.get_account_info` is a `solders.account.Account`, not
-            a dict -- callers read attributes like `.data` and `.owner`, never
-            subscript it).
+            The solders `Account` -- callers read attributes like `.data` and
+            `.owner`, never subscript it.
 
         Raises:
             ValueError: If account doesn't exist
@@ -326,19 +291,16 @@ class SolanaClient:
     ) -> list[Account | None]:
         """Get several accounts in one slot-consistent RPC round trip.
 
-        A single getMultipleAccounts response is served by one node at one
-        slot, unlike back-to-back get_account_info calls which a load-balanced
-        endpoint may serve from nodes seconds apart (issue #170).
+        A single getMultipleAccounts response is served by one node at one slot,
+        unlike back-to-back get_account_info calls, which a load-balanced
+        endpoint may serve from nodes seconds apart.
 
         Args:
             pubkeys: Public keys of the accounts
             commitment: Optional commitment override (default "confirmed")
 
         Returns:
-            One entry per pubkey, in order -- each a solders `Account` (same
-            type as `get_account_info` returns; attributes like `.data` and
-            `.owner`, never subscriptable) or None for accounts that don't
-            exist.
+            One entry per pubkey, in order -- a solders `Account` or None.
         """
         await self._rate_limiter.acquire()
         client = await self.get_client()
@@ -353,15 +315,11 @@ class SolanaClient:
     ) -> int:
         """Get token balance for an account.
 
-        Defaults to "confirmed" rather than solana-py's "finalized": trades are
-        confirmed at "confirmed", and finalization lags it. Reading the finalized
-        balance right after a sell returns the pre-sell amount, and cleanup then
-        builds a burn for tokens the account no longer holds — the whole burn +
-        close transaction reverts with InsufficientFunds and the rent stays
-        locked.
+        Defaults to "confirmed" rather than solana-py's "finalized", which lags
+        it: the finalized balance right after a sell is the pre-sell amount, and
+        cleanup then builds a burn for tokens the account no longer holds.
 
         Args:
-            token_account: Token account address
             commitment: Commitment level for the balance read
 
         Returns:
@@ -377,11 +335,7 @@ class SolanaClient:
         return 0
 
     async def get_latest_blockhash(self) -> Hash:
-        """Get the latest blockhash.
-
-        Returns:
-            Recent blockhash as string
-        """
+        """Get the latest blockhash."""
         await self._rate_limiter.acquire()
         client = await self.get_client()
         response = await client.get_latest_blockhash(commitment="processed")
@@ -397,18 +351,17 @@ class SolanaClient:
         compute_unit_limit: int | None = None,
         account_data_size_limit: int | None = None,
     ) -> Signature:
-        """
-        Send a transaction with optional priority fee and compute unit limit.
+        """Send a transaction with optional priority fee and compute unit limit.
 
         Args:
-            instructions: List of instructions to include in the transaction.
+            instructions: Instructions to include in the transaction.
             signer_keypair: Keypair to sign the transaction.
             skip_preflight: Whether to skip preflight checks.
             max_retries: Maximum number of retry attempts.
-            priority_fee: Optional priority fee in microlamports.
-            compute_unit_limit: Optional compute unit limit. Defaults to 85,000 if not provided.
-            account_data_size_limit: Optional account data size limit in bytes (e.g., 512_000).
-                                    Reduces CU cost from 16k to ~128 CU. Must be first instruction.
+            priority_fee: Priority fee in microlamports.
+            compute_unit_limit: Compute unit limit. Defaults to 85,000.
+            account_data_size_limit: Account data size limit in bytes. Reduces CU
+                cost from 16k to ~128 CU; must be the first instruction.
 
         Returns:
             Transaction signature.
@@ -477,15 +430,14 @@ class SolanaClient:
     ) -> bool:
         """Wait for transaction confirmation and verify execution success.
 
-        Confirms the transaction landed on-chain, then checks meta.err to
-        ensure the inner program instructions actually succeeded. A transaction
-        can be "confirmed" (included in a block) but still fail execution.
+        Confirms the transaction landed on-chain, then checks meta.err: a
+        transaction can be included in a block and still fail execution.
 
-        This deliberately stays a bool. Returning the richer
-        :class:`ConfirmationStatus` here would be a silent trap: every enum
-        member is truthy, so each existing `if await client.confirm_transaction(
-        sig):` would start passing unconditionally. Callers that need to tell a
-        revert from an unknown call :meth:`confirm_transaction_detailed`.
+        Deliberately a bool. Returning :class:`ConfirmationStatus` would be a
+        silent trap — every member is truthy, so every existing
+        `if await client.confirm_transaction(sig):` would start passing
+        unconditionally. Callers that need to tell a revert from an unknown call
+        :meth:`confirm_transaction_detailed`.
 
         Args:
             signature: Transaction signature, base58 string or Signature
@@ -503,11 +455,9 @@ class SolanaClient:
         """Confirm a transaction, distinguishing a revert from an unknown.
 
         Same work as :meth:`confirm_transaction`, but it reports *why* a
-        transaction did not succeed. A caller deciding whether to resubmit a
-        non-idempotent transaction needs that: resubmitting after a confirmed
-        revert is correct, while resubmitting after a lookup that simply never
-        answered can send a second transaction for a position that is already
-        closed.
+        transaction did not succeed. Resubmitting a non-idempotent transaction
+        after a confirmed revert is correct; resubmitting after a lookup that
+        never answered can close an already-closed position twice.
 
         Args:
             signature: Transaction signature, base58 string or Signature
@@ -541,8 +491,7 @@ class SolanaClient:
     async def verify_transaction_succeeded(self, signature: str | Signature) -> bool:
         """Check whether a landed transaction actually executed successfully.
 
-        Bool wrapper around :meth:`verify_transaction_status`, kept because most
-        callers only need to know whether to carry on. See
+        Bool wrapper around :meth:`verify_transaction_status`. See
         :meth:`confirm_transaction` for why this does not return the enum.
 
         Args:
@@ -559,13 +508,11 @@ class SolanaClient:
     ) -> ConfirmationStatus:
         """Read what actually happened to a landed transaction.
 
-        Landing in a block and succeeding are different things: RPC reports a
-        revert in `meta.err`, so a transaction can be "confirmed" and still have
-        done nothing. Split out from :meth:`confirm_transaction` so the check can
-        be run against a transaction that landed some time ago — signature
-        statuses fall out of the RPC's recent history, but `getTransaction` does
-        not. That makes this the right call for re-checking a transaction whose
-        first confirmation came back UNCONFIRMED.
+        Landing in a block and succeeding are different things: a revert shows up
+        in `meta.err`. Split out from :meth:`confirm_transaction` so it can run
+        against a transaction that landed some time ago — signature statuses fall
+        out of the RPC's recent history, `getTransaction` does not. Use this to
+        re-check a transaction whose first confirmation came back UNCONFIRMED.
 
         Args:
             signature: Transaction signature, base58 string or Signature
@@ -634,11 +581,10 @@ class SolanaClient:
     ) -> tuple[int | None, int | None]:
         """Get actual tokens received and quote spent from a buy transaction.
 
-        Uses preBalances/postBalances to find exact SOL transferred to the
-        pool/curve and pre/post token balance diff to find tokens received.
-        For coins paired against an SPL quote asset (e.g. USDC) the quote spend
-        does not show up in lamport balances, so it is read from the quote
-        mint's token balance deltas instead.
+        Reads SOL transferred to the pool/curve from preBalances/postBalances and
+        tokens received from the token balance diff. A non-SOL quote asset does
+        not show up in lamport balances, so its spend comes from the quote mint's
+        token balance deltas instead.
 
         Args:
             signature: Transaction signature, base58 string or Signature
@@ -763,17 +709,14 @@ class SolanaClient:
         """Fetch transaction result from RPC, retrying while it is not visible.
 
         A null result is ambiguous: the transaction may not exist, or the node
-        answering may simply be behind the one that confirmed the signature.
-        Retrying within a budget separates the two, so a trade that landed is
-        not read back as a failure.
+        answering may be behind the one that confirmed the signature. Retrying
+        within a budget separates the two.
 
         Args:
             signature: Transaction signature, base58 string or Signature
-            budget_seconds: How long to keep retrying while the RPC cannot see
-                the transaction. Bounded so a signature that truly does not
-                exist still returns. It is the whole budget, not just the gap
-                between attempts: each lookup is given the time left on it, so
-                a stalled endpoint cannot stretch the call past it.
+            budget_seconds: Whole wall-clock budget, not just the gap between
+                attempts — each lookup is given the time left on it, so a stalled
+                endpoint cannot stretch the call past it.
 
         Returns:
             Transaction result dict or None
@@ -790,12 +733,10 @@ class SolanaClient:
                 {
                     "encoding": "jsonParsed",
                     "commitment": "confirmed",
-                    # Without this the RPC rejects every versioned
-                    # transaction with -32015, so meta.err cannot be read and a
-                    # perfectly good trade reads back as unconfirmed. It has to
-                    # cover v1 (live since 2026-09-15), not just v0: the bot
-                    # sends legacy transactions, but this method is also used to
-                    # read back signatures it did not send.
+                    # Without this the RPC rejects every versioned transaction
+                    # with -32015, so meta.err cannot be read and a good trade
+                    # reads back as unconfirmed. Must cover v1, not just v0: this
+                    # also reads back signatures the bot did not send.
                     "maxSupportedTransactionVersion": 1,
                 },
             ],
@@ -805,10 +746,9 @@ class SolanaClient:
         attempts = 0
         while True:
             attempts += 1
-            # Hand the lookup what is left of the budget rather than letting it
-            # run its own retry schedule to completion. The deadline check below
-            # only runs once post_rpc returns, so without this the real worst
-            # case is budget_seconds plus one full post_rpc backoff.
+            # Hand the lookup what is left of the budget: the deadline check
+            # below only runs once post_rpc returns, so otherwise the worst case
+            # is budget_seconds plus one full post_rpc backoff.
             response = await self.post_rpc(
                 body, deadline_seconds=max(0.0, deadline - monotonic())
             )
@@ -841,21 +781,16 @@ class SolanaClient:
 
         Attempts and wall time are bounded separately. Without a deadline the
         retry schedule alone can keep one call going for minutes — three error
-        retries backing off 1, 2, 4 ... 16s, or ten 429 retries waiting up to
-        30s each and honouring a `Retry-After` header of any size. Every caller
-        inherits that, and on the trade path a confirmation that blocks for
-        minutes holds up the whole bot.
+        retries backing off 1, 2, 4 ... 16s, or ten 429 retries waiting up to 30s
+        each and honouring a `Retry-After` header of any size.
 
         Args:
             body: JSON-RPC request body.
-            max_retries: Maximum number of retry attempts for errors.
-            max_429_retries: Maximum number of retry attempts for 429 rate limits.
-            deadline_seconds: Overall wall-clock budget for this call, covering
-                every attempt and every backoff between them. `None` (the
-                default) keeps the historical behaviour: attempts are bounded,
-                elapsed time is not. A caller that would rather have a slow
-                truthful answer than a punctual wrong one should leave it unset
-                or pass a generous value.
+            max_retries: Maximum retry attempts for errors.
+            max_429_retries: Maximum retry attempts for 429 rate limits.
+            deadline_seconds: Wall-clock budget covering every attempt and every
+                backoff between them. `None` bounds attempts only. Leave it unset
+                when a slow truthful answer beats a punctual wrong one.
 
         Returns:
             Parsed JSON response, or None if all attempts fail.

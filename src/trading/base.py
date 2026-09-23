@@ -1,10 +1,4 @@
-"""
-Enhanced base interfaces for trading operations with platform support.
-
-This module provides the complete enhanced base classes that replace the existing
-trading/base.py while maintaining full backward compatibility. It integrates the
-new interface system with the existing trading infrastructure.
-"""
+"""Base interfaces for trading operations, with platform support."""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -66,8 +60,7 @@ class Trader(ABC):
         pass
 
     def _get_relevant_accounts(self, token_info: TokenInfo) -> list[Pubkey]:
-        """
-        Get the list of accounts relevant for calculating the priority fee.
+        """Get the list of accounts relevant for calculating the priority fee.
 
         This is now platform-agnostic and should be overridden by platform-specific traders.
 
@@ -151,9 +144,6 @@ def upgrade_token_info(legacy_token_info: TokenInfo_Legacy) -> TokenInfo:
     This function allows existing code that creates legacy TokenInfo objects
     to be upgraded to the new enhanced format.
 
-    Args:
-        legacy_token_info: Legacy TokenInfo instance
-
     Returns:
         Enhanced TokenInfo with platform information
     """
@@ -176,12 +166,6 @@ def create_legacy_token_info(enhanced_token_info: TokenInfo) -> TokenInfo_Legacy
 
     This function allows the enhanced TokenInfo to be used with existing
     code that expects the legacy format.
-
-    Args:
-        enhanced_token_info: Enhanced TokenInfo instance
-
-    Returns:
-        Legacy TokenInfo instance
 
     Raises:
         ValueError: If enhanced TokenInfo doesn't have required pump.fun fields
@@ -223,15 +207,13 @@ def create_pump_fun_token_info(
     creator_vault: Pubkey | None = None,
     **kwargs,
 ) -> TokenInfo:
-    """Convenience function to create pump.fun TokenInfo with proper platform setting.
+    """Build a pump.fun TokenInfo with the platform field already set.
 
     Args:
         name: Token name
         symbol: Token symbol
         uri: Token metadata URI
         mint: Token mint address
-        bonding_curve: Bonding curve address
-        associated_bonding_curve: Associated bonding curve address
         user: User/trader address
         creator: Creator address (defaults to user if not provided)
         creator_vault: Creator vault address (will be derived if not provided)
@@ -273,14 +255,13 @@ def create_lets_bonk_token_info(
     creator: Pubkey | None = None,
     **kwargs,
 ) -> TokenInfo:
-    """Convenience function to create LetsBonk TokenInfo with proper platform setting.
+    """Build a letsbonk.fun TokenInfo with the platform field already set.
 
     Args:
         name: Token name
         symbol: Token symbol
         uri: Token metadata URI
         mint: Token mint address
-        pool_state: Pool state address
         base_vault: Base token vault address
         quote_vault: Quote token vault address
         user: User/trader address
@@ -331,9 +312,6 @@ def is_lets_bonk_token(token_info: TokenInfo) -> bool:
 
 def get_platform_specific_fields(token_info: TokenInfo) -> dict[str, Any]:
     """Get platform-specific fields from TokenInfo.
-
-    Args:
-        token_info: Token information
 
     Returns:
         Dictionary of platform-specific fields

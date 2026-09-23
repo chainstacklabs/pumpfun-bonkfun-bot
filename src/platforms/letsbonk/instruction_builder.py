@@ -1,9 +1,4 @@
-"""
-LetsBonk implementation of InstructionBuilder interface.
-
-This module builds LetsBonk (Raydium LaunchLab) specific buy and sell instructions
-by implementing the InstructionBuilder interface with IDL-based discriminators.
-"""
+"""letsbonk.fun InstructionBuilder: buy and sell instructions, IDL discriminators."""
 
 import hashlib
 import struct
@@ -61,7 +56,6 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
         """Build buy instruction(s) for LetsBonk using buy_exact_in.
 
         Args:
-            token_info: Token information
             user: User's wallet address
             amount_in: Amount of SOL to spend (in lamports)
             minimum_amount_out: Minimum tokens expected (raw token units)
@@ -233,7 +227,6 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
         """Build sell instruction(s) for LetsBonk using sell_exact_in.
 
         Args:
-            token_info: Token information
             user: User's wallet address
             amount_in: Amount of tokens to sell (raw token units)
             minimum_amount_out: Minimum SOL expected (in lamports)
@@ -383,7 +376,6 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
         """Get list of accounts required for buy operation (for priority fee calculation).
 
         Args:
-            token_info: Token information
             user: User's wallet address
             address_provider: Platform address provider
 
@@ -408,7 +400,6 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
         """Get list of accounts required for sell operation (for priority fee calculation).
 
         Args:
-            token_info: Token information
             user: User's wallet address
             address_provider: Platform address provider
 
@@ -448,7 +439,6 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
         Args:
             account: The account to initialize
             mint: The token mint
-            owner: The account owner
 
         Returns:
             Instruction for initializing the account

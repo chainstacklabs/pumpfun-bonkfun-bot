@@ -1,49 +1,47 @@
-"""Monitors Solana for new Pump.fun token creations from the pre-execution deshred stream.
-Decodes 'create' instructions the moment entries are formed from shreds, before the transaction runs.
+"""Monitor Solana for new pump.fun coins on the pre-execution deshred stream.
+
+Decodes `create` instructions the moment entries are formed from shreds, before
+the transaction runs.
 
 Usage:
     uv run cookbook/pumpfun/listen/pumpfun_listen_tokens_deshred.py
 
-This is the companion to pumpfun_listen_tokens_geyser.py, which reads the ordinary
-executed stream. The two are different RPCs on the same endpoint and the trade-off
+Companion to `pumpfun_listen_tokens_geyser.py`, which reads the ordinary executed
+stream. The two are different RPCs on the same endpoint, and the trade-off
 between them is the point of this example.
 
-`SubscribeDeshred` delivers a transaction when entries are formed from shreds,
-BEFORE any execution. Raced head-to-head against `Subscribe` on the pump.fun
-program it carries the same signatures with no orphans either way, and on token
-creations -- the case that matters here -- it usually arrives first, by a small
-margin. `tools/compare_deshred_latency.py` reproduces that comparison.
+`SubscribeDeshred` delivers a transaction as entries form from shreds, BEFORE any
+execution. Raced against `Subscribe` on the pump.fun program it carries the same
+signatures with no orphans either way, and on creates it usually arrives first;
+`tools/compare_deshred_latency.py` reproduces that comparison.
 
-What you give up for those milliseconds:
+What you give up:
 
-  - **It cannot see a coin created through a router, at all.** The create then
-    reaches the program as a CPI, and inner instructions are produced *by*
-    execution, so a pre-execution stream never carries them: the transaction
-    arrives on deshred with the create invisible -- present on the stream and
-    undetectable, not dropped. No decoding recovers them, and this script
-    misses them too. The executed listeners walk
-    `meta.innerInstructions` and do not have this blind spot.
-  - No TransactionStatusMeta, so no meta.log_messages, so no CreateEvent. This
-    script therefore decodes the create instruction, which is the fallback route
-    everywhere else in this repo. The creator it prints is the instruction's
-    `args.creator`, which is user-supplied and since 2026-04-28 may differ from
-    the canonical `BondingCurve.creator`. Read the curve if you need the real one.
-  - No success or failure, by construction -- nothing has executed yet. The
-    executed stream filters with `failed = False`; here you see every shredded
-    transaction, landed or reverted.
+  - **A coin created through a router is invisible.** The create reaches the
+    program as a CPI, and inner instructions are produced *by* execution, so a
+    pre-execution stream never carries them — undetectable, not dropped, and no
+    decoding recovers them. The executed listeners walk `meta.innerInstructions`
+    and do not have this blind spot.
+  - No TransactionStatusMeta, so no `meta.log_messages` and no CreateEvent. This
+    script decodes the create instruction instead, the fallback route elsewhere
+    in this repo. The creator it prints is `args.creator`, which is user-supplied
+    and may differ from the canonical `BondingCurve.creator`; read the curve if
+    you need the real one.
+  - No success or failure, by construction. The executed stream filters with
+    `failed = False`; here you see every shredded transaction, landed or not.
 
 So this is a latency demo, not a better listener: a few milliseconds earlier on
 most coins, in exchange for never seeing a few percent of them.
 
 Address lookup tables are already resolved, reported as loaded_writable_addresses
 then loaded_readonly_addresses (that order), so instruction account indices
-resolve the same way they do on the executed stream.
+resolve as they do on the executed stream.
 
-Geyser gRPC Reference:
+Geyser gRPC reference:
 https://docs.triton.one/project-yellowstone/dragons-mouth-grpc-subscriptions
 
-Authentication: Supports both Basic and X-Token authentication methods.
-Configure via GEYSER_ENDPOINT, GEYSER_API_TOKEN, and AUTH_TYPE variables.
+Authentication: Basic or X-Token, via GEYSER_ENDPOINT, GEYSER_API_TOKEN and
+AUTH_TYPE.
 """
 
 import asyncio

@@ -10,18 +10,14 @@ SOL only. This instruction pre-dates non-SOL quote assets and has no quote
 accounts at all, so it cannot trade a coin priced in USDC, in another coin, or in
 a tokenized equity — `pumpfun_buy_token_exact_quote_v2.py` is the one that can.
 
-Two things make it worth reading anyway.
-
 **The IDL lists 16 accounts and the program requires 18.** The missing two are
-the `bonding-curve-v2` PDA and a buyback fee recipient. Send the IDL's list and
-you get AnchorError 6062 (BuybackFeeRecipientMissing), which names the account
-but not where it belongs. This was checked by simulation rather than assumed:
-16 accounts fails 6062, 18 succeeds. The v2 instructions are complete in the
-IDL; this family is not, so cross-check anything outside v2 against a real
-transaction before trusting the file.
+the `bonding-curve-v2` PDA and a buyback fee recipient; sending the IDL's list
+fails with AnchorError 6062 (BuybackFeeRecipientMissing), which names the account
+but not where it belongs. The v2 instructions are complete in the IDL, this
+family is not, so cross-check anything outside v2 against a real transaction.
 
 **Fees come out of what you send**, not on top of it. The IDL documents the
-arithmetic on `buy_exact_sol_in` itself:
+arithmetic on `buy_exact_sol_in`:
 
     net_sol    = floor(spendable_sol_in * 10_000 / (10_000 + total_fee_bps))
     fees       = ceil(net_sol * protocol_fee_bps / 10_000)
@@ -29,10 +25,9 @@ arithmetic on `buy_exact_sol_in` itself:
     tokens_out = floor((net_sol - 1) * virtual_token_reserves
                        / (virtual_sol_reserves + net_sol - 1))
 
-so the tokens you receive are priced off `net_sol`, not off the amount you
-named. The estimate printed below ignores the fee split and is therefore
-slightly optimistic; `min_tokens_out` is what the program actually enforces, and
-that is the number your slippage setting controls.
+so the tokens you receive are priced off `net_sol`, not off the amount you named.
+The estimate printed below ignores the fee split and is slightly optimistic;
+`min_tokens_out` is what the program enforces, and what slippage controls.
 """
 
 import argparse
@@ -76,9 +71,6 @@ async def get_account(client: AsyncClient, address: Pubkey) -> Account:
     Args:
         client: Solana RPC client
         address: Account to fetch
-
-    Returns:
-        The account object
 
     Raises:
         ValueError: If the account does not exist

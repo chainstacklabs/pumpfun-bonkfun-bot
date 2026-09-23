@@ -1,10 +1,10 @@
 """Verify the IDL instruction decoder accepts omitted trailing optional args.
 
-create_v2's trailing `is_cashback_enabled` OptionBool can legally be absent
-from the wire (issue #184): the committed blocksubscribe fixture carries a
-145-byte create_v2 whose args end right after `is_mayhem_mode`. A decoder
-that insists on the byte silently drops roughly half of all coins for every
-consumer of `parse_token_creation_from_instruction`.
+create_v2's trailing `is_cashback_enabled` OptionBool can legally be absent from
+the wire: the committed blocksubscribe fixture carries a 145-byte create_v2
+whose args end right after `is_mayhem_mode`. A decoder that insists on the byte
+silently drops those coins for every consumer of
+`parse_token_creation_from_instruction`.
 
 Offline machine checks, no network and no funds moved:
 
@@ -18,11 +18,10 @@ Offline machine checks, no network and no funds moved:
      None tag, Some tag, and omitted-trailing forms.
   5. The pump.fun event parser turns the raw fixture instruction into a
      TokenInfo with is_cashback_coin=False and state_from_event=False.
-  6. A post-2026-09-15 create_v2 that omits the trailing creator_fee_bps
-     (OptionU64, program upgrade 8109141) decodes instead of dropping the
-     coin — issue #184 reintroduced by a new optional-typed arg.
-  7. A post-upgrade create_v2 that does send creator_fee_bps reads the
-     value back.
+  6. A create_v2 that omits the trailing creator_fee_bps (OptionU64) decodes
+     instead of dropping the coin — the same bug, reintroduced by a new
+     optional-typed arg.
+  7. A create_v2 that does send creator_fee_bps reads the value back.
 
 Usage:
     uv run tests/regression/verify_create_v2_optional_args.py
@@ -53,12 +52,10 @@ FIXTURE = (
     / "decode"
     / "raw_create_tx_from_blocksubscribe.json"
 )
-# Post-upgrade (2026-09-15, program 8109141) getTransaction fixtures — real
-# mainnet create_v2 instructions, one omitting the trailing creator_fee_bps
-# (OptionU64) and one sending it. Captured with maxSupportedTransactionVersion:
-# 0 and encoding: json, so account keys/instruction data are base58 strings
-# rather than a raw base64 VersionedTransaction like the blocksubscribe
-# fixture above.
+# getTransaction fixtures — real mainnet create_v2 instructions, one omitting the
+# trailing creator_fee_bps (OptionU64) and one sending it. Captured with
+# encoding: json, so account keys and instruction data are base58 strings rather
+# than the raw base64 VersionedTransaction the blocksubscribe fixture carries.
 FIXTURE_OMITTED_FEE_BPS = (
     PROJECT_ROOT
     / "cookbook"
@@ -218,9 +215,9 @@ def check_event_parser_reads_raw_fixture() -> bool:
 def check_omitted_option_u64_decodes() -> bool:
     """create_v2 omitting creator_fee_bps must decode, not drop the coin.
 
-    Post-upgrade create_v2 carries two trailing optionals: creator_fee_bps
-    (OptionU64) and is_holder_reward (OptionBool). Live transactions omit
-    either or both. Dropping those coins is issue #184 all over again.
+    create_v2 carries two trailing optionals: creator_fee_bps (OptionU64) and
+    is_holder_reward (OptionBool). Live transactions omit either or both, and
+    dropping those coins is the same bug again.
     """
     parser = _parser()
     data, accounts, keys = _fixture_create_v2_omitted_fee_bps()

@@ -4,35 +4,31 @@ Usage:
     uv run cookbook/pumpfun/read/pumpfun_read_quote_mints.py
     uv run cookbook/pumpfun/read/pumpfun_read_quote_mints.py --stocks
 
-pump.fun coins are not all priced in SOL. A coin's bonding curve carries a
-`quote_mint`, and buys spend that asset — which can be USDC, another coin, or a
-tokenized equity. On 2026-09-22 the registry held 170 mints, 79 of them stocks
-and ETFs, so you can launch a coin priced in Apple or in the S&P 500.
+A coin's bonding curve carries a `quote_mint`, and buys spend that asset — which
+can be USDC, another coin, or a tokenized equity.
 
-There are two registries and this reads the one that is not obvious:
+There are two registries, and this reads the one that is not obvious:
 
 - `Global.whitelisted_quote_mints` is the original list, small and hardcoded.
-- `QuoteControl`, a PDA at seed `["quote-control"]`, was added in the 2026-09-15
-  upgrade with its own admin and its own list. A coin can be paired with a mint
-  that `Global` has never heard of, so reading only `Global` under-reports.
+- `QuoteControl`, a PDA at seed `["quote-control"]`, has its own admin and its
+  own list. A coin can be paired with a mint `Global` has never heard of, so
+  reading only `Global` under-reports.
 
-Each entry carries `initial_virtual_quote_reserves`, which is what a new curve
-paired with that mint starts with instead of the `Global` default — that number
-sets the coin's opening price in its quote asset.
+Each entry carries `initial_virtual_quote_reserves`, what a new curve paired with
+that mint starts with instead of the `Global` default — the coin's opening price
+in its quote asset.
 
-`--stocks` narrows the output to the tokenized equities, which are recognisable
-without a name lookup: they are the Token-2022 mints carrying the full extension
-set `create_v2` requires of them (metadata pointer and metadata, permanent
-delegate, default account state, scaled UI amount, pausable, confidential
-transfer, and a transfer hook with no program).
+`--stocks` narrows the output to the tokenized equities, identified by the
+Token-2022 extension set `create_v2` requires of them rather than by name.
+`solana_read_token2022_mint.py` prints those extensions for one mint.
 
-Two columns worth reading before you trade one:
+Two columns decide whether you can trade a coin priced in one of these:
 
-- **DEC** — xStocks are 8 decimals, Backpack Securities 6, SOL 9, USDC 6. Amounts
-  in a trade instruction are in the quote mint's own raw units, so this is the
-  number that decides whether your slippage cap means what you think.
+- **DEC** — xStocks are 8 decimals, Backpack Securities 6, SOL 9, USDC 6. Trade
+  amounts are in the quote mint's raw units, so this decides whether your
+  slippage cap means what you think.
 - **PAUSED** — a stock mint can be paused by its issuer, and every trade on every
-  coin paired with it fails while it is. Equities do not trade at 3am.
+  coin paired with it fails while it is.
 """
 
 import argparse
@@ -74,11 +70,7 @@ _BATCH = 100
 
 
 def find_quote_control() -> Pubkey:
-    """Derive the QuoteControl PDA.
-
-    Returns:
-        The QuoteControl address
-    """
+    """Derive the QuoteControl PDA."""
     return Pubkey.find_program_address([b"quote-control"], PUMP_PROGRAM)[0]
 
 

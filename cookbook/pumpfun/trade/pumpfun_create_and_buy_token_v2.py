@@ -55,9 +55,9 @@ PRIORITY_FEE_MICROLAMPORTS = 37_037  # Priority fee in microlamports
 COMPUTE_UNIT_LIMIT = 350_000  # Compute unit limit for the transaction
 DEFAULT_MAYHEM = True  # Set to True to enable mayhem mode
 # Set to True to create a holder-reward coin: the creator fee is set aside for
-# holders instead of paid to a creator wallet. Cashback was deprecated
-# 2026-09-15 — create_v2 now rejects is_cashback_enabled=[true] with error
-# 6082 (CashbackDeprecated) — so this is the only trailing-args path left.
+# holders instead of paid to a creator wallet. create_v2 rejects
+# is_cashback_enabled=[true] with error 6082 (CashbackDeprecated), so this is the
+# only trailing-args path left.
 DEFAULT_HOLDER_REWARD = False
 
 load_dotenv()
@@ -190,8 +190,8 @@ def create_pump_create_v2_instruction(
             Reaching it on the wire requires also sending is_cashback_enabled
             and creator_fee_bps (see the data-building comment below) — the
             three trailing args are positional, not independently addressable.
-            Cashback itself was deprecated 2026-09-15 (create_v2 error 6082),
-            so is_cashback_enabled is always sent False here.
+            create_v2 rejects a cashback coin with error 6082, so
+            is_cashback_enabled is always sent False here.
     """
     accounts = [
         AccountMeta(pubkey=mint, is_signer=True, is_writable=True),
@@ -211,9 +211,8 @@ def create_pump_create_v2_instruction(
 
     # The mayhem accounts are mandatory, not conditional: the IDL marks none of
     # create_v2's 16 accounts optional, and sending only 11 fails with
-    # AnchorError 3005 (AccountNotEnoughKeys) on sol_vault whatever the
-    # is_mayhem_mode argument says. Verified by simulateTransaction against
-    # mainnet, 2026-09-22. They must come before event_authority and program.
+    # AnchorError 3005 (AccountNotEnoughKeys) on sol_vault whatever
+    # is_mayhem_mode says. They must come before event_authority and program.
     mayhem_state = find_mayhem_state(mint)
     mayhem_token_vault = find_mayhem_token_vault(mint)
 
@@ -255,20 +254,15 @@ def create_pump_create_v2_instruction(
     )
 
     if is_holder_reward:
-        # Trailing args are positional and independently omittable — the
-        # program does not require any of them, but sending is_holder_reward
-        # means sending is_cashback_enabled and creator_fee_bps first.
-        # idl/pump_fun_idl.json's `types` entries for both OptionBool and
-        # OptionU64 are single-field structs with no presence tag, so each
-        # serializes as its bare inner value: OptionBool as one byte, OptionU64
-        # as a little-endian u64 — never a bool-then-value pair. Confirmed by
-        # decoding live post-upgrade create_v2 instructions through this
-        # repo's IDLParser (2026-09-15): is_cashback_enabled decoded as
-        # {'field_0': False}, creator_fee_bps as {'field_0': 0}, matching this
-        # packing byte-for-byte.
-        # is_cashback_enabled (OptionBool, bare bool): always False here.
-        # Cashback is deprecated as of the 2026-09-15 upgrade; create_v2
-        # rejects [true] with 6082 CashbackDeprecated.
+        # Trailing args are positional: none is required, but sending
+        # is_holder_reward means sending is_cashback_enabled and creator_fee_bps
+        # first. Neither OptionBool nor OptionU64 is a discriminated Option —
+        # idl/pump_fun_idl.json declares both as single-field structs with no
+        # presence tag, so each serializes as its bare inner value, one byte and
+        # a little-endian u64.
+        #
+        # is_cashback_enabled is always False here: create_v2 rejects [true]
+        # with 6082 CashbackDeprecated.
         is_cashback_enabled = False
         # creator_fee_bps (OptionU64, bare u64): unused for holder-reward
         # coins created here, so 0.
@@ -317,15 +311,10 @@ def create_buy_instruction(
 ) -> Instruction:
     """Create the buy instruction (buy_v2).
 
-    Signature is unchanged for the caller, but this now builds `buy_v2` with its
-    27 mandatory accounts. `global_state`, `fee_recipient`,
-    `associated_bonding_curve`, `associated_user`, `creator_vault` and
-    `track_volume` are accepted for backwards compatibility and derived or
-    dropped internally — buy_v2 has no track_volume argument, and pump_v2 picks
-    the fee recipient from the documented set.
-
-    These scripts mint the coin themselves with `creator = payer`, so the buyer
-    is also the creator.
+    Several parameters are accepted only for backwards compatibility and are
+    derived or dropped internally: buy_v2 takes no track_volume argument, and
+    pump_v2 selects the fee recipient from the documented set. This script mints
+    the coin with `creator = payer`, so the buyer is also the creator.
 
     Args:
         global_state: Unused; pump_v2 uses the canonical global PDA

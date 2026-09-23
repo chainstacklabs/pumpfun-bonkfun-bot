@@ -122,7 +122,6 @@ def calculate_discriminator(instruction_name):
 def decode_transaction(tx_data, idl):
     decoded_instructions = []
 
-    # Decode the base64 transaction data
     tx_data_decoded = base64.b64decode(tx_data["transaction"][0])
 
     # Check if it's a versioned transaction

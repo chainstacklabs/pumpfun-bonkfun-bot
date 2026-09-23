@@ -1,7 +1,4 @@
-"""
-PumpFun-specific PumpPortal event processor.
-File: src/platforms/pumpfun/pumpportal_processor.py
-"""
+"""Pump.fun PumpPortal event processor."""
 
 from solders.pubkey import Pubkey
 
@@ -60,13 +57,8 @@ class PumpFunPumpPortalProcessor:
             creator_str = token_data.get("traderPublicKey")  # Maps to user field
             uri = token_data.get("uri", "")
 
-            # Additional fields available from PumpPortal but not currently used:
-            # - initialBuy: Initial buy amount in tokens
-            # - solAmount: SOL amount spent on initial buy
-            # - vSolInBondingCurve: Virtual SOL in bonding curve
-            # - vTokensInBondingCurve: Virtual tokens in bonding curve
-            # - marketCapSol: Market cap in SOL
-            # - signature: Transaction signature
+            # Unused PumpPortal fields: initialBuy, solAmount,
+            # vSolInBondingCurve, vTokensInBondingCurve, marketCapSol, signature.
 
             if not all([name, symbol, mint_str, bonding_curve_str, creator_str]):
                 logger.warning("Missing required fields in PumpPortal token data")
@@ -77,9 +69,9 @@ class PumpFunPumpPortalProcessor:
             user = Pubkey.from_string(creator_str)
 
             # Derive the bonding curve from the mint rather than trusting the
-            # payload: PumpPortal's bondingCurveKey was observed pointing at a
-            # different mint's curve (issue #170), and the PDA derivation is
-            # free. A mismatch is logged as a data-quality signal only.
+            # payload: PumpPortal's bondingCurveKey has been observed pointing
+            # at a different mint's curve, and the PDA derivation is free. A
+            # mismatch is logged as a data-quality signal only.
             bonding_curve = self.address_provider.derive_pool_address(mint)
             if str(bonding_curve) != bonding_curve_str:
                 logger.warning(
@@ -92,11 +84,8 @@ class PumpFunPumpPortalProcessor:
             # since PumpPortal doesn't distinguish between them
             creator = user
 
-            # Derive additional addresses using platform provider
-            # PumpPortal doesn't distinguish between Token and Token2022.
-            # Default to TOKEN_2022_PROGRAM as per pump.fun's migration to create_v2.
-            # Technical limitation: Cannot distinguish from pre-parsed data, but risk is low
-            # since pump.fun now defaults to Token2022 for all new tokens.
+            # PumpPortal does not distinguish Token from Token-2022, so default
+            # to Token-2022, which create_v2 uses for all new coins.
             token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
 
             associated_bonding_curve = (

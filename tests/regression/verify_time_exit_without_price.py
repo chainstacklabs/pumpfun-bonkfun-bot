@@ -5,15 +5,11 @@ iteration and evaluated every exit condition after it. `position.should_exit()`
 takes `current_price`, so a failed read skipped the whole check - including
 `max_hold_time`, which needs no price at all.
 
-If the read kept failing the loop span forever: `position.is_active` never
-changed, the position was never sold, and the bot never moved on. The only
-signal was a repeating `Error monitoring position`.
-
-That is not hypothetical. During live testing of the previous fix,
-`calculate_price` returned `Invalid bonding curve state: Account ... not found`
-three times in a row for a curve that provably existed - a load-balanced
-endpoint serving nodes behind the one that had just confirmed the buy. A longer
-outage or a rate-limit storm would hold it open indefinitely.
+If the read kept failing the loop spun forever: `position.is_active` never
+changed, the position was never sold, and the only signal was a repeating
+`Error monitoring position`. A load-balanced endpoint serving nodes behind the
+one that confirmed the buy is enough to trigger it; a rate-limit storm would
+hold the position open indefinitely.
 
 Offline machine checks, no network and no funds moved. The real monitor loop
 runs against a curve manager that fails on demand:

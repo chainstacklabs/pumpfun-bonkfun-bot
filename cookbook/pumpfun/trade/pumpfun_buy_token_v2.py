@@ -58,9 +58,6 @@ async def get_account(client: AsyncClient, address: Pubkey) -> Account:
         client: Solana RPC client
         address: Account to fetch
 
-    Returns:
-        The account object
-
     Raises:
         ValueError: If the account does not exist
     """
@@ -124,12 +121,10 @@ async def buy(
         # v2 instructions still want wrapped SOL passed explicitly.
         quote_mint = curve.quote_mint
 
-        # Resolve the quote mint before pricing anything. This one read gives
-        # both the token program and the decimals, and the price below is
-        # denominated in the quote asset — a coin paired with AAPLx is priced in
-        # 8-decimal units, one paired with a Backpack equity in 6. Pricing first
-        # and resolving after is how a buy ends up ten or a thousand times the
-        # size that was asked for.
+        # Resolve the quote mint before pricing anything: one read gives both
+        # the token program and the decimals, and the price below is denominated
+        # in the quote asset. Pricing first and resolving after is how a buy ends
+        # up ten or a thousand times the size asked for.
         quote_token_program = await pump_v2.resolve_quote_token_program(
             quote_mint, lambda pk: get_account(client, pk)
         )

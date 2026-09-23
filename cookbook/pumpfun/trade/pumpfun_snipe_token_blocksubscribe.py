@@ -132,9 +132,6 @@ async def _get_account_info(conn: AsyncClient, address: Pubkey) -> Account:
         conn: Solana RPC client
         address: Account to fetch
 
-    Returns:
-        The account object
-
     Raises:
         ValueError: If the account does not exist
     """
@@ -203,11 +200,10 @@ async def buy_token(
             getattr(curve_state, "quote_mint", None)
         )
 
-        # Resolve the quote mint before pricing. One read gives both the token
-        # program -- Token-2022 for every tokenized equity pump.fun admits as a
-        # quote asset -- and the decimals the price and cap below are in. Price
-        # first and resolve after, and both numbers are off by a power of ten,
-        # in the same direction, so they compound.
+        # Resolve the quote mint before pricing: one read gives both the token
+        # program -- Token-2022 for every tokenized equity pump.fun admits -- and
+        # the decimals the price and cap are in. Price first and both numbers are
+        # off by a power of ten in the same direction, so they compound.
         quote_token_program_id = await pump_v2.resolve_quote_token_program(
             quote_mint, lambda pk: _get_account_info(client, pk)
         )
@@ -435,9 +431,9 @@ async def listen_for_create_transaction():
                             for tx in block["transactions"]:
                                 if not isinstance(tx, dict):
                                     continue
-                                # Route on logs. Deserializing the envelope
-                                # here skipped every v1 transaction (live since
-                                # 2026-09-15), so a coin created in one was
+                                # Route on logs: deserializing the envelope here
+                                # skips every transaction version solders
+                                # cannot read, so a coin created in one is
                                 # never sniped.
                                 meta = tx.get("meta") or {}
                                 token_data = token_info_from_logs(

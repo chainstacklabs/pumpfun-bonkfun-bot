@@ -2,20 +2,18 @@
 
 `AsyncClient.confirm_transaction` only waits for a signature to land in a block.
 A landed transaction can still have reverted, so every trade path has to read
-`meta.err` before it prints or returns success. Skipping that check is how issue
-#175 happened: buys reverting with `BuybackFeeRecipientMissing` (6062) were
-reported as confirmed, and the only way to notice was to inspect the signatures
-by hand.
+`meta.err` before it prints or returns success. Without that check, buys
+reverting with `BuybackFeeRecipientMissing` (6062) were reported as confirmed,
+and the only way to notice was to inspect the signatures by hand.
 
 Two layers are checked:
 
-* `tx_status.assert_transaction_succeeded` — the helper the learning examples use
+* `tx_status.assert_transaction_succeeded` — the helper the cookbook scripts use
 * `SolanaClient.verify_transaction_succeeded` — the check the bot itself runs
 
-Offline stub checks run always. Pass `--live` to additionally replay the three
-reverted signatures from issue #175 against mainnet: both layers must fetch them
-successfully and reject them on the strength of `meta.err`, not because the fetch
-failed.
+Offline stub checks run always. `--live` also replays three known reverted
+signatures against mainnet: both layers must fetch them successfully and reject
+them on the strength of `meta.err`, not because the fetch failed.
 
 Usage:
     uv run tests/regression/verify_tx_status_checks.py
@@ -40,7 +38,7 @@ import solana_transaction_status as tx_status  # noqa: E402
 
 from core.client import SolanaClient  # noqa: E402
 
-# Signatures from issue #175: reported as confirmed buys, actually reverted with
+# Real signatures once reported as confirmed buys, actually reverted with
 # BuybackFeeRecipientMissing (6062). They are permanent mainnet history, so they
 # make a stable regression fixture for "landed but failed".
 REVERTED_SIGNATURES = (
@@ -455,7 +453,7 @@ async def main() -> int:
     parser.add_argument(
         "--live",
         action="store_true",
-        help="also replay issue #175's reverted signatures against mainnet",
+        help="also replay known reverted signatures against mainnet",
     )
     args = parser.parse_args()
 
@@ -474,7 +472,7 @@ async def main() -> int:
             print(f"{label} -> OK")
 
     if args.live:
-        print("\nreplaying issue #175 signatures against mainnet...")
+        print("\nreplaying known reverted signatures against mainnet...")
         try:
             await check_live_signatures()
         except Exception as exc:  # noqa: BLE001

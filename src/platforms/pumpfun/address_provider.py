@@ -1,9 +1,4 @@
-"""
-Pump.Fun implementation of AddressProvider interface.
-
-This module provides all pump.fun-specific addresses and PDA derivations
-by implementing the AddressProvider interface.
-"""
+"""Pump.fun addresses and PDA derivations, implementing AddressProvider."""
 
 import secrets
 from dataclasses import dataclass
@@ -78,9 +73,8 @@ class PumpFunAddresses:
         Pubkey.from_string("6AUH3WEHucYZyC61hqpqYUWVto5qA5hjHuNQ32GNnNxA"),
     ]
     # 8 buyback fee recipients — one is required on every buy/sell, for every
-    # coin. On the legacy buy/sell these are appended (mutable) after
-    # bonding-curve-v2; on buy_v2/sell_v2 they are the buyback_fee_recipient
-    # account. Introduced by the 2026-04-28 program upgrade.
+    # coin. Appended (mutable) after bonding-curve-v2 on the legacy buy/sell; on
+    # buy_v2/sell_v2 they are the buyback_fee_recipient account.
     # See FEE_RECIPIENTS.md in the pump-fun public docs repository.
     BUYBACK_FEE_RECIPIENTS: ClassVar[list[Pubkey]] = [
         Pubkey.from_string("5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD"),
@@ -131,18 +125,15 @@ class PumpFunAddresses:
     def find_holder_reward_creator(mint: Pubkey) -> Pubkey:
         """Derive the creator a holder-reward coin's bonding curve carries.
 
-        On a holder-reward coin the creator fee is shared out to holders rather
-        than paid to the launcher, and pump.fun implements that by reusing the
-        ordinary fee route: the program ignores the `creator` passed to
+        On a holder-reward coin the program ignores the `creator` passed to
         `create_v2` and writes this PDA into `BondingCurve.creator`, so
         `creator-vault` derives onto the holder-reward distribution account on
         its own. Seeds are the ones the IDL declares for the `holder_rewards`
         account on `distribute_fee_to_holders`.
 
-        This is what lets a listener holding only the create instruction — no
-        CreateEvent, and no curve to read because nothing has executed — still
-        build a correct buy: the substituted creator depends on nothing but the
-        mint.
+        It depends on nothing but the mint, so a listener holding only the create
+        instruction — no CreateEvent, no curve to read — can still build a
+        correct buy.
 
         Args:
             mint: Coin mint address
@@ -158,8 +149,7 @@ class PumpFunAddresses:
 
     @staticmethod
     def find_global_volume_accumulator() -> Pubkey:
-        """
-        Derive the Program Derived Address (PDA) for the global volume accumulator.
+        """Derive the Program Derived Address (PDA) for the global volume accumulator.
 
         Returns:
             Pubkey of the derived global volume accumulator account
@@ -172,11 +162,7 @@ class PumpFunAddresses:
 
     @staticmethod
     def find_user_volume_accumulator(user: Pubkey) -> Pubkey:
-        """
-        Derive the Program Derived Address (PDA) for a user's volume accumulator.
-
-        Args:
-            user: Pubkey of the user account
+        """Derive the Program Derived Address (PDA) for a user's volume accumulator.
 
         Returns:
             Pubkey of the derived user volume accumulator account
@@ -205,8 +191,7 @@ class PumpFunAddresses:
 
     @staticmethod
     def find_fee_config() -> Pubkey:
-        """
-        Derive the Program Derived Address (PDA) for the fee config.
+        """Derive the Program Derived Address (PDA) for the fee config.
 
         Returns:
             Pubkey of the derived fee config account
@@ -251,15 +236,12 @@ class PumpFunAddressProvider(AddressProvider):
             "fee_program": PumpFunAddresses.FEE_PROGRAM,
         }
 
-        # Combine system and platform-specific addresses
         return {**system_addresses, **pumpfun_addresses}
 
     def derive_pool_address(
         self, base_mint: Pubkey, quote_mint: Pubkey | None = None
     ) -> Pubkey:
-        """Derive the bonding curve address for a token.
-
-        For pump.fun, this is the bonding curve PDA derived from the mint.
+        """Derive the bonding curve PDA for a token.
 
         Args:
             base_mint: Token mint address
@@ -293,9 +275,6 @@ class PumpFunAddressProvider(AddressProvider):
     def get_additional_accounts(self, token_info: TokenInfo) -> dict[str, Pubkey]:
         """Get pump.fun-specific additional accounts needed for trading.
 
-        Args:
-            token_info: Token information
-
         Returns:
             Dictionary of additional account addresses
         """
@@ -319,7 +298,6 @@ class PumpFunAddressProvider(AddressProvider):
                 token_info.mint, token_info.bonding_curve, token_info.token_program_id
             )
 
-        # Derive creator vault if not provided but creator is available
         if not token_info.creator_vault and token_info.creator:
             accounts["creator_vault"] = self.derive_creator_vault(token_info.creator)
 
@@ -335,11 +313,7 @@ class PumpFunAddressProvider(AddressProvider):
 
         Args:
             mint: Token mint address
-            bonding_curve: Bonding curve address
             token_program_id: Token program (TOKEN or TOKEN_2022). Defaults to TOKEN_2022_PROGRAM
-
-        Returns:
-            Associated bonding curve address
         """
         if token_program_id is None:
             token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
@@ -355,14 +329,7 @@ class PumpFunAddressProvider(AddressProvider):
         return derived_address
 
     def derive_creator_vault(self, creator: Pubkey) -> Pubkey:
-        """Derive the creator vault address.
-
-        Args:
-            creator: Creator address
-
-        Returns:
-            Creator vault address
-        """
+        """Derive the creator vault address."""
         creator_vault, _ = Pubkey.find_program_address(
             [b"creator-vault", bytes(creator)], PumpFunAddresses.PROGRAM
         )
@@ -383,22 +350,11 @@ class PumpFunAddressProvider(AddressProvider):
         return PumpFunAddresses.find_holder_reward_creator(mint)
 
     def derive_global_volume_accumulator(self) -> Pubkey:
-        """Derive the global volume accumulator PDA.
-
-        Returns:
-            Global volume accumulator address
-        """
+        """Derive the global volume accumulator PDA."""
         return PumpFunAddresses.find_global_volume_accumulator()
 
     def derive_user_volume_accumulator(self, user: Pubkey) -> Pubkey:
-        """Derive the user volume accumulator PDA.
-
-        Args:
-            user: User address
-
-        Returns:
-            User volume accumulator address
-        """
+        """Derive the user volume accumulator PDA."""
         return PumpFunAddresses.find_user_volume_accumulator(user)
 
     def derive_bonding_curve_v2(self, mint: Pubkey) -> Pubkey:
@@ -413,11 +369,7 @@ class PumpFunAddressProvider(AddressProvider):
         return PumpFunAddresses.find_bonding_curve_v2(mint)
 
     def derive_fee_config(self) -> Pubkey:
-        """Derive the fee config PDA.
-
-        Returns:
-            Fee config address
-        """
+        """Derive the fee config PDA."""
         return PumpFunAddresses.find_fee_config()
 
     def derive_sharing_config(self, base_mint: Pubkey) -> Pubkey:
@@ -425,9 +377,6 @@ class PumpFunAddressProvider(AddressProvider):
 
         Args:
             base_mint: Base token mint address
-
-        Returns:
-            Sharing config address
         """
         return PumpFunAddresses.find_sharing_config(base_mint)
 
@@ -436,9 +385,6 @@ class PumpFunAddressProvider(AddressProvider):
 
         SOL-paired coins store Pubkey::default() in bonding_curve.quote_mint
         but must pass wrapped SOL to the v2 instructions.
-
-        Args:
-            token_info: Token information
 
         Returns:
             Tuple of (quote_mint, quote_token_program)
@@ -456,7 +402,6 @@ class PumpFunAddressProvider(AddressProvider):
 
         Args:
             owner: Account that owns the ATA (may be a PDA)
-            quote_mint: Quote mint address
             quote_token_program_id: Token program owning the quote mint
 
         Returns:
@@ -470,15 +415,12 @@ class PumpFunAddressProvider(AddressProvider):
         """Build the account set shared by buy_v2 and sell_v2.
 
         Both instructions take the same 26 accounts; buy_v2 additionally takes
-        global_volume_accumulator. All accounts are mandatory — there are no
-        optional or conditional accounts on the v2 interface, regardless of
-        mayhem/cashback/holder-reward/quote-mint combination. (Cashback is
-        legacy-only since the 2026-09-15 upgrade — create_v2 no longer mints
-        new cashback coins — but existing cashback coins still trade through
-        this same account set.)
+        global_volume_accumulator. All are mandatory — the v2 interface has no
+        optional or conditional accounts, whatever the
+        mayhem/cashback/holder-reward/quote-mint combination. Cashback coins can
+        no longer be created but existing ones trade through this same set.
 
         Args:
-            token_info: Token information
             user: User's wallet address
 
         Returns:
@@ -553,7 +495,6 @@ class PumpFunAddressProvider(AddressProvider):
         """Get all 27 accounts needed for a buy_v2 instruction.
 
         Args:
-            token_info: Token information
             user: User's wallet address
 
         Returns:
@@ -569,7 +510,6 @@ class PumpFunAddressProvider(AddressProvider):
         """Get all 26 accounts needed for a sell_v2 instruction.
 
         Args:
-            token_info: Token information
             user: User's wallet address
 
         Returns:
@@ -596,7 +536,6 @@ class PumpFunAddressProvider(AddressProvider):
         """Get all accounts needed for a buy instruction.
 
         Args:
-            token_info: Token information
             user: User's wallet address
 
         Returns:
@@ -649,7 +588,6 @@ class PumpFunAddressProvider(AddressProvider):
         """Get all accounts needed for a sell instruction.
 
         Args:
-            token_info: Token information
             user: User's wallet address
 
         Returns:

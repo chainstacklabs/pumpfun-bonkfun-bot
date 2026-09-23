@@ -16,10 +16,8 @@ failed buy:
 Either way the bot holds tokens it believes it never bought: `_handle_failed_buy`
 runs instead of the exit strategy, so the position is never sold, and with
 `cleanup.mode: "on_fail"` plus `force_close_with_burn: true` the tokens are
-burned.
-
-The opposite mistake is issue #175 — reporting a reverted buy as successful — so
-the checks below pin both directions.
+burned. The opposite mistake — reporting a reverted buy as successful — is pinned
+by the same checks.
 
 Offline machine checks, no network and no funds moved. A stub RPC serves
 scripted `getTransaction` responses:
@@ -28,8 +26,7 @@ scripted `getTransaction` responses:
      transaction once the node catches up.
   2. The retry is bounded, so a signature that never appears still returns None.
   3. `verify_transaction_succeeded` is True for a tx that lands after a lag.
-  4. A reverted transaction is still False, however many times it is read
-     (issue #175 stays fixed).
+  4. A reverted transaction is still False, however many times it is read.
   5. A confirmed buy whose amounts never parse is reported successful, with the
      token amount taken from the wallet balance so the sell has a real figure.
   6. That fallback amount is the balance actually held, not the expected amount.
@@ -246,7 +243,7 @@ async def check_verify_succeeds_after_lag() -> bool:
 
 
 async def check_revert_still_fails() -> bool:
-    print("\n4. A reverted transaction still verifies as failed (issue #175)")
+    print("\n4. A reverted transaction still verifies as failed")
     client, rpc = _client_with([_ok(REVERTED_TX)])
     ok = await client.verify_transaction_succeeded(SIGNATURE)
     return _check(

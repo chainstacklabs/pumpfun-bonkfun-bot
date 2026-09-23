@@ -44,12 +44,11 @@ BUY_AMOUNT_SOL = 0.0001
 EXTREME_FAST_TOKEN_AMOUNT = 20
 HOLD_SECONDS = 5
 PRIORITY_FEE = 1_000_000
-# This harness verifies plumbing, not profitability. Brand-new coins routinely
-# lose most of their curve SOL within seconds of creation, and a realistic
-# sell_slippage of 0.3 then makes the program reject the sell with
-# TooLittleSolReceived (6003) — a correct guard, but it stops us proving the
-# 26-account sell_v2 actually lands. Accept almost any payout instead; the
-# position is worth well under a lamport-thousandth of a SOL either way.
+# This harness verifies plumbing, not profitability. A brand-new coin can lose
+# most of its curve SOL within seconds, and a realistic sell_slippage of 0.3 then
+# makes the program reject the sell with TooLittleSolReceived (6003) — a correct
+# guard, but it stops the 26-account sell_v2 from being proven to land. Accept
+# almost any payout instead.
 SELL_SLIPPAGE = 0.95
 BUY_SLIPPAGE = 0.3
 DETECT_TIMEOUT_SECONDS = 150.0
@@ -103,9 +102,6 @@ def make_listener(listener_type: str):
 async def detect(listener_type: str) -> TokenInfo | None:
     """Wait for one new pump.fun token from the given listener.
 
-    Args:
-        listener_type: Listener to use
-
     Returns:
         TokenInfo, or None on timeout
     """
@@ -138,9 +134,6 @@ async def sol_balance(client: SolanaClient, wallet: Wallet) -> float:
     Args:
         client: RPC client
         wallet: Wallet to query
-
-    Returns:
-        Balance in SOL
     """
     response = await client.post_rpc(
         {

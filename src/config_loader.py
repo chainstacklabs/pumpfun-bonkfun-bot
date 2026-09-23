@@ -1,6 +1,4 @@
-"""
-Updated configuration validation with comprehensive platform support.
-"""
+"""Bot configuration loading and platform/listener validation."""
 
 import os
 from pathlib import Path
@@ -298,7 +296,6 @@ def validate_platform_listener_combination(
 
     Args:
         platform: Platform enum
-        listener_type: Listener type string
 
     Returns:
         True if combination is valid
@@ -312,9 +309,6 @@ def get_supported_listeners_for_platform(platform: Platform) -> list[str]:
 
     Args:
         platform: Platform enum
-
-    Returns:
-        List of supported listener types
     """
     return PLATFORM_LISTENER_COMPATIBILITY.get(platform, [])
 

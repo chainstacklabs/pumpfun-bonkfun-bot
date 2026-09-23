@@ -20,8 +20,7 @@ class PriorityFeeManager:
         extra_fee: float,
         hard_cap: int,
     ):
-        """
-        Initialize the priority fee manager.
+        """Initialize the priority fee manager.
 
         Args:
             client: Solana RPC client for dynamic fee calculation.
@@ -45,8 +44,7 @@ class PriorityFeeManager:
     async def calculate_priority_fee(
         self, accounts: list[Pubkey] | None = None
     ) -> int | None:
-        """
-        Calculate the priority fee based on the configuration.
+        """Calculate the priority fee based on the configuration.
 
         Args:
             accounts: List of accounts to consider for dynamic fee calculation.
@@ -72,8 +70,7 @@ class PriorityFeeManager:
         return final_fee
 
     async def _get_base_fee(self, accounts: list[Pubkey] | None = None) -> int | None:
-        """
-        Determine the base fee based on the configuration.
+        """Determine the base fee based on the configuration.
 
         Returns:
             Optional[int]: Base fee in microlamports, or None if no fee should be applied.

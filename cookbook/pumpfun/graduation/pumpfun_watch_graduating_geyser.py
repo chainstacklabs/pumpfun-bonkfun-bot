@@ -6,81 +6,42 @@ Usage:
 
 Needs GEYSER_ENDPOINT, GEYSER_API_TOKEN and GEYSER_AUTH_TYPE in .env, plus
 SOLANA_NODE_RPC_ENDPOINT for the two things the stream cannot answer: the Global
-baseline and each coin's mint. Geyser is a paid add-on, so `pumpfun_watch_graduating_programsubscribe.py`
-is the portable version of this report — it runs on any endpoint, including the public
-one. This variant exists because Geyser is common among traders and gives you the slot
-and transaction signature behind every update, which the WebSocket feed does not.
+baseline and each coin's mint. Geyser is a paid add-on;
+`pumpfun_watch_graduating_programsubscribe.py` is the portable version of this
+report and runs on any endpoint. This variant gives the slot and transaction
+signature behind every update, which the WebSocket feed does not.
 
-Why a subscription and not `getProgramAccounts`: the pump.fun program now owns over
-10 million accounts, and every provider refuses to scan it — the rejection is on
+Why a subscription and not `getProgramAccounts`: the pump.fun program owns over
+10 million accounts and every provider refuses to scan it — the rejection is on
 program size, before filters apply. A curve can only approach graduation by being
-traded, and every write pushes the full account — 125 bytes as `create_v2` allocates
-it, or 151 once `extend_account` has run on it — so each update carries everything
-needed to compute progress: no accumulated state, no cold start beyond the next
-trade.
+traded, and every write pushes the full account, so each update carries
+everything needed to compute progress.
 
 Selecting a graduation threshold
 --------------------------------
-Progress is measured against `Global.initial_real_token_reserves` (~793.1M tokens)
-read from chain, not a hardcoded constant, because a mayhem coin can launch with
-different virtual params and would otherwise show the wrong percentage.
+Progress is measured against `Global.initial_real_token_reserves` read from
+chain, not a hardcoded constant: a mayhem coin can launch with different virtual
+params and would otherwise show the wrong percentage.
 
-The pre-filter the server applies can only match exact bytes, so it cannot do
-"anything above 90%". It can only do a few fixed cutoffs. `--min-progress` uses the
-closest cutoff that is still wide enough, then makes the exact comparison here:
+The server-side pre-filter matches exact bytes, so it cannot express "anything
+above 90%" — only a few fixed cutoffs. `--min-progress` picks the closest cutoff
+that is still wide enough, then makes the exact comparison here:
 
-    filter               cutoff                 ≈ graduated past
+    filter               cutoff                 ~ graduated past
     2 zero bytes @ 30    281.5M tokens left     64.5%
     3 zero bytes @ 29    1.1M tokens left       99.86%
     4 zero bytes @ 28    4,295 tokens left      99.9995%
 
-    --min-progress       pre-filtered by the server?
-    below 64.5%          no, every curve arrives and is filtered here
-    64.5% to 99.86%      yes, at the 64.5% cutoff
-    99.86% and up        yes, at the 99.86% cutoff
+So the pre-filter saves bandwidth, it does not decide the answer — whatever
+percentage you ask for is honoured either way.
 
-So the pre-filter saves traffic, it does not decide the answer — whatever percentage
-you ask for is honoured either way. Low thresholds just cost more bandwidth. If you
-want to hand-tune, pick a different cutoff from the table: the last moments before
-migration want the 3-byte one, a wider funnel the 2-byte one.
-
-Checked against mainnet by running the filtered and unfiltered subscriptions side by
-side for a minute: same curves, nothing dropped, nothing extra.
-
-This script does **not** filter on `datasize`. Earlier it named two
-account-filter groups, one per enumerated length (125 and 151), because
-Geyser ORs across named groups and a single group ANDs its own filters
-together — there was no way to ask one group for "datasize 125 or 151".
-That shape stopped being enough once a third live length (256 bytes) turned
-up, and `extend_account` can grow a curve to any length the program allows,
-so no finite set of named groups closes the gap for good. Dropping `datasize`
-collapses back to the single group this script had before lengths were
-enumerated at all: the discriminator memcmp alone already restricts delivery
-to `BondingCurve` accounts, so nothing is lost by not naming a length. A
-client-side `MIN_CURVE_LEN` floor discards anything shorter than the
-smallest real struct, so a stray short/legacy account still can't reach the
-decoder.
-
-**Bandwidth trade-off, checked directly over Geyser** (not borrowed from the
-WebSocket script's comparison — Geyser reports slot and signature per update
-and its named-group model batches differently, so it gets its own). Two
-*separate* concurrent gRPC streams over the same window, so both see the
-identical trade activity without the sequential-window volume-swing problem
-(a first attempt comparing sequential windows was unreliable for exactly that
-reason — see `pumpfun_watch_graduating_programsubscribe.py`'s module
-docstring): one stream subscribed with this script's old two named groups
-(`datasize` 125 and 151), the other with a single unfiltered group. They took
-in effectively the same volume, i.e. filtering bought nothing. The difference
-was the 256-byte curve (`EJpNsfxnTB6mtVdzrTcgQ9xfywobHSSsUtu1Gh1GFvEg`) that
-no enumerated length could ever match; the filtered stream structurally
-cannot see it at all. `getAccountInfo` on that same curve confirms it: still
-256 bytes, discriminator intact, and it decodes cleanly through this repo's
-own IDL-driven decoder — the bytes past the documented fields are zero
-padding.
-
-UNVERIFIED here: whether the original 49-byte layout (no `creator` field) is
-still written anywhere. Nothing in the unfiltered stream was that length, but
-that is one window, not proof of absence.
+This script does **not** filter on `datasize`. Geyser ORs across named account
+groups and ANDs within one, so enumerating lengths means one group per length —
+and `extend_account` can grow a curve to any length the program allows (125, 151
+and 256 all occur live), so no finite set of groups closes the gap. The
+discriminator memcmp alone already restricts delivery to `BondingCurve`
+accounts, so naming no length loses nothing; a client-side `MIN_CURVE_LEN` floor
+keeps a stray short or legacy account out of the decoder.
 """
 
 import argparse
@@ -131,11 +92,10 @@ TOKEN_PROGRAM_ID: Final[Pubkey] = Pubkey.from_string(
 # See cookbook/solana/anchor_calculate_discriminator.py
 BONDING_CURVE_DISCRIMINATOR: Final[bytes] = bytes.fromhex("17b7f83760d8ac60")
 
-# create_v2 allocates the 125-byte struct; extend_account can grow it past
-# that to any length the program allows (151 and 256 both confirmed live,
-# 2026-09-15) — there is no fixed set of lengths to enumerate. This is a
-# floor, not an allowlist: anything shorter than the smallest real struct is
-# dropped client-side, everything at or above it is decoded and let through.
+# create_v2 allocates the 125-byte struct; extend_account can grow it to any
+# length the program allows (151 and 256 both occur live), so there is no fixed
+# set to enumerate. This is a floor, not an allowlist: anything shorter than the
+# smallest real struct is dropped, everything at or above it is decoded.
 MIN_CURVE_LEN: Final[int] = 125
 
 TOKEN_DECIMALS: Final[int] = 6

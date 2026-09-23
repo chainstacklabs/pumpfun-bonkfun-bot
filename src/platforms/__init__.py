@@ -1,9 +1,4 @@
-"""
-Platform factory and registry for managing multiple trading platforms.
-
-This module provides a centralized way to instantiate and access
-platform-specific implementations of the trading interfaces with IDL support.
-"""
+"""Factory and registry for platform-specific implementations of the interfaces."""
 
 from dataclasses import dataclass
 from typing import Any
@@ -51,10 +46,6 @@ class PlatformRegistry:
 
         Args:
             platform: Platform enum value
-            address_provider_class: AddressProvider implementation class
-            instruction_builder_class: InstructionBuilder implementation class
-            curve_manager_class: CurveManager implementation class
-            event_parser_class: EventParser implementation class
         """
         self._implementations[platform] = {
             "address_provider": address_provider_class,
@@ -128,7 +119,6 @@ class PlatformRegistry:
             event_parser=event_parser,
         )
 
-        # Cache the instances
         self._instances[cache_key] = implementations
 
         return implementations
@@ -257,9 +247,6 @@ class PlatformFactory:
         Args:
             platform: Platform to get provider for
             client: Solana RPC client
-
-        Returns:
-            AddressProvider implementation
         """
         implementations = self.registry.create_platform_implementations(
             platform, client
@@ -274,9 +261,6 @@ class PlatformFactory:
         Args:
             platform: Platform to get builder for
             client: Solana RPC client
-
-        Returns:
-            InstructionBuilder implementation
         """
         implementations = self.registry.create_platform_implementations(
             platform, client
@@ -291,9 +275,6 @@ class PlatformFactory:
         Args:
             platform: Platform to get manager for
             client: Solana RPC client
-
-        Returns:
-            CurveManager implementation
         """
         implementations = self.registry.create_platform_implementations(
             platform, client
@@ -306,9 +287,6 @@ class PlatformFactory:
         Args:
             platform: Platform to get parser for
             client: Solana RPC client
-
-        Returns:
-            EventParser implementation
         """
         implementations = self.registry.create_platform_implementations(
             platform, client
@@ -316,11 +294,7 @@ class PlatformFactory:
         return implementations.event_parser
 
     def get_supported_platforms(self) -> list[Platform]:
-        """Get list of supported platforms.
-
-        Returns:
-            List of supported platforms
-        """
+        """Get list of supported platforms."""
         return self.registry.get_supported_platforms()
 
     def clear_caches(self, platform: Platform | None = None) -> None:
@@ -329,7 +303,6 @@ class PlatformFactory:
         Args:
             platform: Specific platform to clear, or None to clear all
         """
-        # Clear implementation cache
         self.registry.clear_implementation_cache(platform)
 
         # Clear IDL parser cache
@@ -367,10 +340,6 @@ def register_platform_implementations(
 
     Args:
         platform: Platform enum value
-        address_provider_class: AddressProvider implementation class
-        instruction_builder_class: InstructionBuilder implementation class
-        curve_manager_class: CurveManager implementation class
-        event_parser_class: EventParser implementation class
     """
     platform_factory.registry.register_platform(
         platform,

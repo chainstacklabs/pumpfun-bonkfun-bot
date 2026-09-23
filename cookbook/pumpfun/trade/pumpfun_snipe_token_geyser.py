@@ -117,9 +117,6 @@ async def _get_mint_account_info(conn: AsyncClient, address: Pubkey) -> Account:
         conn: Solana RPC client
         address: Account to fetch
 
-    Returns:
-        The account object
-
     Raises:
         ValueError: If the account does not exist
     """
@@ -291,11 +288,10 @@ async def buy_token(
             getattr(curve_state, "quote_mint", None)
         )
 
-        # Resolve the quote mint before pricing. One read gives the token
-        # program -- Token-2022 for every tokenized equity pump.fun admits as a
-        # quote asset, and passing SPL Token for one of those fails the
-        # instruction's account constraints -- and the decimals the price and
-        # cap below are denominated in.
+        # Resolve the quote mint before pricing: one read gives the token program
+        # -- Token-2022 for every tokenized equity pump.fun admits, and passing
+        # SPL Token for one fails the account constraints -- and the decimals the
+        # price and cap are in.
         quote_token_program_id = await pump_v2.resolve_quote_token_program(
             quote_mint, lambda pk: _get_mint_account_info(client, pk)
         )

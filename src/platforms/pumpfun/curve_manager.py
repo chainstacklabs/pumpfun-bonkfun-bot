@@ -1,9 +1,4 @@
-"""
-Pump.Fun implementation of CurveManager interface.
-
-This module handles pump.fun-specific bonding curve operations
-by implementing the CurveManager interface using IDL-based decoding.
-"""
+"""Pump.fun CurveManager: bonding curve reads and pricing, IDL-decoded."""
 
 from typing import Any
 
@@ -82,7 +77,7 @@ class PumpFunCurveManager(CurveManager):
         One getMultipleAccounts round trip, so both values come from the same
         node and slot. Listeners that don't carry the token program (pumpportal
         guesses Token-2022) can be corrected from the mint account's owner
-        without a second, possibly inconsistent read (issue #170).
+        without a second, possibly inconsistent read.
 
         Args:
             pool_address: Address of the bonding curve
@@ -225,11 +220,9 @@ class PumpFunCurveManager(CurveManager):
         if not decoded_curve_state:
             raise ValueError("Failed to decode bonding curve state with IDL parser")
 
-        # Extract the fields we need for trading calculations.
-        # The BondingCurve struct renamed its SOL fields to quote fields when
-        # pump.fun added non-SOL quote assets, and appended quote_mint. The
-        # old names are kept as aliases below so callers written against the
-        # SOL-only layout keep working for SOL-paired coins.
+        # BondingCurve renamed its SOL fields to quote fields when non-SOL quote
+        # assets arrived, and appended quote_mint. The old names are kept as
+        # aliases below so SOL-only callers keep working.
         raw_quote_mint = decoded_curve_state.get("quote_mint")
         quote_mint = normalize_quote_mint(
             Pubkey.from_string(raw_quote_mint)
@@ -251,11 +244,9 @@ class PumpFunCurveManager(CurveManager):
             "complete": decoded_curve_state.get("complete", False),
             "creator": decoded_curve_state.get("creator", ""),
             "is_mayhem_mode": decoded_curve_state.get("is_mayhem_mode", False),
-            # is_cashback_coin: decoded for every coin regardless of when it
-            # was created. Cashback creation was deprecated 2026-09-15
-            # (create_v2 error 6082 CashbackDeprecated), but this flag keeps
-            # driving the legacy sell path's cashback account branch for
-            # coins that already have it set.
+            # Decoded for every coin. create_v2 no longer mints cashback coins
+            # (6082 CashbackDeprecated), but this flag still drives the legacy
+            # sell path's cashback account branch for coins that have it set.
             "is_cashback_coin": decoded_curve_state.get("is_cashback_coin", False),
             "is_holder_reward": decoded_curve_state.get("is_holder_reward", False),
             "creator_fee_bps": decoded_curve_state.get("creator_fee_bps", 0),
@@ -396,8 +387,6 @@ class PumpFunCurveManager(CurveManager):
             True if structure is valid, False otherwise
         """
         try:
-            # This would be used during development/testing to ensure
-            # the IDL parsing is working correctly
             pool_state = self.get_pool_state(pool_address)
 
             required_fields = [

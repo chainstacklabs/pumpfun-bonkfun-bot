@@ -3,10 +3,9 @@
 Usage:
     uv run cookbook/solana/solana_check_transaction.py <SIGNATURE>
 
-"Confirmed" and "succeeded" are different questions, and conflating them is the
-single most expensive mistake in a trading script. `confirmTransaction` answers
+"Confirmed" and "succeeded" are different questions. `confirmTransaction` answers
 only the first: the signature landed in a block. A landed transaction can still
-have reverted, and RPC says so only in `meta.err` — so a script that stops at
+have reverted, and RPC says so only in `meta.err`, so a script that stops at
 confirmation prints "success" while the wallet balance never moves.
 
 This prints all three states separately:
@@ -16,12 +15,12 @@ This prints all three states separately:
     UNCONFIRMED  the node cannot see it (yet, or ever)
 
 A null result is not a failure. On a load-balanced endpoint the node answering
-`getTransaction` is not necessarily the one that just confirmed the signature,
-so a perfectly good transaction reads back as "not found" for a moment. Deciding
-"not found means failed" is how a landed buy gets reported as a failed buy.
+`getTransaction` is not necessarily the one that confirmed the signature, so a
+good transaction reads back as "not found" for a moment. Treating that as failure
+is how a landed buy gets reported as a failed buy.
 
-Note the `max_supported_transaction_version=1`: without it the RPC refuses to
-return any transaction in the v1 format that has been live since 2026-09-15.
+`max_supported_transaction_version=1` is required: without it the RPC refuses to
+return any transaction in the v1 format.
 """
 
 import argparse

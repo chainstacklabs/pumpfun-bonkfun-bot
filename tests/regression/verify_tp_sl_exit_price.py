@@ -1,21 +1,18 @@
 """Verify the tp/sl exit sells against the fresh price and retries a failed sell.
 
-Two bugs in `UniversalTrader._monitor_position_until_exit` (issue #189):
+Two bugs in `UniversalTrader._monitor_position_until_exit`:
 
-  1. The sell was handed `position.entry_price` while the `current_price` that
-     had just triggered the exit sat in the same scope, fetched one RPC call
-     earlier. The seller turns that price into the slippage floor
-     (`min_quote_output`), so on a stop-loss the floor was computed from the
-     higher entry price and demanded more quote asset than the curve could pay
-     — the sell reverts with pump.fun 6003 TooLittleSolReceived exactly during
-     the drop the stop-loss exists to escape. On a take-profit the error runs
-     the other way: the floor lands far below market and protects nothing.
+  1. The sell was handed `position.entry_price` rather than the `current_price`
+     that had just triggered the exit. The seller turns that price into the
+     slippage floor (`min_quote_output`), so a stop-loss demanded more quote
+     asset than the curve could pay and reverted with pump.fun 6003
+     TooLittleSolReceived, exactly during the drop it exists to escape. On a
+     take-profit the error runs the other way and the floor protects nothing.
 
   2. `break` sat outside both branches of `if sell_result.success:`, so the loop
-     exited whether the sell landed or not, contradicting the
-     "Keep monitoring in case sell can be retried" comment right above it. The
-     seller's own `max_retries` covers transaction *submission* only, so an
-     on-chain revert was never retried: the position was abandoned mid-crash.
+     exited whether the sell landed or not. The seller's own `max_retries`
+     covers transaction *submission* only, so an on-chain revert was never
+     retried and the position was abandoned mid-crash.
 
 Offline machine checks, no network and no funds moved. The real monitor loop is
 driven with a stub curve manager serving a scripted price series and a stub
@@ -416,7 +413,7 @@ async def check_config_knob_is_honoured() -> bool:
 
 
 async def main() -> int:
-    print("Verifying tp/sl exit pricing and retry behaviour (issue #189)")
+    print("Verifying tp/sl exit pricing and retry behaviour")
     print(
         f"fixture: entry {ENTRY_PRICE:.8f} SOL, {QUANTITY:,.0f} tokens, "
         f"SL -{STOP_LOSS_PCT:.0%}, TP +{TAKE_PROFIT_PCT:.0%}, "

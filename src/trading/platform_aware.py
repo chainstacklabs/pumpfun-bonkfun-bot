@@ -1,7 +1,4 @@
-"""
-Platform-aware trader implementations that use the interface system.
-Final cleanup removing all platform-specific hardcoding.
-"""
+"""Platform-aware trader implementations built on the interface system."""
 
 import asyncio
 from time import monotonic
@@ -33,9 +30,8 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# How a confirmation outcome reads from the trader's side. SUCCESS has no
-# entry: it is not a failure, and a KeyError is a better outcome than silently
-# labelling a successful trade.
+# How a confirmation outcome reads from the trader's side. SUCCESS has no entry:
+# a KeyError beats silently labelling a successful trade as a failure.
 _FAILURE_REASON_FOR = {
     ConfirmationStatus.REVERTED: TradeFailureReason.REVERTED,
     ConfirmationStatus.UNCONFIRMED: TradeFailureReason.UNCONFIRMED,
@@ -44,9 +40,6 @@ _FAILURE_REASON_FOR = {
 
 def _quote_symbol(quote_mint: Pubkey) -> str:
     """Human-readable label for a quote mint, for logging only.
-
-    Args:
-        quote_mint: Quote mint address
 
     Returns:
         "SOL" for wrapped SOL, otherwise a truncated mint address
@@ -66,15 +59,13 @@ async def _read_pool_state_with_retry(
 ) -> tuple[dict, Pubkey | None]:
     """Read bonding curve state, retrying within a time budget on a lagging node.
 
-    A freshly created curve may not be visible at `confirmed` yet, and a node
-    can momentarily serve a slot that predates it — both surface as "account
-    not found". Reading at `processed` and retrying costs a handful of RPC
-    calls, which is far cheaper than trading on stale account data. Issue #170
-    found individual reads on a load-balanced endpoint lagging well behind a
-    fast listener, hence a time budget rather than a fixed attempt count.
+    A freshly created curve may not be visible at `confirmed` yet, and a node can
+    serve a slot that predates it — both surface as "account not found". Reads on
+    a load-balanced endpoint can lag a fast listener by an unpredictable amount,
+    hence a time budget rather than a fixed attempt count.
 
     When `mint` is given and the curve manager supports it, the curve and the
-    mint are read in one slot-consistent batch so the mint's owning token
+    mint are read in one slot-consistent batch, so the mint's owning token
     program comes back for free (pumpportal listeners can only guess it).
 
     Args:
@@ -121,13 +112,11 @@ def _refresh_quote_mint(token_info: TokenInfo, pool_state: dict) -> Pubkey:
     """Sync token_info's quote asset from freshly-read curve state.
 
     Listeners do not all carry quote_mint (pumpportal carries none of the
-    per-coin flags), and the curve is authoritative, so prefer its value.
-    `quote_token_program_id` is re-derived alongside it: it was set from the
-    *previous* quote_mint at TokenInfo construction (or left None), and a
-    stale non-None value would otherwise win the `or` in
-    AddressProvider.resolve_quote, so the corrected program never gets
-    looked up. `cached_quote_token_program` is a synchronous dict read, so
-    this stays a zero-RPC-call operation on the extreme_fast_mode path.
+    per-coin flags), and the curve is authoritative. `quote_token_program_id` is
+    re-derived alongside it, because a stale non-None value would win the `or` in
+    `AddressProvider.resolve_quote` and the corrected program would never be
+    looked up. `cached_quote_token_program` is a synchronous dict read, so this
+    stays zero-RPC on the extreme_fast_mode path.
 
     Args:
         token_info: Token information, mutated in place
@@ -181,13 +170,11 @@ class PlatformAwareBuyer(Trader):
                 traded with a SOL-denominated amount.
             curve_refresh_budget: Seconds to keep retrying the pre-buy curve
                 read before skipping the token. A buy built without fresh curve
-                state guesses fee_recipient/creator_vault and tends to revert
-                on-chain (issue #170), so skipping beats racing.
-            trust_create_event: Skip the pre-buy curve read entirely for
-                TokenInfo marked state_from_event (creator/flags/quote_mint
-                read from the on-chain CreateEvent) — extreme_fast_mode then
-                makes zero RPC calls between detection and submission. Set
-                False to force the refresh for every listener.
+                state guesses fee_recipient/creator_vault and reverts on-chain.
+            trust_create_event: Skip the pre-buy curve read for TokenInfo marked
+                state_from_event, so extreme_fast_mode makes zero RPC calls
+                between detection and submission. False forces the refresh for
+                every listener.
         """
         self.client = client
         self.wallet = wallet
@@ -221,7 +208,6 @@ class PlatformAwareBuyer(Trader):
     async def execute(self, token_info: TokenInfo) -> TradeResult:
         """Execute buy operation using platform-specific implementations."""
         try:
-            # Get platform-specific implementations
             implementations = get_platform_implementations(
                 token_info.platform, self.client
             )
@@ -234,11 +220,10 @@ class PlatformAwareBuyer(Trader):
             quote_mint = normalize_quote_mint(token_info.quote_mint)
 
             if self.extreme_fast_mode:
-                # Zero-RPC hot path — the point of extreme_fast_mode. When the
-                # CreateEvent already carried the canonical creator, the
-                # mayhem/cashback flags and quote_mint, nothing sits between
-                # detection and submission. Otherwise (pumpportal, old-format
-                # events) refresh from chain or skip.
+                # Zero-RPC hot path: when the CreateEvent carried the canonical
+                # creator, the mayhem/cashback flags and quote_mint, nothing
+                # sits between detection and submission. Otherwise refresh or
+                # skip.
                 if not self._can_skip_refresh(token_info):
                     skip_reason = await self._refresh_curve_state(
                         token_info, address_provider, curve_manager
@@ -251,33 +236,29 @@ class PlatformAwareBuyer(Trader):
                         )
                     quote_mint = normalize_quote_mint(token_info.quote_mint)
             else:
-                # Get pool address based on platform using platform-agnostic method
+                # Platform-agnostic pool address
                 pool_address = self._get_pool_address(token_info, address_provider)
 
-                # Regular behavior with RPC call
-                # Fetch pool state to get price and mayhem mode status
+                # Regular path: fetch pool state for price and flags
                 pool_state = await curve_manager.get_pool_state(pool_address)
                 token_price_sol = pool_state.get("price_per_token")
 
-                # Validate price_per_token is present and positive
                 if token_price_sol is None or token_price_sol <= 0:
                     raise ValueError(
                         f"Invalid price_per_token: {token_price_sol} for pool {pool_address} "
                         f"(mint: {token_info.mint}) - cannot execute buy with zero/invalid price"
                     )
 
-                # Set mayhem-mode and cashback flags from bonding-curve state
-                # so the instruction builder picks the correct fee_recipient and
-                # account-list shape (cashback sells use 17 accounts, non-cashback 16).
+                # Mayhem/cashback flags decide fee_recipient and the account-list
+                # shape (cashback sells use 17 accounts, non-cashback 16).
                 token_info.is_mayhem_mode = pool_state.get("is_mayhem_mode", False)
                 token_info.is_cashback_coin = pool_state.get(
                     "is_cashback_coin", token_info.is_cashback_coin
                 )
                 quote_mint = _refresh_quote_mint(token_info, pool_state)
 
-            # A coin paired against a quote asset we have no configured amount
-            # for cannot be traded — spending `amount` of it would be a
-            # different order of magnitude entirely.
+            # A quote asset with no configured amount cannot be traded: spending
+            # `amount` of it would be a different order of magnitude.
             quote_amount = self._resolve_quote_amount(quote_mint)
             if quote_amount is None:
                 return TradeResult(
@@ -292,25 +273,21 @@ class PlatformAwareBuyer(Trader):
             quote_unit = quote_units_per_token(quote_mint)
             quote_label = _quote_symbol(quote_mint)
 
-            # Both branches need the resolved quote amount to finish sizing the
-            # trade: extreme_fast_mode fixes the token count and back-derives an
-            # implied price, while the regular path fixes the spend and derives
-            # the token count from the curve price.
+            # Both branches size the trade from the resolved quote amount:
+            # extreme_fast_mode fixes the token count and back-derives an implied
+            # price, the regular path fixes the spend and derives the count.
             if self.extreme_fast_mode:
                 token_amount = self.extreme_fast_token_amount
                 token_price_sol = quote_amount / token_amount if token_amount > 0 else 0
             else:
                 token_amount = quote_amount / token_price_sol
 
-            # Calculate minimum token amount with slippage
             minimum_token_amount = token_amount * (1 - self.slippage)
             minimum_token_amount_raw = int(minimum_token_amount * 10**TOKEN_DECIMALS)
 
-            # Calculate maximum quote to spend with slippage, in the quote
-            # mint's own raw units (lamports for SOL, 1e-6 for USDC).
+            # Max spend with slippage, in the quote mint's raw units.
             max_quote_amount_raw = int(quote_amount * quote_unit * (1 + self.slippage))
 
-            # Build buy instructions using platform-specific builder
             instructions = await instruction_builder.build_buy_instruction(
                 token_info,
                 self.wallet.pubkey,
@@ -319,7 +296,6 @@ class PlatformAwareBuyer(Trader):
                 address_provider,
             )
 
-            # Get accounts for priority fee calculation
             priority_accounts = instruction_builder.get_required_accounts_for_buy(
                 token_info, self.wallet.pubkey, address_provider
             )
@@ -333,7 +309,6 @@ class PlatformAwareBuyer(Trader):
                 f"(max: {max_quote_amount_raw / quote_unit:.6f} {quote_label})"
             )
 
-            # Send transaction
             tx_signature = await self.client.build_and_send_transaction(
                 instructions,
                 self.wallet.keypair,
@@ -355,8 +330,6 @@ class PlatformAwareBuyer(Trader):
             if success:
                 logger.info(f"Buy transaction confirmed: {tx_signature}")
 
-                # Fetch actual tokens and SOL spent from transaction
-                # Uses preBalances/postBalances to get exact amounts
                 sol_destination = self._get_sol_destination(
                     token_info, address_provider
                 )
@@ -385,12 +358,10 @@ class PlatformAwareBuyer(Trader):
                     token_price_sol = actual_price
                 else:
                     # confirm_transaction already read meta.err, so the buy
-                    # executed — the amounts just could not be read back.
-                    # Reporting failure here would run _handle_failed_buy on a
-                    # position we actually hold: never sold, and burned outright
-                    # under cleanup.mode "on_fail" with force_close_with_burn.
-                    # Fall back to the balance the wallet really holds so the
-                    # sell has a true amount to work with.
+                    # executed — only the amounts could not be read back.
+                    # Reporting failure would run _handle_failed_buy on a
+                    # position we hold, burning it under cleanup.mode "on_fail".
+                    # Fall back to the balance the wallet really holds.
                     logger.warning(
                         f"Could not parse buy amounts (tokens={tokens_raw}, "
                         f"quote_spent={quote_spent}) from tx {tx_signature}; "
@@ -399,13 +370,10 @@ class PlatformAwareBuyer(Trader):
                     balance = await self._read_token_balance(token_info)
                     if balance is not None and balance > 0:
                         # The balance is cumulative, so cap it at what this buy
-                        # asked for: anything above that was already held, and
-                        # selling it would liquidate an unrelated position.
-                        # Reading the balance *before* submitting would give an
-                        # exact delta, but that is an RPC call on every buy and
-                        # would break extreme_fast_mode's zero-RPC contract
-                        # between detection and submission — and this path only
-                        # runs when the transaction could not be read back.
+                        # asked for: the rest was already held, and selling it
+                        # would liquidate an unrelated position. An exact delta
+                        # would need a pre-submit read, which breaks
+                        # extreme_fast_mode's zero-RPC contract.
                         logger.info(
                             f"Token balance after buy: {balance:.6f}, selling at "
                             f"most the {token_amount:.6f} this buy asked for"
@@ -441,8 +409,7 @@ class PlatformAwareBuyer(Trader):
     def _get_pool_address(
         self, token_info: TokenInfo, address_provider: AddressProvider
     ) -> Pubkey:
-        """Get the pool/curve address for price calculations using platform-agnostic method."""
-        # Try to get the address from token_info first, then derive if needed
+        """Get the pool/curve address, from token_info or derived."""
         if token_info.platform == Platform.PUMP_FUN:
             if hasattr(token_info, "bonding_curve") and token_info.bonding_curve:
                 return token_info.bonding_curve
@@ -450,15 +417,14 @@ class PlatformAwareBuyer(Trader):
             if hasattr(token_info, "pool_state") and token_info.pool_state:
                 return token_info.pool_state
 
-        # Fallback to deriving the address using platform provider
         return address_provider.derive_pool_address(token_info.mint)
 
     async def _read_token_balance(self, token_info: TokenInfo) -> float | None:
         """Read how many of a coin the wallet actually holds.
 
-        Used only when a landed buy's amounts could not be parsed back out of
-        the transaction. The balance is what the sell has to work with, so it
-        beats the expected amount: selling more than is held reverts.
+        Used only when a landed buy's amounts could not be parsed back out of the
+        transaction. Selling more than is held reverts, so the balance beats the
+        expected amount.
 
         Args:
             token_info: Token information carrying the mint and token program
@@ -482,9 +448,9 @@ class PlatformAwareBuyer(Trader):
     def _can_skip_refresh(self, token_info: TokenInfo) -> bool:
         """Whether the pre-buy curve read can be skipped entirely.
 
-        True when the listener read creator, mayhem/cashback and quote_mint
-        from the on-chain CreateEvent (canonical at create time), keeping
-        extreme_fast_mode at zero RPC calls between detection and submission.
+        True when the listener read creator, mayhem/cashback and quote_mint from
+        the on-chain CreateEvent, keeping extreme_fast_mode at zero RPC calls
+        between detection and submission.
 
         Args:
             token_info: Token information from the listener
@@ -506,11 +472,10 @@ class PlatformAwareBuyer(Trader):
     ) -> str | None:
         """Refresh mayhem/cashback/creator/quote_mint/token program from chain.
 
-        Listeners that guess these (pumpportal carries none of them) produce
-        buys the program rejects with NotAuthorized (0x1770) / ConstraintSeeds
-        (0x7d6) when fee_recipient or creator_vault is wrong. PumpPortal also
-        notifies before the BC account is readable on a lagging node, so the
-        read retries within curve_refresh_budget.
+        Listeners that guess these (pumpportal carries none of them) produce buys
+        the program rejects with NotAuthorized (0x1770) or ConstraintSeeds
+        (0x7d6). PumpPortal also notifies before the curve is readable on a
+        lagging node, so the read retries within curve_refresh_budget.
 
         Args:
             token_info: Token information, mutated in place on success
@@ -518,15 +483,13 @@ class PlatformAwareBuyer(Trader):
             curve_manager: Platform curve manager
 
         Returns:
-            None on success; on failure a reason to skip the buy — a buy built
-            from listener-guessed defaults tends to revert on-chain
-            (issue #170: 0x1770 / 0x7d6 / pool 3012), which still costs the fee
+            None on success; on failure a reason to skip the buy, since a buy
+            built from listener-guessed defaults reverts and still costs the fee
         """
         try:
             pool_address = self._get_pool_address(token_info, address_provider)
-            # Geyser/logs fire on processed, so the BC is typically readable in
-            # the same slot; pumpportal occasionally races the on-chain commit,
-            # hence the retries.
+            # Geyser/logs fire on processed, so the curve is usually readable in
+            # the same slot; pumpportal can race the on-chain commit.
             pool_state, fresh_token_program = await _read_pool_state_with_retry(
                 curve_manager,
                 pool_address,
@@ -545,8 +508,8 @@ class PlatformAwareBuyer(Trader):
         token_info.is_cashback_coin = pool_state.get(
             "is_cashback_coin", token_info.is_cashback_coin
         )
-        # The quote asset decides which balance we spend and how amounts are
-        # scaled, so it must come from the curve rather than a listener guess.
+        # The quote asset decides which balance is spent and how amounts scale,
+        # so it must come from the curve rather than a listener guess.
         _refresh_quote_mint(token_info, pool_state)
         fresh_creator = pool_state.get("creator")
         if fresh_creator and hasattr(address_provider, "derive_creator_vault"):
@@ -570,11 +533,10 @@ class PlatformAwareBuyer(Trader):
     ) -> None:
         """Correct a listener-guessed token program from the mint's real owner.
 
-        PumpPortal payloads carry no token program, so the processor defaults
-        to Token-2022; a legacy-`create` coin is SPL Token and the ATA-create
+        PumpPortal payloads carry no token program, so the processor defaults to
+        Token-2022; a legacy-`create` coin is SPL Token and the ATA-create
         instruction then fails with IncorrectProgramId. The associated bonding
-        curve is an ordinary ATA, so it must be re-derived under the corrected
-        program too.
+        curve is an ordinary ATA, so it is re-derived under the corrected program.
 
         Args:
             token_info: Token information, mutated in place
@@ -608,11 +570,9 @@ class PlatformAwareBuyer(Trader):
     ) -> Pubkey:
         """Get the address where SOL is sent during a buy transaction.
 
-        For pump.fun: SOL goes to the bonding curve
-        For letsbonk: SOL goes to the quote_vault (WSOL vault)
+        pump.fun: the bonding curve. letsbonk: the quote_vault (WSOL vault).
 
         Args:
-            token_info: Token information
             address_provider: Platform-specific address provider
 
         Returns:
@@ -622,15 +582,12 @@ class PlatformAwareBuyer(Trader):
             NotImplementedError: If platform SOL destination is not implemented
         """
         if token_info.platform == Platform.PUMP_FUN:
-            # For pump.fun, SOL goes directly to bonding curve
             if hasattr(token_info, "bonding_curve") and token_info.bonding_curve:
                 return token_info.bonding_curve
             return address_provider.derive_pool_address(token_info.mint)
         elif token_info.platform == Platform.LETS_BONK:
-            # For letsbonk, SOL goes to quote_vault (WSOL vault)
             if hasattr(token_info, "quote_vault") and token_info.quote_vault:
                 return token_info.quote_vault
-            # Derive quote_vault if not available
             return address_provider.derive_quote_vault(token_info.mint)
 
         raise NotImplementedError(
@@ -652,7 +609,6 @@ class PlatformAwareBuyer(Trader):
         if not self.compute_units:
             return None
 
-        # Just check for operation override (buy/sell)
         return self.compute_units.get(operation)
 
 
@@ -683,14 +639,13 @@ class PlatformAwareSeller(Trader):
 
         Args:
             token_info: Token information for the sell operation
-            token_amount: Token amount to sell (from buy result). Required to avoid
-                         RPC balance query delays.
+            token_amount: Token amount to sell, from the buy result. Required so
+                no RPC balance query is needed.
             token_price: Reference price in the quote asset that the slippage
-                        floor is computed from. Required rather than read here,
-                        to avoid RPC pool state query delays — pass the freshest
-                        price the caller has. A stale price that is above the
-                        market sets a floor the pool cannot pay and the sell
-                        reverts (pump.fun 6003 TooLittleSolReceived).
+                floor is computed from. Passed in rather than read here, so pass
+                the freshest price available: a stale price above the market sets
+                a floor the pool cannot pay and the sell reverts (pump.fun 6003
+                TooLittleSolReceived).
 
         Returns:
             TradeResult with operation outcome
@@ -709,14 +664,12 @@ class PlatformAwareSeller(Trader):
                 "Pass the price from buy result to avoid RPC delays."
             )
 
-        # Declared before the try so the handler below can tell a sell that was
-        # never submitted from one that was submitted and whose outcome is
-        # simply unknown. The two must not be reported the same way: only the
-        # first is safe to resend without checking the chain first.
+        # Declared before the try so the handler can tell a sell that was never
+        # submitted from one whose outcome is unknown. Only the first is safe to
+        # resend without checking the chain.
         tx_signature = None
 
         try:
-            # Get platform-specific implementations
             implementations = get_platform_implementations(
                 token_info.platform, self.client
             )
@@ -724,14 +677,12 @@ class PlatformAwareSeller(Trader):
             instruction_builder = implementations.instruction_builder
             curve_manager = implementations.curve_manager
 
-            # Fall back to the listener's quote asset if the refresh below fails.
+            # Fall back to the listener's quote asset if the refresh fails.
             quote_mint = normalize_quote_mint(token_info.quote_mint)
 
-            # Refresh mayhem-mode and cashback flags from curve state.
-            # The sell account list is 16 (non-cashback) vs 17 (cashback), and
-            # fee_recipient differs in mayhem mode — both can change between
-            # buy and sell, so re-read from chain instead of trusting create-time
-            # flags carried in token_info.
+            # The sell account list is 16 (non-cashback) vs 17 (cashback) and
+            # fee_recipient differs in mayhem mode; both can change between buy
+            # and sell, so re-read from chain rather than trusting token_info.
             try:
                 pool_address = self._get_pool_address(token_info, address_provider)
                 # Retry rather than reading once at `confirmed`: a node serving a
@@ -748,11 +699,10 @@ class PlatformAwareSeller(Trader):
                     "is_cashback_coin", token_info.is_cashback_coin
                 )
                 quote_mint = _refresh_quote_mint(token_info, pool_state)
-                # Refresh creator/creator_vault from current BC state. Post
-                # 2026-04-28 the program may delegate BC.creator to a PFEE-owned
-                # PDA after the initial creator buy, so the create-time vault
-                # cached on token_info goes stale before the sell lands. Failing
-                # to refresh manifests as ConstraintSeeds (0x7d6) on Sell.
+                # The program may delegate BC.creator to a PFEE-owned PDA after
+                # the initial creator buy, so the create-time vault on
+                # token_info goes stale before the sell lands and the sell
+                # reverts with ConstraintSeeds (0x7d6).
                 fresh_creator = pool_state.get("creator")
                 if fresh_creator:
                     from solders.pubkey import Pubkey as _Pubkey
@@ -827,7 +777,6 @@ class PlatformAwareSeller(Trader):
                 token_info, self.wallet.pubkey, address_provider
             )
 
-            # Send transaction
             tx_signature = await self.client.build_and_send_transaction(
                 instructions,
                 self.wallet.keypair,
@@ -882,11 +831,9 @@ class PlatformAwareSeller(Trader):
                     error_message=str(e),
                     failure_reason=TradeFailureReason.SUBMIT_FAILED,
                 )
-            # A transaction was submitted and something after that threw -
-            # confirmation and status reads both can. The sell may well have
-            # landed, so this is an unknown outcome, not a failed submission:
-            # keep the signature and let the caller re-check it rather than
-            # firing a second sell.
+            # A transaction was submitted and something after it threw. The sell
+            # may have landed, so this is an unknown outcome, not a failed
+            # submission: keep the signature for the caller to re-check.
             return TradeResult(
                 success=False,
                 platform=token_info.platform,
