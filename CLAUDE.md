@@ -172,8 +172,8 @@ What the 13.0.0-rc4 protos changed, all verified live on 2026-09-23:
   v0 and v1 alike. The field is set only for v1 and carries the inline budget
   (priority fee in **total lamports**, CU limit, loaded-accounts data size,
   heap) that v1 moved off the ComputeBudget instructions — so a v1 coin has no
-  ComputeBudget instructions to read a budget from at all. Measured share of
-  pump.fun traffic: 660 of 4,215 transactions (15.7%) in a 90s window.
+  ComputeBudget instructions to read a budget from at all. A meaningful share
+  of pump.fun traffic is v1.
 - Protos older than this **skipped `config` as an unknown field rather than
   failing**, so the stale stubs degraded in silence: frames still decoded, only
   the budget went missing. `verify_transaction_v1.py` now pins the geyser route
@@ -187,32 +187,36 @@ What the 13.0.0-rc4 protos changed, all verified live on 2026-09-23:
   debugging a v1 gap.
 
 `SubscribeDeshred` is a separate RPC delivering transactions **before
-execution**, when entries form from shreds. It is **deliberately not wired into
-the bot**, for two reasons, the second of which is disqualifying.
+execution**, when entries form from shreds. It backs the **`shreds` listener**
+(`monitoring/universal_shreds_listener.py`, pump.fun only,
+`bots/bot-sniper-5-shreds.yaml`), which is off by default and carries one
+permanent cost.
 
-Raced against `Subscribe` on the pump.fun filter, 300s on 2026-09-23: identical
-signature sets, no orphans either way. On creates deshred is first 92% of the
-time, median **+6.4ms**, p90 +21.5ms; on general traffic 79%, median +4.0ms.
-`tools/compare_deshred_latency.py` reproduces it — the far tail swings a lot
-between runs, the median does not.
+Raced against `Subscribe` on the pump.fun filter, deshred arrives first on most
+creates by a small margin; `tools/compare_deshred_latency.py` reproduces the
+comparison.
 
 - There is no `TransactionStatusMeta`, so no `meta.log_messages`, so no
-  CreateEvent. That leaves `state_from_event` unset on every coin and silently
-  demotes `extreme_fast_mode` to a curve refresh.
+  CreateEvent — the listener decodes the create instruction, which is the
+  fallback route everywhere else and the only route here. It sets
+  `state_from_event` itself so `extreme_fast_mode` submits with zero RPC:
+  waiting is not the safer option, because the curve account does not exist
+  yet, so a refresh can only time out and skip the coin.
+- Outcomes are unknown at detection — nothing has executed, so a create that
+  goes on to revert is delivered exactly like one that lands.
 - **A coin created through a router is invisible on it.** The create arrives as
   a CPI, and inner instructions are produced *by* execution, so a pre-execution
-  stream never carries them. Measured 4 of 118 creates (3.4%) in one window and
-  3 of 101 in another — every one present on the stream and undetectable, not
-  dropped, so no decoding recovers them. Note this inverts the CPI note under
-  *Listener and decoder pitfalls*: **trades** are overwhelmingly inner
-  instructions, **creates** are overwhelmingly top-level (114:4), which is why
-  deshred looks nearly complete until you count.
+  stream never carries them — every one present on the stream and undetectable,
+  not dropped, so no decoding recovers them. Note this inverts the CPI note
+  under *Listener and decoder pitfalls*: **trades** are overwhelmingly inner
+  instructions, **creates** are overwhelmingly top-level, which is why deshred
+  looks nearly complete until you count.
 
-Trading a permanent few-percent miss rate on new coins for a 6ms median is not
-a trade this bot should take.
-`cookbook/pumpfun/listen/pumpfun_listen_tokens_deshred.py` demonstrates the
-stream and that trade-off; it decodes instructions because it has no logs to
-route on.
+That miss rate is the whole trade: a few percent of coins never seen, against a
+head start on the rest. `geyser` remains the default for that reason; pick
+`shreds` deliberately.
+`cookbook/pumpfun/listen/pumpfun_listen_tokens_deshred.py` demonstrates the raw
+stream, and `tests/regression/verify_shreds_listener.py` pins the listener.
 
 Where the Solana libraries live, since solana-py 0.40 moved most of them
 (upgraded 2026-09-23 from solders 0.26 / solana 0.36.6):
@@ -243,6 +247,7 @@ name individual scripts to run a subset.
 | `verify_curve_account_sizes.py` | 125/151/256-byte curves all decode, and nothing filters on account length |
 | `verify_create_v2_optional_args.py` | omitted trailing option-typed `create_v2` args decode as unset; mandatory args still fail |
 | `verify_transaction_v1.py` | every reader asks `maxSupportedTransactionVersion: 1`, a v1 `create_v2` is detected from its logs alone with the envelope made unreadable, the envelope decode still works as the fallback, and no cookbook/tools listener detects by opening the envelope; same two routes pinned again over geyser, on a committed v1 `SubscribeUpdate`, plus the inline v1 budget staying readable |
+| `verify_shreds_listener.py` | pre-execution creates decode from the instruction alone: `user` at `create_v2` account 5, a holder-reward coin's creator derived as `PDA(["holder-rewards", mint])`, truncated trailing args decoding as not-holder-reward, lookup-table accounts resolved, and nothing reading a `meta` the stream has no field for |
 | `verify_block_null_guard.py` | a `blockSubscribe` frame with `value.block: null` is skipped, not logged as an error |
 | `verify_listener_cancellation.py` | a cancelled WebSocket listener stops, even when `websockets` reports cancellation as `AssertionError` |
 | `verify_pumpportal_buy_path.py` | curve derived from the mint, unreadable curve skips the buy, curve+mint read in one slot-consistent batch |
@@ -289,7 +294,7 @@ The reasoning behind each lives in the verifier named beside it.
   they read the same for every transaction version; the byte decode is the
   fallback. The repo now runs solders 0.29, which *does* read a v1 envelope
   (0.26, 0.27.1 and 0.28 all raise `ValueError: io error: unexpected end of
-  file` on the committed v1 fixture, measured 2026-09-22) — that does not make
+  file` on the committed v1 fixture) — that does not make
   the log route redundant, because the next version byte will be unreadable in
   its turn. `verify_transaction_v1.py` pins both routes separately.
 - The bot **sends** v0 transactions (`MessageV0.try_compile` +
@@ -322,8 +327,8 @@ The reasoning behind each lives in the verifier named beside it.
   a wrong power of ten inflates the price *and* the slippage cap in the same
   direction, so they compound into an overspend instead of cancelling. pump.fun's
   `QuoteControl` registry (PDA `["quote-control"]`) admits mints at 6, 8 and 9
-  decimals — 79 of the 170 admitted on 2026-09-22 are tokenized equities, and
-  coins paired with them trade live (8 of 124 curves in a 75s sample that day).
+  decimals — many of the admitted mints are tokenized equities, and coins
+  paired with them trade live.
 - `trade.curve_refresh_budget` (seconds, default 2.0) bounds the pre-buy curve
   read in `extreme_fast_mode`; when it expires the token is **skipped**, because a
   buy built from listener-guessed defaults reverts with `NotAuthorized` (6000),
@@ -331,9 +336,15 @@ The reasoning behind each lives in the verifier named beside it.
   sell path keeps the opposite fallback — proceed with cached values — since
   skipping a sell strands the position.
 - The refresh is skipped entirely when `TokenInfo.state_from_event` is set, i.e.
-  the listener parsed the **CreateEvent**. Instruction-parsed `TokenInfo`
-  deliberately does not set it: `args.creator` is user-supplied and post-2026-04-28
-  may differ from the canonical `BC.creator`. `trade.trust_create_event: false`
+  the listener resolved creator/flags/quote_mint for itself. The **CreateEvent**
+  parsers set it. Instruction-parsed `TokenInfo` does not, because
+  `args.creator` is user-supplied and post-2026-04-28 may differ from the
+  canonical `BC.creator` — but that gap is now understood rather than merely
+  feared, and it has exactly two causes: a **holder-reward** coin (derivable
+  from the mint, see below) and a post-launch `migrate_bonding_curve_creator`
+  (which happens *after* create, so it cannot affect a snipe). The `shreds`
+  listener sets the flag itself on that basis; it has no curve to read and no
+  choice. `trade.trust_create_event: false`
   forces the refresh back on; PumpPortal payloads always refresh.
 
 **Selling**
@@ -393,9 +404,8 @@ offline and only visible after a couple of minutes against mainnet.
   was reported as `claim_cashback`. Note `buy_exact_sol_in` is also 18 accounts
   on chain, same as legacy `buy`.
 - **Walk `meta.innerInstructions`, not just `message.instructions`.** Most trades
-  reach the program as a CPI from a router or aggregator: in 40 consecutive
-  pump.fun transactions there was **1 top-level** pump instruction against
-  **8 inner** ones. Anchor's event-CPI prefix (`e445a52e51cb9a1d`) accounts for a
+  reach the program as a CPI from a router or aggregator: top-level pump
+  instructions are heavily outnumbered by inner ones. Anchor's event-CPI prefix (`e445a52e51cb9a1d`) accounts for a
   good share of the inner instructions; the event's own discriminator follows it.
 - **`getProgramAccounts` over the whole pump program is rejected** by current
   providers: *"Too many accounts requested (10000001 pubkeys) … use
@@ -566,9 +576,11 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   "omitted fee bps" getTransaction fixture sends `is_cashback_enabled` only
   (1 byte), and the "with fee bps" getTransaction fixture sends
   `is_cashback_enabled` + `creator_fee_bps` (9 bytes) — counted directly from
-  each fixture's instruction data, 2026-09-15. `is_holder_reward` (the
-  three-trailing-arg form) is legal per the IDL but has not been observed on
-  the wire — UNVERIFIED whether it is ever sent. A decoder that reads a
+  each fixture's instruction data, 2026-09-15. The three-trailing-arg form
+  **is** sent. Because the args are positional, a shorter form cannot have set
+  a later one — so a truncated instruction is proof the coin is not
+  holder-reward, not merely silence about it, which is what lets a
+  pre-execution listener classify every coin. A decoder that reads a
   fixed number of trailing bytes raises `IndexError` on the shorter forms.
   Decode trailing args defensively and report a missing one as unset —
   `utils/idl_parser.py` does this for trailing option-typed args since #184
@@ -602,7 +614,16 @@ holders instead of paid to a creator wallet. On such a coin
 `BondingCurve.creator` holds a pump.fun address rather than the actual
 creator's — that's expected, and the `creator_vault` derivation is unchanged
 and still correct either way, since it derives from whatever `creator` the
-curve carries. **No trade instruction changed**: `buy`, `sell`, `buy_v2`,
+curve carries.
+
+**That substituted address is `PDA(["holder-rewards", mint])` under the pump
+program** — the same account the IDL declares for `holder_rewards` on
+`distribute_fee_to_holders`, which is how the ordinary `creator-vault` route
+delivers the fee to the holder pool without a second payout path. It depends on
+nothing but the mint, so `args.creator` being unusable on these coins costs no
+RPC call to work around: `PumpFunAddresses.find_holder_reward_creator` derives
+it. A meaningful share of launches are holder-reward, so this is not an edge
+case. **No trade instruction changed**: `buy`, `sell`, `buy_v2`,
 `sell_v2` and the PumpSwap instructions take identical accounts and arguments
 whether or not a coin is a holder-reward coin. `Global.is_holder_reward_enabled`
 can switch creation off globally.
@@ -643,15 +664,14 @@ interface pump.fun maintains.
   checks this against committed fixtures, and `--live` re-checks it against the
   real feed. The bonk **trade** path past detection is still unverified — see
   issue #201.
-- **PumpPortal does not report coins created in a transaction v1.** Measured
-  2026-09-16 across two windows: 0 of 6 v1 creates pushed, against near-complete
-  coverage of v0 creates (104 of 105 in one 240s window). It is a third-party
-  feed, so no local change recovers them — the coin is never sent. This compounds
+- **PumpPortal does not report coins created in a transaction v1**, while its
+  coverage of v0 creates is near-complete. It is a third-party feed, so no local change recovers them — the coin is never sent. This compounds
   the thin-bonk-payload gap below, and it means `pumpportal` is a sampling feed
   now, not a complete one. `bots/bot-sniper-4-pp.yaml` carries the same warning.
 - `src/config_loader.py` (repo root of the package, not under `core/`) validates the platform/listener pairing before startup:
-  pump.fun supports `logs`, `blocks`, `geyser`, `pumpportal`; letsbonk.fun
-  supports `blocks`, `geyser`, `pumpportal` — **not `logs`**. Adding a listener
+  pump.fun supports `logs`, `blocks`, `geyser`, `shreds`, `pumpportal`;
+  letsbonk.fun supports `blocks`, `geyser`, `pumpportal` — **not `logs`**, and
+  **not `shreds`** (its instruction parse path is unverified, see #201). Adding a listener
   means updating `PLATFORM_LISTENER_COMPATIBILITY` there too.
 - Bots with `separate_process: true` run in their own process. One log file per
   bot instance.

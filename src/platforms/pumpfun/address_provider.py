@@ -30,6 +30,12 @@ class PumpFunAddresses:
     GLOBAL: Final[Pubkey] = Pubkey.from_string(
         "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"
     )
+    # PDA ["mint-authority"], constant. Account 1 of create/create_v2 and
+    # absent from every trade instruction, which makes it the selective filter
+    # for a creations-only subscription.
+    MINT_AUTHORITY: Final[Pubkey] = Pubkey.from_string(
+        "TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM"
+    )
     EVENT_AUTHORITY: Final[Pubkey] = Pubkey.from_string(
         "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1"
     )
@@ -118,6 +124,35 @@ class PumpFunAddresses:
         derived_address, _ = Pubkey.find_program_address(
             [b"sharing-config", bytes(base_mint)],
             PumpFunAddresses.FEE_PROGRAM,
+        )
+        return derived_address
+
+    @staticmethod
+    def find_holder_reward_creator(mint: Pubkey) -> Pubkey:
+        """Derive the creator a holder-reward coin's bonding curve carries.
+
+        On a holder-reward coin the creator fee is shared out to holders rather
+        than paid to the launcher, and pump.fun implements that by reusing the
+        ordinary fee route: the program ignores the `creator` passed to
+        `create_v2` and writes this PDA into `BondingCurve.creator`, so
+        `creator-vault` derives onto the holder-reward distribution account on
+        its own. Seeds are the ones the IDL declares for the `holder_rewards`
+        account on `distribute_fee_to_holders`.
+
+        This is what lets a listener holding only the create instruction — no
+        CreateEvent, and no curve to read because nothing has executed — still
+        build a correct buy: the substituted creator depends on nothing but the
+        mint.
+
+        Args:
+            mint: Coin mint address
+
+        Returns:
+            The address BondingCurve.creator holds for a holder-reward coin
+        """
+        derived_address, _ = Pubkey.find_program_address(
+            [b"holder-rewards", bytes(mint)],
+            PumpFunAddresses.PROGRAM,
         )
         return derived_address
 
@@ -332,6 +367,20 @@ class PumpFunAddressProvider(AddressProvider):
             [b"creator-vault", bytes(creator)], PumpFunAddresses.PROGRAM
         )
         return creator_vault
+
+    def derive_holder_reward_creator(self, mint: Pubkey) -> Pubkey:
+        """Derive the creator a holder-reward coin's bonding curve carries.
+
+        See PumpFunAddresses.find_holder_reward_creator for why this differs
+        from the creator passed to create_v2.
+
+        Args:
+            mint: Coin mint address
+
+        Returns:
+            The address BondingCurve.creator holds for a holder-reward coin
+        """
+        return PumpFunAddresses.find_holder_reward_creator(mint)
 
     def derive_global_volume_accumulator(self) -> Pubkey:
         """Derive the global volume accumulator PDA.
