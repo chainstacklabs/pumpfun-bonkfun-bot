@@ -3,6 +3,7 @@ Universal Geyser listener that works with any platform through the interface sys
 """
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 
 import grpc
@@ -14,6 +15,64 @@ from platforms import platform_factory
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _describe_envelope(update: geyser_pb2.SubscribeUpdate) -> str:
+    """Summarise the transaction format a coin was created in, for the log.
+
+    Transaction v1 (SIMD-0385) carries its compute budget inline on the message
+    as `config` instead of as ComputeBudget instructions, and geyser sets that
+    field only for v1. Its presence is the version test: the `versioned` flag is
+    true for v0 and v1 alike and cannot separate them.
+
+    Diagnostic only — nothing routes on this. Detection stays on
+    `meta.log_messages`, which reads the same for every transaction version.
+
+    Args:
+        update: The geyser update a TokenInfo was just parsed out of
+
+    Returns:
+        A one-line summary of the version, inline budget and reported cost
+    """
+    transaction = update.transaction.transaction
+    message = transaction.transaction.message
+
+    if not message.HasField("config"):
+        return "v0" if message.versioned else "legacy"
+
+    config = message.config
+    # Every field has presence, and an unset one means zero rather than a
+    # runtime default, so report "unset" rather than implying a fallback.
+    parts = [
+        f"priority_fee={config.priority_fee} lamports"
+        if config.HasField("priority_fee")
+        else "priority_fee=unset",
+        f"cu_limit={config.compute_unit_limit}"
+        if config.HasField("compute_unit_limit")
+        else "cu_limit=unset",
+        f"data_size={config.loaded_accounts_data_size_limit}"
+        if config.HasField("loaded_accounts_data_size_limit")
+        else "data_size=unset",
+    ]
+    if config.HasField("heap_size"):
+        parts.append(f"heap={config.heap_size}")
+    if transaction.meta.HasField("cost_units"):
+        parts.append(f"cost_units={transaction.meta.cost_units}")
+
+    return f"v1 ({', '.join(parts)})"
+
+
+def _log_envelope(update: geyser_pb2.SubscribeUpdate) -> None:
+    """Report the creating transaction's format, when debug logging is on.
+
+    The summary is built only if it will be printed: this sits between detection
+    and submission, which extreme_fast_mode keeps free of avoidable work.
+
+    Args:
+        update: The geyser update a TokenInfo was just parsed out of
+    """
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"Creating transaction envelope: {_describe_envelope(update)}")
 
 
 class UniversalGeyserListener(BaseTokenListener):
@@ -146,6 +205,7 @@ class UniversalGeyserListener(BaseTokenListener):
                         logger.info(
                             f"New token detected: {token_info.name} ({token_info.symbol}) on {token_info.platform.value}"
                         )
+                        _log_envelope(update)
 
                         # Apply filters
                         if match_string and not (

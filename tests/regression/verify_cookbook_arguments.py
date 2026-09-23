@@ -44,6 +44,7 @@ NO_INPUT = {
     "pumpfun_listen_tokens_logsubscribe.py",
     "pumpfun_listen_tokens_blocksubscribe.py",
     "pumpfun_listen_tokens_geyser.py",
+    "pumpfun_listen_tokens_deshred.py",
     "pumpfun_listen_tokens_pumpportal.py",
     "pumpfun_listen_migrations_logsubscribe.py",
     "pumpfun_listen_migrations_programsubscribe.py",

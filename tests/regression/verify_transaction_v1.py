@@ -46,6 +46,23 @@ Offline machine checks, no network and no funds moved:
      0.29; a failure here means the decode has regressed and the log route is
      carrying the whole load again.
 
+The geyser route decodes protobuf rather than transaction bytes, so it goes
+blind differently and is pinned on its own frame:
+
+  8. The committed geyser frame really is a v1 create_v2 — over geyser there is
+     no version number, so `Message.config` is the test. It exists only in the
+     stubs regenerated from yellowstone-grpc-proto 13.0.0-rc4; the previous
+     vendored proto stopped at field 6 and this check fails on a rollback.
+  9. The pump.fun parser reads that frame into a usable TokenInfo. A missing
+     proto field is skipped rather than raised on, so a stale proto degrades in
+     silence here — which is exactly why it is pinned.
+ 10. With the logs stripped from the frame, the instruction decode still finds
+     the coin, and still leaves state_from_event False: `args.creator` is
+     user-supplied, so the curve must be read.
+ 11. The inline v1 budget is readable as a known field. A v1 coin carries no
+     ComputeBudget instructions at all, so anything reading a budget from the
+     instruction list reads nothing for it.
+
 Usage:
     uv run tests/regression/verify_transaction_v1.py
 """
@@ -60,6 +77,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from core.client import SolanaClient  # noqa: E402
+from geyser.generated import geyser_pb2  # noqa: E402
 from interfaces.core import Platform  # noqa: E402
 from monitoring.universal_block_listener import UniversalBlockListener  # noqa: E402
 from platforms import get_platform_implementations  # noqa: E402
@@ -80,6 +98,16 @@ V0_FIXTURE = (
     / "pumpfun"
     / "decode"
     / "raw_create_v2_with_fee_bps_from_gettransaction.json"
+)
+# One geyser SubscribeUpdate carrying a v1 create_v2, captured 2026-09-23. The
+# geyser route has its own decode path and its own stubs, so it needs its own
+# fixture: the getTransaction JSON above cannot exercise a protobuf frame.
+GEYSER_V1_FIXTURE = (
+    PROJECT_ROOT
+    / "cookbook"
+    / "pumpfun"
+    / "decode"
+    / "raw_create_v2_v1_from_geyser.json"
 )
 
 # Solana tags a v1 transaction with this first byte (SIMD-0385 VersionByte).
@@ -220,7 +248,9 @@ def check_log_route_detects_without_the_envelope() -> bool:
     tx["transaction"] = [base64.b64encode(b"not a transaction").decode(), "base64"]
     token_info = listener._process_block_transactions([tx])  # noqa: SLF001
     if token_info is None:
-        print("     a v1 create with unreadable bytes was missed — the logs are not the route")
+        print(
+            "     a v1 create with unreadable bytes was missed — the logs are not the route"
+        )
         return False
     return True
 
@@ -293,6 +323,113 @@ def check_examples_route_on_logs() -> bool:
     return True
 
 
+def _geyser_update() -> "geyser_pb2.SubscribeUpdate":
+    """Rebuild the captured geyser frame from its committed bytes.
+
+    Returns:
+        The `SubscribeUpdate` exactly as it came off the wire
+    """
+    update = geyser_pb2.SubscribeUpdate()
+    update.ParseFromString(
+        base64.b64decode(_load(GEYSER_V1_FIXTURE)["subscribe_update_base64"])
+    )
+    return update
+
+
+def check_geyser_fixture_is_a_v1_create() -> bool:
+    """The geyser fixture has to be a v1 create or the rest proves nothing.
+
+    Over geyser there is no version number to read: `Message.config` is set for
+    v1 and absent otherwise, and `versioned` is true for v0 and v1 alike. The
+    vendored proto carried no `config` field until the 13.0.0-rc4 regeneration,
+    so this check also fails if the stubs are ever rolled back.
+    """
+    update = _geyser_update()
+    message = update.transaction.transaction.transaction.message
+    if not message.HasField("config"):
+        print("     fixture message has no config field — not a v1, or stale stubs")
+        return False
+    if update.transaction.transaction.meta.err.ByteSize():
+        print("     fixture create failed on chain; a failed create has no mint")
+        return False
+    logs = list(update.transaction.transaction.meta.log_messages)
+    if not any("Instruction: CreateV2" in line for line in logs):
+        print("     fixture carries no CreateV2 instruction")
+        return False
+    return True
+
+
+def check_geyser_parser_reads_the_v1_create() -> bool:
+    """The geyser route must reach a usable TokenInfo on a v1 coin.
+
+    An unknown field is skipped by protobuf rather than raised on, so a stale
+    proto degrades silently here — the frame still parses and only the budget
+    goes missing. That is precisely why this is pinned.
+    """
+    parser = get_platform_implementations(
+        Platform.PUMP_FUN, _OfflineClient()
+    ).event_parser
+    token_info = parser.parse_token_creation_from_geyser(_geyser_update())
+    if token_info is None:
+        print("     geyser parser returned None for a v1 create_v2")
+        return False
+    if not token_info.state_from_event:
+        print("     state_from_event is False — extreme_fast_mode would refresh")
+        return False
+    if token_info.mint is None or token_info.creator is None:
+        print("     parsed TokenInfo is missing mint or creator")
+        return False
+    return True
+
+
+def check_geyser_instruction_fallback_reads_v1() -> bool:
+    """With the logs gone, the instruction decode still has to find the coin.
+
+    Same split as the block listener: logs are the route, instruction decoding
+    is the fallback, and each is pinned separately so neither can quietly start
+    carrying the other's load. The fallback must *not* set state_from_event —
+    `args.creator` is user-supplied and post-2026-04-28 may differ from the
+    canonical `BondingCurve.creator`, so the curve still has to be read.
+    """
+    update = _geyser_update()
+    del update.transaction.transaction.meta.log_messages[:]
+
+    parser = get_platform_implementations(
+        Platform.PUMP_FUN, _OfflineClient()
+    ).event_parser
+    token_info = parser.parse_token_creation_from_geyser(update)
+    if token_info is None:
+        print("     instruction fallback returned None for a v1 create_v2")
+        return False
+    if token_info.mint is None:
+        print("     instruction fallback produced no mint")
+        return False
+    if token_info.state_from_event:
+        print("     fallback set state_from_event off an instruction-parsed creator")
+        return False
+    return True
+
+
+def check_geyser_exposes_the_v1_budget() -> bool:
+    """The inline v1 budget must be readable as a known field, not guesswork.
+
+    Transaction v1 moved the compute budget off ComputeBudget instructions and
+    onto the message, so anything reading a coin's budget from the instruction
+    list now reads nothing at all for a v1 coin. The listener reports this at
+    debug; the point of the check is that the field survives regeneration.
+    """
+    config = _geyser_update().transaction.transaction.transaction.message.config
+    if not config.HasField("compute_unit_limit"):
+        print("     v1 fixture carries no compute unit limit")
+        return False
+    if config.compute_unit_limit <= 0:
+        print(f"     compute unit limit is {config.compute_unit_limit}")
+        return False
+    # Unset means zero in v1, never a runtime default, so a real coin that
+    # reaches execution has to have set this explicitly.
+    return True
+
+
 def main() -> int:
     checks = [
         ("every call site accepts v1", check_every_call_site_accepts_v1),
@@ -308,6 +445,19 @@ def main() -> int:
             check_log_route_detects_without_the_envelope,
         ),
         ("the envelope fallback reads v1 too", check_envelope_fallback_reads_v1),
+        (
+            "geyser fixture is a successful v1 create_v2",
+            check_geyser_fixture_is_a_v1_create,
+        ),
+        (
+            "geyser parser reads the v1 create",
+            check_geyser_parser_reads_the_v1_create,
+        ),
+        (
+            "geyser instruction fallback reads v1 without logs",
+            check_geyser_instruction_fallback_reads_v1,
+        ),
+        ("geyser exposes the inline v1 budget", check_geyser_exposes_the_v1_budget),
         ("examples route on logs too", check_examples_route_on_logs),
     ]
     failed = 0
