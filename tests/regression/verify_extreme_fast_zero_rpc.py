@@ -1,11 +1,10 @@
 """Verify extreme_fast_mode makes zero RPC calls for event-sourced tokens.
 
-extreme_fast_mode's contract is that nothing sits between detecting a token
-and submitting the buy — no reads, no price fetch. The pump.fun CreateEvent
-carries the canonical creator (instruction args.creator is user-supplied and
-may differ post-2026-04-28), mayhem/cashback flags and quote_mint, so a
-TokenInfo built from it needs no pre-buy curve refresh. PumpPortal payloads
-carry none of that, so they keep the refresh.
+extreme_fast_mode's contract is that nothing sits between detecting a token and
+submitting the buy — no reads, no price fetch. The pump.fun CreateEvent carries
+the canonical creator (instruction args.creator is user-supplied and may differ),
+the mayhem/cashback flags and quote_mint, so a TokenInfo built from it needs no
+pre-buy curve refresh. PumpPortal payloads carry none of that, so they keep it.
 
 Offline machine checks, no network and no funds moved:
 

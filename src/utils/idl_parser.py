@@ -1,7 +1,4 @@
-"""
-IDL Parser module for Solana programs.
-Provides functionality to load and parse Anchor IDL files and decode instruction data and events.
-"""
+"""Load Anchor IDL files and decode instruction data and events."""
 
 import base64
 import json
@@ -42,8 +39,7 @@ class IDLParser:
     }
 
     def __init__(self, idl_path: str, verbose: bool = False):
-        """
-        Initialize the IDL parser.
+        """Initialize the IDL parser.
 
         Args:
             idl_path: Path to the IDL JSON file
@@ -140,10 +136,10 @@ class IDLParser:
     ) -> dict[str, Any] | None:
         """Decode instruction arguments, or None if the data is malformed.
 
-        Trailing option-typed args can legally be absent from the wire
-        (create_v2's is_cashback_enabled, issue #184): when the buffer is
-        exhausted and every remaining arg is optional, they are reported
-        as unset instead of failing the whole decode.
+        Trailing option-typed args can legally be absent from the wire (e.g.
+        create_v2's is_cashback_enabled): when the buffer is exhausted and every
+        remaining arg is optional, they are reported as unset rather than
+        failing the whole decode.
         """
         args: dict[str, Any] = {}
         decode_offset = 0
@@ -181,8 +177,7 @@ class IDLParser:
     def decode_event_data(
         self, event_data: bytes, event_name: str | None = None
     ) -> dict[str, Any] | None:
-        """
-        Decode event data using IDL event definitions.
+        """Decode event data using IDL event definitions.
 
         Args:
             event_data: Raw event data bytes (typically from base64 decoded log data)
@@ -276,8 +271,7 @@ class IDLParser:
     def find_event_in_logs(
         self, logs: list[str], target_event_name: str | None = None
     ) -> dict[str, Any] | None:
-        """
-        Find and decode event data from transaction logs.
+        """Find and decode event data from transaction logs.
 
         Args:
             logs: List of log strings from a transaction
@@ -293,7 +287,6 @@ class IDLParser:
                     encoded_data = log.split("Program data: ")[1].strip()
                     decoded_data = base64.b64decode(encoded_data)
 
-                    # Try to decode as event
                     event_data = self.decode_event_data(decoded_data, target_event_name)
                     if event_data:
                         return event_data
@@ -315,8 +308,7 @@ class IDLParser:
         account_type_name: str,
         skip_discriminator: bool = True,
     ) -> dict[str, Any] | None:
-        """
-        Decode account data using a specific account type from the IDL.
+        """Decode account data using a specific account type from the IDL.
 
         Args:
             account_data: Raw account data bytes.
@@ -447,7 +439,7 @@ class IDLParser:
         Covers Anchor's native ``option`` wrapper and pump.fun's ``Option*``
         defined types — ``OptionBool`` (is_cashback_enabled, is_holder_reward)
         and ``OptionU64`` (creator_fee_bps). All are observed omitted from the
-        wire when trailing; see issue #184 and the 2026-09-15 program upgrade.
+        wire when trailing.
         """
         if not isinstance(type_def, dict):
             return False
@@ -624,8 +616,7 @@ class IDLParser:
 
 
 def load_idl_parser(idl_path: str, verbose: bool = False) -> IDLParser:
-    """
-    Convenience function to load an IDL parser.
+    """Convenience function to load an IDL parser.
 
     Args:
         idl_path: Path to the IDL JSON file

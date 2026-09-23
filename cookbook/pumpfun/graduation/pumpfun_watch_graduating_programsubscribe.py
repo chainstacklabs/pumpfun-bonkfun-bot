@@ -4,101 +4,49 @@ Usage:
     uv run cookbook/pumpfun/graduation/pumpfun_watch_graduating_programsubscribe.py
     uv run cookbook/pumpfun/graduation/pumpfun_watch_graduating_programsubscribe.py --min-progress 95
 
-Why a subscription and not `getProgramAccounts`: the pump.fun program now owns
-over 10 million accounts, and every provider refuses to scan it. Helius, Alchemy
-and dRPC reject with `Too many accounts requested (10000001 pubkeys)`; QuickNode
-and Chainstack time out. No filter set fixes that — the rejection is on program
-size, before filters apply. `getProgramAccountsV2` is a provider extension (Helius,
-Solana Tracker), not core Agave, and its `limit` is a *scan* budget rather than a
-result count, so answering this question with it means ~1000 sequential pages.
+Why a subscription and not `getProgramAccounts`: the pump.fun program owns over
+10 million accounts and every provider refuses to scan it — the rejection is on
+program size, before filters apply. `getProgramAccountsV2` is a provider
+extension, not core Agave, and its `limit` is a scan budget rather than a result
+count, so one filtered answer costs ~1000 sequential pages.
 
-`programSubscribe` sidesteps the scan entirely. A curve can only approach
-graduation by being traded, and every write to it pushes the full account — 125
-bytes as `create_v2` allocates it, or 151 once `extend_account` has run on it —
-so each notification carries everything needed to compute progress — there is no
-state to accumulate and no cold start beyond the next trade. Verified accepted on
-both a paid endpoint and the public `api.mainnet-beta.solana.com`.
+`programSubscribe` sidesteps the scan. A curve can only approach graduation by
+being traded, and every write pushes the full account, so each notification
+carries everything needed to compute progress: no accumulated state, no cold
+start beyond the next trade. It is accepted even by the public
+`api.mainnet-beta.solana.com`.
 
-See `pumpfun_watch_graduating_geyser.py` for the same report over Geyser gRPC, which
-also gives you the transaction signature behind each update.
+See `pumpfun_watch_graduating_geyser.py` for the same report over Geyser gRPC,
+which also gives the transaction signature behind each update.
 
 Selecting a graduation threshold
 --------------------------------
-Progress is measured against `Global.initial_real_token_reserves` (~793.1M tokens)
-read from chain, not a hardcoded constant, because a mayhem coin can launch with
-different virtual params and would otherwise show the wrong percentage.
+Progress is measured against `Global.initial_real_token_reserves` read from
+chain, not a hardcoded constant: a mayhem coin can launch with different virtual
+params and would otherwise show the wrong percentage.
 
-The pre-filter the server applies can only match exact bytes, so it cannot do
-"anything above 90%". It can only do a few fixed cutoffs. `--min-progress` uses the
-closest cutoff that is still wide enough, then makes the exact comparison here:
+The server-side pre-filter matches exact bytes, so it cannot express "anything
+above 90%" — only a few fixed cutoffs. `--min-progress` picks the closest cutoff
+that is still wide enough, then makes the exact comparison here:
 
-    filter               cutoff                 ≈ graduated past
+    filter               cutoff                 ~ graduated past
     2 zero bytes @ 30    281.5M tokens left     64.5%
     3 zero bytes @ 29    1.1M tokens left       99.86%
     4 zero bytes @ 28    4,295 tokens left      99.9995%
 
-    --min-progress       pre-filtered by the server?
-    below 64.5%          no, every curve arrives and is filtered here
-    64.5% to 99.86%      yes, at the 64.5% cutoff
-    99.86% and up        yes, at the 99.86% cutoff
-
-So the pre-filter saves traffic, it does not decide the answer — whatever percentage
-you ask for is honoured either way. Low thresholds just cost more bandwidth. If you
-want to hand-tune, pick a different cutoff from the table: the last moments before
+So the pre-filter saves bandwidth, it does not decide the answer — whatever
+percentage you ask for is honoured either way, low thresholds just cost more
+traffic. To hand-tune, pick a different cutoff: the last moments before
 migration want the 3-byte one, a wider funnel the 2-byte one.
 
-Checked against mainnet by running the filtered and unfiltered subscriptions side by
-side for a minute: same curves, nothing dropped, nothing extra.
-
-This script does **not** filter on `dataSize`. `create_v2` allocates the curve
-at exactly 125 bytes, an account grows to 151 once `extend_account` has run on
-it, and a rarer third length (256 bytes, confirmed live below) also exists.
-`extend_account` can grow a curve to any length — nothing enumerates every
-size it might produce — so a fixed `dataSize` allowlist is whack-a-mole: the
-next length silently drops curves again, and the failure mode is invisible,
-since the script just prints fewer results rather than an error. The
-discriminator `memcmp` alone already restricts delivery to `BondingCurve`
-accounts, so dropping `dataSize` costs no precision — only bandwidth (see the
-measurement below). A `MIN_CURVE_LEN` floor still discards anything shorter
-than the smallest real struct, so a stray short/legacy account can't reach the
-decoder.
-
-Confirmed live on 2026-09-15 two ways. First, directly: `getAccountInfo` on
-`EJpNsfxnTB6mtVdzrTcgQ9xfywobHSSsUtu1Gh1GFvEg` (a 256-byte curve reported
-elsewhere) returned 256 bytes, discriminator matching, owned by the pump
-program, and it decoded cleanly through this repo's own IDL-driven decoder
-(`PumpFunCurveManager._decode_curve_state_with_idl`) with sane reserves —
-everything past the documented fields is zero padding. Second, over the
-wire: a `programSubscribe` window with this script's own filters
-(discriminator + `complete = false`, no `dataSize`) saw all three lengths —
-125, 151 and that same 256 — among ordinary traffic, the 256 being rare.
-Nothing in it was the legacy 49-byte layout (no `creator` field).
-UNVERIFIED: whether that layout still has any `complete = false` accounts
-left on chain, and whether anything still writes to them — not re-measured
-here.
-
-**Bandwidth trade-off.** A first attempt ran the `dataSize`-filtered shape
-and the unfiltered shape back to back and made unfiltered look *cheaper* —
-that was noise: pump.fun trading volume swings a lot minute to minute, and
-two sequential windows just land on different volume. Rerun with all three
-filter groups (`dataSize 125`, `dataSize 151`, and no `dataSize`) subscribed
-**simultaneously on one connection**, so all three watch the identical trade
-stream: the unfiltered subscription cost barely more than the two enumerated
-lengths together, and the difference was entirely the 256-byte curve neither
-enumerated length can match. Dropping the filter is effectively free here,
-because virtually every update already lands on 125 or 151 and 256 is rare;
-if a resize-happy period ever shifts that mix, the cost scales with however
-much traffic sits outside the two filtered lengths, not with total volume.
-
-UNVERIFIED: a curve was once observed going from 125 to 151 bytes, with
-several 125-byte trades logged in between, suggesting `extend_account` ran as
-its own later transaction rather than bundled into `create_v2` — not
-re-measured here. `extend_account` **can** land in the same transaction as
-`create_v2` — `cookbook/pumpfun/trade/pumpfun_create_and_buy_token_v2.py` does exactly that,
-appending `create_extend_account_instruction` right after
-`create_pump_create_v2_instruction` in the same instruction list — so both
-orderings occur; how common a further-resized (256-byte) curve is remains
-unmeasured.
+This script does **not** filter on `dataSize`. `create_v2` allocates 125 bytes,
+`extend_account` can grow a curve to any length the program allows (151 and 256
+both occur live), and no finite allowlist closes that gap — the next length
+silently drops curves, and the failure mode is invisible because the script just
+prints fewer results. The discriminator `memcmp` alone already restricts delivery
+to `BondingCurve` accounts, so dropping `dataSize` costs no precision. A
+`MIN_CURVE_LEN` floor still discards anything shorter than the smallest real
+struct.
 """
 
 import argparse
@@ -140,11 +88,10 @@ TOKEN_PROGRAM_ID: Final[Pubkey] = Pubkey.from_string(
 # See cookbook/solana/anchor_calculate_discriminator.py
 BONDING_CURVE_DISCRIMINATOR: Final[bytes] = bytes.fromhex("17b7f83760d8ac60")
 
-# create_v2 allocates the 125-byte struct; extend_account can grow it past
-# that to any length the program allows (151 and 256 both confirmed live,
-# 2026-09-15) — there is no fixed set of lengths to enumerate. This is a
-# floor, not an allowlist: anything shorter than the smallest real struct is
-# dropped client-side, everything at or above it is decoded and let through.
+# create_v2 allocates the 125-byte struct; extend_account can grow it to any
+# length the program allows (151 and 256 both occur live), so there is no fixed
+# set to enumerate. This is a floor, not an allowlist: anything shorter than the
+# smallest real struct is dropped, everything at or above it is decoded.
 MIN_CURVE_LEN: Final[int] = 125
 
 TOKEN_DECIMALS: Final[int] = 6

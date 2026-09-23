@@ -9,15 +9,11 @@ library raises
 
     AssertionError: cannot reset() while queue isn't empty
 
-instead. `AssertionError` is an `Exception`, so the broad handler swallowed it
-and the shutdown request was lost. The loop then kept calling `recv()` on a
-connection whose frame state was now corrupt, so every later read tripped
-`assert frame.opcode is OP_TEXT or frame.opcode is OP_BINARY` — thousands of
-identical ERROR lines, and `_wait_for_token` never returning, so the bot hung
-after detecting a token instead of buying it.
-
-Observed live: a blocks-listener run produced a continuous stream of
-AssertionErrors starting on the line after "Found token", and never exited.
+instead. `AssertionError` is an `Exception`, so the broad handler swallowed it and the
+shutdown request was lost. The loop then kept calling `recv()` on a connection
+whose frame state was corrupt, so every later read tripped an opcode assertion
+and `_wait_for_token` never returned — the bot hung after detecting a token
+instead of buying it.
 
 Offline machine checks, no network and no funds moved. A stub websocket raises
 what the real library raises, against the real listeners:

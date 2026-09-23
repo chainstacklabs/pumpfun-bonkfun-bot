@@ -1,6 +1,4 @@
-"""
-Universal Geyser listener that works with any platform through the interface system.
-"""
+"""Universal Geyser gRPC listener, platform-agnostic via the interfaces."""
 
 import asyncio
 import logging
@@ -21,12 +19,9 @@ def _describe_envelope(update: geyser_pb2.SubscribeUpdate) -> str:
     """Summarise the transaction format a coin was created in, for the log.
 
     Transaction v1 (SIMD-0385) carries its compute budget inline on the message
-    as `config` instead of as ComputeBudget instructions, and geyser sets that
-    field only for v1. Its presence is the version test: the `versioned` flag is
-    true for v0 and v1 alike and cannot separate them.
-
-    Diagnostic only — nothing routes on this. Detection stays on
-    `meta.log_messages`, which reads the same for every transaction version.
+    as `config` rather than as ComputeBudget instructions, and geyser sets that
+    field only for v1, so its presence is the version test — `versioned` is true
+    for v0 and v1 alike. Diagnostic only; detection stays on `meta.log_messages`.
 
     Args:
         update: The geyser update a TokenInfo was just parsed out of

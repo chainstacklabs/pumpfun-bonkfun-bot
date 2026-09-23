@@ -1,9 +1,4 @@
-"""
-LetsBonk implementation of EventParser interface.
-
-This module parses LetsBonk-specific token creation events from various sources
-by implementing the EventParser interface with IDL-based parsing.
-"""
+"""letsbonk.fun EventParser: IDL-based parsing of token creation events."""
 
 import base64
 import struct
@@ -131,19 +126,10 @@ class LetsBonkEventParser(EventParser):
             if not base_mint_param:
                 return None
 
-            # Extract account information based on IDL account order for initialize instruction
-            # From the manual example, the account order is:
-            # 0: creator (signer)
-            # 1: creator_ata (not needed for TokenInfo)
-            # 2: global_config
-            # 3: platform_config
-            # 4: creator
-            # 5: pool_state
-            # 6: base_mint
-            # 7: quote_mint (WSOL)
-            # 8: base_vault
-            # 9: quote_vault
-            # ... other accounts
+            # IDL account order for `initialize`: 0 creator (signer),
+            # 1 creator_ata, 2 global_config, 3 platform_config, 4 creator,
+            # 5 pool_state, 6 base_mint, 7 quote_mint (WSOL), 8 base_vault,
+            # 9 quote_vault, then others.
 
             creator = get_account_key(0)  # First signer account (creator)
             global_config = get_account_key(2)  # global_config account

@@ -1,4 +1,4 @@
-"""Transaction status checks shared by the learning examples.
+"""Transaction status checks shared by the cookbook scripts.
 
 `AsyncClient.confirm_transaction` answers one question: did this signature land
 in a block? It says nothing about whether the transaction succeeded. A landed
@@ -6,13 +6,9 @@ transaction can have reverted, and RPC reports that only in `meta.err`.
 
 Skipping the `meta.err` read is how a broken trade path looks healthy: the script
 prints "Transaction confirmed", returns a signature, and the wallet balance never
-moves. That was issue #175 — buys reverting with `BuybackFeeRecipientMissing`
-(6062) reported as successful buys.
+moves.
 
-Deliberately standalone: imports nothing from `src/`, so every example under
-`cookbook/` (including the subdirectories) can use it.
-
-`tests/regression/verify_tx_status_checks.py` verifies the behaviour below.
+Imports nothing from `src/`, so every script under `cookbook/` can use it.
 """
 
 from typing import Any, Protocol

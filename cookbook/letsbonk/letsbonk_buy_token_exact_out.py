@@ -1,19 +1,14 @@
-"""Manual Buy Exact Out Example for Raydium LaunchLab
+"""Buy a letsbonk.fun coin with buy_exact_out, receiving a fixed token amount.
+
+WARNING: this submits a real transaction and spends real funds.
 
 Usage:
     uv run cookbook/letsbonk/letsbonk_buy_token_exact_out.py <MINT> [TOKENS_TO_RECEIVE] [--slippage 0.25]
 
-This script demonstrates how to buy tokens using the buy_exact_out instruction
-from the Raydium LaunchLab program. It follows the IDL structure.
-
-Key features:
-- Uses buy_exact_out instruction
-- Implements proper account ordering as per IDL
-- Includes slippage protection with maximum_amount_in
-- Handles WSOL wrapping/unwrapping automatically
-- Follows the exact transaction structure from the buy_exact_in example
-- User configurable token amount and slippage
-- Uses idempotent ATA creation
+letsbonk.fun runs on Raydium LaunchLab, which quotes in two directions:
+*exact in* fixes what you spend, *exact out* fixes what you receive. Slippage
+protection is `maximum_amount_in`. WSOL is wrapped and unwrapped around the
+trade, and the base-token ATA is created idempotently.
 """
 
 import argparse
@@ -98,14 +93,10 @@ LAMPORTS_PER_SOL = 1_000_000_000
 
 
 def derive_authority_pda() -> Pubkey:
-    """
-    Derive the authority PDA for the Raydium LaunchLab program.
+    """Derive the authority PDA for the Raydium LaunchLab program.
 
     This PDA acts as the authority for pool vault operations and is generated
     using the AUTH_SEED as specified in the IDL.
-
-    Returns:
-        Pubkey: The derived authority PDA
     """
     AUTH_SEED = b"vault_auth_seed"
     authority_pda, _ = Pubkey.find_program_address(
@@ -115,13 +106,9 @@ def derive_authority_pda() -> Pubkey:
 
 
 def derive_event_authority_pda() -> Pubkey:
-    """
-    Derive the event authority PDA for the Raydium LaunchLab program.
+    """Derive the event authority PDA for the Raydium LaunchLab program.
 
     This PDA is used for emitting program events during swaps.
-
-    Returns:
-        Pubkey: The derived event authority PDA
     """
     EVENT_AUTHORITY_SEED = b"__event_authority"
     event_authority_pda, _ = Pubkey.find_program_address(
@@ -131,8 +118,7 @@ def derive_event_authority_pda() -> Pubkey:
 
 
 def derive_pool_state_for_token(base_token_mint: Pubkey) -> Pubkey | None:
-    """
-    Derive the pool state account for a given base token mint.
+    """Derive the pool state account for a given base token mint.
 
     Args:
         base_token_mint: The token mint address to search for
@@ -146,17 +132,11 @@ def derive_pool_state_for_token(base_token_mint: Pubkey) -> Pubkey | None:
 
 
 def derive_creator_fee_vault(creator: Pubkey, quote_mint: Pubkey) -> Pubkey:
-    """
-    Derive the creator fee vault PDA.
-
-    This vault accumulates creator fees from trades.
+    """Derive the creator fee vault PDA, which accumulates creator fees.
 
     Args:
         creator: The pool creator's pubkey
         quote_mint: The quote token mint (WSOL)
-
-    Returns:
-        Pubkey of the creator fee vault
     """
     seeds = [bytes(creator), bytes(quote_mint)]
     creator_fee_vault_pda, _ = Pubkey.find_program_address(
@@ -166,17 +146,10 @@ def derive_creator_fee_vault(creator: Pubkey, quote_mint: Pubkey) -> Pubkey:
 
 
 def derive_platform_fee_vault(platform_config: Pubkey, quote_mint: Pubkey) -> Pubkey:
-    """
-    Derive the platform fee vault PDA.
-
-    This vault accumulates platform fees from trades.
+    """Derive the platform fee vault PDA, which accumulates platform fees.
 
     Args:
-        platform_config: The platform config account
         quote_mint: The quote token mint (WSOL)
-
-    Returns:
-        Pubkey of the platform fee vault
     """
     seeds = [bytes(platform_config), bytes(quote_mint)]
     platform_fee_vault_pda, _ = Pubkey.find_program_address(
@@ -186,8 +159,7 @@ def derive_platform_fee_vault(platform_config: Pubkey, quote_mint: Pubkey) -> Pu
 
 
 def decode_pool_state(account_data: bytes) -> dict | None:
-    """
-    Decode pool state account data using the IDL parser.
+    """Decode pool state account data using the IDL parser.
 
     Args:
         account_data: Raw account data from the pool state account
@@ -213,12 +185,10 @@ def decode_pool_state(account_data: bytes) -> dict | None:
 
 
 async def get_pool_state_data(client: AsyncClient, pool_state: Pubkey) -> dict | None:
-    """
-    Get and decode the pool state account data.
+    """Get and decode the pool state account data.
 
     Args:
         client: Solana RPC client
-        pool_state: The pool state account address
 
     Returns:
         Dictionary containing decoded pool state data, or None if error
@@ -237,17 +207,11 @@ async def get_pool_state_data(client: AsyncClient, pool_state: Pubkey) -> dict |
 
 
 def get_associated_token_address(owner: Pubkey, mint: Pubkey) -> Pubkey:
-    """
-    Calculate the associated token account address for a given owner and mint.
-
-    This manually implements the ATA derivation without requiring the spl-token package.
+    """Derive an associated token account address, without spl-token.
 
     Args:
         owner: The wallet that owns the token account
         mint: The token mint address
-
-    Returns:
-        Pubkey of the associated token account
     """
     ata_address, _ = Pubkey.find_program_address(
         [bytes(owner), bytes(TOKEN_PROGRAM_ID), bytes(mint)],
@@ -259,10 +223,7 @@ def get_associated_token_address(owner: Pubkey, mint: Pubkey) -> Pubkey:
 def create_associated_token_account_idempotent_instruction(
     payer: Pubkey, owner: Pubkey, mint: Pubkey
 ) -> Instruction:
-    """
-    Create an idempotent instruction to create an Associated Token Account.
-
-    This uses the CreateIdempotent instruction which doesn't fail if the ATA already exists.
+    """Build a CreateIdempotent instruction, which succeeds if the ATA exists.
 
     Args:
         payer: The account that will pay for the creation
@@ -299,13 +260,11 @@ def create_associated_token_account_idempotent_instruction(
 def create_initialize_account_instruction(
     account: Pubkey, mint: Pubkey, owner: Pubkey
 ) -> Instruction:
-    """
-    Create an InitializeAccount instruction for the Token Program.
+    """Create an InitializeAccount instruction for the Token Program.
 
     Args:
         account: The account to initialize
         mint: The token mint
-        owner: The account owner
 
     Returns:
         Instruction for initializing the account
@@ -326,8 +285,7 @@ def create_initialize_account_instruction(
 def create_close_account_instruction(
     account: Pubkey, destination: Pubkey, owner: Pubkey
 ) -> Instruction:
-    """
-    Create a CloseAccount instruction for the Token Program.
+    """Create a CloseAccount instruction for the Token Program.
 
     Args:
         account: The account to close
@@ -351,8 +309,7 @@ def create_close_account_instruction(
 def create_wsol_account_with_seed(
     payer: Pubkey, seed: str, lamports: int
 ) -> tuple[Pubkey, Instruction, Instruction]:
-    """
-    Create a WSOL account using createAccountWithSeed and initialize it.
+    """Create a WSOL account using createAccountWithSeed and initialize it.
 
     This replicates the exact pattern from the Solscan example where a new account
     is created with a seed and then initialized as a token account.
@@ -385,18 +342,11 @@ def create_wsol_account_with_seed(
 
 
 def get_user_base_token_account(payer: Pubkey, base_mint: Pubkey) -> Pubkey:
-    """
-    Get the user's associated token account for the base token.
-
-    In a real implementation, this should check if the account exists and create it if needed.
-    For this example, we'll derive the standard ATA address.
+    """Derive the user's associated token account for the base token.
 
     Args:
         payer: The user's wallet address
         base_mint: The base token mint address
-
-    Returns:
-        Pubkey of the user's base token account
     """
     return get_associated_token_address(payer, base_mint)
 
@@ -404,8 +354,7 @@ def get_user_base_token_account(payer: Pubkey, base_mint: Pubkey) -> Pubkey:
 def calculate_maximum_amount_in_from_pool_state(
     pool_state_data: dict, amount_out: int, slippage_tolerance: float
 ) -> int:
-    """
-    Calculate the maximum amount in based on pool state data and slippage tolerance.
+    """Calculate the maximum amount in based on pool state data and slippage tolerance.
 
     Uses the actual pool reserves to calculate expected input using constant product formula.
     For buy_exact_out, we know the output amount and need to calculate the required input.
@@ -469,17 +418,10 @@ async def buy_exact_out(
     amount_out: int,
     slippage_tolerance: float,
 ) -> str | None:
-    """
-    Execute a buy_exact_out transaction on Raydium LaunchLab.
+    """Execute a buy_exact_out transaction on Raydium LaunchLab.
 
-    This function implements the exact transaction flow similar to buy_exact_in:
-    1. SetComputeUnitPrice
-    2. SetComputeUnitLimit
-    3. Create Associated Token Account for base token (idempotent)
-    4. Create WSOL account with seed
-    5. Initialize WSOL account
-    6. Execute buy_exact_out instruction
-    7. Close WSOL account
+    Instruction order: compute unit price and limit, idempotent base-token ATA,
+    WSOL account creation and initialization, the buy, then closing WSOL.
 
     Args:
         client: Solana RPC client

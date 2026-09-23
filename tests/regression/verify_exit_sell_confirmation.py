@@ -9,15 +9,15 @@ saw the same `TradeResult(success=False)` for two very different outcomes:
    fee to act on a balance that no longer represents the position.
 
 An exit sell is not idempotent, so case 2 mattered: on the `tp_sl` path it could
-also burn one of the bounded `max_exit_sell_attempts` on a position that was
-already closed. The trader could not even re-check the previous attempt, because
-the seller's failure branch never populated `TradeResult.tx_signature` - the
+also burn one of the bounded `max_exit_sell_attempts` on a position already
+closed. The trader could not re-check the previous attempt either, because the
+seller's failure branch never populated `TradeResult.tx_signature` — the
 signature existed only as text inside `error_message`.
 
 Offline machine checks, no network and no funds moved. Both real exit loops run
 against a stub seller and a stub client serving scripted confirmations:
 
-  1. A confirmed revert is still retried - the #189/#206 behaviour is intact.
+  1. A confirmed revert is still retried.
   2. An unconfirmed sell is not blindly resold; the signature is re-checked.
   3. A re-check that lands SUCCESS closes the position instead of reselling.
   4. A re-check that lands REVERTED retries.

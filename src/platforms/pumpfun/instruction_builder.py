@@ -1,9 +1,4 @@
-"""
-Pump.Fun implementation of InstructionBuilder interface.
-
-This module builds pump.fun-specific buy and sell instructions
-by implementing the InstructionBuilder interface with IDL-based discriminators.
-"""
+"""Pump.fun InstructionBuilder: buy and sell instructions, IDL discriminators."""
 
 import struct
 
@@ -18,11 +13,9 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Account order for buy_v2 (27 accounts) and sell_v2 (26 accounts).
-# Every account is mandatory and the order is identical for every coin type —
-# SOL-paired or USDC-paired, mayhem or not, cashback or not. This is the whole
-# point of the v2 interface. See BUY.md and SELL.md under docs/instructions in
-# the pump-fun public docs repository.
+# Account order for buy_v2 (27 accounts) and sell_v2 (26 accounts). Every account
+# is mandatory and the order is identical for every coin type. See BUY.md and
+# SELL.md under docs/instructions in the pump-fun public docs repository.
 _BUY_V2_ACCOUNTS: list[tuple[str, bool]] = [
     ("global", False),
     ("base_mint", False),
@@ -138,7 +131,6 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         ``use_legacy_instructions=True``.
 
         Args:
-            token_info: Token information
             user: User's wallet address
             amount_in: Maximum quote amount to spend (raw quote units)
             minimum_amount_out: Minimum tokens expected (raw token units)
@@ -166,7 +158,6 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         """Build a buy_v2 instruction plus the ATAs it needs.
 
         Args:
-            token_info: Token information
             user: User's wallet address
             amount_in: Maximum quote amount to spend (raw quote units:
                 lamports for SOL-paired coins, 1e-6 USDC for USDC-paired)
@@ -239,7 +230,6 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         """Build a sell_v2 instruction plus the ATAs it needs.
 
         Args:
-            token_info: Token information
             user: User's wallet address
             amount_in: Base tokens to sell (raw token units)
             minimum_amount_out: Minimum quote amount to receive (raw quote units)
@@ -298,7 +288,6 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         Only works for SOL-paired coins.
 
         Args:
-            token_info: Token information
             user: User's wallet address
             amount_in: Amount of SOL to spend (in lamports)
             minimum_amount_out: Minimum tokens expected (raw token units)
@@ -394,7 +383,7 @@ class PumpFunInstructionBuilder(InstructionBuilder):
                 is_signer=False,
                 is_writable=False,
             ),
-            # 18th account: breaking-upgrade fee recipient (mutable) — required from 2026-04-28
+            # 18th account: breaking-upgrade fee recipient (mutable), required
             AccountMeta(
                 pubkey=accounts_info["breaking_fee_recipient"],
                 is_signer=False,
@@ -435,7 +424,6 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         ``use_legacy_instructions=True``.
 
         Args:
-            token_info: Token information
             user: User's wallet address
             amount_in: Amount of tokens to sell (raw token units)
             minimum_amount_out: Minimum quote amount expected (raw quote units)
@@ -465,7 +453,6 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         Only works for SOL-paired coins.
 
         Args:
-            token_info: Token information
             user: User's wallet address
             amount_in: Amount of tokens to sell (raw token units)
             minimum_amount_out: Minimum SOL expected (in lamports)
@@ -538,10 +525,8 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         ]
 
         # Remaining accounts (after fee_program) for cashback + bonding_curve_v2.
-        # Cashback was deprecated 2026-09-15 (create_v2 now rejects new
-        # cashback coins with 6082 CashbackDeprecated), but existing cashback
-        # coins still trade and still accrue cashback, so this branch stays
-        # live for them — do not remove it.
+        # create_v2 no longer mints cashback coins (6082 CashbackDeprecated), but
+        # existing ones still trade and accrue, so this branch stays live.
         if token_info.is_cashback_coin:
             # Cashback sell: user_volume_accumulator (mutable) + bonding_curve_v2 (readonly)
             sell_accounts.append(
@@ -559,7 +544,7 @@ class PumpFunInstructionBuilder(InstructionBuilder):
                 is_writable=False,
             )
         )
-        # 16/17th account: breaking-upgrade fee recipient (mutable) — required from 2026-04-28
+        # 16/17th account: breaking-upgrade fee recipient (mutable), required
         sell_accounts.append(
             AccountMeta(
                 pubkey=accounts_info["breaking_fee_recipient"],
@@ -593,7 +578,6 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         """Get list of accounts required for buy operation (for priority fee calculation).
 
         Args:
-            token_info: Token information
             user: User's wallet address
             address_provider: Platform address provider
 
@@ -636,9 +620,6 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         Args:
             layout: Ordered (account name, is_writable) pairs
             accounts_info: Resolved account addresses keyed by IDL name
-
-        Returns:
-            List of writable account addresses
         """
         return [
             accounts_info[name]
@@ -652,7 +633,6 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         """Get list of accounts required for sell operation (for priority fee calculation).
 
         Args:
-            token_info: Token information
             user: User's wallet address
             address_provider: Platform address provider
 
@@ -717,12 +697,10 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         if self._use_legacy_instructions:
             # Buy operations: ATA creation + buy instruction
             return 100_000
-        # buy_v2 touches 27 accounts, so it costs more than the legacy
-        # 18-account buy. Mainnet simulation measured 106,677 CU on
-        # 2026-09-15 (`uv run tools/simulate_v2_trades.py
-        # <MINT>`), so 180k keeps headroom for a non-SOL quote's extra ATA
-        # init. Re-measure with that script after any program upgrade — the
-        # exact figure varies with account state.
+        # buy_v2 touches 27 accounts, so it costs more than the legacy 18-account
+        # buy. 180k leaves headroom for a non-SOL quote's extra ATA init.
+        # Re-measure with `tools/simulate_v2_trades.py` after a program upgrade;
+        # the exact figure varies with account state.
         return 180_000
 
     def get_sell_compute_unit_limit(self, config_override: int | None = None) -> int:
@@ -739,9 +717,7 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         if self._use_legacy_instructions:
             # Sell operations: typically just sell instruction (ATA exists)
             return 60_000
-        # sell_v2 touches 26 accounts. Measured at ~77,196 CU on 2026-09-15
-        # (`uv run tools/simulate_v2_trades.py <MINT>`, via its
-        # buy+sell combined estimate), so 120k keeps headroom. The exact
-        # figure varies with account state — re-measure after any program
-        # upgrade.
+        # sell_v2 touches 26 accounts; 120k leaves headroom. Re-measure with
+        # `tools/simulate_v2_trades.py` after a program upgrade; the exact figure
+        # varies with account state.
         return 120_000

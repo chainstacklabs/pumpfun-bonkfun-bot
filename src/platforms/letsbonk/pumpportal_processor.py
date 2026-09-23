@@ -1,7 +1,4 @@
-"""
-LetsBonk-specific PumpPortal event processor.
-File: src/platforms/letsbonk/pumpportal_processor.py
-"""
+"""letsbonk.fun PumpPortal event processor."""
 
 from solders.pubkey import Pubkey
 
@@ -52,17 +49,11 @@ class LetsBonkPumpPortalProcessor:
             TokenInfo if token creation found, None otherwise
         """
         try:
-            # PumpPortal sends a much thinner payload for bonk pools than for
-            # pump ones. Verified against the live subscribeNewToken feed on
-            # 2026-09-16: a bonk `create` carries only signature, traderPublicKey,
-            # txType, mint, tokensInPool, initialBuy, solAmount, newTokenBalance,
-            # marketCapSol and pool — no name, no symbol and no uri, where the
-            # pump payload has all three.
-            #
-            # Requiring name and symbol therefore rejected every bonk token that
-            # ever arrived, which is why detection sat at zero while the feed
-            # was busy. Only the two fields that cannot be derived are required;
-            # everything else the trade path needs is derived from the mint.
+            # PumpPortal sends a thinner payload for bonk pools than for pump
+            # ones: a bonk `create` carries no name, symbol or uri. Requiring
+            # them rejected every bonk token that ever arrived, so only the two
+            # fields that cannot be derived are required; everything else the
+            # trade path needs comes from the mint.
             mint_str = token_data.get("mint")
             creator_str = token_data.get("traderPublicKey")
 
@@ -127,11 +118,10 @@ class LetsBonkPumpPortalProcessor:
                 quote_vault=quote_vault,
                 user=user,
                 creator=creator,
-                # PumpPortal data does not carry the token program. LetsBonk
-                # tokens are predominantly regular SPL (Token), not Token-2022.
-                # Default here so the ATA-create ix uses the correct program;
-                # without this the universal builder defaults to Token-2022 and
-                # the buy fails with IncorrectProgramId on GetAccountDataSize.
+                # PumpPortal carries no token program, and letsbonk tokens are
+                # predominantly SPL Token. Without this default the universal
+                # builder picks Token-2022 and the buy fails with
+                # IncorrectProgramId on GetAccountDataSize.
                 token_program_id=SystemAddresses.TOKEN_PROGRAM,
             )
 

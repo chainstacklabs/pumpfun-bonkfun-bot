@@ -25,17 +25,14 @@ MIN_ARGC = 2
 
 
 def get_bonding_curve_address(mint: Pubkey, program_id: Pubkey) -> tuple[Pubkey, int]:
-    """
-    Derives the bonding curve address for a given mint
-    """
+    """Derives the bonding curve address for a given mint"""
     return Pubkey.find_program_address([b"bonding-curve", bytes(mint)], program_id)
 
 
 def find_associated_bonding_curve(
     mint: Pubkey, bonding_curve: Pubkey, token_program: Pubkey = TOKEN_2022_PROGRAM
 ) -> Pubkey:
-    """
-    Find the associated bonding curve for a given mint and bonding curve.
+    """Find the associated bonding curve for a given mint and bonding curve.
     This uses the standard ATA derivation.
 
     Args:

@@ -59,22 +59,17 @@ FALLBACK_INITIAL_REAL_TOKEN_RESERVES: Final[float] = 793_100_000.0
 
 
 def get_bonding_curve_address(mint: Pubkey, program_id: Pubkey) -> Pubkey:
-    """
-    Derive the bonding curve PDA address from a mint address.
+    """Derive the bonding curve PDA address from a mint address.
 
     Args:
         mint: The token mint address
         program_id: The program ID for the bonding curve
-
-    Returns:
-        The bonding curve address
     """
     return Pubkey.find_program_address([b"bonding-curve", bytes(mint)], program_id)[0]
 
 
 async def get_account_data(client: AsyncClient, pubkey: Pubkey) -> bytes:
-    """
-    Fetch raw account data for a given public key.
+    """Fetch raw account data for a given public key.
 
     Args:
         client: AsyncClient connection to Solana RPC
@@ -94,8 +89,7 @@ async def get_account_data(client: AsyncClient, pubkey: Pubkey) -> bytes:
 
 
 def parse_curve_state(data: bytes) -> dict:
-    """
-    Decode bonding curve account data into a readable format.
+    """Decode bonding curve account data into a readable format.
 
     Args:
         data: The raw bonding curve account data
@@ -179,8 +173,7 @@ async def fetch_initial_real_token_reserves(client: AsyncClient) -> float:
 
 
 def print_curve_status(state: dict, baseline: float) -> None:
-    """
-    Print the current status of the bonding curve in a readable format.
+    """Print the current status of the bonding curve in a readable format.
 
     Args:
         state: The parsed bonding curve state dictionary
@@ -207,8 +200,7 @@ def print_curve_status(state: dict, baseline: float) -> None:
 
 
 async def track_curve(token_mint: str) -> None:
-    """
-    Continuously track and display the state of a bonding curve.
+    """Continuously track and display the state of a bonding curve.
 
     Args:
         token_mint: The mint address of the coin to follow

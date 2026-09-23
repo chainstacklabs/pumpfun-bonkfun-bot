@@ -1,9 +1,4 @@
-"""
-Centralized IDL management for Solana platforms.
-
-This module provides a single point of IDL loading and management to avoid
-duplicate loading across multiple platform implementation classes.
-"""
+"""Single point of IDL loading, so no platform class loads its own copy."""
 
 from pathlib import Path
 from typing import Any
@@ -148,9 +143,6 @@ class IDLManager:
 
         Args:
             platform: Platform to get instruction names for
-
-        Returns:
-            List of instruction names
         """
         parser = self.get_parser(platform)
         return parser.get_instruction_names()
@@ -176,9 +168,6 @@ class IDLManager:
 
         Args:
             platform: Platform to get event names for
-
-        Returns:
-            List of event names
         """
         parser = self.get_parser(platform)
         return parser.get_event_names()
@@ -337,9 +326,6 @@ def get_event_names(platform: Platform) -> list[str]:
 
     Args:
         platform: Platform to get event names for
-
-    Returns:
-        List of event names
     """
     return get_idl_manager().get_event_names(platform)
 

@@ -278,7 +278,6 @@ def display_transaction_info(signature, logs, wallet: str):
     print(f"  Signature: {signature}")
     print(f"  Wallet: {wallet}")
 
-    # Parse trade event data
     trade_data = parse_trade_event(logs)
     if trade_data:
         # Core transaction info (always present)

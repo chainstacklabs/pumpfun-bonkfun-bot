@@ -152,9 +152,6 @@ async def _get_mint_account_info(client: AsyncClient, address: Pubkey) -> Accoun
         client: Solana RPC client
         address: Account to fetch
 
-    Returns:
-        The account object
-
     Raises:
         ValueError: If the account does not exist
     """
@@ -200,7 +197,6 @@ async def sell_token(
             payer.pubkey(), mint, token_program_id
         )
 
-        # Get token balance
         token_balance = await get_token_balance(client, associated_token_account)
         token_balance_decimal = token_balance / 10**TOKEN_DECIMALS
         print(f"Token balance: {token_balance_decimal}")
@@ -214,12 +210,10 @@ async def sell_token(
             getattr(curve_state, "quote_mint", None)
         )
 
-        # Resolve the quote mint before pricing. The one read gives both the
-        # token program -- which can be Token-2022, and is for every tokenized
-        # equity pump.fun admits as a quote asset -- and the decimals the price
-        # and the slippage floor below are denominated in. Pricing first and
-        # resolving after floors the sell against a number that is off by a
-        # power of ten.
+        # Resolve the quote mint before pricing: one read gives both the token
+        # program -- Token-2022 for every tokenized equity pump.fun admits -- and
+        # the decimals the price and slippage floor are in. Pricing first floors
+        # the sell against a number off by a power of ten.
         quote_token_program_id = await pump_v2.resolve_quote_token_program(
             quote_mint, lambda pk: _get_mint_account_info(client, pk)
         )

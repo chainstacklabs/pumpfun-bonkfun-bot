@@ -1,6 +1,4 @@
-"""
-Position management for take profit/stop loss functionality.
-"""
+"""Position management for take-profit / stop-loss exits."""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -98,11 +96,9 @@ class Position:
         if not self.is_active:
             return False, None
 
-        # Check take profit
         if self.take_profit_price and current_price >= self.take_profit_price:
             return True, ExitReason.TAKE_PROFIT
 
-        # Check stop loss
         if self.stop_loss_price and current_price <= self.stop_loss_price:
             return True, ExitReason.STOP_LOSS
 
@@ -133,7 +129,6 @@ class Position:
 
         Args:
             exit_price: Price at which position was exited
-            exit_reason: Reason for exit
         """
         self.is_active = False
         self.exit_price = exit_price

@@ -1,14 +1,7 @@
-"""Self-contained pump.fun v2 trade helpers for the learning examples.
+"""Self-contained pump.fun v2 trade helpers for the cookbook scripts.
 
-The bonding-curve program's `buy_v2` / `sell_v2` instructions take 27 and 26
-mandatory accounts in a fixed order, identical for every coin — SOL-paired or
-USDC-paired, mayhem or not, cashback or not. Encoding that once here keeps the
-example scripts from each carrying their own copy of the list, which is how they
-drift out of sync with the program.
-
-Deliberately standalone: it imports nothing from `src/`, so the examples stay
-readable on their own. `tests/regression/verify_v2_account_layout.py` checks the
-layout below against `idl/pump_fun_idl.json`.
+`buy_v2` / `sell_v2` take 27 and 26 mandatory accounts in a fixed order,
+identical for every coin. Imports nothing from `src/`.
 
 Docs: BUY.md, SELL.md and COIN_CREATION.md under docs/instructions in
 github.com/pump-fun/pump-public-docs
@@ -44,11 +37,10 @@ WSOL_MINT = Pubkey.from_string("So11111111111111111111111111111111111111112")
 USDC_MINT = Pubkey.from_string("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
 QUOTE_DECIMALS = {WSOL_MINT: 9, USDC_MINT: 6}
 
-# Token program that owns each quote mint below. WSOL and USDC are legacy
-# SPL Token, but a pump.fun upgrade verified 2026-09-15 lets create_v2 pair a
-# coin with a Token-2022 quote mint (error 6064 now accepts "SPL Token or
-# Token-2022"), so this two-entry map is not exhaustive -- see
-# resolve_quote_token_program below for mints outside it.
+# Token program that owns each quote mint below. WSOL and USDC are legacy SPL
+# Token, but create_v2 can pair a coin with a Token-2022 quote mint (error 6064
+# accepts "SPL Token or Token-2022"), so this map is not exhaustive -- see
+# resolve_quote_token_program for mints outside it.
 QUOTE_TOKEN_PROGRAMS = {WSOL_MINT: TOKEN_PROGRAM, USDC_MINT: TOKEN_PROGRAM}
 
 TOKEN_DECIMALS = 6
@@ -131,15 +123,11 @@ def is_sol_paired(quote_mint: Pubkey | None) -> bool:
     return normalize_quote_mint(quote_mint) == WSOL_MINT
 
 
-# Byte offset of the `decimals` field in a Mint account's raw data. SPL Token
-# and Token-2022 mints share the same base layout -- COption<Pubkey>
-# mint_authority (4-byte tag + 32-byte pubkey = 36 bytes), u64 supply
-# (8 bytes), then u8 decimals at byte 44. Token-2022 extensions are appended
-# *after* this base 82-byte struct, never rearranging it. Verified 2026-09-15
-# by reading byte 44 off-chain for WSOL (9), USDC (6) and a live Token-2022
-# quote mint (6, in a 690-byte account carrying extensions) -- all three
-# matched their known decimals. Mirrors core/pubkeys.py's constant, kept as a
-# separate copy because this module deliberately imports nothing from src/.
+# Byte offset of `decimals` in a Mint account. SPL Token and Token-2022 share the
+# same base layout -- COption<Pubkey> mint_authority (4-byte tag + 32-byte
+# pubkey), u64 supply, then u8 decimals at byte 44. Token-2022 extensions are
+# appended after the 82-byte base struct, never rearranging it. Mirrors
+# core/pubkeys.py, duplicated because this module imports nothing from src/.
 _MINT_DECIMALS_OFFSET = 44
 
 
@@ -164,11 +152,9 @@ def _parse_mint_decimals(data: bytes) -> int:
     return data[_MINT_DECIMALS_OFFSET]
 
 
-# Process-lifetime cache of quote mint -> decimals, pre-seeded so WSOL/USDC
-# never cost an RPC call. Mirrors core/pubkeys.py's cache, kept as a separate
-# copy because this module deliberately imports nothing from src/. Warmed by
-# `resolve_quote_token_program` off the same mint-account fetch it already
-# makes to resolve the token program, so this costs zero extra RPC calls.
+# Process-lifetime cache of quote mint -> decimals, pre-seeded so WSOL/USDC never
+# cost an RPC call. Warmed by `resolve_quote_token_program` off the mint-account
+# fetch it already makes, so it costs no extra RPC calls.
 _QUOTE_DECIMALS_CACHE = dict(QUOTE_DECIMALS)
 
 
@@ -179,15 +165,10 @@ def quote_units(quote_mint: Pubkey) -> int:
     resolved by `resolve_quote_token_program` first, which caches its decimals
     off the same account read it already makes.
 
-    This raises rather than guessing, on purpose. pump.fun's `QuoteControl`
-    registry admits mints at 6, 8 and 9 decimals -- tokenized equities are 8
-    (xStocks) or 6 (Backpack Securities) -- so a default of 9 silently
-    overstates a slippage cap by 10x or 1000x, and overstates it in the same
-    direction as the price error it causes, so the two compound instead of
-    cancelling. A loud failure is the only safe answer.
-
-    Args:
-        quote_mint: Quote mint address
+    Raises rather than guessing: `QuoteControl` admits mints at 6, 8 and 9
+    decimals, so a default of 9 overstates a slippage cap by 10x or 1000x, in the
+    same direction as the price error it causes, so the two compound instead of
+    cancelling.
 
     Returns:
         10 ** decimals for the quote mint (1e9 for SOL, 1e6 for USDC)
@@ -208,9 +189,6 @@ def quote_units(quote_mint: Pubkey) -> int:
 def quote_token_program(quote_mint: Pubkey) -> Pubkey:
     """Token program owning a quote mint, defaulting to SPL Token.
 
-    Args:
-        quote_mint: Quote mint address
-
     Returns:
         Token program id for quote_mint if known, else SPL Token
     """
@@ -218,8 +196,7 @@ def quote_token_program(quote_mint: Pubkey) -> Pubkey:
 
 
 # Process-lifetime cache of quote mint -> owning token program, pre-seeded so
-# WSOL/USDC never cost an RPC call. Mirrors core/pubkeys.py's cache, kept as
-# a separate copy because this module deliberately imports nothing from src/.
+# WSOL/USDC never cost an RPC call.
 _QUOTE_TOKEN_PROGRAM_CACHE = dict(QUOTE_TOKEN_PROGRAMS)
 
 
@@ -229,14 +206,12 @@ async def resolve_quote_token_program(
 ) -> Pubkey:
     """Resolve and cache the token program *and* decimals for a quote mint.
 
-    Returns instantly, with no RPC call, for a mint already known or
-    resolved by an earlier call in this process. Otherwise fetches the mint
-    account once -- a mint account's owner *is* the token program that
-    created it, and its raw data carries `decimals` at a fixed byte offset
-    shared by SPL Token and Token-2022 (see `_parse_mint_decimals`) -- and
-    caches both results. `build_v2_accounts` and its callers stay
-    synchronous; call this first and pass the result as
-    `quote_token_program_id` when trading a mint outside QUOTE_TOKEN_PROGRAMS.
+    Returns with no RPC call for a mint already known or resolved earlier in this
+    process. Otherwise fetches the mint account once and caches both facts: the
+    account's owner *is* the token program, and its data carries `decimals` at a
+    fixed offset (see `_parse_mint_decimals`). `build_v2_accounts` and its callers
+    are synchronous, so call this first and pass the result as
+    `quote_token_program_id` for a mint outside QUOTE_TOKEN_PROGRAMS.
 
     Args:
         quote_mint: Quote mint address to resolve
@@ -274,9 +249,6 @@ def find_bonding_curve(mint: Pubkey) -> Pubkey:
 
     Args:
         mint: Base token mint
-
-    Returns:
-        Bonding curve address
     """
     return Pubkey.find_program_address([b"bonding-curve", bytes(mint)], PUMP_PROGRAM)[0]
 
@@ -286,9 +258,6 @@ def find_creator_vault(creator: Pubkey) -> Pubkey:
 
     Args:
         creator: Coin creator
-
-    Returns:
-        Creator vault address
     """
     return Pubkey.find_program_address(
         [b"creator-vault", bytes(creator)], PUMP_PROGRAM
@@ -296,11 +265,7 @@ def find_creator_vault(creator: Pubkey) -> Pubkey:
 
 
 def find_global_volume_accumulator() -> Pubkey:
-    """Derive the global volume accumulator PDA.
-
-    Returns:
-        Global volume accumulator address
-    """
+    """Derive the global volume accumulator PDA."""
     return Pubkey.find_program_address([b"global_volume_accumulator"], PUMP_PROGRAM)[0]
 
 
@@ -309,9 +274,6 @@ def find_user_volume_accumulator(user: Pubkey) -> Pubkey:
 
     Args:
         user: User wallet
-
-    Returns:
-        User volume accumulator address
     """
     return Pubkey.find_program_address(
         [b"user_volume_accumulator", bytes(user)], PUMP_PROGRAM
@@ -319,11 +281,7 @@ def find_user_volume_accumulator(user: Pubkey) -> Pubkey:
 
 
 def find_fee_config() -> Pubkey:
-    """Derive the fee config PDA (under the pump fees program).
-
-    Returns:
-        Fee config address
-    """
+    """Derive the fee config PDA (under the pump fees program)."""
     return Pubkey.find_program_address(
         [b"fee_config", bytes(PUMP_PROGRAM)], PUMP_FEE_PROGRAM
     )[0]
@@ -336,9 +294,6 @@ def find_sharing_config(base_mint: Pubkey) -> Pubkey:
 
     Args:
         base_mint: Base token mint
-
-    Returns:
-        Sharing config address
     """
     return Pubkey.find_program_address(
         [b"sharing-config", bytes(base_mint)], PUMP_FEE_PROGRAM
@@ -354,9 +309,6 @@ def find_associated_token_account(
         owner: ATA owner (may be a PDA)
         mint: Token mint
         token_program: Token program owning the mint
-
-    Returns:
-        Associated token account address
     """
     return Pubkey.find_program_address(
         [bytes(owner), bytes(token_program), bytes(mint)],
@@ -369,31 +321,22 @@ def pick_fee_recipient(*, is_mayhem_mode: bool) -> Pubkey:
 
     Args:
         is_mayhem_mode: Whether the coin is in mayhem mode
-
-    Returns:
-        A fee recipient address
     """
     pool = RESERVED_FEE_RECIPIENTS if is_mayhem_mode else NORMAL_FEE_RECIPIENTS
     return secrets.choice(pool)
 
 
 def pick_buyback_fee_recipient() -> Pubkey:
-    """Pick a buyback fee recipient, required on every v2 trade.
-
-    Returns:
-        A buyback fee recipient address
-    """
+    """Pick a buyback fee recipient, required on every v2 trade."""
     return secrets.choice(BUYBACK_FEE_RECIPIENTS)
 
 
 class BondingCurveState:
     """Parsed pump.fun BondingCurve account.
 
-    The account is 125 bytes as created; an extend_account instruction (not
-    always in a separate transaction from create_v2 — see
-    cookbook/pumpfun/trade/pumpfun_create_and_buy_token_v2.py) can grow it to 151, 256, or any
-    other length the program allows. The struct below covers the leading
-    fields, which are at the same offsets regardless of total length. The
+    The account is 125 bytes as created, and `extend_account` can grow it to 151,
+    256 or any other length the program allows. The struct below covers the
+    leading fields, which sit at the same offsets regardless of total length. The
     SOL-named reserve fields were renamed to quote fields when non-SOL quote
     assets landed; the old names are kept as aliases.
     """
@@ -619,10 +562,9 @@ def build_buy_exact_quote_in_v2_instruction(
 ) -> Instruction:
     """Build a buy_exact_quote_in_v2 instruction.
 
-    The mirror of `buy_v2`. `buy_v2` fixes how many tokens you receive and caps
-    what you spend; this fixes what you spend and floors what you receive. The
-    second form is the natural one when the quote asset is the thing you hold a
-    budget of — a stablecoin, or a tokenized equity.
+    The mirror of `buy_v2`: that fixes how many tokens you receive and caps the
+    spend, this fixes the spend and floors what you receive — the natural form
+    when the quote asset is a budget you hold.
 
     Fees come out of `spendable_quote_in_raw`, so the whole amount leaves the
     wallet and the tokens arrive against what is left.
@@ -683,8 +625,7 @@ def build_buy_exact_sol_in_instruction(
     are the `bonding-curve-v2` PDA and a buyback fee recipient, both writable,
     both appended after `fee_program`. Sending the IDL's 16 fails with
     AnchorError 6062 (BuybackFeeRecipientMissing), which names the missing
-    account but not where it goes. Verified by simulateTransaction on mainnet,
-    2026-09-22: 16 accounts fails 6062, 18 succeeds.
+    account but not where it goes.
 
     Args:
         mint: Coin to buy
@@ -696,9 +637,6 @@ def build_buy_exact_sol_in_instruction(
         is_mayhem_mode: Whether the coin is in mayhem mode, which selects the
             reserved fee recipient set instead of the normal one
         track_volume: Whether to credit the user's volume accumulator
-
-    Returns:
-        The buy_exact_sol_in instruction
     """
     bonding_curve = find_bonding_curve(mint)
     accounts = [
@@ -826,9 +764,8 @@ def build_claim_cashback_v2_instruction(
     """Build a claim_cashback_v2 instruction.
 
     Pays out the cashback accrued on the user's volume accumulator. `create_v2`
-    has refused to mint new cashback coins since 2026-09-15 (error 6082,
-    CashbackDeprecated), but coins created before that keep accruing and stay
-    claimable, so this path is still live.
+    refuses to mint new cashback coins (error 6082, CashbackDeprecated), but
+    older coins keep accruing and stay claimable, so this path is still live.
 
     Args:
         user: Wallet whose cashback to pay out

@@ -2,9 +2,7 @@
 
 A dead link in a cookbook docstring is worse than no link: the script is a
 reference someone reads before writing their own code, and the citation is how
-they check the claim. Three had rotted by 2026-09-22 —
-`book.anchor-lang.com/anchor_bts/discriminator.html` (Anchor restructured its
-docs), `docs.chainstack.com/quickstart/` and `docs.chainstack.com/docs/trader-nodes`.
+they check the claim. The `DEAD` set below lists the ones already removed.
 
 Offline by default, so this can run in the normal set:
 
@@ -30,7 +28,7 @@ from urllib.parse import urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-SEARCH_ROOTS = ("cookbook", "tools", "tests", "src", "bots")
+SEARCH_ROOTS = ("cookbook", "tools", "tests", "src", "bots", "docs", ".claude")
 SEARCH_SUFFIXES = {".py", ".md", ".yaml"}
 EXTRA_FILES = ("README.md", "CLAUDE.md")
 

@@ -1,36 +1,18 @@
-"""
-Performance Comparison Tool for Pump.fun Token Detection Methods
+"""Race the pump.fun token-detection methods against each other.
 
-This script compares four methods of detecting new Pump.fun tokens in real-time:
+Compares four listeners in real time and reports which detects each coin first,
+with per-method latency, message counts and coverage:
 
-1. Block Subscription (blockSubscribe)
-   - Method: WebSocket subscription to blocks mentioning Pump.fun program
-   - Speed: Slowest (processes entire blocks)
-   - Reference: https://solana.com/docs/rpc/websocket/blocksubscribe
+1. `blockSubscribe` — whole blocks mentioning the program; slowest.
+   https://solana.com/docs/rpc/websocket/blocksubscribe
+2. `logsSubscribe` — program logs; the event data carries every field.
+   https://solana.com/docs/rpc/websocket/logssubscribe
+3. Geyser gRPC — Yellowstone Dragon's Mouth streaming; fastest.
+   https://docs.triton.one/rpc-pool/grpc-subscriptions
+4. PumpPortal — third-party aggregated WebSocket feed, pre-processed.
 
-2. Logs Subscription (logsSubscribe)
-   - Method: WebSocket subscription to program logs
-   - Speed: Fast (event data includes all fields)
-   - Reference: https://solana.com/docs/rpc/websocket/logssubscribe
-
-3. Geyser gRPC
-   - Method: Yellowstone Dragon's Mouth gRPC streaming
-   - Speed: Fastest (optimized streaming protocol)
-   - Reference: https://docs.triton.one/rpc-pool/grpc-subscriptions
-
-4. PumpPortal WebSocket
-   - Method: Third-party aggregated WebSocket feed
-   - Speed: Fast (pre-processed data)
-   - Note: Requires trust in third-party provider
-
-The script tracks which method detects each token first and provides detailed
-performance statistics including:
-- First detection counts per method
-- Average latency between methods
-- Message counts per provider
-- Token detection coverage
-
-Configuration: Set provider endpoints in .env or modify the providers dict at the bottom.
+Configuration: set provider endpoints in `.env`, or edit the providers dict at
+the bottom of this file.
 """
 
 import asyncio
@@ -112,7 +94,6 @@ class DetectionTracker:
         """Print detailed summary statistics of the comparison test"""
         test_duration = time.time() - self.start_time
 
-        # Count total messages
         total_messages = sum(self.messages.values())
 
         print("\n=== Test Summary ===")
@@ -158,7 +139,6 @@ class DetectionTracker:
             name = token_data["name"][:15]  # Truncate long names
             symbol = token_data["symbol"][:6]  # Truncate long symbols
 
-            # Find first provider
             first_provider = min(token_data["detections"].items(), key=lambda x: x[1])[
                 0
             ]
@@ -259,9 +239,7 @@ class DetectionTracker:
 
 
 async def fetch_existing_token_mints():
-    """
-    Fetch existing token mints to avoid duplicate detections
-    """
+    """Fetch existing token mints to avoid duplicate detections"""
     # You could implement this by querying a known database or API
     # For simplicity, we'll return an empty set
     return set()
@@ -455,9 +433,7 @@ def is_transaction_successful(logs):
 
 
 async def listen_block_subscription(wss_url, provider_name, tracker, known_tokens=None):
-    """
-    Listen for new tokens via block subscription
-    """
+    """Listen for new tokens via block subscription"""
     if known_tokens is None:
         known_tokens = set()
 
@@ -518,9 +494,9 @@ async def listen_block_subscription(wss_url, provider_name, tracker, known_token
                             # Route on meta.logMessages, which the RPC has
                             # already decoded and which reads the same for every
                             # transaction version. Deserializing the envelope
-                            # here is what used to make this lane miss every v1
-                            # transaction (live since 2026-09-15) and report the
-                            # gap as a speed difference against logs and geyser.
+                            # here makes this lane miss whatever version solders
+                            # cannot read, and report the gap as a speed
+                            # difference against logs and geyser.
                             meta = tx.get("meta") or {}
                             logs = meta.get("logMessages") or []
                             if not any(
@@ -593,9 +569,7 @@ async def listen_block_subscription(wss_url, provider_name, tracker, known_token
 
 
 async def listen_logs_subscription(wss_url, provider_name, tracker, known_tokens=None):
-    """
-    Listen for new tokens via logs subscription
-    """
+    """Listen for new tokens via logs subscription"""
     if known_tokens is None:
         known_tokens = set()
 
@@ -708,11 +682,9 @@ async def listen_logs_subscription(wss_url, provider_name, tracker, known_tokens
 async def listen_geyser_grpc(
     endpoint, api_token, provider_name, tracker, known_tokens=None
 ):
-    """
-    Listen for new tokens via Geyser gRPC API
-    """
+    """Listen for new tokens via Geyser gRPC API"""
     try:
-        # Generated once into src/geyser/generated; see CLAUDE.md for regenerating them.
+        # Generated once into src/geyser/generated; see docs/listeners-and-geyser.md.
         from src.geyser.generated import geyser_pb2, geyser_pb2_grpc
     except ImportError:
         print(
@@ -825,9 +797,7 @@ async def listen_geyser_grpc(
 
 
 async def listen_pumpportal(provider_name, tracker, known_tokens=None):
-    """
-    Listen for new tokens via PumpPortal WebSocket
-    """
+    """Listen for new tokens via PumpPortal WebSocket"""
     if known_tokens is None:
         known_tokens = set()
 
@@ -843,7 +813,6 @@ async def listen_pumpportal(provider_name, tracker, known_tokens=None):
 
                 while True:
                     try:
-                        # Receive WebSocket message
                         message = await websocket.recv()
                         data = json.loads(message)
                         tracker.increment_messages(provider_name)
@@ -866,7 +835,6 @@ async def listen_pumpportal(provider_name, tracker, known_tokens=None):
                         if not mint:
                             continue
 
-                        # Skip known tokens
                         if mint in known_tokens:
                             continue
 
@@ -893,8 +861,7 @@ async def listen_pumpportal(provider_name, tracker, known_tokens=None):
 
 
 async def run_comparison_test(providers, test_duration=600):
-    """
-    Run the comparison test with multiple WebSocket endpoints
+    """Run the comparison test with multiple WebSocket endpoints
 
     Args:
         providers: Dict of {provider_name: {'wss': wss_url, 'geyser': (endpoint, api_token)}}

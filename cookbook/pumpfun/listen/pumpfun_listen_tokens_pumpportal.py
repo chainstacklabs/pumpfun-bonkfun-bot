@@ -26,8 +26,7 @@ WS_URL = "wss://pumpportal.fun/api/data"
 
 
 def print_token_info(token_data):
-    """
-    Print token information in a consistent, user-friendly format.
+    """Print token information in a consistent, user-friendly format.
 
     Args:
         token_data: Dictionary containing token fields from PumpPortal

@@ -1,22 +1,16 @@
-# Shreds mode: reads transactions from the geyser SubscribeDeshred stream
-# BEFORE they execute, which is earlier than the ordinary geyser listener.
+# Shreds mode: reads transactions from the geyser SubscribeDeshred stream BEFORE
+# they execute, earlier than the ordinary geyser listener. Two costs:
 #
-# A few notes:
+#   1. A coin created through a router is INVISIBLE. The create arrives as a CPI,
+#      and inner instructions are produced by execution, so no pre-execution
+#      stream carries them. No setting recovers those coins -- if you need every
+#      coin, use listener_type "geyser".
+#   2. Outcomes are unknown at detection. A create that goes on to revert looks
+#      exactly like one that lands, and the buy against it costs a fee.
 #
-#   1. A coin created through a router is INVISIBLE. The create then arrives as
-#      a CPI, and inner instructions are produced by execution, so no
-#      pre-execution stream carries them. No setting recovers those coins -- if
-#      you need every coin, use listener_type "geyser".
-#   2. Outcomes are unknown at detection. Nothing has executed, so a create that
-#      goes on to revert looks exactly like one that lands, and the buy against
-#      it costs a fee for nothing.
-#
-# extreme_fast_mode below is deliberately true: with it off the bot waits for
-# the curve to stabilize, which spends the latency advantage and leaves only
-# the costs above.
-
-# This file defines comprehensive parameters and settings for the trading bot.
-# Carefully review and adjust values to match your trading strategy and risk tolerance.
+# extreme_fast_mode below is deliberately true: with it off the bot waits for the
+# curve to stabilize, which spends the latency advantage and leaves only the
+# costs above.
 
 # Bot identification and connection settings
 name: "bot-sniper-5"
@@ -39,8 +33,7 @@ geyser:
   api_token: "${GEYSER_API_TOKEN}"
   auth_type: "x-token" # or "basic"
 
-# Trading parameters
-# Control trade execution: amount of SOL per trade and acceptable price deviation
+# Trade execution: amount per trade and acceptable price deviation
 trade:
   buy_amount: 0.0001 # Amount of SOL to spend when buying (in SOL)
   buy_slippage: 0.3 # Maximum acceptable price deviation (0.3 = 30%)
@@ -62,37 +55,28 @@ trade:
   #stop_loss_percentage: 0.1 # Stop loss at 10% loss (0.1 = 10%)
   max_hold_time: 5 # Maximum hold time in seconds for TP/SL strategy, for time_based - see wait_after_buy
   #price_check_interval: 2 # Check price every 2 seconds
-  # A tp/sl exit sell that reverts on-chain (slippage, curve moved under it) is
-  # retried on the next price check, re-reading the price first so the slippage
-  # floor matches the market. After this many attempts the bot gives up and
-  # leaves the position open - tokens are still held.
+  # A tp/sl exit sell can revert when the price moves under it. The bot re-reads
+  # the price and retries; after this many attempts it gives up and leaves the
+  # position open, tokens still held.
   #max_exit_sell_attempts: 3
 
-  # EXTREME FAST mode configuration
-  # When enabled, skips waiting for the bonding curve to stabilize and RPC price check.
-  # The bot buys the specified number of tokens directly, making the process faster but less precise.
-  # For the shreds listener the buy is built entirely from the create
-  # instruction — ZERO RPC calls between detection and submission. The curve
-  # account does not exist yet at that point, so this is not merely faster:
-  # it is the only way shreds mode can trade at all (see trust_create_event).
+  # EXTREME FAST mode: skip the curve-stabilization wait and the price check,
+  # buying a fixed token amount instead. Required in shreds mode, not just
+  # faster — the coin is detected before it exists on chain, so there is no
+  # curve to price against.
   extreme_fast_mode: true
   extreme_fast_token_amount: 20 # Amount of tokens to buy
 
-  # Pre-buy curve refresh (issue #170). Unused in shreds mode while
-  # trust_create_event is true, and kept here for when you switch this bot to
-  # another listener.
+  # Unused in shreds mode. Applies if you switch this bot to another listener.
   curve_refresh_budget: 2.0
 
-  # Skip the pre-buy curve read when the listener resolved the creator,
-  # mayhem/cashback flags and quote_mint itself. Setting this false does NOT
-  # make shreds mode safer — the bonding curve has not been created yet, so
-  # the refresh can only time out and skip the coin. Leave it true here and
-  # use listener_type "geyser" if you want the curve read.
+  # Leave true in shreds mode. Setting it false does not make this safer — the
+  # bonding curve does not exist yet, so the read can only time out and skip
+  # the coin. Use listener_type "geyser" if you want the curve read.
   trust_create_event: true
 
-# Priority fee configuration
-# Manage transaction speed and cost on the Solana network.
-# Note: dynamic mode requires an additional RPC call, which slows down the buying process.
+# Priority fees: transaction speed vs cost.
+# Note: dynamic mode costs an extra RPC call, which slows the buy.
 priority_fees:
   enable_dynamic: false # Use latest transactions to estimate required fee (getRecentPrioritizationFees)
   enable_fixed: true # Use fixed amount below

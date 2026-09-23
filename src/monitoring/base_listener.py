@@ -1,6 +1,4 @@
-"""
-Base class for WebSocket token listeners - now platform-agnostic.
-"""
+"""Platform-agnostic base class for WebSocket token listeners."""
 
 import asyncio
 from abc import ABC, abstractmethod
@@ -47,8 +45,7 @@ class BaseTokenListener(ABC):
         match_string: str | None = None,
         creator_address: str | None = None,
     ) -> None:
-        """
-        Listen for new token creations.
+        """Listen for new token creations.
 
         Args:
             token_callback: Callback function for new tokens
@@ -59,9 +56,6 @@ class BaseTokenListener(ABC):
 
     def should_process_token(self, token_info: TokenInfo) -> bool:
         """Check if a token should be processed based on platform filter.
-
-        Args:
-            token_info: Token information
 
         Returns:
             True if token should be processed

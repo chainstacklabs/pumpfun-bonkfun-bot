@@ -235,12 +235,10 @@ def create_buy_instruction(
 ) -> Instruction:
     """Create the buy instruction (buy_v2).
 
-    The signature is unchanged for callers, but this builds `buy_v2` with its 27
-    mandatory accounts. Several parameters are accepted only for backwards
-    compatibility and are derived or dropped internally: buy_v2 takes no
-    track_volume argument, and pump_v2 selects the fee recipient from the
-    documented set. This script mints the coin with `creator = payer`, so the
-    buyer is also the creator.
+    Several parameters are accepted only for backwards compatibility and are
+    derived or dropped internally: buy_v2 takes no track_volume argument, and
+    pump_v2 selects the fee recipient from the documented set. This script mints
+    the coin with `creator = payer`, so the buyer is also the creator.
 
     Args:
         global_state: Unused; pump_v2 uses the canonical global PDA

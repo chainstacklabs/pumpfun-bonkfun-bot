@@ -1,45 +1,39 @@
 """Offline verifier for the shreds (pre-execution) listener.
 
-Guards the listener added for shreds mode and the instruction-decode path it
-depends on. Nothing here touches the network or moves funds; both fixtures are
-committed geyser `SubscribeDeshred` frames captured from mainnet.
+Guards the shreds listener and the instruction-decode path it depends on. No
+network, no funds; both fixtures are committed geyser `SubscribeDeshred` frames.
 
-The bugs and claims it pins:
+What it pins:
 
 1. **`user` is account 5 on `create_v2`, not 7.** `create_v2` dropped the four
    metaplex accounts legacy `create` carries, so the launcher's wallet sits four
-   places earlier. Reading index 7 yields the Token-2022 program, and every
-   address derived from the wallet is then wrong. This was dormant while only
-   geyser/blocks used the instruction path as a fallback behind `log_messages`;
-   shreds has no logs, so it runs on every coin.
+   places earlier; index 7 yields the Token-2022 program and every address
+   derived from the wallet is wrong. Dormant while the instruction path was only
+   a fallback behind `log_messages`; shreds has no logs, so it runs on every coin.
 
-2. **A holder-reward coin's creator comes from the mint, not from the args.**
-   The program ignores `args.creator` on those coins and writes
+2. **A holder-reward coin's creator comes from the mint, not the args.** The
+   program ignores `args.creator` on those coins and writes
    `PDA(["holder-rewards", mint])` into `BondingCurve.creator`, so
-   `creator_vault` must derive from the PDA. Passing the wrong vault gets the
-   buy rejected on a seeds constraint. Without this the shreds listener could
-   not trade holder-reward coins at all, because there is no curve to read
-   before execution.
+   `creator_vault` must derive from the PDA or the buy is rejected on a seeds
+   constraint. There is no curve to read before execution.
 
 3. **The trailing-arg form cannot lie about holder rewards.** `create_v2`'s
-   trailing arguments are positional, so an instruction that stops short cannot
-   have set a later one. A truncated form must therefore decode as *not* a
-   holder-reward coin rather than raising or guessing.
+   trailing args are positional, so an instruction that stops short cannot have
+   set a later one: a truncated form decodes as *not* holder-reward rather than
+   raising or guessing.
 
-4. **Lookup-table accounts are resolved before indexing.** The deshred stream
-   reports them on the update as `loaded_writable_addresses` then
-   `loaded_readonly_addresses`, in that order. Both fixtures genuinely use a
-   lookup table, so a listener that ignores them fails here rather than on the
-   first live coin.
+4. **Lookup-table accounts are resolved before indexing.** The stream reports
+   them as `loaded_writable_addresses` then `loaded_readonly_addresses`. Both
+   fixtures use a lookup table, so a listener that ignores them fails here rather
+   than on the first live coin.
 
-5. **Nothing on this path reads `meta`.** There is no `TransactionStatusMeta` on
-   a pre-execution stream, so a reader that reaches for `meta.log_messages` gets
-   silence, not an error — the failure would be a listener that quietly detects
-   nothing.
+5. **Nothing on this path reads `meta`.** A pre-execution stream has no
+   `TransactionStatusMeta`, so reaching for `meta.log_messages` gets silence, not
+   an error — the failure would be a listener that quietly detects nothing.
 
-6. **The listener marks its tokens `state_from_event`.** That is what lets
-   `extreme_fast_mode` submit without a curve read. Waiting instead is not a
-   safer fallback here: the account does not exist yet.
+6. **The listener marks its tokens `state_from_event`**, which is what lets
+   `extreme_fast_mode` submit without a curve read. Waiting is not a safer
+   fallback: the account does not exist yet.
 
 Usage:
     uv run tests/regression/verify_shreds_listener.py

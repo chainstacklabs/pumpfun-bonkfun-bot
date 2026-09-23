@@ -3,25 +3,23 @@
 Usage:
     uv run cookbook/pumpfun/decode/pumpfun_decode_transaction_gettransaction.py [tx.json]
 
-Two things this example exists to show, because both are easy to get wrong:
+Three things to get right when writing your own decoder:
 
-1. Identify an instruction by its **8-byte Anchor discriminator**, not by how many
-   accounts it carries. Several pump.fun instructions share an account count, so
-   matching on the count alone silently labels a `create_v2` as `claim_cashback`
-   and then prints every account under the wrong name.
+1. Identify an instruction by its **8-byte Anchor discriminator**, not by how
+   many accounts it carries. Several pump.fun instructions share an account
+   count, so matching on the count labels a `create_v2` as `claim_cashback` and
+   then prints every account under the wrong name.
 
-2. Read `meta.innerInstructions` as well as `message.instructions`. Most pump.fun
-   trades reach the program as a CPI from an aggregator or router, so a decoder
-   that only walks the top level sees almost nothing — top-level pump
-   instructions are heavily outnumbered by inner ones.
+2. Read `meta.innerInstructions` as well as `message.instructions`. Most trades
+   reach the program as a CPI from an aggregator or router, so a decoder that
+   only walks the top level sees almost nothing.
 
 3. Accept whichever encoding the response was captured in. `getTransaction`
-   answers in `jsonParsed`, `json` or `base64` depending on what was asked for,
-   and the three look nothing alike: `json` gives account *indices* where
-   `jsonParsed` gives addresses, and `base64` gives the raw envelope and nothing
-   else. `normalize_result` folds all three into the jsonParsed shape, so the
-   rest of the file only ever sees one layout. The fixtures next to this script
-   cover all three on purpose.
+   answers in `jsonParsed`, `json` or `base64`, and the three look nothing alike:
+   `json` gives account *indices* where `jsonParsed` gives addresses, and
+   `base64` gives the raw envelope and nothing else. `normalize_result` folds all
+   three into the jsonParsed shape. The fixtures beside this script cover all
+   three.
 """
 
 import argparse

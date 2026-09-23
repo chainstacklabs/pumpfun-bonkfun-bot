@@ -13,8 +13,7 @@ class DynamicPriorityFee(PriorityFeePlugin):
     """Dynamic priority fee plugin using getRecentPrioritizationFees."""
 
     def __init__(self, client: SolanaClient):
-        """
-        Initialize the dynamic fee plugin.
+        """Initialize the dynamic fee plugin.
 
         Args:
             client: Solana RPC client for network requests.
@@ -24,8 +23,7 @@ class DynamicPriorityFee(PriorityFeePlugin):
     async def get_priority_fee(
         self, accounts: list[Pubkey] | None = None
     ) -> int | None:
-        """
-        Fetch the recent priority fee using getRecentPrioritizationFees.
+        """Fetch the recent priority fee using getRecentPrioritizationFees.
 
         Args:
             accounts: List of accounts to consider for the fee calculation.

@@ -9,12 +9,11 @@ stream on the same endpoint and reports two things:
   1. Lead time, over every pump.fun transaction and over token creations
      separately. Creates behave differently from general traffic and are the
      number that matters for sniping.
-  2. How many creates the deshred stream cannot detect, and why. A coin created
-     through a router reaches the program as a CPI, and inner instructions are
-     produced *by* execution -- so they do not exist on a pre-execution stream
-     at all. Those coins arrive on deshred with the create invisible, and no
-     amount of decoding recovers them. This classifies every create as
-     top-level or inner to size that blind spot.
+  2. How many creates the deshred stream cannot detect. A coin created through a
+     router reaches the program as a CPI, and inner instructions are produced
+     *by* execution, so they do not exist on a pre-execution stream at all and
+     no decoding recovers them. Every create is classified as top-level or inner
+     to size that blind spot.
 
 Usage:
     uv run tools/compare_deshred_latency.py

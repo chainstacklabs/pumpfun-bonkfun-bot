@@ -4,10 +4,10 @@
 `UniversalTrader._handle_time_based_exit` used to sell exactly once: a revert
 was logged at ERROR and the position was left open, unmonitored and unsold.
 
-Issue #189 added a bounded retry with a re-read price, but only to
-`_monitor_position_until_exit`, which is the `tp_sl` path. The default path kept
-the single-shot behaviour, so the same 6003 `TooLittleSolReceived` revert that
-#189 exists to survive still stranded the tokens.
+The bounded retry with a re-read price was added only to
+`_monitor_position_until_exit`, the `tp_sl` path. The default path kept the
+single-shot behaviour, so a 6003 `TooLittleSolReceived` revert still stranded
+the tokens.
 
 The seller's own `max_retries` does not cover this: it retries transaction
 *submission*, while an on-chain revert comes back as `success=False`. The retry

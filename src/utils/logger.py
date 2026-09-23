@@ -1,8 +1,5 @@
-"""
-Logging utilities for the pump.fun trading bot.
-
-Includes the credential redaction every entry point installs before it logs
-anything — see `install_secret_redaction`.
+"""Logging utilities, including the credential redaction every entry point
+installs before it logs anything — see `install_secret_redaction`.
 """
 
 import logging
@@ -153,15 +150,14 @@ def install_secret_redaction() -> None:
 def _redact_record(record: logging.LogRecord) -> logging.LogRecord:
     """Mask any credential in a record, message and arguments together.
 
-    Renders the record the way a handler eventually will, then redacts that.
-    Masking `record.msg` and its string arguments separately is not enough:
-    httpx2 logs the URL as a `URL` object, not a `str`, so a type check skips
-    the one argument that carries the key — the first version of this guard did
-    exactly that and the key still reached the terminal. Rendering first means
-    the argument's type stops mattering.
+    Renders the record the way a handler will, then redacts that. Masking
+    `record.msg` and its string arguments separately is not enough: httpx2 logs
+    the URL as a `URL` object, not a `str`, so a type check skips the one
+    argument carrying the key. Rendering first makes the argument's type
+    irrelevant.
 
-    The rendered text replaces the record only when redaction actually changed
-    something, so an ordinary line keeps its original message and arguments.
+    The rendered text replaces the record only when redaction changed something,
+    so an ordinary line keeps its original message and arguments.
 
     Args:
         record: The record as the factory built it

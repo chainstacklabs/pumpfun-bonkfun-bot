@@ -77,7 +77,7 @@ PUMP_SWAP_EVENT_AUTHORITY = Pubkey.from_string(
 )
 PUMP_FEE_PROGRAM = Pubkey.from_string("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ")
 
-# 8 breaking-upgrade fee recipients (pump-swap program upgrade 2026-04-28).
+# 8 breaking-upgrade fee recipients.
 # Two new accounts must be appended after pool-v2: the fee recipient (readonly)
 # and its quote-mint ATA (mutable).
 # Doc: github.com/pump-fun/pump-public-docs/blob/main/docs/BREAKING_FEE_RECIPIENT.md
@@ -217,11 +217,8 @@ async def get_market_data(client: AsyncClient, market_address: Pubkey) -> dict:
     return parsed_data
 
 
-# ============================================================================
-# Program Derived Address (PDA) Derivation
-# ============================================================================
-# PDAs are deterministic addresses derived from seeds and a program ID.
-# They allow programs to own accounts without needing a private key.
+# Program Derived Address (PDA) derivation: deterministic addresses derived from
+# seeds and a program id, letting programs own accounts without a private key.
 
 
 def find_coin_creator_vault(coin_creator: Pubkey) -> Pubkey:
@@ -278,11 +275,8 @@ def find_user_volume_accumulator(user: Pubkey) -> Pubkey:
     return derived_address
 
 
-# ============================================================================
-# Mayhem Mode Fee Handling
-# ============================================================================
-# Mayhem mode is a special fee structure where fees go to a different recipient.
-# The fee recipient changes dynamically based on the pool's mayhem_mode flag.
+# Mayhem mode fee handling: the fee recipient changes with the pool's
+# mayhem_mode flag.
 
 
 async def get_reserved_fee_recipient_pumpswap(client: AsyncClient) -> Pubkey:
@@ -386,13 +380,12 @@ async def calculate_token_pool_price(
 
     PumpSwap added `virtual_quote_reserves` to the Pool account. Upstream's
     release note says it is 0 on every pool, but that is out of date: live pools
-    carry non-zero values (17.58 SOL observed on a 148 SOL pool, i.e. quoting
-    off the raw vault balance under-prices by ~10.6%). Always add it.
+    carry non-zero values, and quoting off the raw vault balance under-prices
+    them. Always add it.
 
     Args:
         client: Solana RPC client
         pool_base_token_account: Pool's token account (the token being priced)
-        pool_quote_token_account: Pool's quote account
         virtual_quote_reserves: Pool::virtual_quote_reserves, in raw quote units
 
     Returns:
@@ -426,14 +419,11 @@ MINT_DECIMALS_OFFSET = 44
 async def get_mint_info(client: AsyncClient, mint_address: Pubkey) -> tuple[Pubkey, int]:
     """Read a mint's token program and decimals from one account fetch.
 
-    Both come off the same `getAccountInfo`, so resolving the decimals costs
-    nothing extra — and guessing them is not survivable. Every coin that
-    graduated from a pump.fun bonding curve has 6, which is why a hardcoded 6
-    held for so long, but a pool that was never a bonding-curve coin routinely
-    has 9. Getting it wrong by a factor of 1000 scales the quote and the
-    slippage floor together, so the sell reverts `ExceededSlippage` (6004)
-    instead of merely mispricing. Observed 2026-09-23: `Left: 2990`,
-    `Right: 1500000`.
+    Both come off the same `getAccountInfo`, so the decimals cost nothing extra.
+    Every coin that graduated from a pump.fun bonding curve has 6, but a pool
+    that was never a bonding-curve coin routinely has 9, and a factor of 1000
+    scales the quote and the slippage floor together, so the trade reverts
+    `ExceededSlippage` (6004) rather than merely mispricing.
 
     Args:
         client: Connected RPC client
@@ -520,19 +510,15 @@ async def sell_pump_swap(
 ) -> str | None:
     """Execute a token sell on the PUMP AMM with slippage protection.
 
-    This function:
-    1. Fetches current token balance and pool price
-    2. Calculates minimum SOL output with slippage tolerance
-    3. Constructs and sends the sell transaction
+    Reads the balance and pool price, floors the SOL output by the slippage
+    tolerance, then sends.
 
     Args:
         client: Solana RPC client
         market: AMM pool address
         payer: Wallet keypair for signing
         base_mint: Token mint address
-        user_base_token_account: User's token account
         user_quote_token_account: User's WSOL account
-        pool_base_token_account: Pool's token account
         pool_quote_token_account: Pool's WSOL account
         coin_creator_vault_authority: Creator vault PDA
         coin_creator_vault_ata: Creator's WSOL account
@@ -645,20 +631,18 @@ async def sell_pump_swap(
     # pump.fun bonding curve. `Pool.coin_creator` is the discriminator: it is set
     # for canonical pools and left at `Pubkey::default()` for every other pool
     # (upstream PUMP_SWAP_CREATOR_FEE_README.md). The two buyback accounts below
-    # are required either way, and they are read *positionally* from the end, so
-    # on a non-canonical pool sending pool-v2 shifts the pair by one and the
-    # program rejects the pool-v2 PDA with `BuybackFeeRecipientNotAuthorized`
-    # (6053). Confirmed 2026-09-23 against live trades on both kinds of pool, and
-    # against BREAKING_FEE_RECIPIENT.md, which qualifies the "after pool-v2"
-    # ordering with "for coins that graduate from bonding curve".
+    # are required either way and are read *positionally* from the end, so on a
+    # non-canonical pool sending pool-v2 shifts the pair by one and the program
+    # rejects the pool-v2 PDA with `BuybackFeeRecipientNotAuthorized` (6053).
+    # BREAKING_FEE_RECIPIENT.md qualifies the "after pool-v2" ordering with "for
+    # coins that graduate from bonding curve".
     if coin_creator != DEFAULT_COIN_CREATOR:
         accounts.append(
             AccountMeta(
                 pubkey=find_pool_v2(base_mint), is_signer=False, is_writable=False
             )
         )
-    # 2 accounts required by the 2026-04-28 pump-swap upgrade, appended AFTER
-    # pool-v2: breaking-fee recipient (readonly) + its quote-mint ATA (mutable).
+    # 2 accounts appended AFTER pool-v2: breaking-fee recipient (readonly) + its quote-mint ATA (mutable).
     # Sell counts on a canonical pool: 24 non-cashback / 26 cashback. One fewer
     # on a non-canonical pool, which carries no pool-v2: 23 / 25.
     # Doc: github.com/pump-fun/pump-public-docs/blob/main/docs/BREAKING_FEE_RECIPIENT.md

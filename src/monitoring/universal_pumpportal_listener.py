@@ -1,6 +1,4 @@
-"""
-Universal PumpPortal listener that works with multiple platforms.
-"""
+"""Universal PumpPortal listener that works with multiple platforms."""
 
 import asyncio
 import json

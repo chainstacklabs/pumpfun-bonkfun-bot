@@ -1,9 +1,4 @@
-"""
-LetsBonk implementation of AddressProvider interface.
-
-This module provides all LetsBonk (Raydium LaunchLab) specific addresses and PDA derivations
-by implementing the AddressProvider interface.
-"""
+"""letsbonk.fun (Raydium LaunchLab) addresses and PDA derivations."""
 
 from dataclasses import dataclass
 from typing import Final
@@ -23,20 +18,15 @@ class LetsBonkAddresses:
     PROGRAM: Final[Pubkey] = Pubkey.from_string(
         "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj"
     )
-    # NOTE: GLOBAL_CONFIG is NOT constant across all pools!
-    # Each pool can be initialized with different global_config values. Different global_configs
-    # may define different program-wide settings, versions, or operational parameters.
-    # The correct global_config for each pool is extracted during pool initialization
-    # and stored in TokenInfo.global_config. This value below is a default, used as a fallback.
+    # NOT constant across pools: each pool is initialized with its own
+    # global_config, extracted during pool initialization into
+    # TokenInfo.global_config. The value below is only a fallback.
     GLOBAL_CONFIG: Final[Pubkey] = Pubkey.from_string(
         "6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX"
     )
-    # NOTE: PLATFORM_CONFIG is NOT constant across all pools!
-    # Each pool is initialized with a specific platform_config that defines its fee structure,
-    # launch restrictions, and other settings. Different pools may use different platform_configs
-    # (e.g., standard launches vs partner launches). The correct platform_config for each pool
-    # is extracted during pool initialization and stored in TokenInfo.platform_config.
-    # This value below is the default/most common platform_config, used as a fallback.
+    # NOT constant across pools: platform_config defines a pool's fee structure
+    # and launch restrictions, and is extracted during pool initialization into
+    # TokenInfo.platform_config. The value below is only a fallback.
     PLATFORM_CONFIG: Final[Pubkey] = Pubkey.from_string(
         "5thqcDwKp5QQ8US4XRMoseGeGbmLKMmoKZmS6zHrQAsA"
     )
@@ -105,14 +95,10 @@ class LetsBonkAddressProvider(AddressProvider):
         Args:
             base_mint: Base token mint address
             quote_mint: Quote token mint (defaults to WSOL)
-
-        Returns:
-            Base vault address
         """
         if quote_mint is None:
             quote_mint = SystemAddresses.SOL_MINT
 
-        # First derive the pool state address
         pool_state = self.derive_pool_address(base_mint, quote_mint)
 
         # Then derive the base vault using pool_vault seed
@@ -130,14 +116,10 @@ class LetsBonkAddressProvider(AddressProvider):
         Args:
             base_mint: Base token mint address
             quote_mint: Quote token mint (defaults to WSOL)
-
-        Returns:
-            Quote vault address
         """
         if quote_mint is None:
             quote_mint = SystemAddresses.SOL_MINT
 
-        # First derive the pool state address
         pool_state = self.derive_pool_address(base_mint, quote_mint)
 
         # Then derive the quote vault using pool_vault seed
@@ -167,9 +149,6 @@ class LetsBonkAddressProvider(AddressProvider):
     def get_additional_accounts(self, token_info: TokenInfo) -> dict[str, Pubkey]:
         """Get LetsBonk-specific additional accounts needed for trading.
 
-        Args:
-            token_info: Token information
-
         Returns:
             Dictionary of additional account addresses
         """
@@ -192,10 +171,8 @@ class LetsBonkAddressProvider(AddressProvider):
         else:
             accounts["quote_vault"] = self.derive_quote_vault(token_info.mint)
 
-        # Derive authority PDA
         accounts["authority"] = self.derive_authority_pda()
 
-        # Derive event authority PDA
         accounts["event_authority"] = self.derive_event_authority_pda()
 
         return accounts
@@ -204,9 +181,6 @@ class LetsBonkAddressProvider(AddressProvider):
         """Derive the authority PDA for Raydium LaunchLab.
 
         This PDA acts as the authority for pool vault operations.
-
-        Returns:
-            Authority PDA address
         """
         AUTH_SEED = b"vault_auth_seed"
         authority_pda, _ = Pubkey.find_program_address(
@@ -218,9 +192,6 @@ class LetsBonkAddressProvider(AddressProvider):
         """Derive the event authority PDA for Raydium LaunchLab.
 
         This PDA is used for emitting program events during swaps.
-
-        Returns:
-            Event authority PDA address
         """
         EVENT_AUTHORITY_SEED = b"__event_authority"
         event_authority_pda, _ = Pubkey.find_program_address(
@@ -238,9 +209,6 @@ class LetsBonkAddressProvider(AddressProvider):
         Args:
             creator: The pool creator's pubkey
             quote_mint: The quote token mint (defaults to WSOL)
-
-        Returns:
-            Creator fee vault address
         """
         if quote_mint is None:
             quote_mint = SystemAddresses.SOL_MINT
@@ -260,9 +228,6 @@ class LetsBonkAddressProvider(AddressProvider):
         Args:
             platform_config: The platform config account (defaults to LetsBonk config)
             quote_mint: The quote token mint (defaults to WSOL)
-
-        Returns:
-            Platform fee vault address
         """
         if platform_config is None:
             platform_config = LetsBonkAddresses.PLATFORM_CONFIG
@@ -293,7 +258,6 @@ class LetsBonkAddressProvider(AddressProvider):
         """Get all accounts needed for a buy instruction.
 
         Args:
-            token_info: Token information
             user: User's wallet address
 
         Returns:
@@ -355,7 +319,6 @@ class LetsBonkAddressProvider(AddressProvider):
         """Get all accounts needed for a sell instruction.
 
         Args:
-            token_info: Token information
             user: User's wallet address
 
         Returns:

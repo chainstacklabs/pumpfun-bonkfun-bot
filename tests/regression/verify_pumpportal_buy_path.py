@@ -1,9 +1,9 @@
-"""Verify the pumpportal-sourced buy path hardening from issue #170.
+"""Verify the pumpportal-sourced buy path reads its own curve state.
 
 Offline machine checks, no network and no funds moved:
 
   A. The pumpportal processor derives bonding_curve from the mint instead of
-     trusting the payload's bondingCurveKey (observed stale once in #170).
+     trusting the payload's bondingCurveKey, which has been observed stale.
   B. In extreme_fast_mode, a buy is SKIPPED when the curve state cannot be
      read within the refresh budget, instead of submitting a buy built from
      listener-guessed defaults (the "racing a doomed buy" failure).

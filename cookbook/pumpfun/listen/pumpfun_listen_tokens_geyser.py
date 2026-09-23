@@ -1,15 +1,12 @@
-"""Monitors Solana for new Pump.fun token creations using Geyser gRPC.
-Decodes 'create' instructions to extract and display token details (name, symbol, mint, bonding curve),
-and reports which transaction format each coin was created in, with its inline budget for v1.
+"""Listen for new pump.fun coins over Geyser gRPC.
 
 Usage:
     uv run cookbook/pumpfun/listen/pumpfun_listen_tokens_geyser.py
 
-Performance: Proven to be the fastest listener method available.
-
-This script uses Yellowstone Dragon's Mouth Geyser gRPC interface, which provides
-real-time streaming of Solana blockchain data with lower latency than WebSocket methods.
-Requires a Geyser API token for access.
+Decodes `create` instructions for the token details, and reports which
+transaction format each coin was created in, with its inline budget for v1. Uses
+the Yellowstone Dragon's Mouth interface, the lowest-latency of the executed
+streams; needs a Geyser API token.
 
 Geyser gRPC Reference:
 https://docs.triton.one/rpc-pool/grpc-subscriptions
@@ -53,8 +50,7 @@ PUMP_CREATE_V2_PREFIX = bytes([214, 144, 76, 236, 95, 139, 49, 180])
 
 
 def print_token_info(token_data, signature=None, envelope: dict | None = None):
-    """
-    Print token information in a consistent, user-friendly format.
+    """Print token information in a consistent, user-friendly format.
 
     Args:
         token_data: Dictionary containing token fields
@@ -149,11 +145,11 @@ def resolve_account_keys(
 def describe_envelope(tx: geyser_pb2.SubscribeUpdateTransactionInfo) -> dict:
     """Summarise which transaction format a coin was created in, and its budget.
 
-    Transaction v1 (SIMD-0385, live since 2026-09-15) carries its compute budget
-    inline on the message as `config`, instead of as separate ComputeBudget
-    instructions. Geyser sets that field only for v1, so its presence is how you
-    tell a v1 transaction from a legacy or v0 one here: the `versioned` flag is
-    true for both v0 and v1 and cannot separate them.
+    Transaction v1 (SIMD-0385) carries its compute budget inline on the message
+    as `config` instead of as separate ComputeBudget instructions. Geyser sets
+    that field only for v1, so its presence is how you tell a v1 transaction
+    from a legacy or v0 one: the `versioned` flag is true for both v0 and v1 and
+    cannot separate them.
 
     Args:
         tx: A geyser `SubscribeUpdateTransactionInfo`

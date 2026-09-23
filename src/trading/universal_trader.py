@@ -1,7 +1,4 @@
-"""
-Universal trading coordinator that works with any platform.
-Cleaned up to remove all platform-specific hardcoding.
-"""
+"""Universal trading coordinator that works with any platform."""
 
 import asyncio
 import json
@@ -59,25 +56,21 @@ except ImportError:
 
 logger = get_logger(__name__)
 
-# Default for trade.max_exit_sell_attempts: how many times a tp/sl exit sell is
-# re-attempted before the position is left open. A revert (slippage, curve
-# moved) is not retried by the seller itself — its max_retries only covers
-# transaction submission — so the retry has to happen in the monitor loop,
-# where the price is re-read first. Bounded so a token that keeps reverting
-# cannot pin the bot on one position forever.
+# Default for trade.max_exit_sell_attempts. The seller's own max_retries covers
+# submission only, so a revert is retried in the monitor loop, where the price is
+# re-read first. Bounded so a token that keeps reverting cannot pin the bot.
 DEFAULT_MAX_EXIT_SELL_ATTEMPTS = 3
 
 
 class ExitSellVerdict(Enum):
     """What to do after an exit sell came back unsuccessful.
 
-    An exit sell is not idempotent, so "it did not succeed" is not enough to
-    act on. A sell that reverted changed nothing and should be retried; a sell
-    whose confirmation never arrived may well have emptied the position, and
-    sending another one spends a fee to act on a balance that no longer exists.
+    An exit sell is not idempotent, so "it did not succeed" is not enough to act
+    on: a reverted sell changed nothing and should be retried, while one whose
+    confirmation never arrived may already have emptied the position.
 
-    `_classify_failed_exit_sell` only ever returns the three failure verdicts;
-    SOLD is reported by the attempt itself.
+    `_classify_failed_exit_sell` only returns the three failure verdicts; SOLD is
+    reported by the attempt itself.
     """
 
     SOLD = "sold"  # confirmed on this attempt, the ordinary happy path
@@ -97,14 +90,11 @@ def _exit_sell_verdict_for(reason: TradeFailureReason | None) -> ExitSellVerdict
         The verdict, or None when the signature has to be re-checked first.
     """
     if reason is TradeFailureReason.REVERTED:
-        # The chain has spoken: the program errored and the tokens are still
-        # held. This is exactly the case the retry exists for.
+        # The program errored and the tokens are still held.
         return ExitSellVerdict.RETRY
     if reason is TradeFailureReason.SUBMIT_FAILED:
-        # Nothing was ever confirmed as sent, and there is no signature to
-        # re-check. Retrying matches what the loop did before this
-        # classification existed, and stranding the position is the worse of
-        # the two risks.
+        # Nothing was confirmed as sent and there is no signature to re-check.
+        # Stranding the position is the worse of the two risks.
         return ExitSellVerdict.RETRY
     return None
 
@@ -291,8 +281,7 @@ class UniversalTrader:
         self.take_profit_percentage = take_profit_percentage
         self.stop_loss_percentage = stop_loss_percentage
         self.max_hold_time = max_hold_time
-        # Both govern the position monitor loop. The attempt cap is clamped
-        # because a value below 1 would mean "never even try to sell".
+        # The attempt cap is clamped: below 1 would mean "never try to sell".
         self.price_check_interval, self.max_exit_sell_attempts = (
             price_check_interval,
             max(1, max_exit_sell_attempts),
@@ -329,23 +318,18 @@ class UniversalTrader:
     async def _resolve_quote_token_programs(self) -> None:
         """Warm the quote-mint token-program and decimals caches at startup.
 
-        `extreme_fast_mode` submits a buy with zero RPC calls between
-        detecting a token and sending the transaction, so the token program
-        that owns a coin's quote mint -- and its decimals, which size
-        `max_sol_cost`/`min_sol_output` -- have to already be known by then.
-        The set of quote mints the bot can ever buy is fixed once at startup
-        -- `self.quote_amounts` comes from `_resolve_quote_config` -- so this
-        resolves and caches both facts for each of them once here, from the
-        single mint-account fetch `resolve_quote_token_program` already
-        makes. The hot path only ever reads those caches (see
-        `cached_quote_token_program` and `quote_decimals` in core.pubkeys).
+        `extreme_fast_mode` submits a buy with zero RPC calls between detection
+        and submission, so a quote mint's token program -- and its decimals,
+        which size `max_sol_cost`/`min_sol_output` -- must already be known. The
+        set of quote mints is fixed at startup, so both facts are cached here
+        from the one mint-account fetch `resolve_quote_token_program` makes; the
+        hot path only reads those caches.
 
         Raises:
-            ValueError: If a configured quote mint's owner is neither SPL
-                Token nor Token-2022, or its decimals cannot be read off the
-                mint account. Left uncaught deliberately: trading a quote
-                mint the bot cannot correctly size or derive accounts for is
-                worse than refusing to start.
+            ValueError: If a configured quote mint's owner is neither SPL Token
+                nor Token-2022, or its decimals cannot be read. Left uncaught
+                deliberately: trading a quote mint the bot cannot size is worse
+                than refusing to start.
         """
         for quote_mint in self.quote_amounts:
             token_program = await resolve_quote_token_program(
@@ -389,10 +373,9 @@ class UniversalTrader:
         except Exception as e:
             logger.warning(f"RPC warm-up failed: {e!s}")
 
-        # Deliberately outside the try/except above: an RPC health check is
-        # best-effort, but a quote mint we cannot resolve to a token program
-        # would go on to derive a wrong (non-existent) ATA and revert every
-        # trade against it -- fail startup instead of trading blind.
+        # Outside the try/except above: an RPC health check is best-effort, but a
+        # quote mint that cannot be resolved to a token program derives a
+        # non-existent ATA and reverts every trade -- fail startup instead.
         await self._resolve_quote_token_programs()
 
         try:
@@ -574,8 +557,7 @@ class UniversalTrader:
                 )
                 return
 
-            # Skip coins paired against a quote asset we are not set up to
-            # trade. Cheaper to drop here than to fail a buy on-chain.
+            # Cheaper to drop an unconfigured quote asset here than on-chain.
             token_quote_mint = normalize_quote_mint(token_info.quote_mint)
             if (
                 self.allowed_quote_mints is not None
@@ -676,7 +658,6 @@ class UniversalTrader:
         self, token_info: TokenInfo, buy_result: TradeResult
     ) -> None:
         """Handle take profit/stop loss exit strategy."""
-        # Create position
         position = Position.create_from_buy_result(
             mint=token_info.mint,
             symbol=token_info.symbol,
@@ -702,7 +683,6 @@ class UniversalTrader:
         """Handle legacy time-based exit strategy.
 
         Args:
-            token_info: Token information
             buy_result: Result from the buy operation (contains token amount)
         """
         logger.info(f"Waiting for {self.wait_time_after_buy} seconds before selling...")
@@ -740,9 +720,8 @@ class UniversalTrader:
             verdict = await self._classify_failed_exit_sell(token_info, sell_result)
             if verdict is ExitSellVerdict.LATE_SUCCESS:
                 # The sell landed; only its confirmation was late. Run the same
-                # cleanup a first-try success would have, minus the trade log —
-                # the amounts were never read back, so there is nothing honest
-                # to record there.
+                # cleanup a first-try success would, minus the trade log: the
+                # amounts were never read back.
                 logger.info(f"Sell of {token_info.symbol} confirmed late")
                 await self._cleanup_after_exit(token_info)
                 return
@@ -757,10 +736,9 @@ class UniversalTrader:
             if attempt >= self.max_exit_sell_attempts:
                 break
 
-            # The seller turns token_price into the slippage floor, and a
-            # revert usually means that floor no longer matches the market —
-            # so re-read the price before trying again rather than repeating
-            # the same unpayable ask (same reasoning as the tp/sl path).
+            # The seller turns token_price into the slippage floor, and a revert
+            # usually means that floor no longer matches the market, so re-read
+            # the price rather than repeating the same unpayable ask.
             token_price = await self._current_price_or(token_info, token_price)
 
         logger.error(
@@ -774,17 +752,14 @@ class UniversalTrader:
     ) -> ExitSellVerdict:
         """Decide whether another exit sell is safe after one came back failed.
 
-        `confirm_transaction` used to answer only "did this succeed?", so a sell
-        that reverted and a sell whose confirmation never arrived reached the
-        retry loop looking identical. They are not: the first changed nothing,
-        while the second may already have closed the position, and resending
-        after it spends a fee to sell a balance that is no longer there.
+        A reverted sell changed nothing; one whose confirmation never arrived may
+        already have closed the position, and resending spends a fee to sell a
+        balance that is no longer there.
 
-        A signature that is merely unconfirmed is re-checked here before any
-        decision. `getTransaction` keeps answering long after signature statuses
-        have aged out of the RPC's recent history, so a late confirmation is
-        still reachable — and a sell that turns out to have landed is reported
-        as a late success rather than retried.
+        A merely unconfirmed signature is re-checked first: `getTransaction`
+        keeps answering long after signature statuses age out of the RPC's recent
+        history, so a sell that turns out to have landed is reported as a late
+        success rather than retried.
 
         Args:
             token_info: Token information, for logging
@@ -799,8 +774,7 @@ class UniversalTrader:
 
         signature = sell_result.tx_signature
         if not signature:
-            # No signature to re-check and no reason recorded. Nothing can be
-            # established, so treat it the way an unknown has to be treated.
+            # No signature to re-check and no reason recorded: treat as unknown.
             logger.error(
                 f"Exit sell for {token_info.symbol} failed without a signature "
                 f"to re-check; not sending another one"
@@ -814,12 +788,10 @@ class UniversalTrader:
         try:
             status = await self.solana_client.verify_transaction_status(signature)
         except Exception:
-            # The re-check is the only thing standing between an unresolved
-            # sell and a second one, so it must not throw its way past the
-            # decision. post_rpc contains the RPC errors it knows about, but
-            # nothing promises it contains all of them - and in the monitor
-            # loop an escape lands in the outer handler, which can call
-            # straight back into another exit attempt.
+            # The re-check is all that stands between an unresolved sell and a
+            # second one, so it must not throw past the decision: in the monitor
+            # loop an escape lands in the outer handler, which can call straight
+            # back into another exit attempt.
             logger.exception(
                 f"Could not verify exit sell {signature[:16]}...; "
                 f"leaving it unresolved rather than selling again"
@@ -883,27 +855,23 @@ class UniversalTrader:
             f"Starting position monitoring (check interval: {self.price_check_interval}s)"
         )
 
-        # Get pool address for price monitoring using platform-agnostic method
+        # Platform-agnostic pool address for price monitoring
         pool_address = self._get_pool_address(token_info)
         curve_manager = self.platform_implementations.curve_manager
         exit_sell_attempts = 0
 
-        # The last price actually read. A max_hold_time exit that fires while
-        # the price feed is down still needs a slippage floor, and before the
-        # first successful read the entry price is the only thing known.
-        # Only ever a positive price. entry_price is positive by construction,
-        # and a read of 0.0 never replaces it - see below.
+        # The last price actually read, always positive. A max_hold_time exit
+        # firing with the price feed down still needs a slippage floor, and
+        # before the first successful read the entry price is all there is.
         last_known_price = position.entry_price
 
         while position.is_active:
             try:
-                # Get current price from pool/curve
                 current_price = await curve_manager.calculate_price(pool_address)
-                # A curve with no virtual token reserves left prices at 0.0
-                # rather than raising, and the seller rejects a non-positive
-                # price with a ValueError raised before its own try block - so
-                # storing a 0.0 here would escape the bounded exit handling the
-                # next time the feed went down.
+                # A curve with no virtual token reserves prices at 0.0 rather
+                # than raising, and the seller rejects a non-positive price
+                # before its own try block, so a stored 0.0 would escape the
+                # bounded exit handling next time the feed went down.
                 if current_price > 0:
                     last_known_price = current_price
 
@@ -915,8 +883,7 @@ class UniversalTrader:
                     logger.info(f"Current price: {current_price:.8f} SOL")
 
                     # 0.0 satisfies the stop-loss comparison, so the exit can
-                    # fire on a price the sell cannot be floored against. Sell
-                    # against the last real one instead.
+                    # fire on a price the sell cannot be floored against.
                     exit_price = (
                         current_price if current_price > 0 else last_known_price
                     )
@@ -952,11 +919,8 @@ class UniversalTrader:
                 logger.exception("Error monitoring position")
 
                 # max_hold_time is the one exit condition that needs no price,
-                # and should_exit cannot be asked without one — so a price read
-                # that keeps failing used to skip every exit check. is_active
-                # never changed, the position was never sold, and the loop spun
-                # on the same error indefinitely. Ask the time-only question
-                # here so the deadline is still enforced with the feed down.
+                # and should_exit cannot be asked without one. Ask the time-only
+                # question here so the deadline is enforced with the feed down.
                 if position.should_exit_on_time():
                     logger.warning(
                         f"Max hold time reached for {token_info.symbol} while "
@@ -988,7 +952,6 @@ class UniversalTrader:
         """Make one bounded attempt to close the position.
 
         Args:
-            token_info: Token information
             position: The open position
             exit_reason: Why the exit fired
             price: Price the sell is floored against
@@ -1024,13 +987,11 @@ class UniversalTrader:
         """Sell the position once and report what came of it.
 
         Args:
-            token_info: Token information
             position: The open position, closed in place on success
             exit_reason: Why the exit fired
-            price: Price the sell is floored against. The seller turns this
-                into `min_quote_output`, so it has to be a price the pool can
-                actually pay - an exit fires precisely because the price left
-                the entry price.
+            price: Price the sell is floored against. The seller turns it into
+                `min_quote_output`, so it must be a price the pool can pay — an
+                exit fires precisely because the price left the entry price.
 
         Returns:
             SOLD, LATE_SUCCESS, RETRY, or STOP
@@ -1060,7 +1021,6 @@ class UniversalTrader:
                 sell_result.tx_signature,
             )
 
-            # Log final PnL
             final_pnl = position.get_pnl()
             logger.info(
                 f"Final PnL: {final_pnl['price_change_pct']:.2f}% ({final_pnl['unrealized_pnl_sol']:.6f} SOL)"
@@ -1072,9 +1032,8 @@ class UniversalTrader:
 
         verdict = await self._classify_failed_exit_sell(token_info, sell_result)
         if verdict is ExitSellVerdict.LATE_SUCCESS:
-            # The sell landed; only its confirmation was late. Close the
-            # position against the price it was floored at - the real fill was
-            # never read back, so this is the honest figure available.
+            # The sell landed, only its confirmation was late. Close against the
+            # price it was floored at; the real fill was never read back.
             position.close_position(price, exit_reason)
             logger.info(f"Position for {token_info.symbol} closed by a late fill")
             await self._cleanup_after_exit(token_info)
@@ -1107,13 +1066,11 @@ class UniversalTrader:
         """Get the pool/curve address for price monitoring using platform-agnostic method."""
         address_provider = self.platform_implementations.address_provider
 
-        # Use platform-specific logic to get the appropriate address
         if hasattr(token_info, "bonding_curve") and token_info.bonding_curve:
             return token_info.bonding_curve
         elif hasattr(token_info, "pool_state") and token_info.pool_state:
             return token_info.pool_state
         else:
-            # Fallback to deriving the address using platform provider
             return address_provider.derive_pool_address(token_info.mint)
 
     async def _save_token_info(self, token_info: TokenInfo) -> None:

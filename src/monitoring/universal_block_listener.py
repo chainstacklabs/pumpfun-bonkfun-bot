@@ -1,6 +1,4 @@
-"""
-Universal block listener that works with any platform through the interface system.
-"""
+"""Universal blockSubscribe listener, platform-agnostic via the interfaces."""
 
 import asyncio
 import base64
@@ -144,11 +142,9 @@ class UniversalBlockListener(BaseTokenListener):
                         logger.warning("WebSocket connection closed. Reconnecting...")
                     finally:
                         # Every exit from the read loop leaves this connection
-                        # behind, not just a closed one: an unexpected read
-                        # error now reconnects too, and cancellation unwinds
-                        # through here. An uncancelled ping loop would go on
-                        # pinging a dead socket for up to ping_interval before
-                        # dying on its own, logging a spurious "Ping error".
+                        # behind, including read errors and cancellation. An
+                        # uncancelled ping loop would keep pinging a dead socket
+                        # for up to ping_interval and log a spurious "Ping error".
                         ping_task.cancel()
 
             except Exception:
@@ -179,12 +175,10 @@ class UniversalBlockListener(BaseTokenListener):
                             "encoding": "base64",
                             "showRewards": False,
                             "transactionDetails": "full",
-                            # Solana transaction v1 (SIMD-0296/0385) has been
-                            # live since epoch 1035, 2026-09-15. A version the
-                            # subscription does not accept does not just skip
-                            # that transaction: the RPC nulls out `value.block`
-                            # for the whole frame, leaving this listener
-                            # almost entirely blind.
+                            # Whole-frame setting: a version the subscription
+                            # does not accept does not skip that transaction,
+                            # it nulls `value.block` for the entire frame and
+                            # leaves this listener almost entirely blind.
                             "maxSupportedTransactionVersion": 1,
                         },
                     ],
@@ -309,11 +303,10 @@ class UniversalBlockListener(BaseTokenListener):
                 continue
 
             # Route on the logs before touching the transaction itself. The
-            # decoding below exists only to learn which program the transaction
-            # touched, and solders cannot deserialize a v1 envelope at all — so
-            # gating the dispatch on it drops every v1 coin without raising
-            # anything the caller sees. The parsers prefer meta.log_messages
-            # anyway, for the canonical creator; this just lets them be reached.
+            # decode below only identifies the program touched, and an envelope
+            # version solders cannot read would otherwise drop every such coin
+            # silently. The parsers prefer meta.log_messages anyway, for the
+            # canonical creator.
             token_info = self._parse_from_logs(tx)
             if token_info:
                 return token_info

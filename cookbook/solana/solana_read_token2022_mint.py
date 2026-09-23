@@ -18,18 +18,16 @@ and every tokenized equity pump.fun accepts as a quote asset carries all four:
 - **transfer hook** — a program invoked on every transfer. pump.fun only accepts
   a quote mint whose hook has no program set, so these read as `None`.
 
-The trap this script exists for is the multiplier. The RPC returns two of them:
+The RPC returns two multipliers:
 
     "multiplier": "1.0026642075893797"
     "newMultiplier": "1.0032690125398187"
     "newMultiplierEffectiveTimestamp": 1786149000
 
 The field called `multiplier` is the **old** one. Once the effective timestamp
-has passed — and on AAPLx it passed on 2026-08-08, weeks before this script was
-written — the live multiplier is `newMultiplier`, and nothing renames the fields
-to tell you. Reading the obvious field gives a number that is quietly wrong and
-drifts further at every corporate action. This script compares against the clock
-and prints which one is actually in force.
+has passed, the live multiplier is `newMultiplier` and nothing renames the
+fields, so reading the obvious one gives a number that is quietly wrong. This
+script compares against the clock and prints which is in force.
 """
 
 import argparse

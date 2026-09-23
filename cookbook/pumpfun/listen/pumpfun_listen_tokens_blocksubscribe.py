@@ -55,8 +55,7 @@ CREATE_V2_DISCRIMINATOR = struct.unpack(
 
 
 def print_token_info(token_data, signature=None):
-    """
-    Print token information in a consistent, user-friendly format.
+    """Print token information in a consistent, user-friendly format.
 
     Args:
         token_data: Dictionary containing token fields
@@ -90,13 +89,10 @@ def print_token_info(token_data, signature=None):
 
 
 def get_account_keys(transaction, instruction, loaded_addresses=None):
-    """
-    Safely extract account keys for an instruction from a versioned transaction.
+    """Safely extract account keys for an instruction from a versioned transaction.
     Handles both static account keys and loaded addresses from lookup tables.
 
     Args:
-        transaction: VersionedTransaction object
-        instruction: Instruction object
         loaded_addresses: Dict with 'writable' and 'readonly' loaded addresses from tx meta
 
     Returns:
@@ -109,12 +105,10 @@ def get_account_keys(transaction, instruction, loaded_addresses=None):
     all_keys = list(static_keys)
 
     if loaded_addresses:
-        # Add loaded writable addresses
         if "writable" in loaded_addresses:
             for addr in loaded_addresses["writable"]:
                 all_keys.append(Pubkey.from_string(addr))
 
-        # Add loaded readonly addresses
         if "readonly" in loaded_addresses:
             for addr in loaded_addresses["readonly"]:
                 all_keys.append(Pubkey.from_string(addr))
@@ -256,8 +250,7 @@ def load_idl(file_path):
 
 
 def decode_create_instruction(ix_data, ix_def, accounts):
-    """
-    Decode legacy Create instruction (Metaplex tokens).
+    """Decode legacy Create instruction (Metaplex tokens).
 
     The Create instruction creates tokens using the Metaplex Token Metadata standard.
     Instruction data contains: name, symbol, uri, and additional creator pubkey.
@@ -306,8 +299,7 @@ def decode_create_instruction(ix_data, ix_def, accounts):
 
 
 def decode_create_v2_instruction(ix_data, ix_def, accounts):
-    """
-    Decode CreateV2 instruction (Token2022 tokens).
+    """Decode CreateV2 instruction (Token2022 tokens).
 
     The CreateV2 instruction creates tokens using the Token-2022 standard, which supports
     additional features like transfer fees, interest-bearing tokens, and more.
@@ -327,20 +319,17 @@ def decode_create_v2_instruction(ix_data, ix_def, accounts):
     args = {}
     offset = 8  # Skip 8-byte discriminator
 
-    # Parse instruction arguments according to IDL definition.
-    # CreateV2 args: name, symbol, uri, creator (pubkey), is_mayhem_mode (bool),
+    # create_v2 args: name, symbol, uri, creator (pubkey), is_mayhem_mode (bool),
     # is_cashback_enabled (OptionBool), creator_fee_bps (OptionU64),
-    # is_holder_reward (OptionBool). The last two arrived with the 2026-09-15
-    # program upgrade.
+    # is_holder_reward (OptionBool).
     #
     # OptionBool and OptionU64 are single-field Anchor structs with no presence
-    # tag: each serializes as its bare inner value, 1 and 8 bytes. They are also
+    # tag: each serializes as its bare inner value, 1 and 8 bytes. They are
     # positional rather than independently optional, and the trailing ones are
-    # legally absent from the wire — three lengths are live on chain (no
-    # trailing args, is_cashback_enabled only, is_cashback_enabled plus
-    # creator_fee_bps). An absent one is reported as None, meaning unset, rather
-    # than as a fabricated default. Same rule as utils/idl_parser.py (issue
-    # #184); reading a fixed number of trailing bytes raises IndexError instead.
+    # legally absent from the wire — three lengths occur on chain (no trailing
+    # args, is_cashback_enabled only, is_cashback_enabled plus creator_fee_bps).
+    # An absent arg is reported as None, meaning unset, not as a fabricated
+    # default; reading a fixed number of trailing bytes raises IndexError.
     for arg in ix_def["args"]:
         t = arg["type"]
         if t == "string":
@@ -450,9 +439,8 @@ def handle_transaction(tx, idl):
     Detection routes on `meta.logMessages`, which the RPC has already decoded
     and which reads the same whatever version the transaction is. The envelope
     is only opened afterwards, to report address lookup table use, and only when
-    the installed solders can read it — transaction v1 (live since 2026-09-15)
-    is not deserializable by solders 0.26, and gating detection on that decode
-    is what made this example blind to every v1 block.
+    the installed solders can read it. Gating detection on that decode makes the
+    example blind to every block carrying a version solders does not handle.
 
     Args:
         tx: One entry from a blockSubscribe notification's `transactions`
@@ -486,8 +474,7 @@ def handle_transaction(tx, idl):
 
 
 async def listen_and_decode_create():
-    """
-    Main listener function that subscribes to Solana blocks and decodes Pump.fun token creations.
+    """Main listener function that subscribes to Solana blocks and decodes Pump.fun token creations.
 
     This function:
     1. Loads the Pump.fun IDL for instruction parsing

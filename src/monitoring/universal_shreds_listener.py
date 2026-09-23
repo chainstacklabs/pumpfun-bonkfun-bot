@@ -1,27 +1,24 @@
 """Universal shreds listener: pre-execution token detection over SubscribeDeshred.
 
-`SubscribeDeshred` delivers a transaction when entries are formed from shreds,
-before any execution. That is earlier than `Subscribe`, and it costs two things
-that shape everything in this module.
+`SubscribeDeshred` delivers a transaction as entries form from shreds, before any
+execution. That is earlier than `Subscribe`, and it costs two things.
 
-**There is no TransactionStatusMeta.** No `meta.log_messages`, so no CreateEvent,
-so the log route every other listener prefers does not exist here. This listener
-decodes the create instruction, which is the fallback route elsewhere and the
-only route here. It also means no success or failure: nothing has executed, so a
-create that goes on to revert is delivered exactly like one that lands.
+**There is no TransactionStatusMeta**, so no `meta.log_messages` and no
+CreateEvent: this listener decodes the create instruction, the fallback route
+elsewhere and the only route here. It also means no outcome — a create that goes
+on to revert is delivered exactly like one that lands.
 
-**A coin created through a router is invisible.** The create then reaches the
-program as a CPI, and inner instructions are produced *by* execution, so a
-pre-execution stream never carries them -- the transaction arrives with the
-create undetectable, not dropped. No decoding recovers them. This is the
-standing cost of the mode and the reason it is not the default; see
+**A coin created through a router is invisible.** The create reaches the program
+as a CPI, and inner instructions are produced *by* execution, so a pre-execution
+stream never carries them — undetectable, not dropped, and no decoding recovers
+them. That is the standing cost of the mode and why it is not the default; see
 bots/bot-sniper-5-shreds.yaml.
 
-Note this inverts the usual CPI advice in AGENTS.md: *trades* are overwhelmingly
-inner instructions, *creates* are overwhelmingly top-level, which is why walking
-only top-level instructions here is right rather than a shortcut.
+This inverts the usual CPI advice in docs/listeners-and-geyser.md: *trades* are
+overwhelmingly inner instructions, *creates* overwhelmingly top-level, so
+walking only top-level instructions here is correct.
 
-Address lookup tables are already resolved and reported on the update itself, so
+Address lookup tables are resolved and reported on the update itself, so
 instruction account indices resolve as they do on the executed stream.
 """
 
@@ -58,7 +55,6 @@ class UniversalShredsListener(BaseTokenListener):
 
         Args:
             geyser_endpoint: Geyser gRPC endpoint URL
-            geyser_api_token: Geyser API token
             geyser_auth_type: Either "x-token" or "basic"
             platforms: Platforms to monitor; all supported platforms if None
 
@@ -339,16 +335,14 @@ class UniversalShredsListener(BaseTokenListener):
     def _mark_trusted(token_info: TokenInfo) -> TokenInfo:
         """Mark an instruction-parsed TokenInfo as safe to trade without a refresh.
 
-        Every other listener leaves `state_from_event` False on instruction-parsed
+        Other listeners leave `state_from_event` False on instruction-parsed
         tokens, because `args.creator` is user-supplied and the program may write
-        something else into `BondingCurve.creator`. That reservation has exactly
-        one cause, and the parser now resolves it: a holder-reward coin takes its
-        creator from a PDA of the mint, which is derivable without reading
-        anything.
+        something else into `BondingCurve.creator`. That has exactly one cause,
+        which the parser resolves: a holder-reward coin takes its creator from a
+        PDA of the mint, derivable without reading anything.
 
-        Waiting for the curve here would not be a safer fallback but a broken one:
-        the account does not exist yet, so the only alternatives are trading on
-        this data or not trading at all.
+        Waiting for the curve is not a safer fallback here — the account does not
+        exist yet, so the choice is trading on this data or not trading.
 
         Args:
             token_info: Token parsed from a create instruction

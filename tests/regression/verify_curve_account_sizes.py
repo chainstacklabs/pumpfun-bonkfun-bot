@@ -1,15 +1,14 @@
-"""Offline + mainnet: the bonding curve is 125 bytes as created, and grows.
+"""Verify the bonding curve decodes at every length it occurs in.
 
-The 2026-09-15 program upgrade appended creator_fee_bps (u64),
-can_edit_creator_fee (bool) and is_holder_reward (bool) to BondingCurve and
-dropped the 36 reserved padding bytes. create_v2 now allocates exactly 125
-bytes; extend_account can grow an account past that to any length the
-program allows — 151 and 256 are both confirmed live. A dataSize allowlist
-is whack-a-mole against that: the next length silently drops curves again.
-Anything that watches for curves must not filter on dataSize at all, and must
-decode correctly regardless of which length turns up.
+`create_v2` allocates exactly 125 bytes: creator_fee_bps (u64),
+can_edit_creator_fee (bool) and is_holder_reward (bool) are appended to
+BondingCurve and the 36 reserved padding bytes are gone. `extend_account` can
+grow an account past that to any length the program allows — 151 and 256 both
+occur live — so a dataSize allowlist is whack-a-mole: the next length silently
+drops curves again. Anything watching for curves must not filter on dataSize at
+all, and must decode correctly whichever length turns up.
 
-Moves no funds.
+Offline, moves no funds.
 """
 
 from __future__ import annotations
@@ -24,7 +23,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 CURVE_LEN_CREATED = 125
 CURVE_LEN_EXTENDED = 151
-CURVE_LEN_RESIZED = 256  # confirmed live 2026-09-15, see the two graduating-
+CURVE_LEN_RESIZED = 256  # occurs live, see the two graduating-
 # token scripts' module docstrings for the getAccountInfo + decode evidence
 _VIRTUAL_TOKEN_RESERVES = 1_073_000_000_000_000
 

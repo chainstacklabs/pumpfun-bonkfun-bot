@@ -47,13 +47,10 @@ EXTREME_FAST_TOKEN_AMOUNT = 20
 # Matches retries.wait_after_creation in the bot configs. Only used when
 # extreme_fast_mode is off, where the buyer reads the curve at `confirmed`.
 CURVE_STABILIZE_SECONDS = 15
-# Without a trade.quote_amounts entry, PlatformAwareBuyer only trades
-# SOL-paired coins and skips anything else with "No configured buy amount"
-# — including non-SOL-paired coins, which this script also needs to be able
-# to trade. USDC is the one non-SOL quote mint with a fixed, well-known
-# amount scale; a coin paired with any other quote mint (Token-2022
-# included) still needs its own entry here, keyed by the exact mint, to be
-# tradeable in this script.
+# Without a trade.quote_amounts entry, PlatformAwareBuyer trades only SOL-paired
+# coins and skips the rest with "No configured buy amount". USDC is the one
+# non-SOL quote mint with a well-known amount scale; any other quote mint needs
+# its own entry here, keyed by the exact mint.
 QUOTE_AMOUNTS = {USDC_MINT: 0.01}
 
 

@@ -1,9 +1,4 @@
-"""
-Pump.Fun implementation of EventParser interface.
-
-This module parses pump.fun-specific token creation events from various sources
-by implementing the EventParser interface with IDL-based event parsing.
-"""
+"""Pump.fun EventParser: IDL-based parsing of token creation events."""
 
 import base64
 import struct
@@ -333,11 +328,10 @@ class PumpFunEventParser(EventParser):
                         _coerce_pubkey(fields.get("quote_mint"))
                     )
 
-                    # The event's creator is canonical (unlike instruction
-                    # args.creator) and the flags/quote_mint are authoritative
-                    # at create time, so extreme_fast_mode can trade on them
-                    # without a curve read. Old-format events missing the
-                    # trailing fields stay conservative.
+                    # The event's creator is canonical, unlike instruction
+                    # args.creator, so extreme_fast_mode can trade on it without
+                    # a curve read. Old-format events missing the trailing fields
+                    # stay conservative.
                     state_from_event = (
                         "quote_mint" in fields and "is_mayhem_mode" in fields
                     )
@@ -443,10 +437,9 @@ class PumpFunEventParser(EventParser):
 
             # Holder-reward flag first: it decides where the creator comes from.
             # Safe to trust from instruction args even though `creator` is not —
-            # the program rejects the request when the feature is globally
-            # disabled, so a landed create carrying `true` is proof. The args
-            # are positional, so a truncated trailing form cannot have set this
-            # and reads as False, which is correct by construction.
+            # the program rejects the request when the feature is globally off.
+            # The args are positional, so a truncated form cannot have set this
+            # and reads as False, correct by construction.
             is_holder_reward = _option_bool(args.get("is_holder_reward"))
 
             # On a holder-reward coin the program ignores args.creator and
@@ -466,20 +459,15 @@ class PumpFunEventParser(EventParser):
                 else SystemAddresses.TOKEN_PROGRAM
             )
 
-            # Cashback creation was deprecated 2026-09-15 (create_v2 rejects a
-            # new true here with 6082 CashbackDeprecated), but older create_v2
-            # instructions still carry it and existing cashback coins still
-            # trade, so it's still decoded here.
+            # create_v2 rejects a new true here with 6082 CashbackDeprecated,
+            # but older instructions still carry it and existing cashback coins
+            # still trade, so it is still decoded.
             is_cashback = _option_bool(args.get("is_cashback_enabled"))
 
-            # `creator_fee_bps` is deliberately left at TokenInfo's default
-            # (0) rather than decoded from args here. Upstream documents it
-            # as ignored on SOL- and USDC-paired coins, where the standard
-            # fee schedule applies regardless of what the creator passed --
-            # so a non-zero arg would not reflect the coin's actual fee for
-            # the common case, and nothing in this codebase reads the field
-            # to act on it (informational only). The CreateEvent path above
-            # gets it from the canonical on-chain event instead.
+            # `creator_fee_bps` stays at TokenInfo's default rather than being
+            # decoded from args: upstream ignores it on SOL- and USDC-paired
+            # coins, so a non-zero arg would not reflect the actual fee. The
+            # CreateEvent path above takes it from the on-chain event.
 
             # create_v2 passes a non-native quote mint as optional remaining
             # account 17 (index 16). Absent means the coin is SOL-paired.
@@ -528,11 +516,9 @@ class PumpFunEventParser(EventParser):
             if not hasattr(transaction_info, "transaction"):
                 return None
 
-            # Prefer the CreateEvent from meta.log_messages, same as the block
-            # parser: the event carries the canonical creator (instruction
-            # args.creator is user-supplied and may differ post-2026-04-28)
-            # plus mayhem/cashback/quote_mint, which marks the TokenInfo
-            # state_from_event so extreme_fast_mode can buy with zero RPC
+            # Prefer the CreateEvent from meta.log_messages: it carries the
+            # canonical creator plus mayhem/cashback/quote_mint, which marks the
+            # TokenInfo state_from_event so extreme_fast_mode buys with zero RPC
             # calls. Fall back to instruction decoding when logs are absent.
             tx_info = transaction_info.transaction.transaction
             meta = getattr(tx_info, "meta", None)
@@ -634,12 +620,10 @@ class PumpFunEventParser(EventParser):
                 if not isinstance(tx, dict) or "transaction" not in tx:
                     continue
 
-                # Prefer parsing the CreateEvent from logs — args.creator on the
-                # ix is user-supplied and post-2026-04-28 may differ from the
-                # canonical BC.creator (which the program writes as a PFEE PDA
-                # in some cases). The CreateEvent log carries the canonical
-                # creator, so creator_vault derived from it matches the program
-                # constraint.
+                # Prefer the CreateEvent from logs: args.creator on the
+                # instruction is user-supplied and may differ from the canonical
+                # BC.creator, so creator_vault derived from the event is the one
+                # that matches the program constraint.
                 meta = tx.get("meta")
                 if isinstance(meta, dict):
                     logs = meta.get("logMessages") or meta.get("log_messages")
@@ -777,14 +761,7 @@ class PumpFunEventParser(EventParser):
             return None
 
     def _derive_creator_vault(self, creator: Pubkey) -> Pubkey:
-        """Derive the creator vault for a creator.
-
-        Args:
-            creator: Creator address
-
-        Returns:
-            Creator vault address
-        """
+        """Derive the creator vault for a creator."""
         derived_address, _ = Pubkey.find_program_address(
             [b"creator-vault", bytes(creator)],
             PumpFunAddresses.PROGRAM,
@@ -801,11 +778,7 @@ class PumpFunEventParser(EventParser):
 
         Args:
             mint: Token mint address
-            bonding_curve: Bonding curve address
             token_program_id: Token program (TOKEN or TOKEN_2022). Defaults to TOKEN_PROGRAM
-
-        Returns:
-            Associated bonding curve address
         """
         if token_program_id is None:
             token_program_id = SystemAddresses.TOKEN_PROGRAM
@@ -847,9 +820,6 @@ class PumpFunEventParser(EventParser):
         For now, we return False as a default since the event parser doesn't have
         access to an RPC client. The mayhem mode flag will be set by traders
         when they fetch bonding curve state for other operations.
-
-        Args:
-            bonding_curve_address: Address of the bonding curve
 
         Returns:
             True if mayhem mode, False otherwise (or if parsing fails)

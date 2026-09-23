@@ -4,16 +4,11 @@ Usage:
     uv run cookbook/solana/solana_read_balances.py              # the wallet from .env
     uv run cookbook/solana/solana_read_balances.py <PUBKEY>     # any wallet
 
-Run this before your first buy and after your first sell — most "the trade did
-nothing" reports turn out to be a wallet that never had the SOL, or a sell that
-reverted while the tokens sat there the whole time.
-
-The one thing worth knowing: **token accounts live under two different
-programs.** Coins created with pump.fun's `create_v2` are Token-2022; older
-coins and most other SPL tokens are legacy SPL Token. `getTokenAccountsByOwner`
-takes one program at a time and silently returns an empty list for the other,
-so asking only SPL Token hides every modern pump.fun coin you own. This queries
-both and says which program each account came from.
+**Token accounts live under two different programs.** Coins created with
+`create_v2` are Token-2022; older coins and most other SPL tokens are legacy SPL
+Token. `getTokenAccountsByOwner` takes one program at a time and silently returns
+an empty list for the other, so asking only SPL Token hides every modern pump.fun
+coin you own. This queries both and says which program each account came from.
 
 An account showing a zero balance is still an open account holding ~0.002 SOL
 of rent. `tools/cleanup_accounts.py` closes those and refunds it.

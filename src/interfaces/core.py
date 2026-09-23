@@ -1,9 +1,4 @@
-"""
-Core interfaces for multi-platform trading bot architecture.
-
-This module defines the abstract base classes that each trading platform
-must implement to enable unified trading operations across different protocols.
-"""
+"""Abstract base classes each trading platform implements."""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -24,14 +19,12 @@ class Platform(Enum):
 class ConfirmationStatus(Enum):
     """Outcome of asking the RPC what happened to a submitted transaction.
 
-    "Did not succeed" is two different answers, and conflating them is how a
-    non-idempotent retry gets fired at a trade that already went through:
+    "Did not succeed" is two answers, and conflating them fires a
+    non-idempotent retry at a trade that already went through:
 
-    - `REVERTED` is a fact. The transaction landed in a block and the program
-      returned an error, so nothing it intended actually happened.
-    - `UNCONFIRMED` is an absence of information. The lookup ran out of budget
-      before any node would answer, which on a load-balanced endpoint says
-      nothing about whether the transaction landed.
+    - `REVERTED` is a fact: the transaction landed and the program errored.
+    - `UNCONFIRMED` is an absence of information — the lookup ran out of budget,
+      which says nothing about whether the transaction landed.
 
     Retrying is right for the first and wrong for the second.
     """
@@ -44,9 +37,9 @@ class ConfirmationStatus(Enum):
 class TradeFailureReason(Enum):
     """Why a trade did not complete, as far as the trader can tell.
 
-    Mirrors :class:`ConfirmationStatus` and adds the case that never reached
-    an RPC at all, so a caller can tell "the chain rejected it" from "we never
-    found out" from "it never left the building".
+    Mirrors :class:`ConfirmationStatus` and adds the case that never reached an
+    RPC at all, so a caller can tell "the chain rejected it" from "we never found
+    out" from "it never left the building".
     """
 
     REVERTED = "reverted"
@@ -81,21 +74,17 @@ class TokenInfo:
     token_program_id: Pubkey | None = None  # Token or Token2022 program
     is_mayhem_mode: bool = False  # pump.fun mayhem mode flag
 
-    # pump.fun cashback coin flag. Cashback was deprecated 2026-09-15 —
-    # create_v2 rejects new cashback coins with 6082 CashbackDeprecated — but
-    # existing cashback coins keep trading and accruing cashback exactly as
-    # before, so every cashback code path that reads this flag stays live.
+    # pump.fun cashback coin flag. create_v2 rejects new cashback coins with
+    # 6082 CashbackDeprecated, but existing ones keep trading and accruing, so
+    # every cashback code path reading this flag stays live.
     is_cashback_coin: bool = False
 
-    # Holder rewards coins (2026-09-15 upgrade): the creator fee is set aside
-    # for holders instead of a creator wallet, and BondingCurve.creator holds a
-    # pump.fun address. Trading is identical — creator_vault derivation and the
-    # buy_v2/sell_v2 account lists are unchanged — so this is informational and
-    # available for filtering. creator_fee_bps is non-zero only on custom-pair
-    # coins; SOL- and USDC-paired coins use the standard fee schedule (bps 0).
-    # Checked live against SOL-paired CreateEvents and USDC-paired bonding
-    # curves, which carry bps 0; every custom-pair coin checked alongside them
-    # carried a nonzero value.
+    # Holder-reward coins: the creator fee is set aside for holders instead of a
+    # creator wallet, and BondingCurve.creator holds a pump.fun address. Trading
+    # is identical — creator_vault derivation and the buy_v2/sell_v2 account
+    # lists are unchanged — so this is informational and available for filtering.
+    # creator_fee_bps is non-zero only on custom-pair coins; SOL- and USDC-paired
+    # coins use the standard fee schedule (bps 0).
     is_holder_reward: bool = False
     creator_fee_bps: int = 0
 
@@ -106,12 +95,11 @@ class TokenInfo:
     quote_token_program_id: Pubkey | None = None
     virtual_quote_reserves: int | None = None
 
-    # True when creator, mayhem/cashback flags and quote_mint were read from
-    # the on-chain CreateEvent (canonical at create time), letting
-    # extreme_fast_mode skip the pre-buy curve refresh entirely — zero RPC
-    # calls between detection and submission. Listeners that guess any of
-    # these (pumpportal) or read them from user-supplied instruction args
-    # must leave it False.
+    # True when creator, mayhem/cashback flags and quote_mint were read from the
+    # on-chain CreateEvent, letting extreme_fast_mode skip the pre-buy curve
+    # refresh — zero RPC calls between detection and submission. Listeners that
+    # guess any of these, or read them from user-supplied instruction args, must
+    # leave it False.
     state_from_event: bool = False
 
     # Metadata
@@ -165,18 +153,12 @@ class AddressProvider(ABC):
         Args:
             user: User's wallet address
             mint: Token mint address
-
-        Returns:
-            User's token account address
         """
         pass
 
     @abstractmethod
     def get_additional_accounts(self, token_info: TokenInfo) -> dict[str, Pubkey]:
         """Get platform-specific additional accounts needed for trading.
-
-        Args:
-            token_info: Token information
 
         Returns:
             Dictionary of additional account addresses
@@ -205,7 +187,6 @@ class InstructionBuilder(ABC):
         """Build buy instruction(s) for the platform.
 
         Args:
-            token_info: Token information
             user: User's wallet address
             amount_in: Amount of quote tokens to spend
             minimum_amount_out: Minimum base tokens expected
@@ -228,7 +209,6 @@ class InstructionBuilder(ABC):
         """Build sell instruction(s) for the platform.
 
         Args:
-            token_info: Token information
             user: User's wallet address
             amount_in: Amount of base tokens to sell
             minimum_amount_out: Minimum quote tokens expected
@@ -246,7 +226,6 @@ class InstructionBuilder(ABC):
         """Get list of accounts required for buy operation (for priority fee calculation).
 
         Args:
-            token_info: Token information
             user: User's wallet address
             address_provider: Platform address provider
 
@@ -262,7 +241,6 @@ class InstructionBuilder(ABC):
         """Get list of accounts required for sell operation (for priority fee calculation).
 
         Args:
-            token_info: Token information
             user: User's wallet address
             address_provider: Platform address provider
 

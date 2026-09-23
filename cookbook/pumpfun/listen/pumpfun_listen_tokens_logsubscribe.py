@@ -1,15 +1,12 @@
-"""Listens for new Pump.fun token creations via Solana WebSocket.
-Monitors logs for 'Create' instructions, decodes and prints token details (name, symbol, mint, etc.).
+"""Listen for new pump.fun coins over `logsSubscribe`.
 
 Usage:
     uv run cookbook/pumpfun/listen/pumpfun_listen_tokens_logsubscribe.py
 
-Performance: Usually faster than blockSubscribe, but slower than Geyser.
-
-This script uses logsSubscribe which receives program logs containing event data.
-Event logs include all token fields directly, making parsing simpler and faster than
-decoding full transactions. It also derives each coin's associated bonding curve,
-which is the token account the curve holds its supply in.
+Program logs carry the CreateEvent with every token field in it, so parsing is
+simpler and faster than decoding the full transaction. Usually faster than
+blockSubscribe, slower than Geyser. Also derives each coin's associated bonding
+curve, the token account the curve holds its supply in.
 
 WebSocket API Reference:
 https://solana.com/docs/rpc/websocket/logssubscribe
@@ -61,8 +58,7 @@ CREATE_EVENT_DISCRIMINATOR = bytes([27, 114, 169, 77, 222, 235, 99, 118])
 def print_token_info(
     token_data, signature=None, associated_bonding_curve: str | None = None
 ):
-    """
-    Print token information in a consistent, user-friendly format.
+    """Print token information in a consistent, user-friendly format.
 
     Args:
         token_data: Dictionary containing token fields
@@ -100,8 +96,7 @@ def print_token_info(
 def find_associated_bonding_curve(
     mint: Pubkey, bonding_curve: Pubkey, token_standard: str
 ) -> Pubkey:
-    """
-    Derive the associated token account the bonding curve holds its supply in.
+    """Derive the associated token account the bonding curve holds its supply in.
 
     ATA derivation: find_program_address(
         [bonding_curve, token_program_id, mint], associated_token_program_id
@@ -109,7 +104,6 @@ def find_associated_bonding_curve(
 
     Args:
         mint: The token mint pubkey
-        bonding_curve: The bonding curve pubkey
         token_standard: "token2022" for create_v2 coins, anything else for legacy
 
     Returns:
@@ -128,8 +122,7 @@ def find_associated_bonding_curve(
 
 
 def parse_create_instruction(data):
-    """
-    Parse CreateEvent data from legacy Create instruction (Metaplex tokens).
+    """Parse CreateEvent data from legacy Create instruction (Metaplex tokens).
 
     Event logs contain all fields directly embedded in the event data, unlike
     instruction data which requires account lookup. Event format:

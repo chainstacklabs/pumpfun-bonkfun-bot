@@ -1,6 +1,4 @@
-"""
-Wallet management for Solana transactions.
-"""
+"""Wallet management for Solana transactions."""
 
 import base58
 from solders.keypair import Keypair
@@ -40,9 +38,6 @@ class Wallet:
         Args:
             mint: Token mint address
             token_program_id: Token program (TOKEN or TOKEN_2022). Defaults to TOKEN_2022_PROGRAM
-
-        Returns:
-            Associated token account address
         """
         if token_program_id is None:
             token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
