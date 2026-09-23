@@ -16,8 +16,8 @@ connection whose frame state was now corrupt, so every later read tripped
 identical ERROR lines, and `_wait_for_token` never returning, so the bot hung
 after detecting a token instead of buying it.
 
-Observed live: a blocks-listener run produced 86 consecutive AssertionErrors
-starting on the line after "Found token", and never exited.
+Observed live: a blocks-listener run produced a continuous stream of
+AssertionErrors starting on the line after "Found token", and never exited.
 
 Offline machine checks, no network and no funds moved. A stub websocket raises
 what the real library raises, against the real listeners:

@@ -8,14 +8,11 @@ Usage:
 The mirror of `pumpfun_buy_token_v2.py`. It reads how many tokens you hold, reads the curve
 for a price, and sells the lot with a slippage floor underneath.
 
-Two things to know before you run it:
+One thing to know before you run it:
 
 - **The floor is yours to set.** `min_sol_output` is computed here from the price
   and the slippage, and the program enforces only that number. Passing a floor
   derived from a stale price is how a sell goes through at a price you did not intend.
-- **A dust position may not be sellable at all.** Below a few thousand tokens the
-  output rounds to zero and the program rejects the sell with error 6003
-  (TooLittleSolReceived), whatever slippage you allow.
 """
 
 import argparse

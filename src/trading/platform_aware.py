@@ -70,9 +70,8 @@ async def _read_pool_state_with_retry(
     can momentarily serve a slot that predates it — both surface as "account
     not found". Reading at `processed` and retrying costs a handful of RPC
     calls, which is far cheaper than trading on stale account data. Issue #170
-    measured individual reads on a load-balanced endpoint lagging several
-    seconds behind a fast listener, hence a time budget rather than a fixed
-    attempt count.
+    found individual reads on a load-balanced endpoint lagging well behind a
+    fast listener, hence a time budget rather than a fixed attempt count.
 
     When `mint` is given and the curve manager supports it, the curve and the
     mint are read in one slot-consistent batch so the mint's owning token

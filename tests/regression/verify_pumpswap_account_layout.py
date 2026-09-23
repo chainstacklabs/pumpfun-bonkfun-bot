@@ -12,8 +12,8 @@ The pair is read *positionally* from the end, and `pool-v2` only belongs to a
 `Pubkey::default()` otherwise (upstream PUMP_SWAP_CREATOR_FEE_README.md). Sending
 `pool-v2` on a non-canonical pool shifts the pair by one, so the program reads the
 pool-v2 PDA as the buyback recipient and rejects it with
-`BuybackFeeRecipientNotAuthorized` (6053). That was every non-canonical pool: 5 of
-5 sampled failed before the fix, 10 of 10 simulate cleanly after it (2026-09-23).
+`BuybackFeeRecipientNotAuthorized` (6053). That was every non-canonical pool
+before the fix; they simulate cleanly after it.
 
 Unblocking those pools then exposed a second bug they had been hiding. The scripts
 hardcoded `TOKEN_DECIMALS = 6`, "standard for most pump.fun tokens" — true for

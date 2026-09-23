@@ -183,9 +183,8 @@ class UniversalBlockListener(BaseTokenListener):
                             # live since epoch 1035, 2026-09-15. A version the
                             # subscription does not accept does not just skip
                             # that transaction: the RPC nulls out `value.block`
-                            # for the whole frame. Measured against mainnet on
-                            # 2026-09-16, 60s each: `0` delivered 1 block and
-                            # 177 nulls, `1` delivered 78 blocks and no nulls.
+                            # for the whole frame, leaving this listener
+                            # almost entirely blind.
                             "maxSupportedTransactionVersion": 1,
                         },
                     ],

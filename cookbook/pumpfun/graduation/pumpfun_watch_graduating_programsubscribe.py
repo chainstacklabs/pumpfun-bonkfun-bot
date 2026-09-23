@@ -69,32 +69,26 @@ elsewhere) returned 256 bytes, discriminator matching, owned by the pump
 program, and it decoded cleanly through this repo's own IDL-driven decoder
 (`PumpFunCurveManager._decode_curve_state_with_idl`) with sane reserves —
 everything past the documented fields is zero padding. Second, over the
-wire: a 120s `programSubscribe` window with this script's own filters
-(discriminator + `complete = false`, no `dataSize`) took in 1,066 updates —
-207 at 125 bytes, 853 at 151, and 6 at that same 256 length, among ordinary
-traffic. None of the 1,066 were the legacy 49-byte layout (no `creator`
-field). UNVERIFIED: whether that layout still has any `complete = false`
-accounts left on chain, and whether anything still writes to them — not
-re-measured here.
+wire: a `programSubscribe` window with this script's own filters
+(discriminator + `complete = false`, no `dataSize`) saw all three lengths —
+125, 151 and that same 256 — among ordinary traffic, the 256 being rare.
+Nothing in it was the legacy 49-byte layout (no `creator` field).
+UNVERIFIED: whether that layout still has any `complete = false` accounts
+left on chain, and whether anything still writes to them — not re-measured
+here.
 
-**Bandwidth trade-off, measured 2026-09-15.** A first attempt ran the
-`dataSize`-filtered shape and the unfiltered shape back to back, 90s each,
-and looked like unfiltered cost *less* (0.68x) — that was noise: pump.fun
-trading volume swings a lot minute to minute, and two sequential windows just
-land on different volume. Rerun with all three filter groups (`dataSize
-125`, `dataSize 151`, and no `dataSize`) subscribed **simultaneously on one
-connection**, so all three watch the identical trade stream over the same
-120s: the two enumerated lengths together took in 1,060 updates / 589,279
-bytes; the unfiltered subscription took in 1,066 updates / 593,509 bytes —
-6 extra updates, 4,230 extra bytes, all of it the 256-byte curve neither
-enumerated length can match. That is a **1.006x update ratio / 1.007x byte
-ratio** — under 1% either way, not the double subscription's worth intuition
-might suggest, because in this trade window virtually every update already
-lands on one of the two dataSize-filtered lengths (125 or 151), and 256 is
-rare. Dropping the filter is effectively free here; if a resize-happy period
-ever shifts that mix, the cost scales with however much traffic sits outside
-the two filtered lengths (125/151, i.e. the rarer 256-byte curves and
-beyond), not with total volume.
+**Bandwidth trade-off.** A first attempt ran the `dataSize`-filtered shape
+and the unfiltered shape back to back and made unfiltered look *cheaper* —
+that was noise: pump.fun trading volume swings a lot minute to minute, and
+two sequential windows just land on different volume. Rerun with all three
+filter groups (`dataSize 125`, `dataSize 151`, and no `dataSize`) subscribed
+**simultaneously on one connection**, so all three watch the identical trade
+stream: the unfiltered subscription cost barely more than the two enumerated
+lengths together, and the difference was entirely the 256-byte curve neither
+enumerated length can match. Dropping the filter is effectively free here,
+because virtually every update already lands on 125 or 151 and 256 is rare;
+if a resize-happy period ever shifts that mix, the cost scales with however
+much traffic sits outside the two filtered lengths, not with total volume.
 
 UNVERIFIED: a curve was once observed going from 125 to 151 bytes, with
 several 125-byte trades logged in between, suggesting `extend_account` ran as
