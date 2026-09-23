@@ -95,7 +95,7 @@ filters:
   # Solana transaction v1 (live since 2026-09-15), against near-complete
   # coverage of v0 creates. Nothing in this repo can recover those — the
   # coin is simply never pushed. Use "geyser" or "logs" if you need every
-  # coin; see learning-examples/verify_transaction_v1.py.
+  # coin; see tests/regression/verify_transaction_v1.py.
   listener_type: "pumpportal" # Method for detecting new tokens: "logs", "blocks", "geyser", or "pumpportal"
   max_token_age: 0.001 # Maximum token age in seconds for processing
   marry_mode: false # Only buy tokens, skip selling

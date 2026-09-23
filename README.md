@@ -8,11 +8,11 @@
   • <a target="_blank" href="https://chainstack.com/">Homepage</a> •
   <a target="_blank" href="https://chainstack.com/protocols/">Supported protocols</a> •
   <a target="_blank" href="https://chainstack.com/blog/">Chainstack blog</a> •
-  <a target="_blank" href="https://docs.chainstack.com/quickstart/">Blockchain API reference</a> • <br> 
+  <a target="_blank" href="https://docs.chainstack.com/reference/blockchain-apis">Blockchain API reference</a> • <br> 
   • <a target="_blank" href="https://console.chainstack.com/user/account/create">Start for free</a> •
 </p>
 
-A Solana trading bot for **pump.fun** and **letsbonk.fun**. Its core feature is sniping new tokens: it watches for token creation, buys, and exits on a strategy you configure. `learning-examples/` contains standalone scripts covering every piece of the flow — listeners, price math, manual buys and sells — useful on their own even if you never run the bot.
+A Solana trading bot for **pump.fun** and **letsbonk.fun**. Its core feature is sniping new tokens: it watches for token creation, buys, and exits on a strategy you configure. [`cookbook/`](cookbook/) holds one standalone script per action — buy a coin, create one, watch for new ones, decode a transaction — useful on their own even if you never run the bot.
 
 For the full walkthrough, see [Solana: Creating a trading and sniping pump.fun bot](https://docs.chainstack.com/docs/solana-creating-a-pumpfun-bot). It explains the concepts well but lags behind the code, so treat this README as the source of truth for setup and configuration.
 
@@ -122,9 +122,9 @@ fee. The same skip applies to any token whose event data was incomplete.
 pre-buy read for every listener — the safe fallback if pump.fun changes what
 the CreateEvent carries.
 
-Machine checks: `learning-examples/verify_extreme_fast_zero_rpc.py` (the
+Machine checks: `tests/regression/verify_extreme_fast_zero_rpc.py` (the
 zero-RPC contract per listener) and
-`learning-examples/verify_pumpportal_buy_path.py` (the refresh/skip path).
+`tests/regression/verify_pumpportal_buy_path.py` (the refresh/skip path).
 Neither moves funds.
 
 ### Non-SOL quote assets
@@ -143,50 +143,81 @@ filters:
 
 Keys accept the aliases `sol` / `wsol` / `usdc` or a raw base58 mint. A coin whose quote mint has no configured amount is skipped with a log line rather than bought with a wrongly-scaled amount. SOL always falls back to `buy_amount`, so existing configs keep working untouched. Buying a USDC-paired coin needs USDC in the wallet plus a little SOL for fees and ATA rent.
 
-## Learning examples
+## Cookbook
 
-Standalone scripts, runnable with `uv run <path>`. No bot config needed — they read `.env` directly.
+[`cookbook/`](cookbook/) is one script per thing you might want to do — buy a coin,
+create one, watch for new ones, decode a transaction. Each runs on its own with
+`uv run <path>`, reads `.env` directly, and needs no bot config.
+[`cookbook/README.md`](cookbook/README.md) is the index; the shape is:
 
-| Path | What it covers |
+| Directory | What is in it |
 |---|---|
-| `listen-new-tokens/` | One listener per method (`logs`, `blocks`, `geyser`, `pumpportal`) plus `compare_listeners.py` to race them |
-| `listen-migrations/` | Detect a token graduating from the bonding curve to PumpSwap, via the migration wrapper program or new pool accounts |
-| `bonding-curve-progress/` | Curve state, progress polling, and a live watch for coins close to graduating — over WebSocket (`get_graduating_tokens.py`) or Geyser (`get_graduating_tokens_geyser.py`), both taking `--min-progress` |
-| `pumpswap/` | Manual buy/sell against the PumpSwap AMM, and pool discovery |
-| `letsbonk-buy-sell/` | Manual exact-in / exact-out buys and sells on letsbonk.fun |
-| `copy-trading/` | Watch another wallet's transactions |
-| `manual_buy.py`, `manual_sell.py`, `fetch_price.py` | The minimal pump.fun trade and price path. `manual_buy.py --cu-optimized` adds a `SetLoadedAccountsDataSizeLimit` instruction |
-| `mint_and_buy_v2.py` | Create a coin and buy it in one go |
-| `decode_from_*.py`, `calculate_discriminator.py` | Decoding account data, transactions, and Anchor discriminators |
-| `cleanup_accounts.py` | Close leftover empty token accounts |
+| `cookbook/pumpfun/listen/` | One script per detection method — `logs`, `blocks`, `geyser`, `pumpportal` — plus wallet watching |
+| `cookbook/pumpfun/read/` | Price, curve state, graduation progress, address derivation |
+| `cookbook/pumpfun/trade/` | Buy, sell, create, and the two sniping variants |
+| `cookbook/pumpfun/graduation/` | Coins approaching graduation, and migrations to PumpSwap |
+| `cookbook/pumpfun/decode/` | Account data and transactions, against committed fixtures |
+| `cookbook/solana/` | Chain-level basics: balances, transaction status, Anchor discriminators |
+| `cookbook/pumpswap/` | Pool discovery and manual buy/sell on the AMM |
+| `cookbook/letsbonk/` | Exact-in / exact-out buys and sells on letsbonk.fun |
+| `cookbook/legacy/` | Instructions pump.fun has moved on from |
 
-Most of these take the mint or curve address as the first argument, and print usage if
-you leave it off. The `decode_from_*.py` scripts fall back to the saved fixtures beside
-them (`raw_*.json`), which are recaptured from mainnet rather than hand-edited — a
-stale fixture makes a working decoder look broken and a broken one look fine.
-
-Four examples double as verification scripts to run after any pump.fun program upgrade:
+The quickest way in:
 
 ```bash
-uv run learning-examples/verify_v2_account_layout.py     # offline: account layouts, PDAs, encoding
-uv run learning-examples/verify_curve_account_sizes.py   # offline: 125/151/256-byte curves all decode
-uv run learning-examples/simulate_v2_trades.py <MINT>    # mainnet simulation, no funds moved
-uv run learning-examples/verify_tx_status_checks.py      # offline: every example checks meta.err
+uv run cookbook/solana/solana_read_balances.py               # what you hold
+uv run cookbook/pumpfun/read/pumpfun_read_price.py <CURVE>   # what it costs
+uv run cookbook/pumpfun/trade/pumpfun_buy_token_v2.py <MINT> --dry-run
 ```
 
+Filenames follow `<protocol>_<verb>_<noun>[_<variant>].py`, so a name tells you which
+chain, what it does and which instruction version before you open it. Scripts that
+spend real funds say so on the first line of their docstring. The decode scripts fall
+back to the fixtures beside them (`raw_*.json`), which are recaptured from mainnet
+rather than hand-edited — a stale fixture makes a working decoder look broken and a
+broken one look fine.
+
 Related docs: [Listening to pump.fun migrations](https://docs.chainstack.com/docs/solana-listening-to-pumpfun-migrations-to-raydium) · [Sniping with only logsSubscribe](https://docs.chainstack.com/docs/solana-listening-to-pumpfun-token-mint-using-only-logssubscribe)
+
+## Regression checks
+
+`tests/regression/` holds one offline script per bug that has been fixed here. They
+import the bot's own code, move no funds, and each one's docstring names the bug it
+guards. Run them after any pump.fun program upgrade or change to `src/`:
+
+```bash
+uv run tests/regression/run_all.py                      # the whole set
+uv run tests/regression/verify_v2_account_layout.py     # account layouts, PDAs, encoding
+uv run tests/regression/verify_curve_account_sizes.py   # 125/151/256-byte curves all decode
+uv run tests/regression/verify_tx_status_checks.py      # every path reads meta.err
+```
+
+## Development tools
+
+`tools/` holds the scripts used to exercise the bot rather than teach it. They import
+`src/` and several of them spend real funds — read the module docstring first.
+
+```bash
+uv run tools/simulate_v2_trades.py <MINT>    # mainnet simulation, no funds moved
+uv run tools/simulate_bot_buy_path.py        # the bot's buy path against a fresh coin, no funds moved
+uv run tools/compare_listeners.py            # race all four listeners against each other
+uv run tools/compare_migration_listeners.py  # race the two migration detection methods
+uv run tools/cleanup_accounts.py [MINT]      # close leftover token accounts — submits transactions
+uv run tools/live_v2_round_trip.py --yes     # real buy_v2 + sell_v2 — SPENDS REAL FUNDS
+uv run tools/live_listener_matrix.py --yes   # real round trip per listener — SPENDS REAL FUNDS
+```
 
 ## Throughput and rate limits
 
 Every node provider has its own limits — method availability, requests per second, plan-specific caps. Consult your provider's docs before running the bot, and don't expect public RPC nodes to hold up.
 
-One case worth knowing about: `getProgramAccounts` over the whole pump.fun program is no longer served by anyone. That program owns more than 10 million accounts, so providers reject the request or time out no matter which filters you pass. Use a filtered subscription instead — `bonding-curve-progress/get_graduating_tokens.py` shows the pattern.
+One case worth knowing about: `getProgramAccounts` over the whole pump.fun program is no longer served by anyone. That program owns more than 10 million accounts, so providers reject the request or time out no matter which filters you pass. Use a filtered subscription instead — `cookbook/pumpfun/graduation/pumpfun_watch_graduating_programsubscribe.py` shows the pattern.
 
 For Chainstack, the numbers you need are in the [throughput guidelines](https://docs.chainstack.com/docs/limits), kept up to date.
 
 The bot rate-limits itself with a token bucket: `node.max_rps` in the YAML (25 by default) smooths the request rate while allowing short bursts, and 429s are retried with exponential backoff.
 
-For faster execution, Chainstack offers [Solana Trader nodes](https://docs.chainstack.com/docs/trader-nodes) for transaction propagation and the [Yellowstone gRPC Geyser plugin](https://docs.chainstack.com/docs/yellowstone-grpc-geyser-plugin) for streaming updates.
+For faster execution, Chainstack offers [Solana Trader nodes](https://docs.chainstack.com/docs/solana-trader-nodes) for transaction propagation and the [Yellowstone gRPC Geyser plugin](https://docs.chainstack.com/docs/yellowstone-grpc-geyser-plugin) for streaming updates.
 
 ## IDLs
 

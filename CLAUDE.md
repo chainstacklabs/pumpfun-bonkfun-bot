@@ -6,27 +6,42 @@ Solana trading bot for pump.fun and letsbonk.fun. Snipes newly created tokens an
 
 ## Ground rules
 
-- **Never run a bot with real funds** to test a change. Use `learning-examples/`, or the simulation scripts below, which move no funds.
+- **Never run a bot with real funds** to test a change. Use `cookbook/`, or the simulation scripts below, which move no funds.
 - **Never** touch `.env` or print its contents. `SOLANA_PRIVATE_KEY` is a live key.
 - Don't commit anything from `logs/`.
-- Test with a learning example before touching `src/`.
+- Test with a cookbook script before touching `src/`.
 
 ## Layout
 
 ```
-src/            bot source — this dir is the import root (see below)
-learning-examples/   standalone scripts; each runs on its own, no bot config
-bots/           one YAML per bot instance
-idl/            vendored Anchor IDLs
-logs/           {bot_name}_{timestamp}.log
+src/                 bot source — this dir is the import root (see below)
+cookbook/            standalone scripts; each runs on its own, no bot config
+  solana/            chain-level basics + solana_transaction_status.py
+  pumpfun/{listen,read,trade,graduation,decode}/
+    trade/pumpfun_instructions_v2.py   buy_v2/sell_v2 layouts, by their callers
+  pumpswap/  letsbonk/  legacy/
+tests/regression/    one offline verifier per fixed bug; imports src/
+tools/               dev harness — simulations, live round trips, benchmarks
+bots/                one YAML per bot instance
+idl/                 vendored Anchor IDLs
+logs/                {bot_name}_{timestamp}.log
 ```
 
 **Imports are rooted at `src/`, not at the repo.** `uv pip install -e .` puts
 `src/` itself on `sys.path`, so it is `from core.client import SolanaClient` and
-`from utils.logger import get_logger` — **not** `from src.core...`. Learning
-examples are deliberately self-contained: they import siblings like `pump_v2`
-and `tx_status` as top-level modules and mostly don't import from `src` at all.
-Don't "fix" an example by rewiring it to import the bot.
+`from utils.logger import get_logger` — **not** `from src.core...`. Cookbook
+scripts are deliberately self-contained and don't import from `src` at all.
+Don't "fix" one by rewiring it to import the bot — that is what `tools/` is for.
+
+Two helpers are exempt, because both are things that must never drift between
+copies. `cookbook/solana/solana_transaction_status.py` (the `meta.err` check) is
+used by every platform, so it sits with the other chain-level scripts.
+`cookbook/pumpfun/trade/pumpfun_instructions_v2.py` (the buy_v2/sell_v2 account
+layouts) sits with its only callers, who import it as a plain sibling; `legacy/`
+reaches into that directory for it. Both are imported under a short alias
+(`as pump_v2`, `as tx_status`) so call sites stay readable. A script that needs
+one adds that directory to `sys.path` first; the geyser scripts add the repo root
+too, for `src.geyser.generated`.
 
 Dependency layers, low to high — don't introduce an upward import:
 
@@ -43,26 +58,58 @@ registry in `platforms/__init__.py`. Listeners and the trader are
 platform-agnostic (`Universal*`); anything platform-shaped belongs under
 `platforms/<name>/`.
 
-### Naming inside `learning-examples/`
+### What belongs in `cookbook/`
 
-- **Directories are kebab-case** (`bonding-curve-progress`, `listen-new-tokens`,
-  `copy-trading`). A single-token product name stays one word (`pumpswap`).
-- **Files are snake_case, verb first** — `fetch_price.py`, `decode_from_*.py`,
-  `extract_blocksubscribe_transactions.py`, `verify_*.py`, `simulate_*.py`.
-  Exceptions are the shared helper modules `pump_v2.py` and `tx_status.py`, which
-  are libraries rather than runnable scripts.
+- **One script, one action.** A newcomer should be able to open a single file and
+  see the whole thing. Duplication across scripts is the accepted cost of that —
+  don't factor shared helpers out of them. `pumpfun_instructions_v2.py` and
+  `solana_transaction_status.py` are the two deliberate exceptions and the list is
+  closed. Buy and sell never share a file; `pumpfun_create_and_buy_token_v2.py` is
+  the sole two-action script, because that pair is what people ask for.
+- **Every script runs on its own**: `uv run cookbook/<path>`, reading `.env`. No
+  bot config, no import from `src/`. Anything that needs the bot goes in `tools/`;
+  anything that asserts a past bug stays fixed goes in `tests/regression/`.
+- **Directories are single lowercase words** grouped by what you are doing —
+  `listen`, `read`, `trade`, `graduation`, `decode` — under a platform directory.
+- **Files are `<protocol>_<verb>_<noun>[_<variant>].py`**, all snake_case:
+  `pumpfun_buy_token_v2.py`, `pumpfun_listen_tokens_geyser.py`,
+  `letsbonk_sell_token_exact_out.py`, `solana_read_balances.py`. The protocol
+  repeats what the directory already says, on purpose — a basename is what shows
+  up in an editor tab, a grep hit or a docs link.
+  - protocol: `pumpfun`, `pumpswap`, `letsbonk`, `solana`, `anchor`
+  - verb: `buy`, `sell`, `create`, `snipe`, `listen`, `watch`, `read`, `derive`,
+    `decode`, `check`, `capture`, `find`
+  - noun: `token`, `price`, `curve`, `pool`, `balances`, `transaction`, `migrations`
+  - variant: instruction version (`v1`, `v2`, `exact_in`, `exact_out`) or transport
+  - the two non-runnable helpers take no verb, because they do nothing:
+    `pumpfun_instructions_v2.py`, `solana_transaction_status.py`
 - **RPC and service names are lowercased into one token**, never camelCase:
   `blocksubscribe`, `logsubscribe`, `programsubscribe`, `getaccountinfo`,
-  `gettransaction`, `pumpportal`. So `decode_from_gettransaction.py`, not
-  `decode_from_getTransaction.py`.
-- Fixtures are `raw_<what>_from_<method>.json` next to the script that reads
-  them, under the same rules.
-- `simulate_*` and `verify_*` never move funds — that half of the naming is
-  load-bearing and machine-checked. The inverse is **not** true: `live_*` is not
-  the only prefix that spends. `manual_*` (including the `pumpswap/` and
-  `letsbonk-buy-sell/` ones), `mint_and_buy*` and `cleanup_accounts.py` all
-  submit real transactions. Read the module docstring before running anything
-  that is not `simulate_*` or `verify_*`.
+  `gettransaction`, `pumpportal`. So `pumpfun_decode_transaction_gettransaction.py`,
+  not `..._getTransaction.py`.
+- **Anything not specific to a launchpad belongs under `solana/`**, not `pumpfun/`.
+- **Input is a command-line argument, never a constant you edit.** Every script
+  builds an `ArgumentParser` in `main()`: required values are positionals, tunables
+  are `--options`, and anything the caller varies per run — mint, wallet, amount,
+  slippage, fixture path — is one of them. Constants named `DEFAULT_*` supply the
+  defaults and are the only place a literal belongs.
+  - A placeholder is not a default. `TOKEN_MINT = "..."` reads as optional but
+    `Pubkey.from_string("...")` raises at import, so the script dies before
+    printing its own usage. Nine scripts did this.
+  - Don't read config from environment variables either — `.env` is for
+    endpoints and keys, not for trade parameters no usage line mentions.
+  - `sys.argv` never appears at module level. The seven listeners take no input
+    at all and are exempt; they are listed in the verifier.
+- Fixtures keep their own form, `raw_<what>_from_<method>.json`, next to the script
+  that reads them.
+- **Cite a URL only after checking it resolves.** Three rotted unnoticed by
+  2026-09-22 — Anchor restructured its docs and two Chainstack pages moved.
+  `uv run tests/regression/verify_documentation_links.py --live` fetches every URL
+  in the repo; run it when adding one.
+- **A script that spends says so on the first line of its docstring**, and the
+  cookbook README marks it. The name is not a safety signal: every `*_buy_*`,
+  `*_sell_*`, `*_create_*` and `*_snipe_*` script submits real transactions. Read
+  the docstring before running anything.
 
 ## Commands
 
@@ -97,21 +144,22 @@ is protoc — needed only to regenerate the `geyser_pb2` stubs in
 `src/geyser/generated/` from `src/geyser/proto/`, never at runtime. That is the
 **only** copy: the geyser examples reach it by putting the repo root on
 `sys.path` and importing `src.geyser.generated`. Don't add a second copy under
-`learning-examples/` — the last one drifted out of sync with the protos.
+`cookbook/` — the last one drifted out of sync with the protos.
 
 ### Verifying a change
 
-Every fix here ships with an offline verifier under `learning-examples/`. Each
+Every fix here ships with an offline verifier under `tests/regression/`. Each
 script's docstring carries the bug it guards and the checks it runs — read that
 before touching the code it covers, and run the ones your change reaches. None of
-them move funds.
+them move funds. `uv run tests/regression/run_all.py` runs the whole set, or
+name individual scripts to run a subset.
 
 | Script | Checks |
 |---|---|
 | `verify_v2_account_layout.py` | buy_v2/sell_v2 account layouts, PDA/ATA derivations, encoding — against `idl/pump_fun_idl.json` |
 | `verify_curve_account_sizes.py` | 125/151/256-byte curves all decode, and nothing filters on account length |
 | `verify_create_v2_optional_args.py` | omitted trailing option-typed `create_v2` args decode as unset; mandatory args still fail |
-| `verify_transaction_v1.py` | every reader asks `maxSupportedTransactionVersion: 1`, and a v1 `create_v2` is detected without decoding its envelope |
+| `verify_transaction_v1.py` | every reader asks `maxSupportedTransactionVersion: 1`, a v1 `create_v2` is detected without decoding its envelope, and no cookbook/tools listener detects by opening the envelope |
 | `verify_block_null_guard.py` | a `blockSubscribe` frame with `value.block: null` is skipped, not logged as an error |
 | `verify_listener_cancellation.py` | a cancelled WebSocket listener stops, even when `websockets` reports cancellation as `AssertionError` |
 | `verify_pumpportal_buy_path.py` | curve derived from the mint, unreadable curve skips the buy, curve+mint read in one slot-consistent batch |
@@ -124,12 +172,15 @@ them move funds.
 | `verify_time_exit_without_price.py` | `max_hold_time` still fires when every price read fails |
 | `verify_exit_sell_confirmation.py` | an exit sell is retried only when retrying is provably safe |
 | `verify_rpc_deadline.py` | `post_rpc` bounds wall time, not just attempts (virtual clock) |
+| `verify_quote_decimals_resolved.py` | no trade path prices a coin before resolving its quote mint's decimals |
+| `verify_cookbook_arguments.py` | every cookbook script takes its input as a command-line argument |
+| `verify_documentation_links.py` | no known-dead URL is back; `--live` fetches every one and fails on 4xx/5xx |
 
 Two mainnet simulations, also no funds moved:
 
 ```bash
-uv run learning-examples/simulate_v2_trades.py <MINT>   # buy_v2/sell_v2 for one coin, reports CU
-uv run learning-examples/simulate_bot_buy_path.py       # the bot's whole buy path, fresh coin
+uv run tools/simulate_v2_trades.py <MINT>   # buy_v2/sell_v2 for one coin, reports CU
+uv run tools/simulate_bot_buy_path.py       # the bot's whole buy path, fresh coin
 ```
 
 After any pump.fun program upgrade run `verify_v2_account_layout`,
@@ -148,9 +199,17 @@ The reasoning behind each lives in the verifier named beside it.
   `blockSubscribe` for `0` does not skip the v1 transactions in a block, it nulls
   `value.block` for the entire notification — indistinguishable from a skipped
   slot, and a near-total outage of the blocks listener. Send `1` everywhere.
-- solders 0.26 cannot deserialize a v1 transaction and does not need to: route on
-  `meta.logMessages`, keep the byte decode as a fallback. solders ≥0.28 is gated
-  behind `solana==0.36.6` pinning `solders<0.27` — **not** a fix for a listener.
+- solders cannot deserialize a v1 transaction until **0.29**, and a listener
+  should not depend on that either way: route on `meta.logMessages`, which the
+  RPC has already decoded and which reads the same for every version, and keep
+  the byte decode as a fallback. Measured across versions on 2026-09-22 with the
+  committed v1 fixture: 0.26, 0.27.1 and 0.28 all raise `ValueError: io error:
+  unexpected end of file`; 0.29 decodes it.
+- **Upgrading to solders 0.29 is a solana-py migration, not a bump.** It needs
+  `solana>=0.40`, which moved `TxOpts`, `MemcmpOpts` and `TokenAccountOpts` out
+  of `solana.rpc.types` (`TxOpts` is now `TxOptsModel` in `solana.rpc.core`) —
+  22 files here import them, including the trade path. Tried and reverted:
+  16 of 19 verifiers failed on the import alone. Route on logs instead.
 - The bot still **sends** legacy transactions. Everything above is about reading
   other people's, so the v1 cutover changed nothing on the trade path.
 - `post_rpc` must catch `asyncio.TimeoutError` alongside `aiohttp.ClientError` —
@@ -166,6 +225,14 @@ The reasoning behind each lives in the verifier named beside it.
 
 **Buying**
 
+- **Resolve a coin's quote mint before pricing or sizing anything.**
+  `resolve_quote_token_program` returns the token program and caches the mint's
+  decimals off the same read; `quote_units` raises rather than guessing, because
+  a wrong power of ten inflates the price *and* the slippage cap in the same
+  direction, so they compound into an overspend instead of cancelling. pump.fun's
+  `QuoteControl` registry (PDA `["quote-control"]`) admits mints at 6, 8 and 9
+  decimals — 79 of the 170 admitted on 2026-09-22 are tokenized equities, and
+  coins paired with them trade live (8 of 124 curves in a 75s sample that day).
 - `trade.curve_refresh_budget` (seconds, default 2.0) bounds the pre-buy curve
   read in `extreme_fast_mode`; when it expires the token is **skipped**, because a
   buy built from listener-guessed defaults reverts with `NotAuthorized` (6000),
@@ -206,12 +273,12 @@ The reasoning behind each lives in the verifier named beside it.
 
 ### Listener and decoder pitfalls
 
-Each of these was a live bug in `learning-examples/`, all of them invisible
+Each of these was a live bug in the cookbook scripts, all of them invisible
 offline and only visible after a couple of minutes against mainnet.
 
 - **A `while True: recv()` loop must break out on `websockets.ConnectionClosed`.**
   Catching it in a broad `except Exception` that only logs makes the next `recv()`
-  raise immediately, forever: `listen-new-tokens/compare_listeners.py` produced **13,090,862 error
+  raise immediately, forever: `tools/compare_listeners.py` produced **13,090,862 error
   lines / 888 MB in 150 s** and never reached its own 30-second report. The outer
   reconnect handler with its `sleep` is unreachable in that shape. A narrow
   `except TimeoutError` or `except json.JSONDecodeError` is fine to swallow —
@@ -246,7 +313,8 @@ offline and only visible after a couple of minutes against mainnet.
   `limit` is a *scan* budget rather than a result count — a page can legally
   return zero accounts and a non-null `paginationKey`, so one filtered answer over
   the pump program costs ~1000 sequential pages. Reach for a filtered
-  subscription instead; see the two `get_graduating_tokens*.py` examples.
+  subscription instead; see the two
+  `cookbook/pumpfun/graduation/pumpfun_watch_graduating_*.py` examples.
 - **Filtered `programSubscribe` on the pump program is the portable way to find
   curves by state.** `dataSize` + `memcmp` are applied server-side, and it is
   accepted even by the public `api.mainnet-beta.solana.com`. `memcmp` only matches
@@ -310,7 +378,7 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   quote mint it's paired with, mayhem or not, cashback or not. `sell_v2` is
   `buy_v2` minus `global_volume_accumulator`. Layouts live in `_BUY_V2_ACCOUNTS` /
   `_SELL_V2_ACCOUNTS` in `platforms/pumpfun/instruction_builder.py` and are
-  machine-checked against the IDL by `learning-examples/verify_v2_account_layout.py`.
+  machine-checked against the IDL by `tests/regression/verify_v2_account_layout.py`.
 - v2 args carry **no `track_volume` OptionBool** (24-byte data: discriminator +
   two u64). Volume tracking is unconditional now that `user_volume_accumulator`
   is mandatory. `max_sol_cost`/`min_sol_output` are in the **quote mint's** raw
@@ -343,7 +411,7 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   | 151 bytes | The old allocation size; still reachable via `extend_account` |
   | 256 bytes | A rarer `extend_account` target, confirmed live 2026-09-15 |
 
-  `learning-examples/verify_curve_account_sizes.py` checks that all three
+  `tests/regression/verify_curve_account_sizes.py` checks that all three
   decode correctly and that the graduating-token examples don't filter on
   account length.
 - The SOL-named fields were **renamed**: `virtual_sol_reserves` →
@@ -392,7 +460,7 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   fixed number of trailing bytes raises `IndexError` on the shorter forms.
   Decode trailing args defensively and report a missing one as unset —
   `utils/idl_parser.py` does this for trailing option-typed args since #184
-  (`uv run learning-examples/verify_create_v2_optional_args.py` checks it).
+  (`uv run tests/regression/verify_create_v2_optional_args.py` checks it).
 - `create_v2` accounts 1-16 are in the IDL; accounts **17-19 are optional
   remaining accounts** (`quote_mint`, `associated_quote_bonding_curve`,
   `quote_token_program`). All three or none. This is the only way to read a new
@@ -459,7 +527,7 @@ interface pump.fun maintains.
   #200), so only `mint` and `traderPublicKey` are required; everything else the
   trade path needs is derived from the mint. Consequence worth knowing:
   `filters.match_string` matches on name/symbol, so it can never match a bonk
-  token from this feed. `learning-examples/verify_pumpportal_bonk_fields.py`
+  token from this feed. `tests/regression/verify_pumpportal_bonk_fields.py`
   checks this against committed fixtures, and `--live` re-checks it against the
   real feed. The bonk **trade** path past detection is still unverified — see
   issue #201.
