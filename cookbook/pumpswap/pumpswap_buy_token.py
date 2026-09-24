@@ -147,6 +147,28 @@ VOLUME_TRACKING_ENABLED = 1  # 1 = true, 0 = false
 # ============================================================================
 
 
+# coin_creator sits after discriminator(8) + pool_bump(1) + index(2) + six
+# pubkeys(192) + lp_supply(8). It is set only on a pool the coin graduated into
+# and left at the default on every other pool, so it is what tells the canonical
+# pool from a copy anyone can open against the same mint.
+POOL_COIN_CREATOR_OFFSET = 211
+
+
+def read_pool_coin_creator(data: bytes) -> Pubkey:
+    """Read a pool account's coin_creator.
+
+    Args:
+        data: Raw pool account data, discriminator included
+
+    Returns:
+        The pubkey, or the default one if the account is too short to hold it
+    """
+    end = POOL_COIN_CREATOR_OFFSET + 32
+    if len(data) < end:
+        return DEFAULT_COIN_CREATOR
+    return Pubkey.from_bytes(data[POOL_COIN_CREATOR_OFFSET:end])
+
+
 async def get_market_address_by_base_mint(
     client: AsyncClient, base_mint_address: Pubkey, amm_program_id: Pubkey
 ) -> Pubkey:
@@ -161,14 +183,35 @@ async def get_market_address_by_base_mint(
         amm_program_id: PUMP AMM program address
 
     Returns:
-        Address of the AMM pool (market) for the token
+        Address of the coin's canonical pool
+
+    Raises:
+        ValueError: If the coin has no canonical pool, or carries more than one
     """
     # MemcmpOpts takes the bytes base58-encoded, which a Pubkey's str already is.
     filters = [MemcmpOpts(offset=POOL_BASE_MINT_OFFSET, bytes=str(base_mint_address))]
     response = await client.get_program_accounts(
         amm_program_id, encoding="base64", filters=filters
     )
-    return response.value[0].pubkey
+
+    canonical = [
+        account.pubkey
+        for account in response.value
+        if read_pool_coin_creator(bytes(account.account.data)) != DEFAULT_COIN_CREATOR
+    ]
+    if not canonical:
+        raise ValueError(
+            f"No canonical PumpSwap pool for {base_mint_address}. "
+            f"{len(response.value)} pool(s) carry this base mint, none of them "
+            f"created by graduation. Pass --pool to trade a specific one."
+        )
+    if len(canonical) > 1:
+        listed = ", ".join(str(pool) for pool in canonical)
+        raise ValueError(
+            f"{len(canonical)} canonical pools for {base_mint_address}: {listed}. "
+            f"Pass --pool to choose one."
+        )
+    return canonical[0]
 
 
 async def get_market_data(client: AsyncClient, market_address: Pubkey) -> dict:
@@ -755,17 +798,20 @@ async def buy_pump_swap(
 # ============================================================================
 
 
-async def buy(token_mint: Pubkey, sol_amount: float, slippage: float) -> None:
+async def buy(
+    token_mint: Pubkey, sol_amount: float, slippage: float, pool: Pubkey | None = None
+) -> None:
     """Execute the complete buy flow.
 
     Args:
         token_mint: The coin to buy
         sol_amount: SOL to spend
         slippage: Maximum acceptable price movement
+        pool: Trade this pool rather than the coin's canonical one
     """
     async with AsyncClient(RPC_ENDPOINT, timeout=120) as client:
         # Step 1: Find the pool address for our token
-        market_address = await get_market_address_by_base_mint(
+        market_address = pool or await get_market_address_by_base_mint(
             client, token_mint, PUMP_AMM_PROGRAM_ID
         )
 
@@ -829,10 +875,24 @@ def main() -> None:
         default=DEFAULT_SLIPPAGE,
         help=f"Maximum acceptable price movement (default {DEFAULT_SLIPPAGE})",
     )
+    parser.add_argument(
+        "--pool",
+        help=(
+            "Trade this pool instead of the coin's canonical one. Needed for a "
+            "pool nobody graduated into, which the default selection refuses."
+        ),
+    )
     args = parser.parse_args()
 
     try:
-        asyncio.run(buy(Pubkey.from_string(args.mint), args.amount, args.slippage))
+        asyncio.run(
+            buy(
+                Pubkey.from_string(args.mint),
+                args.amount,
+                args.slippage,
+                Pubkey.from_string(args.pool) if args.pool else None,
+            )
+        )
     except ValueError as e:
         print(e)
         sys.exit(1)

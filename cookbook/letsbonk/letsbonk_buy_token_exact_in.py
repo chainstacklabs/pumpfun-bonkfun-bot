@@ -60,13 +60,6 @@ RAYDIUM_LAUNCHLAB_PROGRAM_ID = Pubkey.from_string(
     "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj"
 )
 GLOBAL_CONFIG = Pubkey.from_string("6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX")
-# Fallback only. platform_config is NOT the same for every LaunchLab pool:
-# partner launches use their own, and passing the wrong one fails the buy/sell
-# with ConstraintAddress (2012). The live value is read from the pool state
-# below; this constant is only used if the pool omits it.
-LETSBONK_PLATFORM_CONFIG = Pubkey.from_string(
-    "5thqcDwKp5QQ8US4XRMoseGeGbmLKMmoKZmS6zHrQAsA"
-)
 
 # Token program and system addresses
 TOKEN_PROGRAM_ID = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
@@ -454,12 +447,13 @@ async def buy_exact_in(
         # Derive necessary PDAs
         authority = derive_authority_pda()
         event_authority = derive_event_authority_pda()
-        # platform_config varies per pool — take the pool's own value.
-        platform_config = (
-            Pubkey.from_string(pool_state_data["platform_config"])
-            if pool_state_data.get("platform_config")
-            else LETSBONK_PLATFORM_CONFIG
-        )
+        # platform_config varies per pool: partner launches use their own, and
+        # the wrong one fails the trade with ConstraintAddress (2012). There is
+        # no value to fall back to, so a pool that omits it cannot be traded.
+        if not pool_state_data.get("platform_config"):
+            print("Pool state carries no platform_config; cannot build the trade")
+            return None
+        platform_config = Pubkey.from_string(pool_state_data["platform_config"])
         creator_fee_vault = derive_creator_fee_vault(creator, WSOL_MINT)
         platform_fee_vault = derive_platform_fee_vault(
             platform_config, WSOL_MINT
@@ -473,6 +467,13 @@ async def buy_exact_in(
         minimum_amount_out = calculate_minimum_amount_out_from_pool_state(
             pool_state_data, amount_in, slippage_tolerance
         )
+
+        # expected_output is a floor division by the quote reserve, so once the
+        # pool nears graduation an ordinary amount_in floors to zero and the
+        # buy would submit accepting any output at all.
+        if minimum_amount_out is None or minimum_amount_out == 0:
+            print("Failed to calculate minimum amount out or amount is too small")
+            return None
 
         print(f"Amount in: {amount_in} lamports ({amount_in_sol} SOL)")
         print(f"Minimum amount out: {minimum_amount_out}")

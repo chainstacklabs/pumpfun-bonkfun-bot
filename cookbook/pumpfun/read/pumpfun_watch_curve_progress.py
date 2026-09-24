@@ -57,8 +57,9 @@ _LEN_WITH_MAYHEM: Final[int] = 74
 _LEN_WITH_CASHBACK: Final[int] = 75
 _LEN_WITH_QUOTE_MINT: Final[int] = 107
 
-# Only used if the Global account cannot be read: 1B supply less 206.9M reserved.
-FALLBACK_INITIAL_REAL_TOKEN_RESERVES: Final[float] = 793_100_000.0
+_NO_BASELINE_MSG: Final[str] = (
+    "Cannot read initial_real_token_reserves from the pump.fun Global account"
+)
 
 
 async def read_quote_decimals(conn: AsyncClient, quote_mint: Pubkey) -> int:
@@ -157,17 +158,14 @@ def parse_curve_state(data: bytes) -> dict:
         creator_bytes = data[49:81]  # 8 (discriminator) + 41 (base fields) = 49
         result["creator"] = Pubkey.from_bytes(creator_bytes)
 
-    # Parse is_mayhem_mode if present
-    if data_length >= _LEN_WITH_MAYHEM:  # Has mayhem mode field
+    # Both flags are absent from a curve laid out before they were added. Leave
+    # them out of the result rather than reporting an unset field as false.
+    if data_length >= _LEN_WITH_MAYHEM:
         result["is_mayhem_mode"] = bool(data[81])
-    else:
-        result["is_mayhem_mode"] = False
 
-    # Parse is_cashback_coin if present (added in late-Feb 2026 cashback upgrade)
+    # is_cashback_coin arrived with the late-Feb 2026 cashback upgrade.
     if data_length >= _LEN_WITH_CASHBACK:
         result["is_cashback_coin"] = bool(data[82])
-    else:
-        result["is_cashback_coin"] = False
 
     return result
 
@@ -183,17 +181,20 @@ async def fetch_initial_real_token_reserves(client: AsyncClient) -> float:
         client: Connected RPC client
 
     Returns:
-        Initial real token reserves in whole tokens, or the fallback constant
+        Initial real token reserves in whole tokens
+
+    Raises:
+        ValueError: If Global is missing or carries a zero at that offset. The
+            baseline is the 0% mark every progress figure is measured against,
+            so a guessed one misreports every coin the run touches.
     """
-    try:
-        resp = await client.get_account_info(PUMP_GLOBAL, encoding="base64")
-        data = resp.value.data
-        raw = struct.unpack_from("<Q", data, 89)[0]
-        if raw:
-            return raw / 10**TOKEN_DECIMALS
-    except Exception as e:  # noqa: BLE001 - fall back rather than abort the poller
-        print(f"⚠️ Could not read Global, using the fallback baseline: {e}")
-    return FALLBACK_INITIAL_REAL_TOKEN_RESERVES
+    resp = await client.get_account_info(PUMP_GLOBAL, encoding="base64")
+    if resp.value is None or len(resp.value.data) < 89 + 8:
+        raise ValueError(_NO_BASELINE_MSG)
+    raw = struct.unpack_from("<Q", resp.value.data, 89)[0]
+    if not raw:
+        raise ValueError(_NO_BASELINE_MSG)
+    return raw / 10**TOKEN_DECIMALS
 
 
 def print_curve_status(state: dict, baseline: float, quote_unit: int) -> None:

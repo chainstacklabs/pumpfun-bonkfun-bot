@@ -432,14 +432,6 @@ def parse_migrate_instruction(data):
         return None
 
 
-def is_transaction_successful(logs):
-    """Check if a transaction was successful based on log messages"""
-    for log in logs:
-        if "AnchorError thrown" in log or "Error" in log:
-            return False
-    return True
-
-
 # ============ WEBSOCKET LISTENERS ============
 
 
@@ -492,8 +484,12 @@ async def listen_for_migrations(wss_url, provider_name, tracker, known_events=No
                         log_data = data["params"]["result"]["value"]
                         logs = log_data.get("logs", [])
 
-                        # Skip failed transactions
-                        if not is_transaction_successful(logs):
+                        # Skip failed transactions. The notification carries
+                        # `err` alongside the logs; scanning the log text for
+                        # "Error" instead drops any migration whose logs merely
+                        # contain the word, in the tool that exists to measure
+                        # which transport saw what.
+                        if log_data.get("err") is not None:
                             continue
 
                         # Skip if not a Migrate instruction

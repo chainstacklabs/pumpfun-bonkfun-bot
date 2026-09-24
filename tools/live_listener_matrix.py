@@ -18,6 +18,7 @@ Usage:
 """
 
 import asyncio
+import contextlib
 import os
 import sys
 from dataclasses import dataclass, field
@@ -54,7 +55,11 @@ BUY_SLIPPAGE = 0.3
 DETECT_TIMEOUT_SECONDS = 150.0
 # Time to let a close/sell finalize before reading balances or account state.
 SETTLE_SECONDS = 20
-ALL_LISTENERS = ("geyser", "logs", "blocks", "pumpportal")
+# Taken from the factory so a listener added there cannot be silently skipped
+# here while the run still reports every listener passing.
+ALL_LISTENERS = tuple(
+    ListenerFactory.get_platform_compatible_listeners(Platform.PUMP_FUN)
+)
 
 
 @dataclass
@@ -103,7 +108,11 @@ async def detect(listener_type: str) -> TokenInfo | None:
     """Wait for one new pump.fun token from the given listener.
 
     Returns:
-        TokenInfo, or None on timeout
+        TokenInfo, or None if nothing was created before the timeout
+
+    Raises:
+        Exception: Whatever the listener raised, rather than reporting it as
+            an idle market
     """
     listener = make_listener(listener_type)
     seen: list[TokenInfo] = []
@@ -114,12 +123,20 @@ async def detect(listener_type: str) -> TokenInfo | None:
     task = asyncio.create_task(listener.listen_for_tokens(on_token))
     try:
         for _ in range(int(DETECT_TIMEOUT_SECONDS / 0.5)):
-            if seen:
+            if seen or task.done():
                 break
             await asyncio.sleep(0.5)
     finally:
-        task.cancel()
-        await asyncio.sleep(0)
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    # Bad credentials, a dead endpoint and a quiet market all leave `seen`
+    # empty. Re-raise what the listener hit, so the harness that exists to
+    # certify listeners cannot report a broken one as an idle one.
+    if task.done() and not task.cancelled():
+        task.result()
 
     return seen[0] if seen else None
 

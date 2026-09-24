@@ -116,7 +116,6 @@ def decode_create_instruction(data: bytes) -> dict:
         "uri": results[2],
         "creator": creator,
         "token_standard": "legacy",
-        "is_mayhem_mode": False,
     }
 
 
@@ -147,20 +146,23 @@ def decode_create_v2_instruction(data: bytes) -> dict:
     )
     offset += 32
 
-    is_mayhem_mode = bool(data[offset]) if offset < len(data) else False
-    offset += 1
-
-    is_cashback_enabled = bool(data[offset]) if offset < len(data) else False
-
-    return {
+    decoded = {
         "name": results[0],
         "symbol": results[1],
         "uri": results[2],
         "creator": creator,
         "token_standard": "token2022",
-        "is_mayhem_mode": is_mayhem_mode,
-        "is_cashback_enabled": is_cashback_enabled,
     }
+
+    # Both trailing args may be cut off the wire. A missing one is left out, so
+    # the caller can tell "not sent" from a flag that was sent as false.
+    if offset < len(data):
+        decoded["is_mayhem_mode"] = bool(data[offset])
+        offset += 1
+    if offset < len(data):
+        decoded["is_cashback_enabled"] = bool(data[offset])
+
+    return decoded
 
 
 def decode_trade_instruction(data: bytes) -> dict:

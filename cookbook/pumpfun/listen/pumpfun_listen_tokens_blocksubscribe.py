@@ -1,5 +1,6 @@
-"""Listens to Solana blocks for Pump.fun 'create' instructions via WebSocket.
-Decodes transaction data to extract mint, bonding curve, and user details.
+"""Listens to Solana blocks for Pump.fun coin creations via WebSocket.
+Reads each transaction's `meta.logMessages` for the CreateEvent the program
+emits, which carries the mint, bonding curve and creator as literal pubkeys.
 
 Usage:
     uv run cookbook/pumpfun/listen/pumpfun_listen_tokens_blocksubscribe.py
@@ -7,8 +8,10 @@ Usage:
 Performance: Usually slower than other listeners due to block-level processing.
 
 This script uses blockSubscribe which receives entire blocks containing transactions
-that mention the Pump.fun program. It then decodes the instruction data from each
-transaction to extract token creation details.
+that mention the Pump.fun program. Detection routes on the logs rather than the
+transaction envelope: a `create` reached by CPI is in the logs and absent from the
+envelope's top-level instructions. To take an envelope apart, see
+cookbook/pumpfun/decode/pumpfun_decode_transaction_blocksubscribe.py.
 
 WebSocket API Reference:
 https://solana.com/docs/rpc/websocket/blocksubscribe
@@ -23,11 +26,9 @@ import json
 import os
 import struct
 
-import base58
 import websockets
 from dotenv import load_dotenv
 from solders.pubkey import Pubkey
-from solders.transaction import VersionedTransaction
 
 load_dotenv()
 
@@ -38,20 +39,10 @@ WSS_ENDPOINT = os.environ.get("SOLANA_NODE_WSS_ENDPOINT")
 # instead of delivering the message. Same value the bot's own listeners use.
 WEBSOCKET_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
 PUMP_PROGRAM_ID = Pubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")
-TOKEN_PROGRAM = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
 TOKEN_2022_PROGRAM = Pubkey.from_string("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
 ASSOCIATED_TOKEN_PROGRAM = Pubkey.from_string(
     "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
 )
-
-# Instruction discriminators (8-byte identifiers for instruction types)
-# Calculated using the first 8 bytes of sha256("global:create") for legacy Create
-# and sha256("global:createV2") for Token2022 CreateV2
-# See: cookbook/solana/anchor_calculate_discriminator.py
-CREATE_DISCRIMINATOR = 8576854823835016728
-CREATE_V2_DISCRIMINATOR = struct.unpack(
-    "<Q", bytes([214, 144, 76, 236, 95, 139, 49, 180])
-)[0]
 
 
 def print_token_info(token_data, signature=None):
@@ -78,7 +69,7 @@ def print_token_info(token_data, signature=None):
         print(f"Creator:          {token_data['creator']}")
 
     print(f"Token Standard:   {token_data.get('token_standard', 'N/A')}")
-    print(f"Mayhem Mode:      {token_data.get('is_mayhem_mode', False)}")
+    print(f"Mayhem Mode:      {token_data.get('is_mayhem_mode', 'N/A')}")
 
     if "uri" in token_data:
         print(f"URI:              {token_data['uri']}")
@@ -86,48 +77,6 @@ def print_token_info(token_data, signature=None):
         print(f"Signature:        {signature}")
 
     print("=" * 80 + "\n")
-
-
-def get_account_keys(transaction, instruction, loaded_addresses=None):
-    """Safely extract account keys for an instruction from a versioned transaction.
-    Handles both static account keys and loaded addresses from lookup tables.
-
-    Args:
-        loaded_addresses: Dict with 'writable' and 'readonly' loaded addresses from tx meta
-
-    Returns:
-        List of account keys as strings, or None if unable to resolve
-    """
-    account_keys = []
-    static_keys = transaction.message.account_keys
-
-    # Combine all available account keys: static + loaded
-    all_keys = list(static_keys)
-
-    if loaded_addresses:
-        if "writable" in loaded_addresses:
-            for addr in loaded_addresses["writable"]:
-                all_keys.append(Pubkey.from_string(addr))
-
-        if "readonly" in loaded_addresses:
-            for addr in loaded_addresses["readonly"]:
-                all_keys.append(Pubkey.from_string(addr))
-
-    # Now resolve account indices
-    for index in instruction.accounts:
-        try:
-            if index < len(all_keys):
-                account_keys.append(str(all_keys[index]))
-            else:
-                print(
-                    f"Warning: Account index {index} out of range (max: {len(all_keys) - 1})"
-                )
-                return None
-        except (IndexError, Exception) as e:
-            print(f"Error resolving account at index {index}: {e}")
-            return None
-
-    return account_keys
 
 
 # First 8 bytes of sha256("event:CreateEvent"). Anchor emits the event as a
@@ -244,223 +193,38 @@ def find_create_event(logs):
     return None
 
 
-def load_idl(file_path):
-    with open(file_path) as f:
-        return json.load(f)
-
-
-def decode_create_instruction(ix_data, ix_def, accounts):
-    """Decode legacy Create instruction (Metaplex tokens).
-
-    The Create instruction creates tokens using the Metaplex Token Metadata standard.
-    Instruction data contains: name, symbol, uri, and additional creator pubkey.
-    Account references are extracted from the accounts array.
-
-    Args:
-        ix_data: Raw instruction data bytes
-        ix_def: Instruction definition from IDL
-        accounts: List of account pubkeys involved in the instruction
-
-    Returns:
-        Dictionary containing decoded token information
-    """
-    args = {}
-    offset = 8  # Skip 8-byte discriminator
-
-    # Parse instruction arguments according to IDL definition
-    for arg in ix_def["args"]:
-        if arg["type"] == "string":
-            # String format: 4-byte length prefix + UTF-8 encoded string
-            length = struct.unpack_from("<I", ix_data, offset)[0]
-            offset += 4
-            value = ix_data[offset : offset + length].decode("utf-8")
-            offset += length
-        elif arg["type"] == "pubkey":
-            # Pubkey is 32 bytes, encoded as base58
-            value = base58.b58encode(ix_data[offset : offset + 32]).decode("utf-8")
-            offset += 32
-        else:
-            raise ValueError(f"Unsupported type: {arg['type']}")
-
-        args[arg["name"]] = value
-
-    # Extract account addresses from the accounts array
-    # Account layout for Create instruction:
-    # 0: mint, 1: metadata, 2: bondingCurve, 3: associatedBondingCurve,
-    # 4: tokenProgram, 5: systemProgram, 6: rent, 7: user
-    args["mint"] = str(accounts[0])
-    args["bondingCurve"] = str(accounts[2])
-    args["associatedBondingCurve"] = str(accounts[3])
-    args["user"] = str(accounts[7])
-    args["token_standard"] = "legacy"
-    args["is_mayhem_mode"] = False
-
-    return args
-
-
-def decode_create_v2_instruction(ix_data, ix_def, accounts):
-    """Decode CreateV2 instruction (Token2022 tokens).
-
-    The CreateV2 instruction creates tokens using the Token-2022 standard, which supports
-    additional features like transfer fees, interest-bearing tokens, and more.
-    This instruction includes an optional is_mayhem_mode flag.
-
-    Token-2022 Reference:
-    https://spl.solana.com/token-2022
-
-    Args:
-        ix_data: Raw instruction data bytes
-        ix_def: Instruction definition from IDL
-        accounts: List of account pubkeys involved in the instruction
-
-    Returns:
-        Dictionary containing decoded token information
-    """
-    args = {}
-    offset = 8  # Skip 8-byte discriminator
-
-    # create_v2 args: name, symbol, uri, creator (pubkey), is_mayhem_mode (bool),
-    # is_cashback_enabled (OptionBool), creator_fee_bps (OptionU64),
-    # is_holder_reward (OptionBool).
-    #
-    # OptionBool and OptionU64 are single-field Anchor structs with no presence
-    # tag: each serializes as its bare inner value, 1 and 8 bytes. They are
-    # positional rather than independently optional, and the trailing ones are
-    # legally absent from the wire — three lengths occur on chain (no trailing
-    # args, is_cashback_enabled only, is_cashback_enabled plus creator_fee_bps).
-    # An absent arg is reported as None, meaning unset, not as a fabricated
-    # default; reading a fixed number of trailing bytes raises IndexError.
-    for arg in ix_def["args"]:
-        t = arg["type"]
-        if t == "string":
-            length = struct.unpack_from("<I", ix_data, offset)[0]
-            offset += 4
-            value = ix_data[offset : offset + length].decode("utf-8")
-            offset += length
-        elif t == "pubkey":
-            value = base58.b58encode(ix_data[offset : offset + 32]).decode("utf-8")
-            offset += 32
-        elif t == "bool":
-            value = bool(ix_data[offset]) if offset < len(ix_data) else False
-            offset += 1
-        elif isinstance(t, dict) and "defined" in t:
-            defined_name = (
-                t["defined"]["name"] if isinstance(t["defined"], dict) else t["defined"]
-            )
-            if defined_name == "OptionBool":
-                if offset >= len(ix_data):
-                    value = None
-                else:
-                    value = bool(ix_data[offset])
-                    offset += 1
-            elif defined_name == "OptionU64":
-                if offset + 8 > len(ix_data):
-                    value = None
-                else:
-                    value = struct.unpack_from("<Q", ix_data, offset)[0]
-                    offset += 8
-            else:
-                raise ValueError(f"Unsupported defined type: {defined_name}")
-        else:
-            raise ValueError(f"Unsupported type: {t}")
-
-        args[arg["name"]] = value
-
-    # Extract account addresses from the accounts array
-    # Account layout for CreateV2 instruction:
-    # 0: mint, 1: metadata, 2: bondingCurve, 3: associatedBondingCurve,
-    # 4: tokenProgram (Token2022), 5: user, 6: systemProgram, 7: rent
-    args["mint"] = str(accounts[0])
-    args["bondingCurve"] = str(accounts[2])
-    args["associatedBondingCurve"] = str(accounts[3])
-    args["user"] = str(accounts[5])
-    args["token_standard"] = "token2022"
-
-    return args
-
-
-def decode_from_envelope(tx, idl):
-    """Decode a coin creation straight from the transaction bytes.
-
-    The fallback for a block that arrives without `logMessages`. It is a
-    fallback and not the main path because the envelope is the one part of a
-    transaction whose format changes underneath you: solders 0.26 raises
-    `ValueError: io error: unexpected end of file` on a v1 transaction, and
-    solders only learned to read one in 0.29, which needs solana-py 0.40.
-
-    Args:
-        tx: One entry from a blockSubscribe notification's `transactions`
-        idl: The parsed pump.fun IDL
-
-    Returns:
-        True if a creation was found and printed
-    """
-    try:
-        transaction = VersionedTransaction.from_bytes(
-            base64.b64decode(tx["transaction"][0])
-        )
-    except (ValueError, KeyError, IndexError):
-        return False
-
-    meta = tx.get("meta") or {}
-    loaded_addresses = meta.get("loadedAddresses")
-    for ix in transaction.message.instructions:
-        program = transaction.message.account_keys[ix.program_id_index]
-        if str(program) != str(PUMP_PROGRAM_ID):
-            continue
-        ix_data = bytes(ix.data)
-        if len(ix_data) < 8:
-            continue
-        discriminator = struct.unpack("<Q", ix_data[:8])[0]
-        if discriminator not in (CREATE_DISCRIMINATOR, CREATE_V2_DISCRIMINATOR):
-            continue
-
-        is_v2 = discriminator == CREATE_V2_DISCRIMINATOR
-        wanted = "create_v2" if is_v2 else "create"
-        ix_def = next(
-            (instr for instr in idl["instructions"] if instr["name"] == wanted),
-            next(instr for instr in idl["instructions"] if instr["name"] == "create"),
-        )
-        account_keys = get_account_keys(transaction, ix, loaded_addresses)
-        if account_keys is None:
-            print("⚠️  Skipping transaction due to unresolved accounts")
-            continue
-
-        decode = decode_create_v2_instruction if is_v2 else decode_create_instruction
-        print("\n🔍 Found a creation by decoding the envelope (no logs in this block)")
-        print_token_info(decode(ix_data, ix_def, account_keys))
-        return True
-    return False
-
-
-def handle_transaction(tx, idl):
+def handle_transaction(tx):
     """Detect and print a coin creation in one transaction from a block.
 
-    Detection routes on `meta.logMessages`, which the RPC has already decoded
-    and which reads the same whatever version the transaction is. The envelope
-    is only opened afterwards, to report address lookup table use, and only when
-    the installed solders can read it. Gating detection on that decode makes the
-    example blind to every block carrying a version solders does not handle.
+    Detection routes on `meta.logMessages`. The RPC has already decoded the
+    envelope by the time it emits the logs, and they read the same for every
+    transaction version, so the logs are the one route: a `create` reached by
+    CPI appears in them and is absent from the envelope's top-level
+    instructions. Opening the envelope is a separate exercise, done by
+    `cookbook/pumpfun/decode/pumpfun_decode_transaction_blocksubscribe.py`.
 
     Args:
         tx: One entry from a blockSubscribe notification's `transactions`
-        idl: The parsed pump.fun IDL, kept for the envelope path
     """
     meta = tx.get("meta") or {}
-    logs = meta.get("logMessages")
-    version = tx.get("version", "legacy")
-
-    if logs:
-        event = find_create_event(logs)
-        if not event:
-            return
-        label = "legacy" if version == "legacy" else f"v{version}"
-        print(f"\n🔍 Found CreateEvent in a {label} transaction")
-        print_token_info(event)
-    # Some providers return blocks without logMessages. The envelope is then
-    # the only route, and it only works for a version solders can read.
-    elif not decode_from_envelope(tx, idl):
+    # The runtime keeps the logs a transaction emitted before it failed, so a
+    # create that succeeded inside a transaction a later instruction reverted
+    # still leaves a CreateEvent here. The mint does not exist, and a snipe on
+    # it fails with InvalidMint, so `err` has to be read to tell the two apart.
+    if meta.get("err") is not None:
         return
+
+    logs = meta.get("logMessages")
+    if not logs:
+        return
+    event = find_create_event(logs)
+    if not event:
+        return
+
+    version = tx.get("version", "legacy")
+    label = "legacy" if version == "legacy" else f"v{version}"
+    print(f"\n🔍 Found CreateEvent in a {label} transaction")
+    print_token_info(event)
 
     loaded_addresses = meta.get("loadedAddresses")
     if loaded_addresses:
@@ -477,13 +241,10 @@ async def listen_and_decode_create():
     """Main listener function that subscribes to Solana blocks and decodes Pump.fun token creations.
 
     This function:
-    1. Loads the Pump.fun IDL for instruction parsing
-    2. Subscribes to blocks mentioning the Pump.fun program
-    3. Decodes transactions to extract Create/CreateV2 instructions
-    4. Handles Address Lookup Tables (ALTs) for account resolution
+    1. Subscribes to blocks mentioning the Pump.fun program
+    2. Reads each transaction's `meta.logMessages` for a CreateEvent
+    3. Reports address lookup table use alongside each creation
     """
-    idl = load_idl("idl/pump_fun_idl.json")
-
     async with websockets.connect(
         WSS_ENDPOINT, max_size=WEBSOCKET_MAX_MESSAGE_BYTES
     ) as websocket:
@@ -524,7 +285,7 @@ async def listen_and_decode_create():
                                 for tx in block["transactions"]:
                                     if not isinstance(tx, dict):
                                         continue
-                                    handle_transaction(tx, idl)
+                                    handle_transaction(tx)
                 elif "result" in data:
                     print("Subscription confirmed")
                 else:

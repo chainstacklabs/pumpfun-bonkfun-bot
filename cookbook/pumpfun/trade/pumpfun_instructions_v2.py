@@ -49,6 +49,8 @@ LAMPORTS_PER_SOL = 1_000_000_000
 # Account discriminator for the BondingCurve account.
 BONDING_CURVE_DISCRIMINATOR = struct.pack("<Q", 6966180631402821399)
 
+_SHORT_CURVE_MSG = "Bonding curve data ends before {name} at byte {offset}"
+
 # Instruction discriminators (first 8 bytes of sha256("global:<name>")).
 BUY_V2_DISCRIMINATOR = bytes([184, 23, 238, 97, 103, 197, 211, 61])
 SELL_V2_DISCRIMINATOR = bytes([93, 246, 130, 60, 231, 233, 64, 178])
@@ -376,8 +378,12 @@ class BondingCurveState:
         self.real_sol_reserves = self.real_quote_reserves
 
         self.creator = self._read_pubkey(data, self._CREATOR_OFFSET)
-        self.is_mayhem_mode = self._read_flag(data, self._MAYHEM_OFFSET)
-        self.is_cashback_coin = self._read_flag(data, self._CASHBACK_OFFSET)
+        self.is_mayhem_mode = self._read_flag(
+            data, self._MAYHEM_OFFSET, "is_mayhem_mode"
+        )
+        self.is_cashback_coin = self._read_flag(
+            data, self._CASHBACK_OFFSET, "is_cashback_coin"
+        )
         raw_quote_mint = self._read_pubkey(data, self._QUOTE_MINT_OFFSET)
         self.quote_mint = normalize_quote_mint(raw_quote_mint)
         self.is_sol_paired = is_sol_paired(raw_quote_mint)
@@ -398,17 +404,26 @@ class BondingCurveState:
         return Pubkey.from_bytes(data[offset : offset + 32])
 
     @staticmethod
-    def _read_flag(data: bytes, offset: int) -> bool:
-        """Read a single-byte bool if the data extends that far.
+    def _read_flag(data: bytes, offset: int, name: str) -> bool:
+        """Read a single-byte bool, refusing to guess when the field is absent.
 
         Args:
             data: Raw account data
             offset: Byte offset
+            name: Field name, used in the error
 
         Returns:
-            Flag value, or False if the field is absent
+            Flag value
+
+        Raises:
+            ValueError: If the data ends before the flag. is_mayhem_mode picks
+                the fee recipient for a buy, and the wrong one reverts with
+                NotAuthorized (6000), so defaulting it only moves the failure
+                to somewhere harder to read.
         """
-        return bool(data[offset]) if len(data) > offset else False
+        if len(data) <= offset:
+            raise ValueError(_SHORT_CURVE_MSG.format(name=name, offset=offset))
+        return bool(data[offset])
 
     def price_per_token(self) -> float:
         """Current price in whole quote units per whole token.

@@ -12,7 +12,7 @@ Geyser gRPC Reference:
 https://docs.triton.one/rpc-pool/grpc-subscriptions
 
 Authentication: Supports both Basic and X-Token authentication methods.
-Configure via GEYSER_ENDPOINT, GEYSER_API_TOKEN, and AUTH_TYPE variables.
+Configure via GEYSER_ENDPOINT, GEYSER_API_TOKEN and GEYSER_AUTH_TYPE.
 """
 
 import asyncio
@@ -36,8 +36,9 @@ load_dotenv()
 
 GEYSER_ENDPOINT = os.getenv("GEYSER_ENDPOINT")
 GEYSER_API_TOKEN = os.getenv("GEYSER_API_TOKEN")
-# Authentication type: "x-token" or "basic"
-AUTH_TYPE = "x-token"
+AUTH_TYPE = os.getenv("GEYSER_AUTH_TYPE", "x-token").lower()
+
+BAD_AUTH_TYPE_MSG = "GEYSER_AUTH_TYPE must be 'x-token' or 'basic'"
 
 PUMP_PROGRAM_ID = Pubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")
 
@@ -74,7 +75,7 @@ def print_token_info(token_data, signature=None, envelope: dict | None = None):
         print(f"Creator:          {token_data['creator']}")
 
     print(f"Token Standard:   {token_data.get('token_standard', 'N/A')}")
-    print(f"Mayhem Mode:      {token_data.get('is_mayhem_mode', False)}")
+    print(f"Mayhem Mode:      {token_data.get('is_mayhem_mode', 'N/A')}")
 
     if "uri" in token_data:
         print(f"URI:              {token_data['uri']}")
@@ -91,17 +92,23 @@ def print_token_info(token_data, signature=None, envelope: dict | None = None):
 
 
 async def create_geyser_connection():
-    """Establish a secure connection to the Geyser endpoint using the configured auth type."""
+    """Establish a secure connection to the Geyser endpoint using the configured auth type.
+
+    Raises:
+        ValueError: If GEYSER_AUTH_TYPE names a scheme the endpoint does not take
+    """
     if AUTH_TYPE == "x-token":
         auth = grpc.metadata_call_credentials(
             lambda _, callback: callback((("x-token", GEYSER_API_TOKEN),), None)
         )
-    else:  # Default to basic auth
+    elif AUTH_TYPE == "basic":
         auth = grpc.metadata_call_credentials(
             lambda _, callback: callback(
                 (("authorization", f"Basic {GEYSER_API_TOKEN}"),), None
             )
         )
+    else:
+        raise ValueError(BAD_AUTH_TYPE_MSG)
 
     creds = grpc.composite_channel_credentials(grpc.ssl_channel_credentials(), auth)
     channel = grpc.aio.secure_channel(GEYSER_ENDPOINT, creds)
@@ -245,7 +252,6 @@ def decode_create_instruction(ix_data: bytes, keys, accounts) -> dict:
         "rent": get_account_key(6),
         "user": get_account_key(7),
         "token_standard": "legacy",
-        "is_mayhem_mode": False,
     }
 
     return token_info
@@ -291,15 +297,6 @@ def decode_create_v2_instruction(ix_data: bytes, keys, accounts) -> dict:
     uri = read_string()
     creator = read_pubkey()
 
-    # CreateV2 trailing args: is_mayhem_mode (bool, 1B), is_cashback_enabled (OptionBool, 1B)
-    is_mayhem_mode = False
-    is_cashback_enabled = False
-    if offset < len(ix_data):
-        is_mayhem_mode = bool(ix_data[offset])
-        offset += 1
-    if offset < len(ix_data):
-        is_cashback_enabled = bool(ix_data[offset])
-
     token_info = {
         "name": name,
         "symbol": symbol,
@@ -310,9 +307,16 @@ def decode_create_v2_instruction(ix_data: bytes, keys, accounts) -> dict:
         "associated_bonding_curve": get_account_key(3),
         "user": get_account_key(5),
         "token_standard": "token2022",
-        "is_mayhem_mode": is_mayhem_mode,
-        "is_cashback_enabled": is_cashback_enabled,
     }
+
+    # CreateV2 trailing args: is_mayhem_mode (bool, 1B), is_cashback_enabled
+    # (OptionBool, 1B). Either may be truncated off the wire; a missing one is
+    # left out of the dict rather than reported as False.
+    if offset < len(ix_data):
+        token_info["is_mayhem_mode"] = bool(ix_data[offset])
+        offset += 1
+    if offset < len(ix_data):
+        token_info["is_cashback_enabled"] = bool(ix_data[offset])
 
     return token_info
 

@@ -63,8 +63,9 @@ PUMPPORTAL_WS_URL = "wss://pumpportal.fun/api/data"
 # Test duration in seconds
 TEST_DURATION = 30
 
-# Geyser authentication type: "x-token" or "basic"
-GEYSER_AUTH_TYPE = "x-token"
+GEYSER_AUTH_TYPE = os.getenv("GEYSER_AUTH_TYPE", "x-token").lower()
+
+BAD_AUTH_TYPE_MSG = "GEYSER_AUTH_TYPE must be 'x-token' or 'basic'"
 
 
 class DetectionTracker:
@@ -696,20 +697,25 @@ async def listen_geyser_grpc(
     if known_tokens is None:
         known_tokens = set()
 
+    # Built once, outside the retry loop: the reconnect handler below catches
+    # every exception and sleeps, so a bad auth type raised in there would
+    # reconnect forever instead of reporting a misconfiguration.
+    if GEYSER_AUTH_TYPE == "x-token":
+        auth = grpc.metadata_call_credentials(
+            lambda _context, callback: callback((("x-token", api_token),), None)
+        )
+    elif GEYSER_AUTH_TYPE == "basic":
+        auth = grpc.metadata_call_credentials(
+            lambda _context, callback: callback(
+                (("authorization", f"Basic {api_token}"),), None
+            )
+        )
+    else:
+        raise ValueError(BAD_AUTH_TYPE_MSG)
+
     while True:
         try:
             print(f"[INFO] Connecting Geyser gRPC listener to {provider_name}...")
-
-            if GEYSER_AUTH_TYPE == "x-token":
-                auth = grpc.metadata_call_credentials(
-                    lambda _context, callback: callback((("x-token", api_token),), None)
-                )
-            else:
-                auth = grpc.metadata_call_credentials(
-                    lambda _context, callback: callback(
-                        (("authorization", f"Basic {api_token}"),), None
-                    )
-                )
 
             creds = grpc.composite_channel_credentials(
                 grpc.ssl_channel_credentials(), auth
