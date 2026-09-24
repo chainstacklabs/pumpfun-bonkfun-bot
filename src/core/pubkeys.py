@@ -314,6 +314,18 @@ def resolve_quote_amounts(
     return resolved
 
 
+def quote_symbol(quote_mint: Pubkey) -> str:
+    """Human-readable label for a quote mint, for logging only.
+
+    Returns:
+        "SOL" for wrapped SOL, otherwise a truncated mint address
+    """
+    if is_sol_paired(quote_mint):
+        return "SOL"
+    mint_str = str(quote_mint)
+    return f"{mint_str[:4]}..{mint_str[-4:]}"
+
+
 def is_sol_paired(quote_mint: Pubkey | None) -> bool:
     """Check whether a coin is SOL-paired (native SOL transfers).
 

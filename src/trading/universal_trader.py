@@ -21,6 +21,7 @@ from core.pubkeys import (
     WSOL_MINT,
     normalize_quote_mint,
     quote_decimals,
+    quote_symbol,
     resolve_quote_amounts,
     resolve_quote_mint,
     resolve_quote_token_program,
@@ -669,10 +670,15 @@ class UniversalTrader:
         )
 
         logger.info(f"Created position: {position}")
+        quote_label = quote_symbol(normalize_quote_mint(token_info.quote_mint))
         if position.take_profit_price:
-            logger.info(f"Take profit target: {position.take_profit_price:.8f} SOL")
+            logger.info(
+                f"Take profit target: {position.take_profit_price:.8f} {quote_label}"
+            )
         if position.stop_loss_price:
-            logger.info(f"Stop loss target: {position.stop_loss_price:.8f} SOL")
+            logger.info(
+                f"Stop loss target: {position.stop_loss_price:.8f} {quote_label}"
+            )
 
         # Monitor position until exit condition is met
         await self._monitor_position_until_exit(token_info, position)
@@ -859,6 +865,9 @@ class UniversalTrader:
         pool_address = self._get_pool_address(token_info)
         curve_manager = self.platform_implementations.curve_manager
         exit_sell_attempts = 0
+        # Every price below is denominated in the coin's quote asset, which is
+        # not always SOL.
+        quote_label = quote_symbol(normalize_quote_mint(token_info.quote_mint))
 
         # The last price actually read, always positive. A max_hold_time exit
         # firing with the price feed down still needs a slippage floor, and
@@ -880,7 +889,7 @@ class UniversalTrader:
 
                 if should_exit and exit_reason:
                     logger.info(f"Exit condition met: {exit_reason.value}")
-                    logger.info(f"Current price: {current_price:.8f} SOL")
+                    logger.info(f"Current price: {current_price:.8f} {quote_label}")
 
                     # 0.0 satisfies the stop-loss comparison, so the exit can
                     # fire on a price the sell cannot be floored against.
@@ -890,7 +899,8 @@ class UniversalTrader:
                     if exit_price != current_price:
                         logger.warning(
                             f"Curve priced {token_info.symbol} at 0; flooring the "
-                            f"exit sell at the last real price {exit_price:.8f} SOL"
+                            f"exit sell at the last real price "
+                            f"{exit_price:.8f} {quote_label}"
                         )
 
                     exit_sell_attempts += 1
@@ -909,7 +919,8 @@ class UniversalTrader:
                     exit_sell_attempts = 0
                     pnl = position.get_pnl(current_price)
                     logger.debug(
-                        f"Position status: {current_price:.8f} SOL ({pnl['price_change_pct']:+.2f}%)"
+                        f"Position status: {current_price:.8f} {quote_label} "
+                        f"({pnl['price_change_pct']:+.2f}%)"
                     )
 
                 # Wait before next price check
@@ -925,7 +936,7 @@ class UniversalTrader:
                     logger.warning(
                         f"Max hold time reached for {token_info.symbol} while "
                         f"the price is unreadable - exiting against the last "
-                        f"known price {last_known_price:.8f} SOL"
+                        f"known price {last_known_price:.8f} {quote_label}"
                     )
                     exit_sell_attempts += 1
                     if await self._run_exit_attempt(
@@ -999,7 +1010,9 @@ class UniversalTrader:
         # Log PnL before exit
         pnl = position.get_pnl(price)
         logger.info(
-            f"Position PnL: {pnl['price_change_pct']:.2f}% ({pnl['unrealized_pnl_sol']:.6f} SOL)"
+            f"Position PnL: {pnl['price_change_pct']:.2f}% "
+            f"({pnl['unrealized_pnl_quote']:.6f} "
+            f"{quote_symbol(normalize_quote_mint(token_info.quote_mint))})"
         )
 
         sell_result = await self.seller.execute(
@@ -1023,7 +1036,9 @@ class UniversalTrader:
 
             final_pnl = position.get_pnl()
             logger.info(
-                f"Final PnL: {final_pnl['price_change_pct']:.2f}% ({final_pnl['unrealized_pnl_sol']:.6f} SOL)"
+                f"Final PnL: {final_pnl['price_change_pct']:.2f}% "
+                f"({final_pnl['unrealized_pnl_quote']:.6f} "
+                f"{quote_symbol(normalize_quote_mint(token_info.quote_mint))})"
             )
             await self._cleanup_after_exit(token_info)
             return ExitSellVerdict.SOLD

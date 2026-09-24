@@ -31,6 +31,7 @@ individual scripts for a subset.
 | `verify_cookbook_arguments.py` | every cookbook script takes its input as a command-line argument |
 | `verify_documentation_links.py` | no known-dead URL is back; `--live` fetches every one and fails on 4xx/5xx |
 | `verify_no_rpc_credentials_logged.py` | credentials masked in every log record, including a URL passed as a non-`str` argument, and every site that installs a root handler installs the redaction first |
+| `verify_pumpfun_prices_without_hardcoded_sol_unit.py` | nothing in `core/`, `trading/` or `platforms/pumpfun/` scales an amount by `LAMPORTS_PER_SOL`; the letsbonk sites left out of scope are still the documented ones |
 | `verify_pumpswap_account_layout.py` | pump-amm's `pool-v2` account is gated on `coin_creator`, the buyback pair stays last, and base-token decimals are resolved rather than assumed; `--live` re-reads the authorized recipients from `GlobalConfig` |
 
 Two mainnet simulations, also no funds moved:

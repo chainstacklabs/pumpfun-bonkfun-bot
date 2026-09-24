@@ -12,7 +12,6 @@ from spl.token.instructions import create_idempotent_associated_token_account
 from core.pubkeys import (
     TOKEN_ACCOUNT_RENT_EXEMPT_RESERVE,
     TOKEN_ACCOUNT_SIZE,
-    TOKEN_DECIMALS,
     SystemAddresses,
 )
 from interfaces.core import AddressProvider, InstructionBuilder, Platform, TokenInfo
@@ -152,10 +151,14 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
                 pubkey=SystemAddresses.SOL_MINT, is_signer=False, is_writable=False
             ),  # quote_token_mint
             AccountMeta(
-                pubkey=accounts_info["base_token_program"], is_signer=False, is_writable=False
+                pubkey=accounts_info["base_token_program"],
+                is_signer=False,
+                is_writable=False,
             ),  # base_token_program
             AccountMeta(
-                pubkey=accounts_info["quote_token_program"], is_signer=False, is_writable=False
+                pubkey=accounts_info["quote_token_program"],
+                is_signer=False,
+                is_writable=False,
             ),  # quote_token_program
             AccountMeta(
                 pubkey=accounts_info["event_authority"],
@@ -306,10 +309,14 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
                 pubkey=SystemAddresses.SOL_MINT, is_signer=False, is_writable=False
             ),  # quote_token_mint
             AccountMeta(
-                pubkey=accounts_info["base_token_program"], is_signer=False, is_writable=False
+                pubkey=accounts_info["base_token_program"],
+                is_signer=False,
+                is_writable=False,
             ),  # base_token_program
             AccountMeta(
-                pubkey=accounts_info["quote_token_program"], is_signer=False, is_writable=False
+                pubkey=accounts_info["quote_token_program"],
+                is_signer=False,
+                is_writable=False,
             ),  # quote_token_program
             AccountMeta(
                 pubkey=accounts_info["event_authority"],
@@ -484,28 +491,6 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
         return Instruction(
             program_id=SystemAddresses.TOKEN_PROGRAM, data=data, accounts=accounts
         )
-
-    def calculate_token_amount_raw(self, token_amount_decimal: float) -> int:
-        """Convert decimal token amount to raw token units.
-
-        Args:
-            token_amount_decimal: Token amount in decimal form
-
-        Returns:
-            Token amount in raw units (adjusted for decimals)
-        """
-        return int(token_amount_decimal * 10**TOKEN_DECIMALS)
-
-    def calculate_token_amount_decimal(self, token_amount_raw: int) -> float:
-        """Convert raw token amount to decimal form.
-
-        Args:
-            token_amount_raw: Token amount in raw units
-
-        Returns:
-            Token amount in decimal form
-        """
-        return token_amount_raw / 10**TOKEN_DECIMALS
 
     def get_buy_compute_unit_limit(self, config_override: int | None = None) -> int:
         """Get the recommended compute unit limit for LetsBonk buy operations.
