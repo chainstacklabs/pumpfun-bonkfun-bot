@@ -474,6 +474,13 @@ async def buy_exact_in(
             pool_state_data, amount_in, slippage_tolerance
         )
 
+        # expected_output is a floor division by the quote reserve, so once the
+        # pool nears graduation an ordinary amount_in floors to zero and the
+        # buy would submit accepting any output at all.
+        if minimum_amount_out is None or minimum_amount_out == 0:
+            print("Failed to calculate minimum amount out or amount is too small")
+            return None
+
         print(f"Amount in: {amount_in} lamports ({amount_in_sol} SOL)")
         print(f"Minimum amount out: {minimum_amount_out}")
 
