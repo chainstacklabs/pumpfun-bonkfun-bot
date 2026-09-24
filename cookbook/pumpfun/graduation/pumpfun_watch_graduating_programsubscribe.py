@@ -117,8 +117,9 @@ QUOTE_SYMBOLS: Final[dict[Pubkey, str]] = {WSOL_MINT: "SOL", USDC_MINT: "USDC"}
 # Same offset in SPL Token and Token-2022: extensions are appended after it.
 _MINT_DECIMALS_OFFSET: Final[int] = 44
 
-# Only used if the Global account cannot be read: 1B supply less 206.9M reserved.
-FALLBACK_INITIAL_REAL_TOKEN_RESERVES: Final[float] = 793_100_000.0
+_NO_BASELINE_MSG: Final[str] = (
+    "Cannot read initial_real_token_reserves from the pump.fun Global account"
+)
 
 # A qualifying curve is traded several times a second. Reprint it only once it has
 # moved this far, so the output stays readable.
@@ -256,18 +257,22 @@ async def fetch_initial_real_token_reserves(client: AsyncClient) -> float:
         client: Connected RPC client
 
     Returns:
-        Initial real token reserves in whole tokens, or the fallback constant
+        Initial real token reserves in whole tokens
+
+    Raises:
+        ValueError: If Global is missing or carries a zero at that offset. The
+            baseline is the 0% mark every progress figure is measured against,
+            so a guessed one misreports every coin the run touches.
     """
-    try:
-        resp = await client.get_account_info(PUMP_GLOBAL, encoding="base64")
-        raw = struct.unpack_from(
-            "<Q", resp.value.data, _GLOBAL_INITIAL_REAL_TOKEN_RESERVES_OFFSET
-        )[0]
-        if raw:
-            return raw / 10**TOKEN_DECIMALS
-    except Exception as e:  # noqa: BLE001 - fall back rather than abort the watcher
-        print(f"⚠️ Could not read Global, using the fallback baseline: {e}")
-    return FALLBACK_INITIAL_REAL_TOKEN_RESERVES
+    resp = await client.get_account_info(PUMP_GLOBAL, encoding="base64")
+    if resp.value is None:
+        raise ValueError(_NO_BASELINE_MSG)
+    raw = struct.unpack_from(
+        "<Q", resp.value.data, _GLOBAL_INITIAL_REAL_TOKEN_RESERVES_OFFSET
+    )[0]
+    if not raw:
+        raise ValueError(_NO_BASELINE_MSG)
+    return raw / 10**TOKEN_DECIMALS
 
 
 async def resolve_mint(client: AsyncClient, curve: Pubkey) -> Pubkey | None:
