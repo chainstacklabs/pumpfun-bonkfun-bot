@@ -218,6 +218,9 @@ class PlatformAwareBuyer(Trader):
             # Quote asset is resolved from the curve below; start from whatever
             # the listener gave us so extreme_fast_mode has a usable default.
             quote_mint = normalize_quote_mint(token_info.quote_mint)
+            # Read from the curve on the regular path, back-derived from the
+            # fixed token count in extreme_fast_mode, which reads no curve.
+            token_price_sol: float | None = None
 
             if self.extreme_fast_mode:
                 # Zero-RPC hot path: when the CreateEvent carried the canonical
@@ -241,13 +244,10 @@ class PlatformAwareBuyer(Trader):
 
                 # Regular path: fetch pool state for price and flags
                 pool_state = await curve_manager.get_pool_state(pool_address)
+                # Validated below, after the quote gate: an unconfigured quote
+                # asset leaves this None, and "no configured buy amount" is the
+                # accurate reason to skip, not "invalid price".
                 token_price_sol = pool_state.get("price_per_token")
-
-                if token_price_sol is None or token_price_sol <= 0:
-                    raise ValueError(
-                        f"Invalid price_per_token: {token_price_sol} for pool {pool_address} "
-                        f"(mint: {token_info.mint}) - cannot execute buy with zero/invalid price"
-                    )
 
                 # Mayhem/cashback flags decide fee_recipient and the account-list
                 # shape (cashback sells use 17 accounts, non-cashback 16).
@@ -280,6 +280,13 @@ class PlatformAwareBuyer(Trader):
                 token_amount = self.extreme_fast_token_amount
                 token_price_sol = quote_amount / token_amount if token_amount > 0 else 0
             else:
+                if token_price_sol is None or token_price_sol <= 0:
+                    raise ValueError(
+                        f"Invalid price_per_token: {token_price_sol} for pool "
+                        f"{self._get_pool_address(token_info, address_provider)} "
+                        f"(mint: {token_info.mint}) - cannot execute buy with "
+                        f"zero/invalid price"
+                    )
                 token_amount = quote_amount / token_price_sol
 
             minimum_token_amount = token_amount * (1 - self.slippage)
