@@ -6,7 +6,7 @@ from solders.instruction import AccountMeta, Instruction
 from solders.pubkey import Pubkey
 from spl.token.instructions import create_idempotent_associated_token_account
 
-from core.pubkeys import TOKEN_DECIMALS, is_sol_paired
+from core.pubkeys import is_sol_paired
 from interfaces.core import AddressProvider, InstructionBuilder, Platform, TokenInfo
 from utils.idl_parser import IDLParser
 from utils.logger import get_logger
@@ -660,28 +660,6 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             accounts_info["bonding_curve_v2"],
             accounts_info["breaking_fee_recipient"],
         ]
-
-    def calculate_token_amount_raw(self, token_amount_decimal: float) -> int:
-        """Convert decimal token amount to raw token units.
-
-        Args:
-            token_amount_decimal: Token amount in decimal form
-
-        Returns:
-            Token amount in raw units (adjusted for decimals)
-        """
-        return int(token_amount_decimal * 10**TOKEN_DECIMALS)
-
-    def calculate_token_amount_decimal(self, token_amount_raw: int) -> float:
-        """Convert raw token amount to decimal form.
-
-        Args:
-            token_amount_raw: Token amount in raw units
-
-        Returns:
-            Token amount in decimal form
-        """
-        return token_amount_raw / 10**TOKEN_DECIMALS
 
     def get_buy_compute_unit_limit(self, config_override: int | None = None) -> int:
         """Get the recommended compute unit limit for pump.fun buy operations.

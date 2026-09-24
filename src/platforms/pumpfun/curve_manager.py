@@ -6,7 +6,6 @@ from solders.pubkey import Pubkey
 
 from core.client import SolanaClient
 from core.pubkeys import (
-    LAMPORTS_PER_SOL,
     TOKEN_DECIMALS,
     cached_quote_units,
     is_sol_paired,
@@ -320,43 +319,6 @@ class PumpFunCurveManager(CurveManager):
 
         return curve_data
 
-    # Additional convenience methods for pump.fun specific operations
-    async def calculate_expected_tokens(
-        self, pool_address: Pubkey, sol_amount: float
-    ) -> float:
-        """Calculate the expected token amount for a given SOL input.
-
-        This is a convenience method that converts between decimal and raw units.
-
-        Args:
-            pool_address: Address of the bonding curve
-            sol_amount: Amount of SOL to spend (in decimal SOL)
-
-        Returns:
-            Expected token amount (in decimal tokens)
-        """
-        sol_lamports = int(sol_amount * LAMPORTS_PER_SOL)
-        tokens_raw = await self.calculate_buy_amount_out(pool_address, sol_lamports)
-        return tokens_raw / 10**TOKEN_DECIMALS
-
-    async def calculate_expected_sol(
-        self, pool_address: Pubkey, token_amount: float
-    ) -> float:
-        """Calculate the expected SOL amount for a given token input.
-
-        This is a convenience method that converts between decimal and raw units.
-
-        Args:
-            pool_address: Address of the bonding curve
-            token_amount: Amount of tokens to sell (in decimal tokens)
-
-        Returns:
-            Expected SOL amount (in decimal SOL)
-        """
-        tokens_raw = int(token_amount * 10**TOKEN_DECIMALS)
-        sol_lamports = await self.calculate_sell_amount_out(pool_address, tokens_raw)
-        return sol_lamports / LAMPORTS_PER_SOL
-
     async def is_curve_complete(self, pool_address: Pubkey) -> bool:
         """Check if the bonding curve is complete (migrated to Raydium).
 
@@ -368,36 +330,6 @@ class PumpFunCurveManager(CurveManager):
         """
         pool_state = await self.get_pool_state(pool_address)
         return pool_state.get("complete", False)
-
-    async def get_curve_progress(self, pool_address: Pubkey) -> dict[str, Any]:
-        """Get bonding curve completion progress information.
-
-        Args:
-            pool_address: Address of the bonding curve
-
-        Returns:
-            Dictionary with progress information
-        """
-        pool_state = await self.get_pool_state(pool_address)
-
-        # Calculate progress based on SOL raised vs target
-        # This is approximate since the exact target isn't stored in the curve state
-        sol_raised = pool_state["real_sol_reserves"] / LAMPORTS_PER_SOL
-
-        # Estimate progress based on typical pump.fun graduation requirements
-        # (This could be made more accurate with additional on-chain data)
-        estimated_target_sol = 85.0  # Typical pump.fun graduation target
-        progress_percentage = min((sol_raised / estimated_target_sol) * 100, 100.0)
-
-        return {
-            "complete": pool_state.get("complete", False),
-            "sol_raised": sol_raised,
-            "estimated_target_sol": estimated_target_sol,
-            "progress_percentage": progress_percentage,
-            "tokens_available": pool_state["virtual_token_reserves"]
-            / 10**TOKEN_DECIMALS,
-            "market_cap_sol": sol_raised,  # Approximate market cap
-        }
 
     def validate_curve_state_structure(self, pool_address: Pubkey) -> bool:
         """Validate that the curve state structure matches IDL expectations.

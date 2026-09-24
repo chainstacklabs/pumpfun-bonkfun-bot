@@ -160,7 +160,7 @@ class Position:
             "current_price": price_to_use,
             "price_change": price_change,
             "price_change_pct": price_change_pct,
-            "unrealized_pnl_sol": unrealized_pnl,
+            "unrealized_pnl_quote": unrealized_pnl,
             "quantity": self.quantity,
         }
 
@@ -172,4 +172,4 @@ class Position:
             status = f"CLOSED ({self.exit_reason.value})"
         else:
             status = "CLOSED (UNKNOWN)"
-        return f"Position({self.symbol}: {self.quantity:.6f} @ {self.entry_price:.8f} SOL - {status})"
+        return f"Position({self.symbol}: {self.quantity:.6f} @ {self.entry_price:.8f} - {status})"

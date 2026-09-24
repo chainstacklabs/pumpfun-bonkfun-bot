@@ -12,8 +12,8 @@ from core.pubkeys import (
     WSOL_MINT,
     SystemAddresses,
     cached_quote_token_program,
-    is_sol_paired,
     normalize_quote_mint,
+    quote_symbol,
     quote_units_per_token,
 )
 from core.wallet import Wallet
@@ -36,18 +36,6 @@ _FAILURE_REASON_FOR = {
     ConfirmationStatus.REVERTED: TradeFailureReason.REVERTED,
     ConfirmationStatus.UNCONFIRMED: TradeFailureReason.UNCONFIRMED,
 }
-
-
-def _quote_symbol(quote_mint: Pubkey) -> str:
-    """Human-readable label for a quote mint, for logging only.
-
-    Returns:
-        "SOL" for wrapped SOL, otherwise a truncated mint address
-    """
-    if is_sol_paired(quote_mint):
-        return "SOL"
-    mint_str = str(quote_mint)
-    return f"{mint_str[:4]}..{mint_str[-4:]}"
 
 
 async def _read_pool_state_with_retry(
@@ -271,7 +259,7 @@ class PlatformAwareBuyer(Trader):
                 )
 
             quote_unit = quote_units_per_token(quote_mint)
-            quote_label = _quote_symbol(quote_mint)
+            quote_label = quote_symbol(quote_mint)
 
             # Both branches size the trade from the resolved quote amount:
             # extreme_fast_mode fixes the token count and back-derives an implied
@@ -731,7 +719,7 @@ class PlatformAwareSeller(Trader):
                 )
 
             quote_unit = quote_units_per_token(quote_mint)
-            quote_label = _quote_symbol(quote_mint)
+            quote_label = quote_symbol(quote_mint)
 
             # Use pre-known amount and price (no RPC delay)
             token_balance_decimal = token_amount
