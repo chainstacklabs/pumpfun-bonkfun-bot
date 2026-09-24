@@ -69,7 +69,7 @@ def print_token_info(token_data, signature=None):
         print(f"Creator:          {token_data['creator']}")
 
     print(f"Token Standard:   {token_data.get('token_standard', 'N/A')}")
-    print(f"Mayhem Mode:      {token_data.get('is_mayhem_mode', False)}")
+    print(f"Mayhem Mode:      {token_data.get('is_mayhem_mode', 'N/A')}")
 
     if "uri" in token_data:
         print(f"URI:              {token_data['uri']}")

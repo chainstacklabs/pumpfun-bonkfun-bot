@@ -99,7 +99,7 @@ def print_token_info(token_data: dict, signature: str, slot: int) -> None:
     # From the instruction args, not the curve: may differ from BondingCurve.creator.
     print(f"Creator (args):   {token_data.get('creator', 'N/A')}")
     print(f"Token Standard:   {token_data.get('token_standard', 'N/A')}")
-    print(f"Mayhem Mode:      {token_data.get('is_mayhem_mode', False)}")
+    print(f"Mayhem Mode:      {token_data.get('is_mayhem_mode', 'N/A')}")
     print(f"URI:              {token_data.get('uri', 'N/A')}")
     print(f"Tx version:       {token_data.get('tx_version', 'N/A')}")
     print(f"Slot:             {slot}")
@@ -229,17 +229,9 @@ def decode_create_instruction(
             "associated_bonding_curve": get_account_key(3),
             "user": get_account_key(7),
             "token_standard": "legacy",
-            "is_mayhem_mode": False,
         }
 
-    # create_v2 trailing args are positional and may be truncated on the wire:
-    # read defensively and report a missing one as unset rather than raising.
-    is_mayhem_mode = False
-    if offset < len(ix_data):
-        is_mayhem_mode = bool(ix_data[offset])
-        offset += 1
-
-    return {
+    token_info = {
         "name": name,
         "symbol": symbol,
         "uri": uri,
@@ -249,8 +241,16 @@ def decode_create_instruction(
         "associated_bonding_curve": get_account_key(3),
         "user": get_account_key(5),
         "token_standard": "token2022",
-        "is_mayhem_mode": is_mayhem_mode,
     }
+
+    # create_v2 trailing args are positional and may be truncated on the wire.
+    # A missing one is left out of the dict: the caller prints "N/A" for it,
+    # rather than a False the instruction never carried.
+    if offset < len(ix_data):
+        token_info["is_mayhem_mode"] = bool(ix_data[offset])
+        offset += 1
+
+    return token_info
 
 
 def describe_version(message: geyser_pb2.Message) -> str:

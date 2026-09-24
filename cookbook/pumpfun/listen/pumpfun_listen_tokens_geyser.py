@@ -75,7 +75,7 @@ def print_token_info(token_data, signature=None, envelope: dict | None = None):
         print(f"Creator:          {token_data['creator']}")
 
     print(f"Token Standard:   {token_data.get('token_standard', 'N/A')}")
-    print(f"Mayhem Mode:      {token_data.get('is_mayhem_mode', False)}")
+    print(f"Mayhem Mode:      {token_data.get('is_mayhem_mode', 'N/A')}")
 
     if "uri" in token_data:
         print(f"URI:              {token_data['uri']}")
@@ -252,7 +252,6 @@ def decode_create_instruction(ix_data: bytes, keys, accounts) -> dict:
         "rent": get_account_key(6),
         "user": get_account_key(7),
         "token_standard": "legacy",
-        "is_mayhem_mode": False,
     }
 
     return token_info
@@ -298,15 +297,6 @@ def decode_create_v2_instruction(ix_data: bytes, keys, accounts) -> dict:
     uri = read_string()
     creator = read_pubkey()
 
-    # CreateV2 trailing args: is_mayhem_mode (bool, 1B), is_cashback_enabled (OptionBool, 1B)
-    is_mayhem_mode = False
-    is_cashback_enabled = False
-    if offset < len(ix_data):
-        is_mayhem_mode = bool(ix_data[offset])
-        offset += 1
-    if offset < len(ix_data):
-        is_cashback_enabled = bool(ix_data[offset])
-
     token_info = {
         "name": name,
         "symbol": symbol,
@@ -317,9 +307,16 @@ def decode_create_v2_instruction(ix_data: bytes, keys, accounts) -> dict:
         "associated_bonding_curve": get_account_key(3),
         "user": get_account_key(5),
         "token_standard": "token2022",
-        "is_mayhem_mode": is_mayhem_mode,
-        "is_cashback_enabled": is_cashback_enabled,
     }
+
+    # CreateV2 trailing args: is_mayhem_mode (bool, 1B), is_cashback_enabled
+    # (OptionBool, 1B). Either may be truncated off the wire; a missing one is
+    # left out of the dict rather than reported as False.
+    if offset < len(ix_data):
+        token_info["is_mayhem_mode"] = bool(ix_data[offset])
+        offset += 1
+    if offset < len(ix_data):
+        token_info["is_cashback_enabled"] = bool(ix_data[offset])
 
     return token_info
 

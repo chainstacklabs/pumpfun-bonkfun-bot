@@ -172,7 +172,9 @@ async def read_quote_mints(*, stocks_only: bool) -> None:
         for mint, reserves, info in sorted(
             rows, key=lambda r: r[2].get("symbol") or "~"
         ):
-            program = "Token-2022" if info.get("token_2022") else "SPL Token"
+            program = {True: "Token-2022", False: "SPL Token"}.get(
+                info.get("token_2022"), "-"
+            )
             paused = {True: "YES", False: "no"}.get(info.get("paused"), "-")
             multiplier = info.get("multiplier") or "-"
             decimals = info.get("decimals")

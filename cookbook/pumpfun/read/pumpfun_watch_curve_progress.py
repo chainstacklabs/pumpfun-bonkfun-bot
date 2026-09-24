@@ -158,17 +158,14 @@ def parse_curve_state(data: bytes) -> dict:
         creator_bytes = data[49:81]  # 8 (discriminator) + 41 (base fields) = 49
         result["creator"] = Pubkey.from_bytes(creator_bytes)
 
-    # Parse is_mayhem_mode if present
-    if data_length >= _LEN_WITH_MAYHEM:  # Has mayhem mode field
+    # Both flags are absent from a curve laid out before they were added. Leave
+    # them out of the result rather than reporting an unset field as false.
+    if data_length >= _LEN_WITH_MAYHEM:
         result["is_mayhem_mode"] = bool(data[81])
-    else:
-        result["is_mayhem_mode"] = False
 
-    # Parse is_cashback_coin if present (added in late-Feb 2026 cashback upgrade)
+    # is_cashback_coin arrived with the late-Feb 2026 cashback upgrade.
     if data_length >= _LEN_WITH_CASHBACK:
         result["is_cashback_coin"] = bool(data[82])
-    else:
-        result["is_cashback_coin"] = False
 
     return result
 
