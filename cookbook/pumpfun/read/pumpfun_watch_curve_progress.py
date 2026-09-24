@@ -189,7 +189,7 @@ async def fetch_initial_real_token_reserves(client: AsyncClient) -> float:
             so a guessed one misreports every coin the run touches.
     """
     resp = await client.get_account_info(PUMP_GLOBAL, encoding="base64")
-    if resp.value is None:
+    if resp.value is None or len(resp.value.data) < 89 + 8:
         raise ValueError(_NO_BASELINE_MSG)
     raw = struct.unpack_from("<Q", resp.value.data, 89)[0]
     if not raw:
