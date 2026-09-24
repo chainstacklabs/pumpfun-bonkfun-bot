@@ -135,9 +135,13 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
 
 - **Resolve a coin's quote mint before pricing or sizing anything.**
   `resolve_quote_token_program` returns the token program and caches the mint's
-  decimals off the same read; `quote_units` raises rather than guessing, because
-  a wrong power of ten inflates the price *and* the slippage cap in the same
-  direction, so they compound into an overspend instead of cancelling.
+  decimals off the same read. Both unit helpers then raise rather than guess —
+  `quote_units_per_token` in `src/`, `quote_units` in `cookbook/` — because a
+  wrong power of ten inflates the price *and* the slippage cap in the same
+  direction, so they compound into an overspend instead of cancelling. Only
+  `cached_quote_units` answers `None` instead of raising, for the curve decoder,
+  which runs against coins that are never traded; it leaves `price_per_token`
+  unset and the caller's quote gate refuses the coin.
 - `trade.curve_refresh_budget` (seconds, default 2.0) bounds the pre-buy curve
   read in `extreme_fast_mode`; when it expires the token is **skipped**, because
   a buy built from listener-guessed defaults reverts with `NotAuthorized` (6000),

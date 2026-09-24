@@ -8,9 +8,9 @@ from core.client import SolanaClient
 from core.pubkeys import (
     LAMPORTS_PER_SOL,
     TOKEN_DECIMALS,
+    cached_quote_units,
     is_sol_paired,
     normalize_quote_mint,
-    quote_units_per_token,
 )
 from interfaces.core import CurveManager, Platform
 from utils.idl_parser import IDLParser
@@ -115,6 +115,11 @@ class PumpFunCurveManager(CurveManager):
         Returns:
             Current token price denominated in the curve's quote asset
             (SOL for SOL-paired coins, USDC for USDC-paired coins)
+
+        Raises:
+            ValueError: If the curve's quote mint has not been resolved, so no
+                price can be expressed. Distinct from the 0.0 below: that is a
+                curve with nothing in it, this is a curve nobody can price.
         """
         pool_state = await self.get_pool_state(pool_address)
 
@@ -123,7 +128,13 @@ class PumpFunCurveManager(CurveManager):
 
         # _decode_curve_state_with_idl already scales by the quote mint's
         # decimals, so don't re-derive the price with a hardcoded 1e9 here.
-        return pool_state["price_per_token"]
+        price = pool_state["price_per_token"]
+        if price is None:
+            raise ValueError(
+                f"Cannot price {pool_address}: decimals for its quote mint "
+                f"{pool_state['quote_mint']} are unresolved"
+            )
+        return price
 
     async def calculate_buy_amount_out(
         self, pool_address: Pubkey, amount_in: int
@@ -229,7 +240,11 @@ class PumpFunCurveManager(CurveManager):
             if isinstance(raw_quote_mint, str)
             else raw_quote_mint
         )
-        quote_unit = quote_units_per_token(quote_mint)
+        # None for a quote mint nobody resolved. Decoding runs against every coin
+        # a listener reports, most of which are never traded, so an unknown quote
+        # asset leaves the quote-denominated fields unset rather than failing the
+        # decode -- the caller's quote gate is what refuses the coin.
+        quote_unit = cached_quote_units(quote_mint)
 
         curve_data = {
             "virtual_token_reserves": decoded_curve_state.get(
@@ -271,6 +286,9 @@ class PumpFunCurveManager(CurveManager):
 
         # Price is denominated in the curve's quote asset, so scale by that
         # mint's decimals (1e9 for SOL, 1e6 for USDC) rather than assuming SOL.
+        # None when those decimals are unknown: a price is unanswerable without
+        # them, and a guessed power of ten would misprice the coin and inflate
+        # the slippage cap the same way, compounding instead of cancelling.
         curve_data["price_per_token"] = (
             (
                 curve_data["virtual_quote_reserves"]
@@ -278,6 +296,8 @@ class PumpFunCurveManager(CurveManager):
             )
             * (10**TOKEN_DECIMALS)
             / quote_unit
+            if quote_unit is not None
+            else None
         )
 
         # Add convenience decimal fields
@@ -286,6 +306,8 @@ class PumpFunCurveManager(CurveManager):
         )
         curve_data["quote_reserves_decimal"] = (
             curve_data["virtual_quote_reserves"] / quote_unit
+            if quote_unit is not None
+            else None
         )
         curve_data["sol_reserves_decimal"] = curve_data["quote_reserves_decimal"]
 
@@ -293,7 +315,7 @@ class PumpFunCurveManager(CurveManager):
             f"Decoded curve state: virtual_token_reserves={curve_data['virtual_token_reserves']}, "
             f"virtual_quote_reserves={curve_data['virtual_quote_reserves']}, "
             f"quote_mint={quote_mint}, "
-            f"price={curve_data['price_per_token']:.8f} quote/token"
+            f"price={curve_data['price_per_token']} quote/token"
         )
 
         return curve_data

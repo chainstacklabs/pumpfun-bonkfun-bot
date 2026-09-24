@@ -102,14 +102,29 @@ _QUOTE_DECIMALS_CACHE: dict[Pubkey, int] = dict(QUOTE_DECIMALS)
 def quote_decimals(quote_mint: Pubkey) -> int:
     """Get a quote mint's decimal count from the warm cache -- zero RPC.
 
-    Pre-seeded with WSOL (9) and USDC (6); every other configured quote mint is
-    cached at startup by `resolve_quote_token_program`, so an uncached mint here
-    is one the bot refuses to trade rather than one this silently mis-scales.
+    Pre-seeded with WSOL (9) and USDC (6); every other quote mint is cached by
+    `resolve_quote_token_program`, which every configured mint goes through at
+    startup.
+
+    Raises rather than guessing. `QuoteControl` admits mints at 6, 8 and 9
+    decimals, so a default would misprice the coin and inflate the slippage cap
+    in the same direction, compounding into an overspend instead of cancelling.
+    Callers that must not fail on an unknown mint use `cached_quote_units`.
 
     Returns:
         Number of decimals used by the quote mint
+
+    Raises:
+        ValueError: If the mint's decimals have not been resolved yet
     """
-    return _QUOTE_DECIMALS_CACHE.get(quote_mint, 9)
+    decimals = _QUOTE_DECIMALS_CACHE.get(quote_mint)
+    if decimals is None:
+        raise ValueError(
+            f"Decimals for quote mint {quote_mint} are unknown. Call "
+            f"resolve_quote_token_program() for it before pricing or sizing a "
+            f"trade -- guessing here misprices the trade by a power of ten."
+        )
+    return decimals
 
 
 def quote_units_per_token(quote_mint: Pubkey) -> int:
@@ -117,8 +132,27 @@ def quote_units_per_token(quote_mint: Pubkey) -> int:
 
     Returns:
         10 ** decimals for the quote mint (1e9 for SOL, 1e6 for USDC)
+
+    Raises:
+        ValueError: If the mint's decimals have not been resolved yet
     """
     return 10 ** quote_decimals(quote_mint)
+
+
+def cached_quote_units(quote_mint: Pubkey) -> int | None:
+    """Get the raw-units-per-whole-unit factor, or None if it is unknown.
+
+    For callers that decode a coin they may never trade -- a curve decoder runs
+    against every coin a listener reports, and raising there would turn an
+    unknown quote asset into a decode failure that a retry loop keeps retrying.
+    Anything that sizes or prices a real trade uses `quote_units_per_token` and
+    takes the raise.
+
+    Returns:
+        10 ** decimals for the quote mint, or None if unresolved
+    """
+    decimals = _QUOTE_DECIMALS_CACHE.get(quote_mint)
+    return None if decimals is None else 10**decimals
 
 
 def quote_token_program(quote_mint: Pubkey) -> Pubkey:
@@ -167,8 +201,11 @@ async def resolve_quote_token_program(
             uncaught at startup: trading a quote mint the bot cannot size is
             worse than refusing to start.
     """
+    # Both caches, not just the program one: a mint seeded into
+    # QUOTE_TOKEN_PROGRAMS but not QUOTE_DECIMALS would otherwise short-circuit
+    # here and never have its decimals read at all.
     cached = _QUOTE_TOKEN_PROGRAM_CACHE.get(quote_mint)
-    if cached is not None:
+    if cached is not None and quote_mint in _QUOTE_DECIMALS_CACHE:
         return cached
 
     account = await get_account_info(quote_mint)
