@@ -119,6 +119,9 @@ USDC_MINT: Final[Pubkey] = Pubkey.from_string(
 QUOTE_DECIMALS: Final[dict[Pubkey, int]] = {WSOL_MINT: 9, USDC_MINT: 6}
 QUOTE_SYMBOLS: Final[dict[Pubkey, str]] = {WSOL_MINT: "SOL", USDC_MINT: "USDC"}
 
+# Same offset in SPL Token and Token-2022: extensions are appended after it.
+_MINT_DECIMALS_OFFSET: Final[int] = 44
+
 # Only used if the Global account cannot be read: 1B supply less 206.9M reserved.
 FALLBACK_INITIAL_REAL_TOKEN_RESERVES: Final[float] = 793_100_000.0
 
@@ -236,7 +239,7 @@ def parse_curve(data: bytes) -> dict[str, Any]:
         data: Raw bonding curve account data
 
     Returns:
-        Reserves in whole tokens, plus the quote asset's symbol
+        Token reserves in whole tokens, quote reserves raw, plus the quote mint
 
     Raises:
         ValueError: If the discriminator does not match a bonding curve
@@ -250,13 +253,37 @@ def parse_curve(data: bytes) -> dict[str, Any]:
     quote_mint = Pubkey.from_bytes(data[_QUOTE_MINT_OFFSET : _QUOTE_MINT_OFFSET + 32])
     if quote_mint == DEFAULT_QUOTE_MINT:
         quote_mint = WSOL_MINT
-    quote_unit = 10 ** QUOTE_DECIMALS.get(quote_mint, 9)
 
+    # Quote-side reserves stay raw: only the quote mint's decimals scale them.
     return {
         "real_token_reserves": real_token_reserves / 10**TOKEN_DECIMALS,
-        "real_quote_reserves": real_quote_reserves / quote_unit,
+        "real_quote_reserves_raw": real_quote_reserves,
+        "quote_mint": quote_mint,
         "quote_symbol": QUOTE_SYMBOLS.get(quote_mint, str(quote_mint)),
     }
+
+
+async def read_quote_decimals(conn: AsyncClient, quote_mint: Pubkey) -> int:
+    """Read a quote mint's decimals from chain.
+
+    `QuoteControl` admits mints from 4 to 12 decimals, so a default of 9 is
+    wrong for most of them and misscales every quote-side figure silently.
+
+    Raises:
+        ValueError: If the mint is missing or too short to be a mint
+    """
+    if quote_mint in QUOTE_DECIMALS:
+        return QUOTE_DECIMALS[quote_mint]
+
+    response = await conn.get_account_info(quote_mint, encoding="base64")
+    if response.value is None:
+        raise ValueError(f"Quote mint {quote_mint} does not exist on chain")
+    data = bytes(response.value.data)
+    if len(data) <= _MINT_DECIMALS_OFFSET:
+        raise ValueError(
+            f"Account {quote_mint} is only {len(data)} bytes, too short to be a mint"
+        )
+    return data[_MINT_DECIMALS_OFFSET]
 
 
 async def fetch_initial_real_token_reserves(client: AsyncClient) -> float:
@@ -379,6 +406,7 @@ class GraduationReporter:
         self.baseline = baseline
         self.min_progress = min_progress
         self.mints: dict[Pubkey, Pubkey | None] = {}
+        self.quote_decimals: dict[Pubkey, int] = {}
         self.last_printed: dict[Pubkey, float] = {}
 
     async def handle(self, curve: Pubkey, data: bytes, suffix: str = "") -> None:
@@ -410,12 +438,20 @@ class GraduationReporter:
             self.mints[curve] = await resolve_mint(self.client, curve)
         mint = self.mints[curve]
 
+        quote_mint = state["quote_mint"]
+        if quote_mint not in self.quote_decimals:
+            self.quote_decimals[quote_mint] = await read_quote_decimals(
+                self.client, quote_mint
+            )
+        quote_unit = 10 ** self.quote_decimals[quote_mint]
+
         print(
             f"🎓 {progress:6.2f}%  "
             f"mint={mint if mint else '<unresolved>'}  "
             f"curve={curve}  "
             f"{state['real_token_reserves']:,.0f} tokens left  "
-            f"{state['real_quote_reserves']:,.4f} {state['quote_symbol']}"
+            f"{state['real_quote_reserves_raw'] / quote_unit:,.4f} "
+            f"{state['quote_symbol']}"
             f"{suffix}"
         )
 

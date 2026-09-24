@@ -23,7 +23,6 @@ RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 PUMP_AMM_PROGRAM_ID = Pubkey.from_string("pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA")
 
 
-
 async def get_market_address_by_base_mint(
     base_mint_address: Pubkey, amm_program_id: Pubkey
 ):
@@ -48,6 +47,29 @@ async def get_market_address_by_base_mint(
             # yet, which is the common case rather than an error.
             return None
         return pool_addresses[0]
+
+
+# Same offset in SPL Token and Token-2022: extensions are appended after it.
+_MINT_DECIMALS_OFFSET = 44
+
+
+async def read_mint_decimals(mint: Pubkey) -> int:
+    """Read a mint's decimals from chain.
+
+    pump-amm pools do not all quote in SOL, so only the pool's own quote mint
+    says what power of ten its reserves are in.
+
+    Raises:
+        ValueError: If the mint is missing or too short to be a mint
+    """
+    async with AsyncClient(RPC_ENDPOINT, timeout=120) as client:
+        response = await client.get_account_info(mint, encoding="base64")
+    if response.value is None:
+        raise ValueError(f"Mint {mint} does not exist on chain")
+    data = bytes(response.value.data)
+    if len(data) <= _MINT_DECIMALS_OFFSET:
+        raise ValueError(f"Account {mint} is too short to be a mint")
+    return data[_MINT_DECIMALS_OFFSET]
 
 
 async def get_market_data(market_address: Pubkey):
@@ -142,9 +164,12 @@ async def show_pool(token_mint: Pubkey) -> None:
     # under-prices by anywhere from a few percent to over 20%.
     virtual = market_data.get("virtual_quote_reserves", 0)
     if virtual:
+        quote_mint = Pubkey.from_string(market_data["quote_mint"])
+        quote_decimals = await read_mint_decimals(quote_mint)
         print(
-            f"\nNote: this pool carries {virtual / 1e9:.9f} SOL of virtual quote "
-            "reserves. Add them to pool_quote_token_account.amount before quoting."
+            f"\nNote: this pool carries {virtual / 10**quote_decimals:.9f} "
+            f"of virtual quote reserves ({quote_mint}, {quote_decimals} decimals). "
+            "Add them to pool_quote_token_account.amount before quoting."
         )
 
 

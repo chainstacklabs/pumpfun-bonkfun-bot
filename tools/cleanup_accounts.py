@@ -3,13 +3,13 @@
 WARNING: this submits real transactions and spends real funds.
 
 Usage:
-    uv run tools/cleanup_accounts.py [MINT]
+    uv run tools/cleanup_accounts.py <MINT>
 """
 
+import argparse
 import asyncio
 import logging
 import os
-import sys
 
 from dotenv import load_dotenv
 from solders.pubkey import Pubkey
@@ -35,11 +35,6 @@ logger = get_logger(__name__)
 
 RPC_ENDPOINT = os.getenv("SOLANA_NODE_RPC_ENDPOINT")
 PRIVATE_KEY = os.getenv("SOLANA_PRIVATE_KEY")
-
-# Mint of the token account to close: pass as argv[1], or change the default.
-MINT_ADDRESS = Pubkey.from_string(
-    sys.argv[1] if len(sys.argv) > 1 else "9WHpYbqG6LJvfCYfMjvGbyo1wHXgroCrixPb33s2pump"
-)
 
 # The mint's token program is read from the mint account itself (see
 # resolve_token_program). Guessing it derives the wrong ATA address, and the
@@ -147,16 +142,17 @@ async def close_account_if_exists(
         logger.error(f"Error while processing account {account}: {e}")
 
 
-async def main():
+async def cleanup(mint: Pubkey) -> None:
+    """Burn any leftover balance in this wallet's token account and close it."""
+    client = SolanaClient(RPC_ENDPOINT)
     try:
-        client = SolanaClient(RPC_ENDPOINT)
         wallet = Wallet(PRIVATE_KEY)
 
-        token_program = await resolve_token_program(client, MINT_ADDRESS)
-        logger.info(f"Mint {MINT_ADDRESS} uses token program {token_program}")
+        token_program = await resolve_token_program(client, mint)
+        logger.info(f"Mint {mint} uses token program {token_program}")
 
-        ata = wallet.get_associated_token_address(MINT_ADDRESS, token_program)
-        await close_account_if_exists(client, wallet, ata, MINT_ADDRESS, token_program)
+        ata = wallet.get_associated_token_address(mint, token_program)
+        await close_account_if_exists(client, wallet, ata, mint, token_program)
 
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
@@ -164,5 +160,16 @@ async def main():
         await client.close()
 
 
+def main() -> None:
+    """Parse the command line and close the account."""
+    parser = argparse.ArgumentParser(
+        description="Burn any leftover balance in a token account and close it"
+    )
+    parser.add_argument("mint", help="Mint whose token account to close")
+    args = parser.parse_args()
+
+    asyncio.run(cleanup(Pubkey.from_string(args.mint)))
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

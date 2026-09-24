@@ -12,6 +12,8 @@ coin you own. This queries both and says which program each account came from.
 
 An account showing a zero balance is still an open account holding ~0.002 SOL
 of rent. `tools/cleanup_accounts.py` closes those and refunds it.
+
+Balances are read at `confirmed`, so a trade that just landed is visible.
 """
 
 import argparse
@@ -21,6 +23,7 @@ import os
 import base58
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
+from solana.rpc.commitment import Confirmed
 from solana.rpc.core import TokenAccountOpts
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
@@ -45,14 +48,16 @@ async def show_balances(owner: Pubkey) -> None:
         owner: The wallet to inspect
     """
     async with AsyncClient(RPC_ENDPOINT) as client:
-        lamports = (await client.get_balance(owner)).value
+        # solana-py defaults to `finalized`, which lags far enough behind that
+        # a balance read straight after a trade still shows pre-trade state.
+        lamports = (await client.get_balance(owner, commitment=Confirmed)).value
         print(f"Wallet: {owner}")
         print(f"SOL:    {lamports / LAMPORTS_PER_SOL:.9f} ({lamports} lamports)\n")
 
         found = False
         for program_name, program_id in TOKEN_PROGRAMS.items():
             response = await client.get_token_accounts_by_owner_json_parsed(
-                owner, TokenAccountOpts(program_id=program_id)
+                owner, TokenAccountOpts(program_id=program_id), commitment=Confirmed
             )
             for account in response.value:
                 info = account.account.data.parsed["info"]

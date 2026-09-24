@@ -399,7 +399,7 @@ async def read_virtual_quote_reserves(client: AsyncClient, pool: Pubkey) -> int:
     if len(data) < end:
         return 0
     return int.from_bytes(
-        data[POOL_VIRTUAL_QUOTE_RESERVES_OFFSET : end], "little", signed=True
+        data[POOL_VIRTUAL_QUOTE_RESERVES_OFFSET:end], "little", signed=True
     )
 
 
@@ -454,7 +454,9 @@ async def calculate_token_pool_price(
 MINT_DECIMALS_OFFSET = 44
 
 
-async def get_mint_info(client: AsyncClient, mint_address: Pubkey) -> tuple[Pubkey, int]:
+async def get_mint_info(
+    client: AsyncClient, mint_address: Pubkey
+) -> tuple[Pubkey, int]:
     """Read a mint's token program and decimals from one account fetch.
 
     Both come off the same `getAccountInfo`, so the decimals cost nothing extra.
@@ -634,10 +636,16 @@ async def buy_pump_swap(
     breaking_fee_quote_ata = get_associated_token_address(
         breaking_fee_recipient, SOL, SYSTEM_TOKEN_PROGRAM
     )
-    accounts.extend([
-        AccountMeta(pubkey=breaking_fee_recipient, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=breaking_fee_quote_ata, is_signer=False, is_writable=True),
-    ])
+    accounts.extend(
+        [
+            AccountMeta(
+                pubkey=breaking_fee_recipient, is_signer=False, is_writable=False
+            ),
+            AccountMeta(
+                pubkey=breaking_fee_quote_ata, is_signer=False, is_writable=True
+            ),
+        ]
+    )
 
     # Instruction data format:
     # discriminator (8 bytes) + amount_out (8 bytes) + max_in (8 bytes) + track_volume (1 byte)
@@ -715,7 +723,7 @@ async def buy_pump_swap(
     simulation = await client.simulate_transaction(tx)
     if simulation.value.err:
         print(f"Simulation error: {simulation.value.err}")
-        for log in (simulation.value.logs or []):
+        for log in simulation.value.logs or []:
             print(f"  log: {log}")
         # NOTE: pump-swap may throw AnchorError 6023 (Overflow) at buy.rs:400 on
         # the dynamic creator-fee calc for some pools. The account list matches
@@ -763,6 +771,17 @@ async def buy(token_mint: Pubkey, sol_amount: float, slippage: float) -> None:
 
         # Step 2: Parse pool data to get necessary accounts
         market_data = await get_market_data(client, market_address)
+
+        # This script wraps SOL and caps with LAMPORTS_PER_SOL, but prices off
+        # the pool's own decimals. On a pool quoting anything else the two
+        # disagree and compound, so refuse rather than size the trade wrong.
+        pool_quote_mint = Pubkey.from_string(market_data["quote_mint"])
+        if pool_quote_mint != SOL:
+            raise ValueError(
+                f"Pool {market_address} quotes in {pool_quote_mint}, not SOL. "
+                f"This script wraps SOL and prices in it, so it cannot trade "
+                f"that pool."
+            )
 
         # Determine token program ID for the base mint
         token_program_id, _ = await get_mint_info(client, token_mint)
@@ -812,7 +831,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    asyncio.run(buy(Pubkey.from_string(args.mint), args.amount, args.slippage))
+    try:
+        asyncio.run(buy(Pubkey.from_string(args.mint), args.amount, args.slippage))
+    except ValueError as e:
+        print(e)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
