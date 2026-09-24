@@ -41,7 +41,7 @@ Geyser gRPC reference:
 https://docs.triton.one/project-yellowstone/dragons-mouth-grpc-subscriptions
 
 Authentication: Basic or X-Token, via GEYSER_ENDPOINT, GEYSER_API_TOKEN and
-AUTH_TYPE.
+GEYSER_AUTH_TYPE.
 """
 
 import asyncio
@@ -65,8 +65,9 @@ load_dotenv()
 
 GEYSER_ENDPOINT = os.getenv("GEYSER_ENDPOINT")
 GEYSER_API_TOKEN = os.getenv("GEYSER_API_TOKEN")
-# Authentication type: "x-token" or "basic"
-AUTH_TYPE = "x-token"
+AUTH_TYPE = os.getenv("GEYSER_AUTH_TYPE", "x-token").lower()
+
+BAD_AUTH_TYPE_MSG = "GEYSER_AUTH_TYPE must be 'x-token' or 'basic'"
 
 PUMP_PROGRAM_ID = Pubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")
 
@@ -112,17 +113,22 @@ async def create_geyser_connection() -> geyser_pb2_grpc.GeyserStub:
 
     Returns:
         A Geyser stub bound to an authenticated channel
+
+    Raises:
+        ValueError: If GEYSER_AUTH_TYPE names a scheme the endpoint does not take
     """
     if AUTH_TYPE == "x-token":
         auth = grpc.metadata_call_credentials(
             lambda _, callback: callback((("x-token", GEYSER_API_TOKEN),), None)
         )
-    else:  # Default to basic auth
+    elif AUTH_TYPE == "basic":
         auth = grpc.metadata_call_credentials(
             lambda _, callback: callback(
                 (("authorization", f"Basic {GEYSER_API_TOKEN}"),), None
             )
         )
+    else:
+        raise ValueError(BAD_AUTH_TYPE_MSG)
 
     creds = grpc.composite_channel_credentials(grpc.ssl_channel_credentials(), auth)
     channel = grpc.aio.secure_channel(GEYSER_ENDPOINT, creds)

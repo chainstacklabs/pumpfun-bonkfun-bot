@@ -63,8 +63,9 @@ PUMPPORTAL_WS_URL = "wss://pumpportal.fun/api/data"
 # Test duration in seconds
 TEST_DURATION = 30
 
-# Geyser authentication type: "x-token" or "basic"
-GEYSER_AUTH_TYPE = "x-token"
+GEYSER_AUTH_TYPE = os.getenv("GEYSER_AUTH_TYPE", "x-token").lower()
+
+BAD_AUTH_TYPE_MSG = "GEYSER_AUTH_TYPE must be 'x-token' or 'basic'"
 
 
 class DetectionTracker:
@@ -704,12 +705,14 @@ async def listen_geyser_grpc(
                 auth = grpc.metadata_call_credentials(
                     lambda _context, callback: callback((("x-token", api_token),), None)
                 )
-            else:
+            elif GEYSER_AUTH_TYPE == "basic":
                 auth = grpc.metadata_call_credentials(
                     lambda _context, callback: callback(
                         (("authorization", f"Basic {api_token}"),), None
                     )
                 )
+            else:
+                raise ValueError(BAD_AUTH_TYPE_MSG)
 
             creds = grpc.composite_channel_credentials(
                 grpc.ssl_channel_credentials(), auth

@@ -84,7 +84,9 @@ RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 # Geyser endpoints
 GEYSER_ENDPOINT = os.environ.get("GEYSER_ENDPOINT")
 GEYSER_API_TOKEN = os.environ.get("GEYSER_API_TOKEN")
-AUTH_TYPE = os.environ.get("GEYSER_AUTH_TYPE", "x-token")  # Default to x-token
+AUTH_TYPE = os.environ.get("GEYSER_AUTH_TYPE", "x-token").lower()
+
+BAD_AUTH_TYPE_MSG = "GEYSER_AUTH_TYPE must be 'x-token' or 'basic'"
 
 PUMP_CREATE_DISCRIMINATOR = struct.pack("<Q", 8576854823835016728)
 PUMP_CREATE_V2_DISCRIMINATOR = bytes([214, 144, 76, 236, 95, 139, 49, 180])
@@ -145,17 +147,23 @@ def calculate_pump_curve_price(curve_state: pump_v2.BondingCurveState) -> float:
 
 
 async def create_geyser_connection():
-    """Establish a secure connection to the Geyser endpoint using the configured auth type."""
+    """Establish a secure connection to the Geyser endpoint using the configured auth type.
+
+    Raises:
+        ValueError: If GEYSER_AUTH_TYPE names a scheme the endpoint does not take
+    """
     if AUTH_TYPE == "x-token":
         auth = grpc.metadata_call_credentials(
             lambda _, callback: callback((("x-token", GEYSER_API_TOKEN),), None)
         )
-    else:  # Default to basic auth
+    elif AUTH_TYPE == "basic":
         auth = grpc.metadata_call_credentials(
             lambda _, callback: callback(
                 (("authorization", f"Basic {GEYSER_API_TOKEN}"),), None
             )
         )
+    else:
+        raise ValueError(BAD_AUTH_TYPE_MSG)
 
     creds = grpc.composite_channel_credentials(grpc.ssl_channel_credentials(), auth)
     channel = grpc.aio.secure_channel(GEYSER_ENDPOINT, creds)
