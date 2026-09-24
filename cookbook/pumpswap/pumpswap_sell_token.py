@@ -361,7 +361,7 @@ async def read_virtual_quote_reserves(client: AsyncClient, pool: Pubkey) -> int:
     if len(data) < end:
         return 0
     return int.from_bytes(
-        data[POOL_VIRTUAL_QUOTE_RESERVES_OFFSET : end], "little", signed=True
+        data[POOL_VIRTUAL_QUOTE_RESERVES_OFFSET:end], "little", signed=True
     )
 
 
@@ -416,7 +416,9 @@ async def calculate_token_pool_price(
 MINT_DECIMALS_OFFSET = 44
 
 
-async def get_mint_info(client: AsyncClient, mint_address: Pubkey) -> tuple[Pubkey, int]:
+async def get_mint_info(
+    client: AsyncClient, mint_address: Pubkey
+) -> tuple[Pubkey, int]:
     """Read a mint's token program and decimals from one account fetch.
 
     Both come off the same `getAccountInfo`, so the decimals cost nothing extra.
@@ -617,16 +619,18 @@ async def sell_pump_swap(
     # post-cutover cashback sell
     # (sig 4ei1cJV7uaENJeb5p8prVKiTApTouTh94r9HqPNbj7oJH52X8mEiXhrVNKUgtB9WeZB8jZANnmuSkdTuJ59y8NP3).
     if is_cashback:
-        accounts.extend([
-            AccountMeta(
-                pubkey=user_volume_accumulator_quote_ata,
-                is_signer=False,
-                is_writable=True,
-            ),
-            AccountMeta(
-                pubkey=user_volume_accumulator, is_signer=False, is_writable=True
-            ),
-        ])
+        accounts.extend(
+            [
+                AccountMeta(
+                    pubkey=user_volume_accumulator_quote_ata,
+                    is_signer=False,
+                    is_writable=True,
+                ),
+                AccountMeta(
+                    pubkey=user_volume_accumulator, is_signer=False, is_writable=True
+                ),
+            ]
+        )
     # pool-v2 belongs only to a *canonical* pool — one that graduated from a
     # pump.fun bonding curve. `Pool.coin_creator` is the discriminator: it is set
     # for canonical pools and left at `Pubkey::default()` for every other pool
@@ -650,10 +654,16 @@ async def sell_pump_swap(
     breaking_fee_quote_ata = get_associated_token_address(
         breaking_fee_recipient, SOL, SYSTEM_TOKEN_PROGRAM
     )
-    accounts.extend([
-        AccountMeta(pubkey=breaking_fee_recipient, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=breaking_fee_quote_ata, is_signer=False, is_writable=True),
-    ])
+    accounts.extend(
+        [
+            AccountMeta(
+                pubkey=breaking_fee_recipient, is_signer=False, is_writable=False
+            ),
+            AccountMeta(
+                pubkey=breaking_fee_quote_ata, is_signer=False, is_writable=True
+            ),
+        ]
+    )
 
     # Instruction data format: discriminator (8 bytes) + amount (8 bytes) + min_out (8 bytes)
     # All integers are little-endian (<)
@@ -719,6 +729,17 @@ async def sell(token_mint: Pubkey, slippage: float) -> None:
         # Step 2: Parse pool data to get necessary accounts
         market_data = await get_market_data(client, market_address)
 
+        # This script wraps SOL and caps with LAMPORTS_PER_SOL, but prices off
+        # the pool's own decimals. On a pool quoting anything else the two
+        # disagree and compound, so refuse rather than size the trade wrong.
+        pool_quote_mint = Pubkey.from_string(market_data["quote_mint"])
+        if pool_quote_mint != SOL:
+            raise ValueError(
+                f"Pool {market_address} quotes in {pool_quote_mint}, not SOL. "
+                f"This script wraps SOL and prices in it, so it cannot trade "
+                f"that pool."
+            )
+
         # Determine token program ID for the base mint
         token_program_id, base_decimals = await get_mint_info(client, token_mint)
 
@@ -761,7 +782,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    asyncio.run(sell(Pubkey.from_string(args.mint), args.slippage))
+    try:
+        asyncio.run(sell(Pubkey.from_string(args.mint), args.slippage))
+    except ValueError as e:
+        print(e)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

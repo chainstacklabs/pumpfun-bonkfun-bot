@@ -42,19 +42,39 @@ USDC_MINT: Final[Pubkey] = Pubkey.from_string(
 QUOTE_DECIMALS: Final[dict[Pubkey, int]] = {WSOL_MINT: 9, USDC_MINT: 6}
 QUOTE_SYMBOLS: Final[dict[Pubkey, str]] = {WSOL_MINT: "SOL", USDC_MINT: "USDC"}
 
+# Same offset in SPL Token and Token-2022: extensions are appended after it.
+_MINT_DECIMALS_OFFSET: Final[int] = 44
 
-def resolve_quote_asset(quote_mint: Pubkey) -> tuple[Pubkey, str, int]:
-    """Resolve a curve's quote mint to its symbol and raw-unit scale.
 
-    Args:
-        quote_mint: The curve's raw quote_mint field
+def effective_quote_mint(quote_mint: Pubkey) -> Pubkey:
+    """Resolve a curve's raw quote_mint field to the mint it prices against.
 
-    Returns:
-        (effective mint, display symbol, raw units per whole token)
+    The field is all zeros on SOL-paired coins, not wrapped SOL.
     """
-    mint = WSOL_MINT if quote_mint == DEFAULT_QUOTE_MINT else quote_mint
-    decimals = QUOTE_DECIMALS.get(mint, 9)
-    return mint, QUOTE_SYMBOLS.get(mint, str(mint)), 10**decimals
+    return WSOL_MINT if quote_mint == DEFAULT_QUOTE_MINT else quote_mint
+
+
+async def read_quote_decimals(conn: AsyncClient, quote_mint: Pubkey) -> int:
+    """Read a quote mint's decimals from chain.
+
+    `QuoteControl` admits mints from 4 to 12 decimals, so a default of 9 is
+    wrong for most of them and misscales every quote-side figure silently.
+
+    Raises:
+        ValueError: If the mint is missing or too short to be a mint
+    """
+    if quote_mint in QUOTE_DECIMALS:
+        return QUOTE_DECIMALS[quote_mint]
+
+    response = await conn.get_account_info(quote_mint, encoding="base64")
+    if response.value is None:
+        raise ValueError(f"Quote mint {quote_mint} does not exist on chain")
+    data = bytes(response.value.data)
+    if len(data) <= _MINT_DECIMALS_OFFSET:
+        raise ValueError(
+            f"Account {quote_mint} is only {len(data)} bytes, too short to be a mint"
+        )
+    return data[_MINT_DECIMALS_OFFSET]
 
 
 class BondingCurveState:
@@ -224,9 +244,9 @@ async def check_token_status(mint_address: str) -> None:
                     client, bonding_curve_address
                 )
 
-                quote_mint, quote_symbol, quote_unit = resolve_quote_asset(
-                    curve_state.quote_mint
-                )
+                quote_mint = effective_quote_mint(curve_state.quote_mint)
+                quote_symbol = QUOTE_SYMBOLS.get(quote_mint, str(quote_mint))
+                quote_unit = 10 ** await read_quote_decimals(client, quote_mint)
 
                 print("\nBonding curve status:")
                 print("-" * 50)
@@ -273,9 +293,7 @@ async def check_token_status(mint_address: str) -> None:
 def main() -> None:
     """Main entry point for the token status checker."""
     parser = argparse.ArgumentParser(description="Check token bonding curve status")
-    parser.add_argument(
-        "mint_address", help="The token mint address"
-    )
+    parser.add_argument("mint_address", help="The token mint address")
     args = parser.parse_args()
 
     asyncio.run(check_token_status(args.mint_address))

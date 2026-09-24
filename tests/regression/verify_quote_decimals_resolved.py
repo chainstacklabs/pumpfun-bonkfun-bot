@@ -1,8 +1,9 @@
 """Verify no trade path prices a coin before resolving its quote mint.
 
 pump.fun's quote assets are not just SOL and USDC. The `QuoteControl` registry
-(PDA `["quote-control"]`) admits mints at 6, 8 and 9 decimals — 8 for Backed's
-xStocks, 6 for Backpack Securities — and coins paired with them trade live.
+(PDA `["quote-control"]`) admits mints anywhere from 4 to 12 decimals — 8 for
+Backed's xStocks, 6 for Backpack Securities — and coins paired with them trade
+live.
 
 `quote_units()` used to default to 9 decimals for an unresolved mint. Every
 cookbook trade script called it *before* `resolve_quote_token_program()` warmed
@@ -25,6 +26,7 @@ Offline machine checks, no network and no funds moved:
      it makes for the token program, so resolving costs no extra RPC call.
   C. Every cookbook script that calls `quote_units` or `price_per_token` calls
      `resolve_quote_token_program` first, checked per function body.
+  D. No cookbook script falls back to a literal decimal count for a quote mint.
 
 Usage:
     uv run tests/regression/verify_quote_decimals_resolved.py
@@ -134,8 +136,9 @@ def check_scripts_resolve_before_pricing() -> None:
     offenders = []
     for path in sorted(COOKBOOK.rglob("*.py")):
         source = path.read_text()
-        # Only scripts that share the helper module's cache are in scope; the
-        # offline decoders carry their own self-contained arithmetic.
+        # Only scripts that share the helper module's cache are in scope here.
+        # Scripts carrying their own arithmetic are covered by
+        # check_no_assumed_quote_decimals instead.
         if "pumpfun_instructions_v2" not in source:
             continue
         tree = ast.parse(source)
@@ -168,6 +171,38 @@ def check_scripts_resolve_before_pricing() -> None:
     )
 
 
+def check_no_assumed_quote_decimals() -> None:
+    """No script may fall back to a literal decimal count for a quote mint.
+
+    `QuoteControl` admits mints from 4 to 12 decimals, so the literal is wrong
+    for most quote assets and silently so. A two-argument `.get` on a decimals
+    table is the defect whatever the default is; read the mint instead.
+    """
+    _GET_WITH_DEFAULT_ARGC = 2  # dict.get(key, default)
+
+    offenders = []
+    for path in sorted(COOKBOOK.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if (
+                not isinstance(node, ast.Call)
+                or len(node.args) != _GET_WITH_DEFAULT_ARGC
+            ):
+                continue
+            func = node.func
+            if not isinstance(func, ast.Attribute) or func.attr != "get":
+                continue
+            table = func.value
+            if not isinstance(table, ast.Name) or not table.id.endswith("DECIMALS"):
+                continue
+            offenders.append(
+                f"{path.relative_to(PROJECT_ROOT)}:{node.lineno}: "
+                f"{table.id}.get(..., <default>)"
+            )
+    assert not offenders, (
+        "quote decimals assumed rather than resolved:\n  " + "\n  ".join(offenders)
+    )
+
+
 async def main() -> None:
     """Run every check and report."""
     print("=" * 72)
@@ -178,6 +213,7 @@ async def main() -> None:
         ("an unresolved quote mint raises", check_unresolved_mint_raises),
         ("resolution caches decimals in one read", check_resolution_caches_decimals),
         ("every script resolves before pricing", check_scripts_resolve_before_pricing),
+        ("no script assumes a quote mint's decimals", check_no_assumed_quote_decimals),
     ]
     for label, fn in checks:
         result = fn()

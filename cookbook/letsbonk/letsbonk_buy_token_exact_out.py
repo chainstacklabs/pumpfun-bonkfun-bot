@@ -49,7 +49,7 @@ PRIVATE_KEY = base58.b58decode(os.environ.get("SOLANA_PRIVATE_KEY"))
 PAYER = Keypair.from_bytes(PRIVATE_KEY)
 
 # Defaults for the command line below, not fixed settings.
-DEFAULT_AMOUNT = 1_000_000
+DEFAULT_AMOUNT = 1.0
 DEFAULT_SLIPPAGE = 0.25
 
 # Transaction parameters
@@ -466,23 +466,25 @@ async def buy_exact_out(
             else LETSBONK_PLATFORM_CONFIG
         )
         creator_fee_vault = derive_creator_fee_vault(creator, WSOL_MINT)
-        platform_fee_vault = derive_platform_fee_vault(
-            platform_config, WSOL_MINT
-        )
+        platform_fee_vault = derive_platform_fee_vault(platform_config, WSOL_MINT)
 
         print(f"Creator fee vault: {creator_fee_vault}")
         print(f"Platform fee vault: {platform_fee_vault}")
 
+        # LaunchLab coins are not all 6 decimals; base_decimals is already
+        # in the pool state fetched above.
+        amount_out_raw = int(amount_out * 10 ** pool_state_data["base_decimals"])
+
         # Calculate amounts using pool state data
         maximum_amount_in = calculate_maximum_amount_in_from_pool_state(
-            pool_state_data, amount_out, slippage_tolerance
+            pool_state_data, amount_out_raw, slippage_tolerance
         )
 
         if maximum_amount_in is None:
             print("Failed to calculate maximum amount in")
             return None
 
-        print(f"Amount out: {amount_out} tokens")
+        print(f"Amount out: {amount_out:,g} tokens ({amount_out_raw:,} raw)")
         print(
             f"Maximum amount in: {maximum_amount_in} lamports ({maximum_amount_in / LAMPORTS_PER_SOL:.6f} SOL)"
         )
@@ -576,7 +578,7 @@ async def buy_exact_out(
         # Instruction data: discriminator + amount_out + maximum_amount_in + share_fee_rate
         instruction_data = (
             BUY_EXACT_OUT_DISCRIMINATOR
-            + struct.pack("<Q", amount_out)  # amount_out (u64)
+            + struct.pack("<Q", amount_out_raw)  # amount_out (u64)
             + struct.pack("<Q", maximum_amount_in)  # maximum_amount_in (u64)
             + struct.pack("<Q", SHARE_FEE_RATE)  # share_fee_rate (u64): 0
         )
@@ -677,9 +679,7 @@ async def run(token_mint: Pubkey, amount: int, slippage: float) -> None:
             balance_sol = balance_resp.value / LAMPORTS_PER_SOL
             print(f"Wallet balance: {balance_sol:.6f} SOL")
 
-            tx_signature = await buy_exact_out(
-                client, token_mint, amount, slippage
-            )
+            tx_signature = await buy_exact_out(client, token_mint, amount, slippage)
 
             if tx_signature:
                 print(f"\n✅ Success! Transaction: {tx_signature}")
@@ -700,12 +700,14 @@ async def run(token_mint: Pubkey, amount: int, slippage: float) -> None:
 
 def main() -> None:
     """Parse the command line and run the trade."""
-    parser = argparse.ArgumentParser(description="Buy a fixed number of letsbonk.fun tokens")
+    parser = argparse.ArgumentParser(
+        description="Buy a fixed number of letsbonk.fun tokens"
+    )
     parser.add_argument("mint", help="The coin's mint address")
     parser.add_argument(
         "amount",
         nargs="?",
-        type=int,
+        type=float,
         default=DEFAULT_AMOUNT,
         help=f"Whole tokens to receive (default {DEFAULT_AMOUNT})",
     )

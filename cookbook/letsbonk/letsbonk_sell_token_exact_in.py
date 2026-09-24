@@ -49,7 +49,7 @@ PRIVATE_KEY = base58.b58decode(os.environ.get("SOLANA_PRIVATE_KEY"))
 PAYER = Keypair.from_bytes(PRIVATE_KEY)
 
 # Defaults for the command line below, not fixed settings.
-DEFAULT_AMOUNT = 1_000_000
+DEFAULT_AMOUNT = 1.0
 DEFAULT_SLIPPAGE = 0.25
 
 # Transaction parameters
@@ -463,23 +463,25 @@ async def sell_exact_in(
             else LETSBONK_PLATFORM_CONFIG
         )
         creator_fee_vault = derive_creator_fee_vault(creator, WSOL_MINT)
-        platform_fee_vault = derive_platform_fee_vault(
-            platform_config, WSOL_MINT
-        )
+        platform_fee_vault = derive_platform_fee_vault(platform_config, WSOL_MINT)
 
         print(f"Creator fee vault: {creator_fee_vault}")
         print(f"Platform fee vault: {platform_fee_vault}")
 
+        # LaunchLab coins are not all 6 decimals; base_decimals is already
+        # in the pool state fetched above.
+        amount_in_raw = int(amount_in_tokens * 10 ** pool_state_data["base_decimals"])
+
         # Calculate amounts using pool state data
         minimum_amount_out = calculate_minimum_amount_out_from_pool_state(
-            pool_state_data, amount_in_tokens, slippage_tolerance
+            pool_state_data, amount_in_raw, slippage_tolerance
         )
 
         if minimum_amount_out is None or minimum_amount_out == 0:
             print("Failed to calculate minimum amount out or amount is too small")
             return None
 
-        print(f"Amount in: {amount_in_tokens:,} tokens")
+        print(f"Amount in: {amount_in_tokens:,g} tokens ({amount_in_raw:,} raw)")
         print(
             f"Minimum amount out: {minimum_amount_out:,} lamports ({minimum_amount_out / LAMPORTS_PER_SOL:.6f} SOL)"
         )
@@ -569,7 +571,7 @@ async def sell_exact_in(
         # Instruction data: discriminator + amount_in + minimum_amount_out + share_fee_rate
         instruction_data = (
             SELL_EXACT_IN_DISCRIMINATOR
-            + struct.pack("<Q", amount_in_tokens)  # amount_in (u64)
+            + struct.pack("<Q", amount_in_raw)  # amount_in (u64)
             + struct.pack("<Q", minimum_amount_out)  # minimum_amount_out (u64)
             + struct.pack("<Q", SHARE_FEE_RATE)  # share_fee_rate (u64): 0
         )
@@ -669,9 +671,7 @@ async def run(token_mint: Pubkey, amount: int, slippage: float) -> None:
             print(f"Wallet balance: {balance_sol:.6f} SOL")
 
             # Check if user has the base token account and sufficient balance
-            user_base_token = get_associated_token_address(
-                PAYER.pubkey(), token_mint
-            )
+            user_base_token = get_associated_token_address(PAYER.pubkey(), token_mint)
             try:
                 token_account_info = await client.get_token_account_balance(
                     user_base_token
@@ -692,9 +692,7 @@ async def run(token_mint: Pubkey, amount: int, slippage: float) -> None:
                 print(f"Error checking token balance: {e}")
                 print("Continuing anyway...")
 
-            tx_signature = await sell_exact_in(
-                client, token_mint, amount, slippage
-            )
+            tx_signature = await sell_exact_in(client, token_mint, amount, slippage)
 
             if tx_signature:
                 print(f"\n✅ Success! Transaction: {tx_signature}")
@@ -715,12 +713,14 @@ async def run(token_mint: Pubkey, amount: int, slippage: float) -> None:
 
 def main() -> None:
     """Parse the command line and run the trade."""
-    parser = argparse.ArgumentParser(description="Sell a fixed number of letsbonk.fun tokens")
+    parser = argparse.ArgumentParser(
+        description="Sell a fixed number of letsbonk.fun tokens"
+    )
     parser.add_argument("mint", help="The coin's mint address")
     parser.add_argument(
         "amount",
         nargs="?",
-        type=int,
+        type=float,
         default=DEFAULT_AMOUNT,
         help=f"Whole tokens to sell (default {DEFAULT_AMOUNT})",
     )

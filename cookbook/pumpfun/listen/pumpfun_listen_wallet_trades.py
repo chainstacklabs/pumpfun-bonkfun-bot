@@ -20,11 +20,22 @@ from urllib.parse import urlsplit
 import base58
 import websockets
 from dotenv import load_dotenv
+from solana.rpc.async_api import AsyncClient
+from solders.pubkey import Pubkey
 
 load_dotenv()
 
 # Configuration
 WSS_ENDPOINT = os.environ.get("SOLANA_NODE_WSS_ENDPOINT")
+RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
+
+# pump.fun coins are 6 decimals; the quote side is whatever quote_mint says.
+TOKEN_DECIMALS = 6
+_WSOL_MINT = "So11111111111111111111111111111111111111112"
+_ALL_ZERO_MINT = "11111111111111111111111111111111"
+# Same offset in SPL Token and Token-2022: extensions are appended after it.
+_MINT_DECIMALS_OFFSET = 44
+_QUOTE_CACHE: dict[str, tuple[str, int]] = {}
 
 # Solana's blockSubscribe (and a busy logsSubscribe) sends frames well past
 # websockets' 1 MiB default, which kills the connection with a 1009 close
@@ -128,6 +139,10 @@ def parse_trade_event(logs):
     return None
 
 
+# A borsh Shareholder: pubkey + u16 share.
+_SHAREHOLDER_SIZE = 34
+
+
 def decode_trade_event(data):
     """Decode TradeEvent structure from raw bytes with progressive parsing.
 
@@ -141,7 +156,13 @@ def decode_trade_event(data):
     Extended fields (added later): real_sol_reserves, real_token_reserves,
     fee_recipient, fee_basis_points, fee, creator, creator_fee_basis_points,
     creator_fee, track_volume, total_unclaimed_tokens, total_claimed_tokens,
-    current_sol_volume, last_update_timestamp, ix_name
+    current_sol_volume, last_update_timestamp, ix_name, mayhem_mode,
+    the cashback/buyback fees, shareholders and quote_mint
+
+    `quote_mint` is the one that matters for display: pump.fun coins are not all
+    SOL-paired, and the quote-side amounts are in that mint's raw units. It sits
+    after a variable-length shareholders vec, so reaching it means walking that
+    vec even though nothing here prints it.
     """
     # Minimum size for core fields: 32+8+8+1+32+8+8+8 = 105 bytes
     if len(data) < 105:
@@ -194,7 +215,7 @@ def decode_trade_event(data):
         fee = struct.unpack("<Q", data[offset : offset + 8])[0]
         offset += 8
     else:
-        fee_recipient = b'\x00' * 32
+        fee_recipient = b"\x00" * 32
         fee_basis_points = 0
         fee = 0
 
@@ -207,7 +228,7 @@ def decode_trade_event(data):
         creator_fee = struct.unpack("<Q", data[offset : offset + 8])[0]
         offset += 8
     else:
-        creator = b'\x00' * 32
+        creator = b"\x00" * 32
         creator_fee_basis_points = 0
         creator_fee = 0
 
@@ -236,12 +257,33 @@ def decode_trade_event(data):
         offset += 4
         if len(data) >= offset + string_length:
             ix_name = data[offset : offset + string_length].decode("utf-8")
+            # Step over the string, not just its length prefix.
+            offset += string_length
         else:
             ix_name = ""
     else:
         ix_name = ""
 
+    # Mayhem, cashback and buyback details (1 + 8*4 = 33 bytes)
+    if len(data) >= offset + 33:
+        mayhem_mode = bool(data[offset])
+        offset += 1 + 32  # the four fee/amount u64s are not displayed
+    else:
+        mayhem_mode = False
+
+    # Nothing displays shareholders, but quote_mint sits after the vec.
+    quote_mint = None
+    if len(data) >= offset + 4:
+        n_shareholders = struct.unpack("<I", data[offset : offset + 4])[0]
+        offset += 4 + n_shareholders * _SHAREHOLDER_SIZE
+
+        # The unit every quote-side figure above is in.
+        if len(data) >= offset + 32:
+            quote_mint = base58.b58encode(data[offset : offset + 32]).decode()
+
     return {
+        "mayhem_mode": mayhem_mode,
+        "quote_mint": quote_mint,
         "mint": base58.b58encode(mint).decode(),
         "sol_amount": sol_amount,
         "token_amount": token_amount,
@@ -252,10 +294,14 @@ def decode_trade_event(data):
         "virtual_token_reserves": virtual_token_reserves,
         "real_sol_reserves": real_sol_reserves,
         "real_token_reserves": real_token_reserves,
-        "fee_recipient": base58.b58encode(fee_recipient).decode() if fee_recipient != b'\x00' * 32 else None,
+        "fee_recipient": base58.b58encode(fee_recipient).decode()
+        if fee_recipient != b"\x00" * 32
+        else None,
         "fee_basis_points": fee_basis_points,
         "fee": fee,
-        "creator": base58.b58encode(creator).decode() if creator != b'\x00' * 32 else None,
+        "creator": base58.b58encode(creator).decode()
+        if creator != b"\x00" * 32
+        else None,
         "creator_fee_basis_points": creator_fee_basis_points,
         "creator_fee": creator_fee,
         "track_volume": track_volume,
@@ -264,13 +310,45 @@ def decode_trade_event(data):
         "current_sol_volume": current_sol_volume,
         "last_update_timestamp": last_update_timestamp,
         "ix_name": ix_name,
-        "price_per_token": (sol_amount * 1_000_000) / token_amount
+        # Raw quote units per whole token; the display scales it.
+        "price_per_token_raw": (sol_amount * 10**TOKEN_DECIMALS) / token_amount
         if token_amount > 0
         else 0,
     }
 
 
-def display_transaction_info(signature, logs, wallet: str):
+async def resolve_quote_asset(quote_mint: str | None) -> tuple[str, int]:
+    """Resolve a trade's quote mint to a display label and its raw-unit scale.
+
+    `None` means the event predates the field, which only SOL-paired coins did.
+
+    Returns:
+        (label, raw units per whole unit)
+
+    Raises:
+        ValueError: If the mint is missing or too short to be a mint
+    """
+    if quote_mint is None or quote_mint == _ALL_ZERO_MINT:
+        return "SOL", 10**9
+    if quote_mint in _QUOTE_CACHE:
+        return _QUOTE_CACHE[quote_mint]
+
+    mint = Pubkey.from_string(quote_mint)
+    async with AsyncClient(RPC_ENDPOINT) as client:
+        response = await client.get_account_info(mint, encoding="base64")
+    if response.value is None:
+        raise ValueError(f"Quote mint {quote_mint} does not exist on chain")
+    data = bytes(response.value.data)
+    if len(data) <= _MINT_DECIMALS_OFFSET:
+        raise ValueError(f"Account {quote_mint} is too short to be a mint")
+
+    decimals = data[_MINT_DECIMALS_OFFSET]
+    label = "SOL" if quote_mint == _WSOL_MINT else quote_mint
+    _QUOTE_CACHE[quote_mint] = (label, 10**decimals)
+    return _QUOTE_CACHE[quote_mint]
+
+
+async def display_transaction_info(signature, logs, wallet: str):
     """Display formatted transaction information."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -281,35 +359,47 @@ def display_transaction_info(signature, logs, wallet: str):
     trade_data = parse_trade_event(logs)
     if trade_data:
         # Core transaction info (always present)
-        ix_name = trade_data.get('ix_name', '')
-        trade_type = 'BUY' if trade_data['is_buy'] else 'SELL'
+        ix_name = trade_data.get("ix_name", "")
+        trade_type = "BUY" if trade_data["is_buy"] else "SELL"
         print(f"  Type: {trade_type}{f' ({ix_name})' if ix_name else ''}")
         print(f"  Token: {trade_data['mint']}")
-        print(f"  SOL Amount: {trade_data['sol_amount'] / 1_000_000_000:.6f} SOL")
+        quote_label, quote_unit = await resolve_quote_asset(trade_data["quote_mint"])
+        print(
+            f"  Quote Amount: {trade_data['sol_amount'] / quote_unit:.6f} {quote_label}"
+        )
         print(f"  Token Amount: {trade_data['token_amount']:,}")
         print(
-            f"  Price per Token: {trade_data['price_per_token'] / 1_000_000_000:.9f} SOL"
+            f"  Price per Token: "
+            f"{trade_data['price_per_token_raw'] / quote_unit:.9f} {quote_label}"
         )
         print(f"  Trader: {trade_data['user']}")
 
         # Fee info (may not be present in older transactions)
-        if trade_data['fee'] > 0 or trade_data['fee_basis_points'] > 0:
-            print(f"  Fee: {trade_data['fee'] / 1_000_000_000:.6f} SOL ({trade_data['fee_basis_points']} bps)")
+        if trade_data["fee"] > 0 or trade_data["fee_basis_points"] > 0:
+            print(
+                f"  Fee: {trade_data['fee'] / quote_unit:.6f} {quote_label} ({trade_data['fee_basis_points']} bps)"
+            )
 
-        if trade_data['creator_fee'] > 0 or trade_data['creator_fee_basis_points'] > 0:
-            print(f"  Creator Fee: {trade_data['creator_fee'] / 1_000_000_000:.6f} SOL ({trade_data['creator_fee_basis_points']} bps)")
+        if trade_data["creator_fee"] > 0 or trade_data["creator_fee_basis_points"] > 0:
+            print(
+                f"  Creator Fee: {trade_data['creator_fee'] / quote_unit:.6f} {quote_label} ({trade_data['creator_fee_basis_points']} bps)"
+            )
 
-        if trade_data['creator']:
+        if trade_data["creator"]:
             print(f"  Creator: {trade_data['creator']}")
 
-        if trade_data['fee_recipient']:
+        if trade_data["fee_recipient"]:
             print(f"  Fee Recipient: {trade_data['fee_recipient']}")
 
         # Reserve info
-        print(f"  Virtual Reserves: {trade_data['virtual_sol_reserves'] / 1_000_000_000:.6f} SOL / {trade_data['virtual_token_reserves']:,} tokens")
+        print(
+            f"  Virtual Reserves: {trade_data['virtual_sol_reserves'] / quote_unit:.6f} {quote_label} / {trade_data['virtual_token_reserves']:,} tokens"
+        )
 
-        if trade_data['real_sol_reserves'] > 0 or trade_data['real_token_reserves'] > 0:
-            print(f"  Real Reserves: {trade_data['real_sol_reserves'] / 1_000_000_000:.6f} SOL / {trade_data['real_token_reserves']:,} tokens")
+        if trade_data["real_sol_reserves"] > 0 or trade_data["real_token_reserves"] > 0:
+            print(
+                f"  Real Reserves: {trade_data['real_sol_reserves'] / quote_unit:.6f} {quote_label} / {trade_data['real_token_reserves']:,} tokens"
+            )
 
     # Extract and display program info
     display_program_info(logs)
@@ -373,7 +463,7 @@ async def handle_transaction(log_data, wallet: str):
     if not is_pump_bonding_curve_buysell(logs):
         return
 
-    display_transaction_info(signature, logs, wallet)
+    await display_transaction_info(signature, logs, wallet)
 
 
 async def process_websocket_message(websocket, wallet: str):
@@ -401,7 +491,7 @@ async def listen_for_transactions(wallet: str):
     """Main function to listen for wallet transactions."""
     print(f"Starting to monitor wallet: {wallet}")
     # Endpoint carries an API key. hostname, not netloc: netloc keeps any
-        # user:pass@ userinfo, which would leak the credential anyway.
+    # user:pass@ userinfo, which would leak the credential anyway.
     print(f"Connecting to: {urlsplit(WSS_ENDPOINT).hostname or '<unset>'}")
     print("Looking for pump.fun bonding curve buy/sell transactions only...")
     print("=" * 80)

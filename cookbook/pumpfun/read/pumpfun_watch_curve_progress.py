@@ -48,6 +48,9 @@ USDC_MINT: Final[Pubkey] = Pubkey.from_string(
 QUOTE_DECIMALS: Final[dict[Pubkey, int]] = {WSOL_MINT: 9, USDC_MINT: 6}
 QUOTE_SYMBOLS: Final[dict[Pubkey, str]] = {WSOL_MINT: "SOL", USDC_MINT: "USDC"}
 
+# Same offset in SPL Token and Token-2022: extensions are appended after it.
+_MINT_DECIMALS_OFFSET: Final[int] = 44
+
 # Data lengths excluding the 8-byte discriminator, per curve layout version.
 _LEN_WITH_CREATOR: Final[int] = 73
 _LEN_WITH_MAYHEM: Final[int] = 74
@@ -56,6 +59,29 @@ _LEN_WITH_QUOTE_MINT: Final[int] = 107
 
 # Only used if the Global account cannot be read: 1B supply less 206.9M reserved.
 FALLBACK_INITIAL_REAL_TOKEN_RESERVES: Final[float] = 793_100_000.0
+
+
+async def read_quote_decimals(conn: AsyncClient, quote_mint: Pubkey) -> int:
+    """Read a quote mint's decimals from chain.
+
+    `QuoteControl` admits mints from 4 to 12 decimals, so a default of 9 is
+    wrong for most of them and misscales every quote-side figure silently.
+
+    Raises:
+        ValueError: If the mint is missing or too short to be a mint
+    """
+    if quote_mint in QUOTE_DECIMALS:
+        return QUOTE_DECIMALS[quote_mint]
+
+    response = await conn.get_account_info(quote_mint, encoding="base64")
+    if response.value is None:
+        raise ValueError(f"Quote mint {quote_mint} does not exist on chain")
+    data = bytes(response.value.data)
+    if len(data) <= _MINT_DECIMALS_OFFSET:
+        raise ValueError(
+            f"Account {quote_mint} is only {len(data)} bytes, too short to be a mint"
+        )
+    return data[_MINT_DECIMALS_OFFSET]
 
 
 def get_bonding_curve_address(mint: Pubkey, program_id: Pubkey) -> Pubkey:
@@ -95,7 +121,7 @@ def parse_curve_state(data: bytes) -> dict:
         data: The raw bonding curve account data
 
     Returns:
-        A dictionary containing parsed bonding curve fields
+        Parsed fields. Token reserves in whole tokens, quote reserves raw.
 
     Raises:
         ValueError: If the account discriminator is invalid
@@ -107,19 +133,17 @@ def parse_curve_state(data: bytes) -> dict:
     fields = struct.unpack_from("<QQQQQ?", data, 8)
     data_length = len(data) - 8
 
-    # quote_mint decides the scale of the quote-side reserves, so read it before
-    # converting anything.
     quote_mint = DEFAULT_QUOTE_MINT
     if data_length >= _LEN_WITH_QUOTE_MINT:  # Has quote_mint
         quote_mint = Pubkey.from_bytes(data[83:115])
     effective_quote_mint = WSOL_MINT if quote_mint == DEFAULT_QUOTE_MINT else quote_mint
-    quote_unit = 10 ** QUOTE_DECIMALS.get(effective_quote_mint, 9)
 
+    # Quote-side reserves stay raw: only the quote mint's decimals scale them.
     result = {
         "virtual_token_reserves": fields[0] / 10**TOKEN_DECIMALS,
-        "virtual_quote_reserves": fields[1] / quote_unit,
+        "virtual_quote_reserves_raw": fields[1],
         "real_token_reserves": fields[2] / 10**TOKEN_DECIMALS,
-        "real_quote_reserves": fields[3] / quote_unit,
+        "real_quote_reserves_raw": fields[3],
         "token_total_supply": fields[4] / 10**TOKEN_DECIMALS,
         "complete": fields[5],
         "quote_mint": effective_quote_mint,
@@ -172,12 +196,13 @@ async def fetch_initial_real_token_reserves(client: AsyncClient) -> float:
     return FALLBACK_INITIAL_REAL_TOKEN_RESERVES
 
 
-def print_curve_status(state: dict, baseline: float) -> None:
+def print_curve_status(state: dict, baseline: float, quote_unit: int) -> None:
     """Print the current status of the bonding curve in a readable format.
 
     Args:
         state: The parsed bonding curve state dictionary
         baseline: Launch-time real token reserves, used as the 0% mark
+        quote_unit: Raw units per whole unit of the coin's quote asset
     """
     progress = 0.0
     if state["complete"]:
@@ -195,7 +220,10 @@ def print_curve_status(state: dict, baseline: float) -> None:
     print(f"Complete: {'✅' if state['complete'] else '❌'}")
     print(f"Progress: {progress:.2f}%")
     print(f"Token reserves: {state['real_token_reserves']:.4f}")
-    print(f"{state['quote_symbol']} reserves:   {state['real_quote_reserves']:.6f}")
+    print(
+        f"{state['quote_symbol']} reserves:   "
+        f"{state['real_quote_reserves_raw'] / quote_unit:.6f}"
+    )
     print("=" * 30, "\n")
 
 
@@ -219,6 +247,10 @@ async def track_curve(token_mint: str) -> None:
         baseline = await fetch_initial_real_token_reserves(client)
         print(f"Graduation baseline: {baseline:,.0f} tokens (from Global)\n")
 
+        # A curve's quote mint never changes: resolve its scale once, not per poll.
+        first = parse_curve_state(await get_account_data(client, curve_pubkey))
+        quote_unit = 10 ** await read_quote_decimals(client, first["quote_mint"])
+
         while True:
             try:
                 data = await get_account_data(client, curve_pubkey)
@@ -226,7 +258,7 @@ async def track_curve(token_mint: str) -> None:
                 # Never let a coin that launched above Global's baseline read as
                 # negative progress; see the note in print_curve_status.
                 baseline = max(baseline, state["real_token_reserves"])
-                print_curve_status(state, baseline)
+                print_curve_status(state, baseline, quote_unit)
             except Exception as e:
                 print(f"⚠️ Error: {e}")
 
