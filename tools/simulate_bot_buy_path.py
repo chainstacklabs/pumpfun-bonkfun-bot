@@ -8,7 +8,8 @@ before submission and simulates it instead. This exercises the listener ->
 event parser -> curve manager -> address provider -> instruction builder
 chain as a unit.
 
-No funds move: `build_and_send_transaction` is monkeypatched to simulate.
+No funds move: the RPC client's `send_transaction` is monkeypatched to
+simulate whatever the bot handed it.
 
 Usage:
     uv run tools/simulate_bot_buy_path.py
@@ -16,21 +17,20 @@ Usage:
 """
 
 import asyncio
+import contextlib
 import os
+import struct
 import sys
 from base64 import b64encode
 from pathlib import Path
+from types import SimpleNamespace
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from dotenv import load_dotenv  # noqa: E402
-from solders.compute_budget import (  # noqa: E402
-    set_compute_unit_limit,
-    set_compute_unit_price,
-)
-from solders.message import MessageV0  # noqa: E402
-from solders.transaction import VersionedTransaction  # noqa: E402
+from solders.pubkey import Pubkey  # noqa: E402
+from solders.signature import Signature  # noqa: E402
 
 from core.client import SolanaClient  # noqa: E402
 from core.priority_fee.manager import PriorityFeeManager  # noqa: E402
@@ -79,17 +79,69 @@ async def wait_for_token(timeout_seconds: float = 90.0) -> TokenInfo | None:
     task = asyncio.create_task(listener.listen_for_tokens(on_token))
     try:
         for _ in range(int(timeout_seconds / 0.5)):
-            if seen:
+            if seen or task.done():
                 break
             await asyncio.sleep(0.5)
     finally:
-        task.cancel()
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    # Bad credentials, a dead endpoint and a quiet market all leave `seen`
+    # empty. Re-raise what the listener hit so they stay distinguishable.
+    if task.done() and not task.cancelled():
+        task.result()
 
     return seen[0] if seen else None
 
 
-def install_simulation_hook(client: SolanaClient) -> dict:
-    """Replace transaction submission with simulation.
+COMPUTE_BUDGET_PROGRAM = Pubkey.from_string(
+    "ComputeBudget111111111111111111111111111111"
+)
+# Compute Budget instruction tags, from the program's own enum.
+_SET_CU_LIMIT = 2
+_SET_CU_PRICE = 3
+_SET_DATA_SIZE_LIMIT = 4
+
+
+def read_compute_budget(message) -> dict:
+    """Recover the compute budget settings from a compiled transaction.
+
+    Args:
+        message: The compiled `MessageV0` about to be submitted
+
+    Returns:
+        cu_limit, priority_fee and data_size_limit, each None if the
+        transaction carries no instruction setting it
+    """
+    found: dict = {"cu_limit": None, "priority_fee": None, "data_size_limit": None}
+    for ix in message.instructions:
+        try:
+            program = message.account_keys[ix.program_id_index]
+        except IndexError:
+            continue
+        if program != COMPUTE_BUDGET_PROGRAM:
+            continue
+        data = bytes(ix.data)
+        if not data:
+            continue
+        if data[0] == _SET_CU_LIMIT and len(data) >= 5:
+            found["cu_limit"] = struct.unpack_from("<I", data, 1)[0]
+        elif data[0] == _SET_CU_PRICE and len(data) >= 9:
+            found["priority_fee"] = struct.unpack_from("<Q", data, 1)[0]
+        elif data[0] == _SET_DATA_SIZE_LIMIT and len(data) >= 5:
+            found["data_size_limit"] = struct.unpack_from("<I", data, 1)[0]
+    return found
+
+
+async def install_simulation_hook(client: SolanaClient) -> dict:
+    """Simulate the transaction the bot built, instead of sending it.
+
+    Hooks the RPC client's `send_transaction`, so the compute budget preamble,
+    the blockhash and the message compilation are all the bot's own work. A
+    hook on `build_and_send_transaction` has to rebuild those, and a rebuild
+    that misses an instruction simulates something the bot would never send.
 
     Args:
         client: Client whose send path should be intercepted
@@ -98,28 +150,9 @@ def install_simulation_hook(client: SolanaClient) -> dict:
         Dict that will be populated with the simulation outcome
     """
     outcome: dict = {}
+    rpc = await client.get_client()
 
-    async def simulate_instead(
-        instructions,
-        signer_keypair,
-        skip_preflight=True,
-        max_retries=3,
-        priority_fee=None,
-        compute_unit_limit=None,
-        account_data_size_limit=None,
-    ):
-        preamble = []
-        if compute_unit_limit:
-            preamble.append(set_compute_unit_limit(compute_unit_limit))
-        if priority_fee:
-            preamble.append(set_compute_unit_price(priority_fee))
-
-        blockhash = await client.get_latest_blockhash()
-        message = MessageV0.try_compile(
-            signer_keypair.pubkey(), [*preamble, *instructions], [], blockhash
-        )
-        transaction = VersionedTransaction(message, [signer_keypair])
-
+    async def simulate_instead(transaction, *_args, **_kwargs):
         response = await client.post_rpc(
             {
                 "jsonrpc": "2.0",
@@ -137,24 +170,23 @@ def install_simulation_hook(client: SolanaClient) -> dict:
             }
         )
         value = (response or {}).get("result", {}).get("value", {})
+        message = transaction.message
         outcome.update(
             {
                 "err": value.get("err"),
                 "units": value.get("unitsConsumed"),
                 "logs": value.get("logs") or [],
-                "cu_limit": compute_unit_limit,
-                "priority_fee": priority_fee,
-                "instruction_count": len(instructions),
-                "account_count": len(instructions[-1].accounts),
+                "instruction_count": len(message.instructions),
+                "account_count": len(message.instructions[-1].accounts),
+                **read_compute_budget(message),
             }
         )
-        # Returning a sentinel signature: confirm_transaction is stubbed below.
-        return "SIMULATED"
+        return SimpleNamespace(value=Signature.default())
 
     async def never_confirm(_signature, **_kwargs):
         return False
 
-    client.build_and_send_transaction = simulate_instead
+    rpc.send_transaction = simulate_instead
     client.confirm_transaction = never_confirm
     return outcome
 
@@ -167,10 +199,21 @@ async def main() -> int:
     """
     extreme_fast = "--no-extreme-fast" not in sys.argv
 
+    # Built before detection, as the bot builds it at startup: the client's
+    # blockhash updater needs a cycle to land, and build_and_send_transaction
+    # reads the cached value rather than fetching one.
+    client = SolanaClient(os.environ["SOLANA_NODE_RPC_ENDPOINT"])
+    wallet = Wallet(os.environ["SOLANA_PRIVATE_KEY"])
+
     print("Waiting for a fresh pump.fun coin via the bot's geyser listener...")
-    token_info = await wait_for_token()
+    try:
+        token_info = await wait_for_token()
+    except BaseException:
+        await client.close()
+        raise
     if token_info is None:
         print("No coin detected before timeout.")
+        await client.close()
         return 2
 
     print(f"\ndetected:   {token_info.symbol} ({token_info.mint})")
@@ -180,8 +223,6 @@ async def main() -> int:
     print(f"state_from_event={token_info.state_from_event} (True = zero-RPC buy path)")
     print(f"extreme_fast_mode={extreme_fast}\n")
 
-    client = SolanaClient(os.environ["SOLANA_NODE_RPC_ENDPOINT"])
-    wallet = Wallet(os.environ["SOLANA_PRIVATE_KEY"])
     priority_fee_manager = PriorityFeeManager(
         client=client,
         enable_dynamic_fee=False,
@@ -191,7 +232,7 @@ async def main() -> int:
         hard_cap=1_000_000,
     )
 
-    outcome = install_simulation_hook(client)
+    outcome = await install_simulation_hook(client)
     buyer = PlatformAwareBuyer(
         client,
         wallet,
@@ -221,11 +262,13 @@ async def main() -> int:
         return 1
 
     print("simulated buy:")
-    print(f"  instructions:  {outcome['instruction_count']}")
+    print(f"  instructions:   {outcome['instruction_count']}")
     print(f"  trade accounts: {outcome['account_count']}")
-    print(f"  cu_limit:      {outcome['cu_limit']}")
-    print(f"  unitsConsumed: {outcome['units']}")
-    print(f"  err:           {outcome['err']}")
+    print(f"  cu_limit:       {outcome['cu_limit']}")
+    print(f"  data size cap:  {outcome['data_size_limit']}")
+    print(f"  priority fee:   {outcome['priority_fee']}")
+    print(f"  unitsConsumed:  {outcome['units']}")
+    print(f"  err:            {outcome['err']}")
 
     if outcome["err"]:
         for line in outcome["logs"]:
@@ -233,8 +276,10 @@ async def main() -> int:
                 print(f"    {line}")
         return 1
 
-    headroom = outcome["cu_limit"] - (outcome["units"] or 0)
-    print(f"\nCU headroom: {headroom} ({headroom / outcome['cu_limit']:.0%})")
+    cu_limit = outcome["cu_limit"]
+    if cu_limit:
+        headroom = cu_limit - (outcome["units"] or 0)
+        print(f"\nCU headroom: {headroom} ({headroom / cu_limit:.0%})")
     print("Buy path validated end to end against live mainnet state.")
     return 0
 
