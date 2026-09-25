@@ -341,7 +341,25 @@ class BondingCurveState:
     leading fields, which sit at the same offsets regardless of total length. The
     SOL-named reserve fields were renamed to quote fields when non-SOL quote
     assets landed; the old names are kept as aliases.
+
+    The fields are declared below rather than left to the struct parse, so an
+    editor and a type checker can both see what a curve holds.
     """
+
+    virtual_token_reserves: int
+    virtual_quote_reserves: int
+    real_token_reserves: int
+    real_quote_reserves: int
+    token_total_supply: int
+    complete: bool
+    virtual_sol_reserves: int
+    real_sol_reserves: int
+    #: None when the account is too short to carry the field.
+    creator: Pubkey | None
+    is_mayhem_mode: bool
+    is_cashback_coin: bool
+    quote_mint: Pubkey | None
+    is_sol_paired: bool
 
     _STRUCT = Struct(
         "virtual_token_reserves" / Int64ul,
@@ -371,7 +389,13 @@ class BondingCurveState:
         if data[:8] != BONDING_CURVE_DISCRIMINATOR:
             raise ValueError("Invalid curve state discriminator")
 
-        self.__dict__.update(self._STRUCT.parse(data[8:]))
+        parsed = self._STRUCT.parse(data[8:])
+        self.virtual_token_reserves = parsed.virtual_token_reserves
+        self.virtual_quote_reserves = parsed.virtual_quote_reserves
+        self.real_token_reserves = parsed.real_token_reserves
+        self.real_quote_reserves = parsed.real_quote_reserves
+        self.token_total_supply = parsed.token_total_supply
+        self.complete = parsed.complete
 
         # Aliases for the pre-rename field names.
         self.virtual_sol_reserves = self.virtual_quote_reserves

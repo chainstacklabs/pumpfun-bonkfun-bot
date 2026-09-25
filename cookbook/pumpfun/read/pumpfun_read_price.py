@@ -49,7 +49,29 @@ RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 
 
 class BondingCurveState:
-    """Parse bonding curve account data - supports all versions."""
+    """Parse bonding curve account data - supports all versions.
+
+    The fields are declared below rather than left to the struct parse, so an
+    editor and a type checker can both see what a curve holds. The quote-side
+    reserves are in the quote mint's raw units — 1e9 for SOL, 1e6 for USDC — so
+    they are only lamports on a SOL-paired coin. `virtual_sol_reserves` and
+    `real_sol_reserves` are aliases kept from before the rename.
+    """
+
+    virtual_token_reserves: int
+    virtual_quote_reserves: int
+    real_token_reserves: int
+    real_quote_reserves: int
+    token_total_supply: int
+    complete: bool
+    virtual_sol_reserves: int
+    real_sol_reserves: int
+    #: None on a layout predating the creator field.
+    creator: Pubkey | None
+    is_mayhem_mode: bool
+    is_cashback_coin: bool
+    #: All zeros on a SOL-paired coin.
+    quote_mint: Pubkey
 
     _STRUCT_V1 = Struct(
         "virtual_token_reserves" / Int64ul,
@@ -107,11 +129,6 @@ class BondingCurveState:
         body = data[8:]
         data_length = len(body)
 
-        self.creator = None
-        self.is_mayhem_mode = False
-        self.is_cashback_coin = False
-        self.quote_mint = DEFAULT_QUOTE_MINT
-
         if data_length < _V2_LENGTH:  # V1: without creator and mayhem mode
             parsed = self._STRUCT_V1.parse(body)
         elif data_length == _V2_LENGTH:  # V2: with creator, without mayhem mode
@@ -121,11 +138,23 @@ class BondingCurveState:
         else:  # V4: adds is_cashback_coin and quote_mint
             parsed = self._STRUCT_V4.parse(body)
 
-        self.__dict__.update(parsed)
-        if isinstance(self.creator, bytes):
-            self.creator = Pubkey.from_bytes(self.creator)
-        if isinstance(self.quote_mint, bytes):
-            self.quote_mint = Pubkey.from_bytes(self.quote_mint)
+        self.virtual_token_reserves = parsed.virtual_token_reserves
+        self.virtual_quote_reserves = parsed.virtual_quote_reserves
+        self.real_token_reserves = parsed.real_token_reserves
+        self.real_quote_reserves = parsed.real_quote_reserves
+        self.token_total_supply = parsed.token_total_supply
+        self.complete = parsed.complete
+
+        # The trailing fields arrived one layout at a time; an older account
+        # stops short of them and reads as the behaviour they replaced.
+        creator = parsed.get("creator")
+        self.creator = Pubkey.from_bytes(creator) if creator else None
+        self.is_mayhem_mode = parsed.get("is_mayhem_mode", False)
+        self.is_cashback_coin = parsed.get("is_cashback_coin", False)
+        quote_mint = parsed.get("quote_mint")
+        self.quote_mint = (
+            Pubkey.from_bytes(quote_mint) if quote_mint else DEFAULT_QUOTE_MINT
+        )
 
         # The SOL-named fields were renamed when non-SOL quote assets landed. Keep the
         # old names working for anything that still reads them.
