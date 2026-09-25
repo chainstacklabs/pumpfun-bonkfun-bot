@@ -20,6 +20,7 @@ individual scripts for a subset.
 | `verify_pumpportal_buy_path.py` | curve derived from the mint, unreadable curve skips the buy, curve+mint read in one slot-consistent batch |
 | `verify_pumpportal_bonk_fields.py` | bonk payloads (no name/symbol/uri) still produce a `TokenInfo`; `--live` re-checks the real feed |
 | `verify_extreme_fast_zero_rpc.py` | zero RPC calls between detection and submission for CreateEvent-sourced tokens |
+| `verify_token_queue_shutdown.py` | cancelling the token queue processor ends it without raising, and `task_done()` stays balanced on the paths that took an item |
 | `verify_buy_result_not_lost.py` | a landed buy is never reported failed, and a reverted one never reported landed |
 | `verify_tx_status_checks.py` | every path reads `meta.err`; `--live` replays known reverted signatures |
 | `verify_tp_sl_exit_price.py` | the tp/sl exit prices off the trigger price, and a reverted sell is retried, bounded |

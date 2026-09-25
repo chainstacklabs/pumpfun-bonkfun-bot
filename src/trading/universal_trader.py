@@ -515,10 +515,19 @@ class UniversalTrader:
         )
 
     async def _process_token_queue(self) -> None:
-        """Continuously process tokens from the queue, only if they're fresh."""
+        """Continuously process tokens from the queue, only if they're fresh.
+
+        `task_done()` is balanced against `get()`: cancelling this task is how
+        yolo mode shuts down, and the cancellation usually lands while parked on
+        `get()`, with no item taken. Calling `task_done()` on that path raises
+        ValueError, which `start()` does not catch, so a clean shutdown ends up
+        logged as `Trading stopped due to error`.
+        """
         while True:
+            took_item = False
             try:
                 token_info = await self.token_queue.get()
+                took_item = True
                 token_key = str(token_info.mint)
 
                 # Check if token is still "fresh"
@@ -546,7 +555,10 @@ class UniversalTrader:
             except Exception:
                 logger.exception("Error in token queue processor")
             finally:
-                self.token_queue.task_done()
+                # The stale-token `continue` above took an item, so it still
+                # needs this; a cancellation parked on `get()` did not.
+                if took_item:
+                    self.token_queue.task_done()
 
     async def _handle_token(self, token_info: TokenInfo) -> None:
         """Handle a new token creation event."""
