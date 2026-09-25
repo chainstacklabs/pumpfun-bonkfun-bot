@@ -99,11 +99,11 @@ async def _read_pool_state_with_retry(
 def _refresh_quote_mint(token_info: TokenInfo, pool_state: dict) -> Pubkey:
     """Sync token_info's quote asset from freshly-read curve state.
 
-    Listeners do not all carry quote_mint, and the curve is authoritative. `quote_token_program_id` is
-    re-derived alongside it, because a stale non-None value would win the `or` in
-    `AddressProvider.resolve_quote` and the corrected program would never be
-    looked up. `cached_quote_token_program` is a synchronous dict read, so this
-    stays zero-RPC on the extreme_fast_mode path.
+    Listeners do not all carry quote_mint, and the curve is authoritative.
+    `quote_token_program_id` is re-derived alongside it, because a stale non-None
+    value would win the `or` in `AddressProvider.resolve_quote` and the corrected
+    program would never be looked up. `cached_quote_token_program` is a
+    synchronous dict read, so this stays zero-RPC on the extreme_fast_mode path.
 
     Args:
         token_info: Token information, mutated in place
