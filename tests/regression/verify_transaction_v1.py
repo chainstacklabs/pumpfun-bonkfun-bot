@@ -77,6 +77,7 @@ from geyser.generated import geyser_pb2  # noqa: E402
 from interfaces.core import Platform  # noqa: E402
 from monitoring.universal_block_listener import UniversalBlockListener  # noqa: E402
 from platforms import get_platform_implementations  # noqa: E402
+from solders.transaction import VersionedTransaction  # noqa: E402
 
 V1_FIXTURE = (
     PROJECT_ROOT
@@ -251,21 +252,19 @@ def check_log_route_detects_without_the_envelope() -> bool:
     return True
 
 
-def check_envelope_fallback_reads_v1() -> bool:
-    """Strip the logs and the installed solders must read the v1 envelope.
+def check_solders_reads_a_v1_envelope() -> bool:
+    """The installed solders must still deserialize a v1 envelope.
 
-    The fallback, not the route. It only works from solders 0.29 — 0.26, 0.27.1
-    and 0.28 all raise `ValueError: io error: unexpected end of file` on this
-    same fixture. A failure here is a decode regression, not a routing bug: the
-    bot keeps detecting v1 coins through the logs either way.
+    No detection path depends on this: the block listener routes on the logs
+    alone. It stays as a dependency canary, because the cookbook decode scripts
+    open envelopes and 0.26, 0.27.1 and 0.28 all raise `ValueError: io error:
+    unexpected end of file` on this same fixture.
     """
-    listener = UniversalBlockListener("wss://offline.invalid", [Platform.PUMP_FUN])
     result = _load(V1_FIXTURE)
-    tx = _as_block_transaction(result)
-    tx["meta"] = {**tx["meta"], "logMessages": []}
-    token_info = listener._process_block_transactions([tx])  # noqa: SLF001
-    if token_info is None:
-        print("     the installed solders cannot decode a v1 envelope")
+    try:
+        VersionedTransaction.from_bytes(base64.b64decode(result["transaction"][0]))
+    except Exception as error:  # noqa: BLE001 - any failure is the regression
+        print(f"     the installed solders cannot decode a v1 envelope: {error}")
         return False
     return True
 
@@ -440,7 +439,7 @@ def main() -> int:
             "the log route detects v1 without the envelope",
             check_log_route_detects_without_the_envelope,
         ),
-        ("the envelope fallback reads v1 too", check_envelope_fallback_reads_v1),
+        ("solders still reads a v1 envelope", check_solders_reads_a_v1_envelope),
         (
             "geyser fixture is a successful v1 create_v2",
             check_geyser_fixture_is_a_v1_create,
