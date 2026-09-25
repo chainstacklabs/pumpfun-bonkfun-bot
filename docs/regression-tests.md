@@ -30,6 +30,7 @@ individual scripts for a subset.
 | `verify_exit_sell_confirmation.py` | an exit sell is retried only when retrying is provably safe |
 | `verify_rpc_deadline.py` | `post_rpc` bounds wall time, not just attempts (virtual clock) |
 | `verify_quote_decimals_resolved.py` | no trade path prices a coin before resolving its quote mint's decimals; nothing in `cookbook/` or `src/` falls back to a literal decimal count; both unit helpers raise for an unresolved mint; the two pre-seeded quote tables carry the same mints; the buy clears its quote gate before it sizes |
+| `verify_migration_event_discriminator.py` | the migration decoder rejects any payload that is not the wrapper program's `CreatePoolEvent`, including a foreign one long enough for the schema |
 | `verify_cookbook_arguments.py` | every cookbook script takes its input as a command-line argument |
 | `verify_documentation_links.py` | no known-dead URL is back; `--live` fetches every one and fails on 4xx/5xx |
 | `verify_no_rpc_credentials_logged.py` | credentials masked in every log record, including a URL passed as a non-`str` argument, and every site that installs a root handler installs the redaction first |

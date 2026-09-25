@@ -42,6 +42,11 @@ QUOTE_MINT_SOL = base58.b58encode(
 ).decode()
 
 MARKET_DISCRIMINATOR = base58.b58encode(b"\xf1\x9am\x04\x11\xb1m\xbc").decode()
+
+# The wrapper program emits CreatePoolEvent, not the CompletePumpAmmMigrationEvent
+# in idl/pump_fun_idl.json — first 8 bytes of sha256("event:CreatePoolEvent").
+# See cookbook/solana/anchor_calculate_discriminator.py.
+CREATE_POOL_EVENT_DISCRIMINATOR = bytes.fromhex("b1310cd2a076a774")
 MARKET_ACCOUNT_LENGTH = 8 + 1 + 2 + 32 * 6 + 8 + 32 + 1 + 1  # Pool with is_mayhem_mode + is_cashback_coin = 245 bytes
 
 
@@ -367,14 +372,21 @@ def parse_market_account_data(data):
 
 
 def parse_migrate_instruction(data):
-    """Parse migration event from the migration wrapper program
+    """Parse the CreatePoolEvent emitted by the migration wrapper program.
 
-    Note: This parses the event emitted by the migration wrapper program
-    (39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg), which has a different
-    structure than CompletePumpAmmMigrationEvent in pump_fun_idl.json.
+    Returns None for any payload that is not that event, including the other
+    events a migration transaction emits.
     """
     if len(data) < 8:
         print(f"[ERROR] Data length too short: {len(data)} bytes")
+        return None
+
+    if data[:8] != CREATE_POOL_EVENT_DISCRIMINATOR:
+        # A migration transaction carries Program data lines from several
+        # programs. Without this check every one of them is decoded against the
+        # schema below, and any payload long enough to cover it returns a full
+        # dict of meaningless values — a decimals field reading 176 rather than
+        # an error.
         return None
 
     offset = 8  # Skip discriminator
