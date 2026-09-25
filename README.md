@@ -71,12 +71,9 @@ Each YAML file in `bots/` is one bot instance. They ship with commented defaults
 | `bot-sniper-1-geyser.yaml` | `geyser` — fastest, needs a Geyser endpoint | `pump_fun` |
 | `bot-sniper-2-logs.yaml` | `logs` — `logsSubscribe`, supported everywhere | `pump_fun` |
 | `bot-sniper-3-blocks.yaml` | `blocks` — `blockSubscribe`, not supported by every provider | `pump_fun` |
-| `bot-sniper-4-pp.yaml` | `pumpportal` — third-party aggregator, misses some coins | `lets_bonk` |
 | `bot-sniper-5-shreds.yaml` | `shreds` — pre-execution, ahead of `geyser`, cannot see router-created coins | `pump_fun` |
 
-Set `platform: "pump_fun"` or `platform: "lets_bonk"`. pump.fun supports all five listeners; letsbonk.fun supports `blocks`, `geyser`, and `pumpportal` but **not** `logs` or `shreds`. The bot validates the pairing at startup and refuses to run an invalid one.
-
-`pumpportal` is a third-party feed and only reports what it indexes — it does not push coins whose creation landed in a Solana transaction v1, so it sees a sample rather than everything. `geyser`, `logs` and `blocks` read the chain directly and are unaffected.
+Set `platform: "pump_fun"` or `platform: "lets_bonk"`. pump.fun supports all four listeners; letsbonk.fun supports `blocks` and `geyser` but **not** `logs` or `shreds`. The bot validates the pairing at startup and refuses to run an invalid one.
 
 Set `enabled: false` to keep a config around without running it. Every bot with `enabled: true` starts when you run the bot.
 
@@ -106,9 +103,10 @@ With `extreme_fast_mode: true` the bot buys a fixed token amount
 (`extreme_fast_token_amount`) instead of reading the curve price first. You give
 up knowing what you paid per token; you get the buy submitted sooner.
 
-How much sooner depends on the listener. With `geyser`, `logs` or `blocks` the
-bot makes **no RPC call at all between detecting the token and submitting the
-buy**. `pumpportal` does one account read first, because its payload is missing
+How much sooner depends on what the listener could decode. When it read the
+coin's `CreateEvent`, the bot makes **no RPC call at all between detecting the
+token and submitting the buy**. When it fell back to decoding the create
+instruction, it does one account read first, because the instruction is missing
 fields the buy needs.
 
 Two knobs:
@@ -143,7 +141,7 @@ its own with `uv run <path>`, reads `.env` directly, and needs no bot config.
 
 | Directory | What is in it |
 |---|---|
-| `cookbook/pumpfun/listen/` | One script per detection method — `logs`, `blocks`, `geyser`, `pumpportal` — plus wallet watching |
+| `cookbook/pumpfun/listen/` | One script per detection method — `logs`, `blocks`, `geyser`, `shreds` — plus wallet watching |
 | `cookbook/pumpfun/read/` | Price, curve state, graduation progress, address derivation |
 | `cookbook/pumpfun/trade/` | Buy, sell, create, and the two sniping variants |
 | `cookbook/pumpfun/graduation/` | Coins approaching graduation, and migrations to PumpSwap |

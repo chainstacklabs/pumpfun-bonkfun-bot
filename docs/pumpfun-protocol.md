@@ -141,8 +141,9 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
 - `extreme_fast_mode` skips the curve-state price fetch. Whether it also reads the
   curve for mayhem/cashback/creator/**quote_mint** depends on provenance (see the
   Invariants in CLAUDE.md): CreateEvent-sourced tokens (`state_from_event`) trade on the event
-  data with zero RPC calls, while pumpportal/incomplete-event tokens refresh from
-  chain — the wrong quote mint means spending the wrong balance entirely. Event
+  data with zero RPC calls, while instruction-parsed and incomplete-event tokens
+  refresh from chain — the wrong quote mint means spending the wrong balance
+  entirely. Event
   parsers populate `quote_mint` from `CreateEvent`, which carries `quote_mint` and
   `virtual_quote_reserves` as trailing fields.
 

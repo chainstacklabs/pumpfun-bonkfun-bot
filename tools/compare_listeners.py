@@ -1,6 +1,6 @@
 """Race the pump.fun token-detection methods against each other.
 
-Compares five listeners in real time and reports which detects each coin first,
+Compares four listeners in real time and reports which detects each coin first,
 with per-method latency, message counts and coverage:
 
 1. `blockSubscribe` — whole blocks mentioning the program; slowest.
@@ -11,13 +11,11 @@ with per-method latency, message counts and coverage:
    https://docs.triton.one/rpc-pool/grpc-subscriptions
 4. Geyser `SubscribeDeshred` — the same endpoint pre-execution; earliest, and
    the only lane that cannot see a coin created through a router.
-5. PumpPortal — third-party aggregated WebSocket feed, pre-processed.
 
 This races on *coverage*: which lane saw a given mint, and how much later than
 the winner. A lane that never reports a mint is the finding, not a rounding
-error — `shreds` misses router creates and PumpPortal samples its feed. Every
-lane is restricted to pump.fun coins, PumpPortal included: it aggregates other
-launchpads, and their coins would read as a miss by all four on-chain lanes.
+error — `shreds` misses router creates. Every lane is restricted to pump.fun
+coins.
 `tools/compare_deshred_latency.py` answers the other question, pairing deshred
 against executed per signature to measure the lead itself.
 
@@ -42,7 +40,6 @@ import os
 import struct
 import sys
 import time
-from collections import Counter
 from pathlib import Path
 from queue import Empty
 
@@ -94,14 +91,6 @@ STARVED_LANE_SHARE = 0.6
 # Seconds to keep draining the queue after the sampling deadline, so a lane's
 # final frame count is not lost to the shutdown.
 LANE_SHUTDOWN_GRACE = 10
-
-# PumpPortal WebSocket endpoint (third-party service)
-PUMPPORTAL_WS_URL = "wss://pumpportal.fun/api/data"
-
-# PumpPortal aggregates several launchpads and names each coin's one in `pool`.
-# The four on-chain lanes subscribe to the pump.fun program alone, so anything
-# else is a coin they are not watching for, not one they missed.
-PUMPPORTAL_POOL = "pump"
 
 # The two log lines the pump.fun program writes when it creates a coin.
 CREATE_LOG = "Program log: Instruction: Create"
@@ -1003,94 +992,6 @@ async def listen_deshred_grpc(
             await asyncio.sleep(5)
 
 
-async def listen_pumpportal(provider_name, tracker, known_tokens=None):
-    """Listen for new tokens via PumpPortal WebSocket.
-
-    Only pump.fun coins are reported. `subscribeNewToken` also carries
-    letsbonk creates, and counting those against lanes that never subscribed to
-    that program turns a launchpad this race does not cover into a hole in
-    every on-chain lane at once.
-    """
-    if known_tokens is None:
-        known_tokens = set()
-
-    lane = f"{provider_name}_pumpportal"
-    skipped_by_pool = Counter()
-
-    try:
-        await _pumpportal_loop(lane, tracker, known_tokens, skipped_by_pool)
-    finally:
-        if skipped_by_pool:
-            # A payload naming no pool sorts and prints as "unknown" rather than
-            # being left out: an unrecognised launchpad is the case worth seeing.
-            tally = ", ".join(
-                f"{pool or 'unknown'}={count}"
-                for pool, count in sorted(
-                    skipped_by_pool.items(), key=lambda item: str(item[0])
-                )
-            )
-            print(f"[INFO] {lane} ignored coins from other launchpads: {tally}")
-
-
-async def _pumpportal_loop(lane, tracker, known_tokens, skipped_by_pool):
-    """Drain the PumpPortal feed until cancelled, reconnecting as needed."""
-    while True:
-        try:
-            print("[INFO] Connecting to PumpPortal WebSocket...")
-            async with websockets.connect(PUMPPORTAL_WS_URL) as websocket:
-                # Subscribe to new token events
-                await websocket.send(
-                    json.dumps({"method": "subscribeNewToken", "params": []})
-                )
-                print(f"[INFO] PumpPortal listener active for {lane}")
-
-                while True:
-                    try:
-                        message = await websocket.recv()
-                        data = json.loads(message)
-                        tracker.increment_messages(lane)
-
-                        # Extract token information
-                        token_info = None
-                        if "method" in data and data["method"] == "newToken":
-                            token_info = data.get("params", [{}])[0]
-                        elif "signature" in data and "mint" in data:
-                            token_info = data
-
-                        if not token_info:
-                            continue
-
-                        # Get token details
-                        mint = token_info.get("mint")
-                        name = token_info.get("name", "Unknown")
-                        symbol = token_info.get("symbol", "UNK")
-
-                        if not mint:
-                            continue
-
-                        pool = token_info.get("pool")
-                        if pool != PUMPPORTAL_POOL:
-                            skipped_by_pool[pool] += 1
-                            continue
-
-                        if mint in known_tokens:
-                            continue
-
-                        # Record the token detection
-                        ts = time.time()
-                        tracker.add_token(mint, name, symbol, lane, ts)
-                        known_tokens.add(mint)
-
-                    except Exception as e:
-                        print(f"[ERROR] PumpPortal listener for {lane}: {e}")
-                        break
-
-        except Exception as e:
-            print(f"[ERROR] Connection error in PumpPortal listener for {lane}: {e}")
-            print("[INFO] Reconnecting in 5 seconds...")
-            await asyncio.sleep(5)
-
-
 # ============ MAIN TEST RUNNER ============
 
 # Each lane is built in the child process, so the parent only ships a kind and
@@ -1104,7 +1005,6 @@ LANE_COROUTINES = {
     "shreds": lambda a, t, k: listen_deshred_grpc(
         a["endpoint"], a["token"], a["provider"], t, k
     ),
-    "pumpportal": lambda a, t, k: listen_pumpportal(a["provider"], t, k),
 }
 
 
@@ -1179,9 +1079,6 @@ def build_lane_specs(providers):
             }
             lanes.append(("geyser", grpc_args))
             lanes.append(("shreds", dict(grpc_args)))
-
-    # PumpPortal is a single third-party feed, not a per-provider lane.
-    lanes.append(("pumpportal", {"provider": "pumpportal"}))
     return lanes
 
 

@@ -153,8 +153,7 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
   parsers set it; instruction-parsed `TokenInfo` does not, because `args.creator`
   is user-supplied and may differ from the canonical `BC.creator`. The `shreds`
   listener sets the flag itself, having no curve to read.
-  `trade.trust_create_event: false` forces the refresh back on; PumpPortal
-  payloads always refresh.
+  `trade.trust_create_event: false` forces the refresh back on.
 
 **Selling**
 
@@ -189,16 +188,9 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
   `GEYSER_*`.
 - `src/config_loader.py` (package root, not under `core/`) validates the
   platform/listener pairing before startup: pump.fun supports `logs`, `blocks`,
-  `geyser`, `shreds`, `pumpportal`; letsbonk.fun supports `blocks`, `geyser`,
-  `pumpportal` — not `logs`, and not `shreds` (issue #201). Adding a listener
-  means updating `PLATFORM_LISTENER_COMPATIBILITY` there too.
-- **PumpPortal is a sampling feed, not a complete one, and not one launchpad.**
-  It never sends a coin created in a transaction v1, and a bonk `create` carries
-  no `name`, `symbol` or `uri` — so only `mint` and `traderPublicKey` are
-  required, and `filters.match_string` can never match a bonk token. Each
-  payload names its launchpad in `pool`; a consumer that ignores it counts bonk
-  coins as pump.fun ones. The bonk trade path past
-  detection is unverified (issue #201).
+  `geyser`, `shreds`; letsbonk.fun supports `blocks` and `geyser` — not `logs`,
+  and not `shreds` (issue #201). Adding a listener means updating
+  `PLATFORM_LISTENER_COMPATIBILITY` there too.
 - Bots with `separate_process: true` run in their own process, one log file each.
 - `pump_bot` runs **every** `bots/*.yaml`, and three of the four committed configs
   ship `enabled: false`. With all of them disabled it prints nothing and exits 0,

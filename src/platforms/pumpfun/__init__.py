@@ -4,7 +4,6 @@ from .address_provider import PumpFunAddressProvider
 from .curve_manager import PumpFunCurveManager
 from .event_parser import PumpFunEventParser
 from .instruction_builder import PumpFunInstructionBuilder
-from .pumpportal_processor import PumpFunPumpPortalProcessor
 
 # Export implementations for direct use if needed
 __all__ = [
@@ -12,5 +11,4 @@ __all__ = [
     "PumpFunCurveManager",
     "PumpFunEventParser",
     "PumpFunInstructionBuilder",
-    "PumpFunPumpPortalProcessor",
 ]

@@ -4,7 +4,8 @@ extreme_fast_mode's contract is that nothing sits between detecting a token and
 submitting the buy — no reads, no price fetch. The pump.fun CreateEvent carries
 the canonical creator (instruction args.creator is user-supplied and may differ),
 the mayhem/cashback flags and quote_mint, so a TokenInfo built from it needs no
-pre-buy curve refresh. PumpPortal payloads carry none of that, so they keep it.
+pre-buy curve refresh. A TokenInfo decoded from the create instruction carries
+none of that, so it keeps the refresh.
 
 Offline machine checks, no network and no funds moved:
 
@@ -14,10 +15,9 @@ Offline machine checks, no network and no funds moved:
   4. The geyser LISTENER delegates to that parser (it used to inline
      instruction decoding, bypassing the event path).
   5. The block parser rides the same CreateEvent logs.
-  6. The pumpportal processor never sets state_from_event.
-  7. An event-sourced buy submits with ZERO curve-manager/RPC calls.
-  8. A pumpportal-sourced buy still refreshes from chain.
-  9. trade.trust_create_event=false forces the refresh even for event data.
+  6. An event-sourced buy submits with ZERO curve-manager/RPC calls.
+  7. A buy from a TokenInfo without the flag still refreshes from chain.
+  8. trade.trust_create_event=false forces the refresh even for event data.
 
 Usage:
     uv run tests/regression/verify_extreme_fast_zero_rpc.py
@@ -40,9 +40,6 @@ from core.pubkeys import WSOL_MINT, SystemAddresses  # noqa: E402
 from interfaces.core import Platform, TokenInfo  # noqa: E402
 from platforms.pumpfun.address_provider import PumpFunAddressProvider  # noqa: E402
 from platforms.pumpfun.event_parser import PumpFunEventParser  # noqa: E402
-from platforms.pumpfun.pumpportal_processor import (  # noqa: E402
-    PumpFunPumpPortalProcessor,
-)
 from trading import platform_aware  # noqa: E402
 from trading.platform_aware import PlatformAwareBuyer  # noqa: E402
 from utils.idl_manager import get_idl_manager  # noqa: E402
@@ -305,29 +302,6 @@ def check_block_parser_marks_event_state() -> bool:
     return ok
 
 
-def check_pumpportal_never_sets_flag() -> bool:
-    """PumpPortal payloads carry no curve state -> flag must stay unset."""
-    mint = Pubkey.from_string("So11111111111111111111111111111111111111112")
-    token_info = PumpFunPumpPortalProcessor().process_token_data(
-        {
-            "name": "T",
-            "symbol": "T",
-            "mint": str(mint),
-            "bondingCurveKey": str(PROVIDER.derive_pool_address(mint)),
-            "traderPublicKey": str(TRADER),
-            "uri": "",
-            "pool": "pump",
-        }
-    )
-    ok = (
-        token_info is not None
-        and getattr(token_info, "state_from_event", False) is False
-    )
-    if not ok:
-        print("    pumpportal TokenInfo must not set state_from_event")
-    return ok
-
-
 def check_event_sourced_buy_is_zero_rpc() -> bool:
     """The killer feature: detection -> submission with no reads at all."""
     token_info = _event_sourced_token_info()
@@ -345,7 +319,7 @@ def check_event_sourced_buy_is_zero_rpc() -> bool:
     return ok
 
 
-def check_pumpportal_buy_still_refreshes() -> bool:
+def check_unflagged_buy_still_refreshes() -> bool:
     """Listener-guessed data must still be refreshed from chain."""
     mint = Pubkey.from_string("So11111111111111111111111111111111111111112")
     bonding_curve = PROVIDER.derive_pool_address(mint)
@@ -405,9 +379,8 @@ def main() -> int:
             check_geyser_listener_delegates_to_parser,
         ),
         ("block parser marks CreateEvent state", check_block_parser_marks_event_state),
-        ("pumpportal never sets state_from_event", check_pumpportal_never_sets_flag),
         ("event-sourced buy makes zero RPC calls", check_event_sourced_buy_is_zero_rpc),
-        ("pumpportal buy still refreshes", check_pumpportal_buy_still_refreshes),
+        ("unflagged buy still refreshes", check_unflagged_buy_still_refreshes),
         ("trust_create_event=false forces refresh", check_trust_flag_forces_refresh),
     ]
     failed = 0

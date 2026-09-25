@@ -17,18 +17,16 @@ class ListenerFactory:
         geyser_endpoint: str | None = None,
         geyser_api_token: str | None = None,
         geyser_auth_type: str = "x-token",
-        pumpportal_url: str = "wss://pumpportal.fun/api/data",
         platforms: list[Platform] | None = None,
     ) -> BaseTokenListener:
         """Create a token listener based on the specified type.
 
         Args:
-            listener_type: Type of listener ('logs', 'blocks', 'geyser',
-                'shreds' or 'pumpportal')
+            listener_type: Type of listener ('logs', 'blocks', 'geyser'
+                or 'shreds')
             wss_endpoint: WebSocket endpoint URL (for logs/blocks listeners)
             geyser_endpoint: Geyser gRPC endpoint URL (geyser/shreds listeners)
             geyser_api_token: Geyser API token (geyser/shreds listeners)
-            pumpportal_url: PumpPortal WebSocket URL (for pumpportal listener)
             platforms: List of platforms to monitor (if None, monitor all)
 
         Returns:
@@ -99,47 +97,10 @@ class ListenerFactory:
             logger.info("Created Universal Block listener for token monitoring")
             return listener
 
-        elif listener_type == "pumpportal":
-            from monitoring.universal_pumpportal_listener import (
-                UniversalPumpPortalListener,
-            )
-
-            # Validate that requested platforms support PumpPortal
-            supported_pumpportal_platforms = [Platform.PUMP_FUN, Platform.LETS_BONK]
-
-            if platforms:
-                unsupported = [
-                    p for p in platforms if p not in supported_pumpportal_platforms
-                ]
-                if unsupported:
-                    logger.warning(
-                        f"Platforms {[p.value for p in unsupported]} do not support PumpPortal"
-                    )
-
-                # Filter to only supported platforms
-                filtered_platforms = [
-                    p for p in platforms if p in supported_pumpportal_platforms
-                ]
-                if not filtered_platforms:
-                    raise ValueError(
-                        "No supported platforms specified for PumpPortal listener"
-                    )
-                platforms = filtered_platforms
-
-            listener = UniversalPumpPortalListener(
-                pumpportal_url=pumpportal_url,
-                platforms=platforms,
-            )
-            logger.info(
-                f"Created Universal PumpPortal listener for platforms: {[p.value for p in (platforms or supported_pumpportal_platforms)]}"
-            )
-            return listener
-
         else:
             raise ValueError(
                 f"Invalid listener type '{listener_type}'. "
-                f"Must be one of: 'logs', 'blocks', 'geyser', 'shreds', "
-                f"'pumpportal'"
+                f"Must be one of: 'logs', 'blocks', 'geyser', 'shreds'"
             )
 
     @staticmethod
@@ -149,7 +110,7 @@ class ListenerFactory:
         Returns:
             List of supported listener type strings
         """
-        return ["logs", "blocks", "geyser", "shreds", "pumpportal"]
+        return ["logs", "blocks", "geyser", "shreds"]
 
     @staticmethod
     def get_platform_compatible_listeners(platform: Platform) -> list[str]:
@@ -159,13 +120,8 @@ class ListenerFactory:
             platform: Platform to check compatibility for
         """
         if platform == Platform.PUMP_FUN:
-            return ["logs", "blocks", "geyser", "shreds", "pumpportal"]
+            return ["logs", "blocks", "geyser", "shreds"]
         elif platform == Platform.LETS_BONK:
-            return ["blocks", "geyser", "pumpportal"]  # Added pumpportal support
+            return ["blocks", "geyser"]
         else:
             return ["blocks", "geyser"]  # Default universal listeners
-
-    @staticmethod
-    def get_pumpportal_supported_platforms() -> list[Platform]:
-        """Get list of platforms that support PumpPortal listener."""
-        return [Platform.PUMP_FUN, Platform.LETS_BONK]
