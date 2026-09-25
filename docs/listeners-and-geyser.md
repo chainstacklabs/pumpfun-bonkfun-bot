@@ -37,8 +37,9 @@ A separate RPC delivering transactions **before execution**, as entries form fro
 shreds. It backs the **`shreds` listener**
 (`monitoring/universal_shreds_listener.py`, pump.fun only,
 `bots/bot-sniper-5-shreds.yaml`), off by default. Deshred arrives ahead of
-`Subscribe` on most creates; `tools/compare_deshred_latency.py` reproduces the
-comparison.
+`Subscribe` on most creates; `tools/compare_deshred_latency.py` measures the lead
+per signature, and `tools/compare_listeners.py` runs it as a lane against the
+other four to show which coins it never reports.
 
 - There is no `TransactionStatusMeta`, so no `meta.log_messages` and no
   CreateEvent. The listener decodes the create instruction — the fallback route

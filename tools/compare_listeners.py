@@ -1,20 +1,37 @@
 """Race the pump.fun token-detection methods against each other.
 
-Compares four listeners in real time and reports which detects each coin first,
+Compares five listeners in real time and reports which detects each coin first,
 with per-method latency, message counts and coverage:
 
 1. `blockSubscribe` — whole blocks mentioning the program; slowest.
    https://solana.com/docs/rpc/websocket/blocksubscribe
 2. `logsSubscribe` — program logs; the event data carries every field.
    https://solana.com/docs/rpc/websocket/logssubscribe
-3. Geyser gRPC — Yellowstone Dragon's Mouth streaming; fastest.
+3. Geyser gRPC — Yellowstone Dragon's Mouth streaming, post-execution.
    https://docs.triton.one/rpc-pool/grpc-subscriptions
-4. PumpPortal — third-party aggregated WebSocket feed, pre-processed.
+4. Geyser `SubscribeDeshred` — the same endpoint pre-execution; earliest, and
+   the only lane that cannot see a coin created through a router.
+5. PumpPortal — third-party aggregated WebSocket feed, pre-processed.
+
+This races on *coverage*: which lane saw a given mint, and how much later than
+the winner. A lane that never reports a mint is the finding, not a rounding
+error — `shreds` misses router creates and PumpPortal samples its feed.
+`tools/compare_deshred_latency.py` answers the other question, pairing deshred
+against executed per signature to measure the lead itself.
+
+Read-only. No funds are moved and nothing is submitted.
 
 Configuration: set provider endpoints in `.env`, or edit the providers dict at
-the bottom of this file.
+the bottom of this file. Every lane starts automatically for a provider that
+has the endpoint it needs: `wss` gives blocks and logs, `geyser` gives both the
+executed and the deshred stream.
+
+Usage:
+    uv run tools/compare_listeners.py
+    uv run tools/compare_listeners.py --duration 600
 """
 
+import argparse
 import asyncio
 import base64
 import json
@@ -57,11 +74,19 @@ PUMP_CREATE_V2_PREFIX = bytes([214, 144, 76, 236, 95, 139, 49, 180])
 # Calculated using the first 8 bytes of sha256("event:CreateEvent")
 CREATE_EVENT_DISCRIMINATOR = bytes([27, 114, 169, 77, 222, 235, 99, 118])
 
+# PDA ["mint-authority"], a constant. Account 1 of both create and create_v2 and
+# absent from every trade instruction, so a deshred subscription filtered on it
+# yields creations only. Filtering on the program id instead delivers every
+# pump.fun transaction pre-execution, which is enough volume to make a Python
+# consumer lag until the server ends the stream.
+PUMP_MINT_AUTHORITY = "TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM"
+
 # PumpPortal WebSocket endpoint (third-party service)
 PUMPPORTAL_WS_URL = "wss://pumpportal.fun/api/data"
 
-# Test duration in seconds
-TEST_DURATION = 30
+# Sampling window in seconds, overridable with --duration. Short runs see few
+# coins, and a lane's coverage gap only shows up over enough of them.
+DEFAULT_DURATION = 60
 
 GEYSER_AUTH_TYPE = os.getenv("GEYSER_AUTH_TYPE", "x-token").lower()
 
@@ -680,6 +705,34 @@ async def listen_logs_subscription(wss_url, provider_name, tracker, known_tokens
             await asyncio.sleep(5)
 
 
+def build_geyser_credentials(api_token):
+    """Build channel credentials for the configured Geyser auth type.
+
+    Args:
+        api_token: The token or basic-auth blob from the environment
+
+    Returns:
+        Composite channel credentials
+
+    Raises:
+        ValueError: If GEYSER_AUTH_TYPE is neither "x-token" nor "basic"
+    """
+    if GEYSER_AUTH_TYPE == "x-token":
+        auth = grpc.metadata_call_credentials(
+            lambda _context, callback: callback((("x-token", api_token),), None)
+        )
+    elif GEYSER_AUTH_TYPE == "basic":
+        auth = grpc.metadata_call_credentials(
+            lambda _context, callback: callback(
+                (("authorization", f"Basic {api_token}"),), None
+            )
+        )
+    else:
+        raise ValueError(BAD_AUTH_TYPE_MSG)
+
+    return grpc.composite_channel_credentials(grpc.ssl_channel_credentials(), auth)
+
+
 async def listen_geyser_grpc(
     endpoint, api_token, provider_name, tracker, known_tokens=None
 ):
@@ -700,26 +753,12 @@ async def listen_geyser_grpc(
     # Built once, outside the retry loop: the reconnect handler below catches
     # every exception and sleeps, so a bad auth type raised in there would
     # reconnect forever instead of reporting a misconfiguration.
-    if GEYSER_AUTH_TYPE == "x-token":
-        auth = grpc.metadata_call_credentials(
-            lambda _context, callback: callback((("x-token", api_token),), None)
-        )
-    elif GEYSER_AUTH_TYPE == "basic":
-        auth = grpc.metadata_call_credentials(
-            lambda _context, callback: callback(
-                (("authorization", f"Basic {api_token}"),), None
-            )
-        )
-    else:
-        raise ValueError(BAD_AUTH_TYPE_MSG)
+    creds = build_geyser_credentials(api_token)
 
     while True:
         try:
             print(f"[INFO] Connecting Geyser gRPC listener to {provider_name}...")
 
-            creds = grpc.composite_channel_credentials(
-                grpc.ssl_channel_credentials(), auth
-            )
             channel = grpc.aio.secure_channel(endpoint, creds)
             stub = geyser_pb2_grpc.GeyserStub(channel)
 
@@ -802,6 +841,121 @@ async def listen_geyser_grpc(
             await asyncio.sleep(5)
 
 
+async def listen_deshred_grpc(
+    endpoint, api_token, provider_name, tracker, known_tokens=None
+):
+    """Listen for new tokens via the Geyser deshred stream, before execution.
+
+    This lane sees a transaction as entries form from shreds, so it carries no
+    TransactionStatusMeta: there are no logs and no CreateEvent, and the create
+    instruction is the only route to a mint. Only top-level instructions are
+    walked, because inner instructions are produced by execution and do not
+    exist yet -- a coin created through a router is therefore absent from this
+    lane's coverage while every other lane reports it.
+    """
+    try:
+        # Generated once into src/geyser/generated; see docs/listeners-and-geyser.md.
+        from src.geyser.generated import geyser_pb2, geyser_pb2_grpc
+    except ImportError:
+        print(
+            "[ERROR] Could not import geyser_pb2 or geyser_pb2_grpc. "
+            "Regenerate them into src/geyser/generated from src/geyser/proto"
+        )
+        return
+
+    if known_tokens is None:
+        known_tokens = set()
+
+    creds = build_geyser_credentials(api_token)
+
+    while True:
+        try:
+            print(f"[INFO] Connecting deshred listener to {provider_name}...")
+
+            channel = grpc.aio.secure_channel(endpoint, creds)
+            stub = geyser_pb2_grpc.GeyserStub(channel)
+
+            # Its own request type, not a SubscribeRequest: the deshred stream
+            # carries no commitment level and no `failed` filter, because both
+            # describe execution and nothing has executed.
+            request = geyser_pb2.SubscribeDeshredRequest()
+            deshred_filter = request.deshred_transactions["pump_filter"]
+            deshred_filter.account_include.append(PUMP_MINT_AUTHORITY)
+            deshred_filter.vote = False
+
+            print(f"[INFO] Deshred listener active for {provider_name}")
+
+            async for update in stub.SubscribeDeshred(iter([request])):
+                tracker.increment_messages(provider_name)
+
+                if not update.HasField("deshred_transaction"):
+                    continue
+
+                transaction = update.deshred_transaction.transaction
+                msg = getattr(transaction.transaction, "message", None)
+                if msg is None:
+                    continue
+
+                # A v0 transaction indexes accounts past the end of
+                # message.account_keys when it uses a lookup table. The deshred
+                # stream resolves those onto the update itself rather than
+                # under a meta, in this order.
+                resolved_keys = list(msg.account_keys)
+                resolved_keys.extend(transaction.loaded_writable_addresses)
+                resolved_keys.extend(transaction.loaded_readonly_addresses)
+
+                for ix in msg.instructions:
+                    is_create = ix.data.startswith(PUMP_CREATE_PREFIX)
+                    is_create_v2 = ix.data.startswith(PUMP_CREATE_V2_PREFIX)
+
+                    if not (is_create or is_create_v2):
+                        continue
+
+                    account_keys = [
+                        base58.b58encode(bytes(resolved_keys[account_idx])).decode()
+                        for account_idx in ix.accounts
+                        if account_idx < len(resolved_keys)
+                    ]
+
+                    if len(account_keys) == 0:
+                        continue
+
+                    mint = account_keys[0]
+                    if mint in known_tokens:
+                        continue
+
+                    if is_create_v2:
+                        print(
+                            f"[{provider_name}_shreds] Detected: CreateV2 instruction (Token2022)"
+                        )
+                        decoded = decode_create_v2_instruction(ix.data, account_keys)
+                    else:
+                        print(
+                            f"[{provider_name}_shreds] Detected: Create instruction (Legacy/Metaplex)"
+                        )
+                        decoded = decode_create_instruction(ix.data, account_keys)
+
+                    if not decoded:
+                        continue
+
+                    ts = time.time()
+                    tracker.add_token(
+                        mint,
+                        decoded["name"],
+                        decoded["symbol"],
+                        f"{provider_name}_shreds",
+                        ts,
+                    )
+                    known_tokens.add(mint)
+
+        except Exception as e:
+            print(
+                f"[ERROR] Connection error in deshred listener for {provider_name}: {e}"
+            )
+            print("[INFO] Reconnecting in 5 seconds...")
+            await asyncio.sleep(5)
+
+
 async def listen_pumpportal(provider_name, tracker, known_tokens=None):
     """Listen for new tokens via PumpPortal WebSocket"""
     if known_tokens is None:
@@ -866,12 +1020,12 @@ async def listen_pumpportal(provider_name, tracker, known_tokens=None):
 # ============ MAIN TEST RUNNER ============
 
 
-async def run_comparison_test(providers, test_duration=600):
+async def run_comparison_test(providers, test_duration=DEFAULT_DURATION):
     """Run the comparison test with multiple WebSocket endpoints
 
     Args:
         providers: Dict of {provider_name: {'wss': wss_url, 'geyser': (endpoint, api_token)}}
-        test_duration: How long to run the test in seconds (default: 10 minutes)
+        test_duration: How long to sample for, in seconds
     """
     # Initialize our tracker and fetch existing tokens to avoid duplicates
     tracker = DetectionTracker()
@@ -911,6 +1065,14 @@ async def run_comparison_test(providers, test_duration=600):
                 )
                 tasks.append(task)
 
+                print(f"[INFO] Starting deshred listener for {provider_name}")
+                task = asyncio.create_task(
+                    listen_deshred_grpc(
+                        endpoint, api_token, provider_name, tracker, known_tokens.copy()
+                    )
+                )
+                tasks.append(task)
+
     # Start PumpPortal listener (only once, not per provider)
     print("[INFO] Starting PumpPortal listener")
     task = asyncio.create_task(
@@ -929,6 +1091,17 @@ async def run_comparison_test(providers, test_duration=600):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Race the pump.fun token-detection methods against each other"
+    )
+    parser.add_argument(
+        "--duration",
+        type=int,
+        default=DEFAULT_DURATION,
+        help=f"seconds to sample (default: {DEFAULT_DURATION})",
+    )
+    args = parser.parse_args()
+
     # Read providers from environment variables
     providers = {
         "provider_1": {
@@ -950,8 +1123,8 @@ if __name__ == "__main__":
     }
 
     print(
-        f"[INFO] Starting Pump.fun token detector comparison test for {TEST_DURATION} seconds"
+        f"[INFO] Starting Pump.fun token detector comparison test for {args.duration} seconds"
     )
     print(f"[INFO] Providers: {', '.join(providers.keys())}")
 
-    asyncio.run(run_comparison_test(providers, test_duration=TEST_DURATION))
+    asyncio.run(run_comparison_test(providers, test_duration=args.duration))

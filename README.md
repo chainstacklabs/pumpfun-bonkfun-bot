@@ -188,7 +188,7 @@ uv run tests/regression/verify_tx_status_checks.py      # every path reads meta.
 ```bash
 uv run tools/simulate_v2_trades.py <MINT>    # mainnet simulation, no funds moved
 uv run tools/simulate_bot_buy_path.py        # the bot's buy path against a fresh coin, no funds moved
-uv run tools/compare_listeners.py            # race all four listeners against each other
+uv run tools/compare_listeners.py            # race all five listeners against each other
 uv run tools/compare_migration_listeners.py  # race the two migration detection methods
 uv run tools/cleanup_accounts.py [MINT]      # close leftover token accounts — submits transactions
 uv run tools/live_v2_round_trip.py --yes     # real buy_v2 + sell_v2 — SPENDS REAL FUNDS
