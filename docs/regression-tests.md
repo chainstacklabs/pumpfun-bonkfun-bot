@@ -16,10 +16,13 @@ individual scripts for a subset.
 | `verify_transaction_v1.py` | every reader asks `maxSupportedTransactionVersion: 1`; a v1 `create_v2` is detected from logs alone with the envelope unreadable, and from the envelope alone with the logs stripped; the same two routes over geyser, plus the inline v1 budget |
 | `verify_shreds_listener.py` | pre-execution creates decode from the instruction alone: `user` at `create_v2` account 5, a holder-reward creator derived as `PDA(["holder-rewards", mint])`, truncated trailing args decoding as not-holder-reward, lookup-table accounts resolved, and nothing reading a `meta` the stream has no field for |
 | `verify_block_null_guard.py` | a `blockSubscribe` frame with `value.block: null` is skipped, not logged as an error |
+| `verify_ping_loop_close_is_quiet.py` | a WebSocket closing normally ends the ping loop quietly in every listener, while an unexpected failure is still logged |
 | `verify_listener_cancellation.py` | a cancelled WebSocket listener stops, even when `websockets` reports cancellation as `AssertionError` |
 | `verify_pumpportal_buy_path.py` | curve derived from the mint, unreadable curve skips the buy, curve+mint read in one slot-consistent batch |
 | `verify_pumpportal_bonk_fields.py` | bonk payloads (no name/symbol/uri) still produce a `TokenInfo`; `--live` re-checks the real feed |
 | `verify_extreme_fast_zero_rpc.py` | zero RPC calls between detection and submission for CreateEvent-sourced tokens |
+| `verify_cleanup_survives_shutdown.py` | shutdown cleanup runs to completion through the cancellation that triggered it, bounded, and a cleanup that hangs or raises still lets the process exit |
+| `verify_token_queue_shutdown.py` | cancelling the token queue processor ends it without raising, and `task_done()` stays balanced on the paths that took an item |
 | `verify_buy_result_not_lost.py` | a landed buy is never reported failed, and a reverted one never reported landed |
 | `verify_tx_status_checks.py` | every path reads `meta.err`; `--live` replays known reverted signatures |
 | `verify_tp_sl_exit_price.py` | the tp/sl exit prices off the trigger price, and a reverted sell is retried, bounded |
@@ -28,6 +31,7 @@ individual scripts for a subset.
 | `verify_exit_sell_confirmation.py` | an exit sell is retried only when retrying is provably safe |
 | `verify_rpc_deadline.py` | `post_rpc` bounds wall time, not just attempts (virtual clock) |
 | `verify_quote_decimals_resolved.py` | no trade path prices a coin before resolving its quote mint's decimals; nothing in `cookbook/` or `src/` falls back to a literal decimal count; both unit helpers raise for an unresolved mint; the two pre-seeded quote tables carry the same mints; the buy clears its quote gate before it sizes |
+| `verify_migration_event_discriminator.py` | the migration decoder rejects any payload that is not the wrapper program's `CreatePoolEvent`, including a foreign one long enough for the schema |
 | `verify_cookbook_arguments.py` | every cookbook script takes its input as a command-line argument |
 | `verify_documentation_links.py` | no known-dead URL is back; `--live` fetches every one and fails on 4xx/5xx |
 | `verify_no_rpc_credentials_logged.py` | credentials masked in every log record, including a URL passed as a non-`str` argument, and every site that installs a root handler installs the redaction first |

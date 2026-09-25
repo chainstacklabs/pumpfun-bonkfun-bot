@@ -5,7 +5,8 @@ Usage:
     uv run cookbook/pumpfun/graduation/pumpfun_listen_migrations_logsubscribe.py
 
 Note: This uses a migration wrapper program (39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg)
-that emits a different event structure than the CompletePumpAmmMigrationEvent in pump_fun_idl.json.
+that emits CreatePoolEvent, not the CompletePumpAmmMigrationEvent in pump_fun_idl.json,
+so the layout below is hand-rolled rather than read from the IDL.
 
 Skips transactions with truncated logs (no Program data in the logs -> no parsed data).
 To cover those cases, please use an additional RPC call (get transaction data) or additional listener not based on logs.
@@ -34,16 +35,28 @@ MIGRATION_PROGRAM_ID = Pubkey.from_string(
     "39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg"
 )
 
+# The wrapper program emits CreatePoolEvent, not the CompletePumpAmmMigrationEvent
+# in idl/pump_fun_idl.json — first 8 bytes of sha256("event:CreatePoolEvent").
+# See cookbook/solana/anchor_calculate_discriminator.py.
+CREATE_POOL_EVENT_DISCRIMINATOR = bytes.fromhex("b1310cd2a076a774")
+
 
 def parse_migrate_instruction(data):
     """Parse migration event from the migration wrapper program.
 
-    Note: This parses the event emitted by the migration wrapper program
-    (39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg), which has a different
-    structure than CompletePumpAmmMigrationEvent in pump_fun_idl.json.
+    Returns None for any payload that is not the wrapper program's
+    CreatePoolEvent, including the other events a migration transaction emits.
     """
     if len(data) < 8:
         print(f"[ERROR] Data length too short: {len(data)} bytes")
+        return None
+
+    if data[:8] != CREATE_POOL_EVENT_DISCRIMINATOR:
+        # A migration transaction carries Program data lines from several
+        # programs. Without this check every one of them is decoded against the
+        # schema below, and any payload long enough to cover it returns a full
+        # dict of meaningless values — a decimals field reading 176 rather than
+        # an error.
         return None
 
     offset = 8
@@ -117,8 +130,12 @@ def print_transaction_details(log_data):
         if log.startswith("Program data:"):
             try:
                 data = base64.b64decode(log.split(": ")[1])
-                parsed_data = parse_migrate_instruction(data)
-                if parsed_data:
+                # Most Program data lines in a migration transaction belong to
+                # other events and come back None, so keep the first match
+                # rather than letting a later line overwrite it.
+                parsed = parse_migrate_instruction(data)
+                if parsed:
+                    parsed_data = parsed
                     print("[INFO] Parsed from Program data:")
                     for key, value in parsed_data.items():
                         print(f"  {key}: {value}")

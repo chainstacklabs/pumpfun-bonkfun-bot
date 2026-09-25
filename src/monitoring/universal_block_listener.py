@@ -205,6 +205,14 @@ class UniversalBlockListener(BaseTokenListener):
                     return
         except asyncio.CancelledError:
             pass
+        except websockets.exceptions.ConnectionClosed:
+            # The connection going away is the expected end of a ping loop's
+            # life, not a failure. `ping()` raises ConnectionClosedOK on a clean
+            # 1000 close and ConnectionClosedError when no close frame comes
+            # back; both are normal shutdowns and neither is a CancelledError,
+            # so without this they reach the broad handler and print a traceback
+            # at ERROR on every good run.
+            logger.debug("Ping loop ending: the connection closed")
         except Exception:
             logger.exception("Ping error")
 

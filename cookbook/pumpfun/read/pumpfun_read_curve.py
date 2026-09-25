@@ -80,15 +80,23 @@ async def read_quote_decimals(conn: AsyncClient, quote_mint: Pubkey) -> int:
 class BondingCurveState:
     """Represents the state of a bonding curve account.
 
-    Attributes:
-        virtual_token_reserves: Virtual token reserves in the curve
-        virtual_sol_reserves: Virtual SOL reserves in the curve
-        real_token_reserves: Real token reserves in the curve
-        real_sol_reserves: Real SOL reserves in the curve
-        token_total_supply: Total token supply in the curve
-        complete: Whether the curve has completed and liquidity migrated
-        is_mayhem_mode: Whether the curve is in mayhem mode
+    The fields are declared below rather than left to the struct parse, so an
+    editor and a type checker can both see what a curve holds. The quote-side
+    reserves are in the quote mint's raw units — 1e9 for SOL, 1e6 for USDC — so
+    they are only lamports on a SOL-paired coin.
     """
+
+    virtual_token_reserves: int
+    virtual_sol_reserves: int
+    real_token_reserves: int
+    real_sol_reserves: int
+    token_total_supply: int
+    complete: bool
+    creator: Pubkey
+    is_mayhem_mode: bool
+    is_cashback_coin: bool
+    #: All zeros on a SOL-paired coin; `effective_quote_mint` resolves it.
+    quote_mint: Pubkey
 
     # V2: Struct with creator field (81 bytes total: 8 discriminator + 73 data)
     _STRUCT_V2 = Struct(
@@ -145,39 +153,42 @@ class BondingCurveState:
     )
 
     def __init__(self, data: bytes) -> None:
-        """Parse bonding curve data."""
+        """Parse bonding curve data.
+
+        Args:
+            data: Raw account data including the 8-byte discriminator
+
+        Raises:
+            ValueError: If the discriminator is wrong
+        """
         if data[:8] != EXPECTED_DISCRIMINATOR:
             raise ValueError("Invalid curve state discriminator")
 
         total_length = len(data)
-        self.quote_mint = DEFAULT_QUOTE_MINT
-
         if total_length == 81:  # V2: Creator only
             parsed = self._STRUCT_V2.parse(data[8:])
-            self.__dict__.update(parsed)
-            self.creator = Pubkey.from_bytes(self.creator)
-            self.is_mayhem_mode = False
-            self.is_cashback_coin = False
-
         elif total_length == 82:  # V3: Creator + mayhem
             parsed = self._STRUCT_V3.parse(data[8:])
-            self.__dict__.update(parsed)
-            self.creator = Pubkey.from_bytes(self.creator)
-            self.is_cashback_coin = False
-
         elif total_length < _V5_MIN_LENGTH:  # V4: Creator + mayhem + cashback
             parsed = self._STRUCT_V4.parse(data[8:])
-            self.__dict__.update(parsed)
-            self.creator = Pubkey.from_bytes(self.creator)
-
-        elif total_length >= _V5_MIN_LENGTH:  # V5: + quote_mint
+        else:  # V5: + quote_mint
             parsed = self._STRUCT_V5.parse(data[8:])
-            self.__dict__.update(parsed)
-            self.creator = Pubkey.from_bytes(self.creator)
-            self.quote_mint = Pubkey.from_bytes(self.quote_mint)
 
-        else:
-            raise ValueError(f"Unexpected bonding curve size: {total_length} bytes")
+        self.virtual_token_reserves = parsed.virtual_token_reserves
+        self.virtual_sol_reserves = parsed.virtual_sol_reserves
+        self.real_token_reserves = parsed.real_token_reserves
+        self.real_sol_reserves = parsed.real_sol_reserves
+        self.token_total_supply = parsed.token_total_supply
+        self.complete = parsed.complete
+        self.creator = Pubkey.from_bytes(parsed.creator)
+        # The trailing fields arrived one layout at a time; an older account
+        # stops short of them and reads as the behaviour they replaced.
+        self.is_mayhem_mode = parsed.get("is_mayhem_mode", False)
+        self.is_cashback_coin = parsed.get("is_cashback_coin", False)
+        quote_mint = parsed.get("quote_mint")
+        self.quote_mint = (
+            Pubkey.from_bytes(quote_mint) if quote_mint else DEFAULT_QUOTE_MINT
+        )
 
 
 def get_bonding_curve_address(mint: Pubkey, program_id: Pubkey) -> tuple[Pubkey, int]:
