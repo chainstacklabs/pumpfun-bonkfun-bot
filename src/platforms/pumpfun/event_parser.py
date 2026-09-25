@@ -36,6 +36,16 @@ _CREATE_V2_USER_ACCOUNT_INDEX = 5
 # Length of a Solana public key in bytes.
 PUBKEY_BYTE_LENGTH = 32
 
+# The two log lines the pump.fun program writes when it creates a coin. They are
+# matched whole: Anchor writes `Instruction: <Name>` for every program, so a
+# substring test also accepts CreateTokenAccount, CreatePool,
+# CreateFeeSharingConfig and any other instruction whose name starts with
+# "Create", from any program sharing the transaction.
+CREATE_INSTRUCTION_LOGS = (
+    "Program log: Instruction: Create",
+    "Program log: Instruction: CreateV2",
+)
+
 
 def _option_bool(value: object) -> bool:
     """Read an Anchor OptionBool argument.
@@ -146,16 +156,9 @@ class PumpFunEventParser(EventParser):
         Returns:
             TokenInfo if token creation found, None otherwise
         """
-        # Check if this is a token creation transaction (create or create_v2 for token2022)
-        if not any(
-            "Program log: Instruction: Create" in log
-            or "Program log: Instruction: Create_v2" in log
-            for log in logs
-        ):
-            return None
-
-        # Skip swaps as the first condition may pass them
-        if any("Program log: Instruction: CreateTokenAccount" in log for log in logs):
+        # Check if this is a token creation transaction (create, or create_v2
+        # for token2022)
+        if not any(log in CREATE_INSTRUCTION_LOGS for log in logs):
             return None
 
         logger.info(f"🔍 Parsing token creation from logs for signature: {signature}")
@@ -168,12 +171,9 @@ class PumpFunEventParser(EventParser):
 
             # First, collect all Program data entries and note when Create instruction happens
             for i, log in enumerate(logs):
-                if (
-                    "Program log: Instruction: Create" in log
-                    or "Program log: Instruction: Create_v2" in log
-                ):
+                if log in CREATE_INSTRUCTION_LOGS:
                     create_instruction_found = True
-                    instruction_type = "Create_v2" if "Create_v2" in log else "Create"
+                    instruction_type = log.rsplit(": ", 1)[1]
                     logger.info(
                         f"📝 Found {instruction_type} instruction at log index {i}"
                     )
@@ -186,7 +186,7 @@ class PumpFunEventParser(EventParser):
                     )
 
             if not create_instruction_found:
-                logger.info("❌ No Create or Create_v2 instruction found in logs")
+                logger.info("❌ No Create or CreateV2 instruction found in logs")
                 return None
 
             if not program_data_entries:

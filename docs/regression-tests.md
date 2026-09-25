@@ -19,6 +19,8 @@ individual scripts for a subset.
 | `verify_ping_loop_close_is_quiet.py` | a WebSocket closing normally ends the ping loop quietly in every listener, while an unexpected failure is still logged |
 | `verify_listener_cancellation.py` | a cancelled WebSocket listener stops, even when `websockets` reports cancellation as `AssertionError` |
 | `verify_pumpportal_buy_path.py` | curve derived from the mint, unreadable curve skips the buy, curve+mint read in one slot-consistent batch |
+| `verify_create_log_gate.py` | the create marker is matched as a whole log line, so a foreign `Create*` instruction is not a coin and a real create sharing its transaction with one is still detected |
+| `verify_pumpportal_pool_filter.py` | `compare_listeners`' PumpPortal lane reports `pool: "pump"` coins only, still counts every frame, and tallies the launchpads it ignored |
 | `verify_pumpportal_bonk_fields.py` | bonk payloads (no name/symbol/uri) still produce a `TokenInfo`; `--live` re-checks the real feed |
 | `verify_extreme_fast_zero_rpc.py` | zero RPC calls between detection and submission for CreateEvent-sourced tokens |
 | `verify_cleanup_survives_shutdown.py` | shutdown cleanup runs to completion through the cancellation that triggered it, bounded, and a cleanup that hangs or raises still lets the process exit |

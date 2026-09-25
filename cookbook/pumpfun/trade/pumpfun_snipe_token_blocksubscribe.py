@@ -298,6 +298,12 @@ async def buy_token(
 # works for every transaction version.
 CREATE_EVENT_DISCRIMINATOR = bytes([27, 114, 169, 77, 222, 235, 99, 118])
 
+# The two log lines the pump.fun program writes when it creates a coin.
+CREATE_INSTRUCTION_LOGS = (
+    "Program log: Instruction: Create",
+    "Program log: Instruction: CreateV2",
+)
+
 _CREATE_EVENT_FIELDS = [
     ("name", "string"),
     ("symbol", "string"),
@@ -360,7 +366,10 @@ def token_info_from_logs(logs):
     Returns:
         The token fields the buy path needs, or None if no coin was created
     """
-    if not any("Program log: Instruction: Create" in log for log in logs):
+    # Matched whole: Anchor writes `Instruction: <Name>` for every program, so
+    # a substring test also accepts CreateTokenAccount, CreatePool and the rest
+    # from whichever programs share the transaction.
+    if not any(log in CREATE_INSTRUCTION_LOGS for log in logs):
         return None
     for log in logs:
         if "Program data:" not in log:

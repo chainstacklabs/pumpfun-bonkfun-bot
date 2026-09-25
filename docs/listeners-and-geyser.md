@@ -75,6 +75,21 @@ against mainnet.
   the installed solders is only ever one version behind. Route on
   `meta.logMessages`, which the RPC has already decoded and which is
   version-agnostic; keep the byte decode as a fallback.
+- **Match a create marker as a whole log line, not a substring.** Anchor writes
+  `Program log: Instruction: <Name>` for every program, so
+  `"Program log: Instruction: Create" in log` also accepts CreateTokenAccount,
+  CreateFeeSharingConfig, CreatePool and CreateConsume from whichever programs
+  share the transaction. pump.fun writes exactly
+  `Program log: Instruction: Create` or `... CreateV2`. (The associated
+  token account program writes `Program log: Create`, with no `Instruction: `
+  prefix, so it never matched either way.)
+- **PumpPortal's `subscribeNewToken` is not one launchpad.** Each payload names
+  its launchpad in `pool` (`pump`, `bonk`), and a consumer that ignores the
+  field treats letsbonk creates as pump.fun coins, each then reading as a
+  simultaneous miss by every on-chain lane. The `mint` field is also not always
+  the coin: on a bonk pool quoted in something other than SOL it carries the
+  quote mint instead, which resolves to a token with its own trading history
+  rather than a fresh one.
 - **Resolve v0 lookup-table accounts before indexing them.** An instruction's
   account indices can point past `message.account_keys` into the address lookup
   table, which geyser reports in `meta.loaded_writable_addresses` then
