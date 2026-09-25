@@ -1,12 +1,10 @@
 """Universal blockSubscribe listener, platform-agnostic via the interfaces."""
 
 import asyncio
-import base64
 import json
 from collections.abc import Awaitable, Callable
 
 import websockets
-from solders.transaction import VersionedTransaction
 
 from core.client import SolanaClient
 from interfaces.core import Platform, TokenInfo
@@ -293,83 +291,27 @@ class UniversalBlockListener(BaseTokenListener):
             TokenInfo if a token creation is found, None otherwise
         """
         for tx in transactions:
-            if not isinstance(tx, dict) or "transaction" not in tx:
+            if not isinstance(tx, dict):
                 continue
 
             # Skip failed txs — sniping a failed create yields a non-existent
-            # mint and the buy-side tx then fails with InvalidMint.
+            # mint and the buy-side tx then fails with InvalidMint. The runtime
+            # keeps the logs a transaction emitted before it failed, so a create
+            # inside one that later reverted still leaves a CreateEvent here.
             meta = tx.get("meta")
             if isinstance(meta, dict) and meta.get("err") is not None:
                 continue
 
-            # Route on the logs before touching the transaction itself. The
-            # decode below only identifies the program touched, and an envelope
-            # version solders cannot read would otherwise drop every such coin
-            # silently. The parsers prefer meta.log_messages anyway, for the
-            # canonical creator.
+            # The logs are the only route. A `create` reached by CPI lives in
+            # meta.innerInstructions, produced by execution, so it is absent
+            # from the envelope's top-level instructions however well those are
+            # decoded; the logs carry it at any depth because `emit!` fires at
+            # any depth. Both are fields of the same frame, so reading the logs
+            # costs no extra request. Opening an envelope is a separate
+            # exercise, done by cookbook/pumpfun/decode/.
             token_info = self._parse_from_logs(tx)
             if token_info:
                 return token_info
-
-            tx_data = tx["transaction"]
-
-            # Handle base64 encoded transaction data
-            if isinstance(tx_data, list) and len(tx_data) > 0:
-                token_info = self._parse_encoded_transaction(tx, tx_data[0])
-                if token_info:
-                    return token_info
-
-            # Handle already decoded transaction data (shouldn't happen in blockSubscribe)
-            elif isinstance(tx_data, dict) and "message" in tx_data:
-                token_info = self._parse_decoded_transaction(tx, tx_data)
-                if token_info:
-                    return token_info
-
-        return None
-
-    def _parse_encoded_transaction(
-        self, tx: dict, encoded_data: str
-    ) -> TokenInfo | None:
-        """Parse base64 encoded transaction data.
-
-        Args:
-            tx: Transaction wrapper from block
-            encoded_data: Base64 encoded transaction data
-
-        Returns:
-            TokenInfo if token creation found, None otherwise
-        """
-        try:
-            tx_bytes = base64.b64decode(encoded_data)
-            transaction = VersionedTransaction.from_bytes(tx_bytes)
-
-            # Check if any of the instructions use our monitored programs
-            for instruction in transaction.message.instructions:
-                program_id = str(
-                    transaction.message.account_keys[instruction.program_id_index]
-                )
-
-                # Check if this program ID is one we're monitoring
-                if program_id in self.program_id_to_parser:
-                    platform, parser = self.program_id_to_parser[program_id]
-
-                    # Try to parse with the appropriate parser
-                    try:
-                        if hasattr(parser, "parse_token_creation_from_block"):
-                            token_info = parser.parse_token_creation_from_block(
-                                {"transactions": [tx]}
-                            )
-                            if token_info:
-                                return token_info
-                    except Exception:
-                        # Expected for non-creation transactions
-                        continue
-
-        except Exception:
-            # A transaction the installed solders cannot deserialize — a v1
-            # one, for instance. Logged rather than swallowed: silence here is
-            # what made the v1 cutover look like a quiet drop in detections.
-            logger.debug("Could not decode a block transaction envelope")
 
         return None
 
@@ -402,46 +344,5 @@ class UniversalBlockListener(BaseTokenListener):
             token_info = parser.parse_token_creation_from_block({"transactions": [tx]})
             if token_info:
                 return token_info
-
-        return None
-
-    def _parse_decoded_transaction(self, tx: dict, tx_data: dict) -> TokenInfo | None:
-        """Parse already decoded transaction data.
-
-        Args:
-            tx: Transaction wrapper from block
-            tx_data: Decoded transaction data
-
-        Returns:
-            TokenInfo if token creation found, None otherwise
-        """
-        message = tx_data["message"]
-        if "instructions" not in message or "accountKeys" not in message:
-            return None
-
-        for ix in message["instructions"]:
-            if "programIdIndex" not in ix:
-                continue
-
-            program_idx = ix["programIdIndex"]
-            if program_idx >= len(message["accountKeys"]):
-                continue
-
-            program_id = message["accountKeys"][program_idx]
-
-            # Check if this program ID is one we're monitoring
-            if program_id in self.program_id_to_parser:
-                platform, parser = self.program_id_to_parser[program_id]
-
-                try:
-                    if hasattr(parser, "parse_token_creation_from_block"):
-                        token_info = parser.parse_token_creation_from_block(
-                            {"transactions": [tx]}
-                        )
-                        if token_info:
-                            return token_info
-                except Exception:
-                    # Expected for non-creation transactions
-                    continue
 
         return None
