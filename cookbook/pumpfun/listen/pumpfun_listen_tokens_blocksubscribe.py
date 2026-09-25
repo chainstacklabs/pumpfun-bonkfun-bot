@@ -83,6 +83,12 @@ def print_token_info(token_data, signature=None):
 # base64 "Program data:" log line, which the RPC has already decoded for us.
 CREATE_EVENT_DISCRIMINATOR = bytes([27, 114, 169, 77, 222, 235, 99, 118])
 
+# The two log lines the pump.fun program writes when it creates a coin.
+CREATE_INSTRUCTION_LOGS = (
+    "Program log: Instruction: Create",
+    "Program log: Instruction: CreateV2",
+)
+
 # The CreateEvent layout, in order. Trailing fields were appended by later
 # upgrades, so a shorter payload stops early rather than failing.
 _CREATE_EVENT_FIELDS = [
@@ -157,7 +163,10 @@ def find_create_event(logs):
     Returns:
         The decoded event, or None if the transaction created no coin
     """
-    if not any("Program log: Instruction: Create" in log for log in logs):
+    # Matched whole: Anchor writes `Instruction: <Name>` for every program, so
+    # a substring test also accepts CreateTokenAccount, CreatePool and the rest
+    # from whichever programs share the transaction.
+    if not any(log in CREATE_INSTRUCTION_LOGS for log in logs):
         return None
     for log in logs:
         if "Program data:" not in log:

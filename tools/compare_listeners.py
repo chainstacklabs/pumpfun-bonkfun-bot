@@ -15,7 +15,9 @@ with per-method latency, message counts and coverage:
 
 This races on *coverage*: which lane saw a given mint, and how much later than
 the winner. A lane that never reports a mint is the finding, not a rounding
-error — `shreds` misses router creates and PumpPortal samples its feed.
+error — `shreds` misses router creates and PumpPortal samples its feed. Every
+lane is restricted to pump.fun coins, PumpPortal included: it aggregates other
+launchpads, and their coins would read as a miss by all four on-chain lanes.
 `tools/compare_deshred_latency.py` answers the other question, pairing deshred
 against executed per signature to measure the lead itself.
 
@@ -40,6 +42,7 @@ import os
 import struct
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 from queue import Empty
 
@@ -94,6 +97,15 @@ LANE_SHUTDOWN_GRACE = 10
 
 # PumpPortal WebSocket endpoint (third-party service)
 PUMPPORTAL_WS_URL = "wss://pumpportal.fun/api/data"
+
+# PumpPortal aggregates several launchpads and names each coin's one in `pool`.
+# The four on-chain lanes subscribe to the pump.fun program alone, so anything
+# else is a coin they are not watching for, not one they missed.
+PUMPPORTAL_POOL = "pump"
+
+# The two log lines the pump.fun program writes when it creates a coin.
+CREATE_LOG = "Program log: Instruction: Create"
+CREATE_V2_LOG = "Program log: Instruction: CreateV2"
 
 # Sampling window in seconds, overridable with --duration. Short runs see few
 # coins, and a lane's coverage gap only shows up over enough of them.
@@ -559,10 +571,7 @@ async def listen_block_subscription(wss_url, provider_name, tracker, known_token
                             # difference against logs and geyser.
                             meta = tx.get("meta") or {}
                             logs = meta.get("logMessages") or []
-                            if not any(
-                                "Program log: Instruction: Create" in log
-                                for log in logs
-                            ):
+                            if not (CREATE_LOG in logs or CREATE_V2_LOG in logs):
                                 continue
 
                             decoded = None
@@ -585,10 +594,7 @@ async def listen_block_subscription(wss_url, provider_name, tracker, known_token
                             if not mint or mint in known_tokens:
                                 continue
 
-                            is_v2 = any(
-                                "Program log: Instruction: CreateV2" in log
-                                for log in logs
-                            )
+                            is_v2 = CREATE_V2_LOG in logs
                             kind = (
                                 "CreateV2 (Token2022)" if is_v2 else "Create (Legacy)"
                             )
@@ -668,13 +674,14 @@ async def listen_logs_subscription(wss_url, provider_name, tracker, known_tokens
                         log_data = data["params"]["result"]["value"]
                         logs = log_data.get("logs", [])
 
-                        # Detect both Create and CreateV2 instructions
-                        is_create = any(
-                            "Program log: Instruction: Create" in log for log in logs
-                        )
-                        is_create_v2 = any(
-                            "Program log: Instruction: CreateV2" in log for log in logs
-                        )
+                        # Detect both Create and CreateV2 instructions. The
+                        # lines are matched whole: Anchor writes
+                        # `Instruction: <Name>` for every program, so a
+                        # substring test also accepts CreateTokenAccount,
+                        # CreatePool and the rest from whichever programs share
+                        # the transaction.
+                        is_create = CREATE_LOG in logs
+                        is_create_v2 = CREATE_V2_LOG in logs
 
                         if not (is_create or is_create_v2):
                             continue
@@ -997,12 +1004,36 @@ async def listen_deshred_grpc(
 
 
 async def listen_pumpportal(provider_name, tracker, known_tokens=None):
-    """Listen for new tokens via PumpPortal WebSocket"""
+    """Listen for new tokens via PumpPortal WebSocket.
+
+    Only pump.fun coins are reported. `subscribeNewToken` also carries
+    letsbonk creates, and counting those against lanes that never subscribed to
+    that program turns a launchpad this race does not cover into a hole in
+    every on-chain lane at once.
+    """
     if known_tokens is None:
         known_tokens = set()
 
     lane = f"{provider_name}_pumpportal"
+    skipped_by_pool = Counter()
 
+    try:
+        await _pumpportal_loop(lane, tracker, known_tokens, skipped_by_pool)
+    finally:
+        if skipped_by_pool:
+            # A payload naming no pool sorts and prints as "unknown" rather than
+            # being left out: an unrecognised launchpad is the case worth seeing.
+            tally = ", ".join(
+                f"{pool or 'unknown'}={count}"
+                for pool, count in sorted(
+                    skipped_by_pool.items(), key=lambda item: str(item[0])
+                )
+            )
+            print(f"[INFO] {lane} ignored coins from other launchpads: {tally}")
+
+
+async def _pumpportal_loop(lane, tracker, known_tokens, skipped_by_pool):
+    """Drain the PumpPortal feed until cancelled, reconnecting as needed."""
     while True:
         try:
             print("[INFO] Connecting to PumpPortal WebSocket...")
@@ -1011,7 +1042,7 @@ async def listen_pumpportal(provider_name, tracker, known_tokens=None):
                 await websocket.send(
                     json.dumps({"method": "subscribeNewToken", "params": []})
                 )
-                print(f"[INFO] PumpPortal listener active for {provider_name}")
+                print(f"[INFO] PumpPortal listener active for {lane}")
 
                 while True:
                     try:
@@ -1037,6 +1068,11 @@ async def listen_pumpportal(provider_name, tracker, known_tokens=None):
                         if not mint:
                             continue
 
+                        pool = token_info.get("pool")
+                        if pool != PUMPPORTAL_POOL:
+                            skipped_by_pool[pool] += 1
+                            continue
+
                         if mint in known_tokens:
                             continue
 
@@ -1046,13 +1082,11 @@ async def listen_pumpportal(provider_name, tracker, known_tokens=None):
                         known_tokens.add(mint)
 
                     except Exception as e:
-                        print(f"[ERROR] PumpPortal listener for {provider_name}: {e}")
+                        print(f"[ERROR] PumpPortal listener for {lane}: {e}")
                         break
 
         except Exception as e:
-            print(
-                f"[ERROR] Connection error in PumpPortal listener for {provider_name}: {e}"
-            )
+            print(f"[ERROR] Connection error in PumpPortal listener for {lane}: {e}")
             print("[INFO] Reconnecting in 5 seconds...")
             await asyncio.sleep(5)
 

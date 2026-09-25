@@ -54,6 +54,10 @@ ASSOCIATED_TOKEN_PROGRAM_ID = Pubkey.from_string(
 # Calculated using the first 8 bytes of sha256("event:CreateEvent")
 CREATE_EVENT_DISCRIMINATOR = bytes([27, 114, 169, 77, 222, 235, 99, 118])
 
+# The two log lines the pump.fun program writes when it creates a coin.
+CREATE_LOG = "Program log: Instruction: Create"
+CREATE_V2_LOG = "Program log: Instruction: CreateV2"
+
 
 def print_token_info(
     token_data, signature=None, associated_bonding_curve: str | None = None
@@ -246,15 +250,14 @@ async def listen_for_new_tokens():
                             log_data = data["params"]["result"]["value"]
                             logs = log_data.get("logs", [])
 
-                            # Detect both Create and CreateV2 instructions
-                            is_create = any(
-                                "Program log: Instruction: Create" in log
-                                for log in logs
-                            )
-                            is_create_v2 = any(
-                                "Program log: Instruction: CreateV2" in log
-                                for log in logs
-                            )
+                            # Detect both Create and CreateV2 instructions.
+                            # Matched whole: Anchor writes
+                            # `Instruction: <Name>` for every program, so a
+                            # substring test also accepts CreateTokenAccount,
+                            # CreatePool and the rest from whichever programs
+                            # share the transaction.
+                            is_create = CREATE_LOG in logs
+                            is_create_v2 = CREATE_V2_LOG in logs
 
                             if is_create or is_create_v2:
                                 for log in logs:
