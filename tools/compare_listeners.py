@@ -35,11 +35,13 @@ import argparse
 import asyncio
 import base64
 import json
+import multiprocessing as mp
 import os
 import struct
 import sys
 import time
 from pathlib import Path
+from queue import Empty
 
 import base58
 import grpc
@@ -81,6 +83,15 @@ CREATE_EVENT_DISCRIMINATOR = bytes([27, 114, 169, 77, 222, 235, 99, 118])
 # consumer lag until the server ends the stream.
 PUMP_MINT_AUTHORITY = "TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM"
 
+# A lane detecting less than this share of the best lane's coins is called out
+# in the summary. Lanes normally land within a few percent of each other, so a
+# lane at a third of the best is reporting a fault, not a slower feed.
+STARVED_LANE_SHARE = 0.6
+
+# Seconds to keep draining the queue after the sampling deadline, so a lane's
+# final frame count is not lost to the shutdown.
+LANE_SHUTDOWN_GRACE = 10
+
 # PumpPortal WebSocket endpoint (third-party service)
 PUMPPORTAL_WS_URL = "wss://pumpportal.fun/api/data"
 
@@ -110,11 +121,14 @@ class DetectionTracker:
             f"[TOKEN] mint={mint} name={name} symbol={symbol} provider={provider} time={timestamp:.3f}"
         )
 
-    def increment_messages(self, provider):
-        """Count WebSocket/gRPC messages received by listener"""
-        if provider not in self.messages:
-            self.messages[provider] = 0
-        self.messages[provider] += 1
+    def add_messages(self, lane, count):
+        """Add to a lane's frame count.
+
+        Keyed per lane, not per provider: a provider's lanes hold separate
+        subscriptions, and a lane falling behind is only visible against the
+        others' counts.
+        """
+        self.messages[lane] = self.messages.get(lane, 0) + count
 
     def print_summary(self):
         """Print detailed summary statistics of the comparison test"""
@@ -141,12 +155,30 @@ class DetectionTracker:
         for provider, count in sorted(provider_tokens.items()):
             print(f"  - {provider}: {count}")
 
-        print("\n=== Provider Message Counts ===")
-        print("Provider                | Messages")
-        print("-" * 40)
-        for provider in sorted(self.messages.keys()):
-            message_count = self.messages.get(provider, 0)
-            print(f"{provider:<22} | {message_count:<8}")
+        print("\n=== Lane Throughput And Coverage ===")
+        print("Lane                   | Frames   | Frames/s | Coins | vs best")
+        print("-" * 64)
+        best = max(provider_tokens.values(), default=0)
+        for lane in sorted(set(self.messages) | set(provider_tokens)):
+            frames = self.messages.get(lane, 0)
+            coins = provider_tokens.get(lane, 0)
+            share = (coins / best * 100) if best else 0.0
+            rate = frames / test_duration if test_duration else 0.0
+            print(
+                f"{lane:<22} | {frames:<8} | {rate:>8.1f} | {coins:>5} | {share:>5.0f}%"
+            )
+
+        starved = sorted(
+            lane
+            for lane, coins in provider_tokens.items()
+            if best and coins / best < STARVED_LANE_SHARE
+        )
+        if starved:
+            print(f"\n[WARN] Far below the best lane: {', '.join(starved)}")
+            print(
+                "       Read that lane's Frames figure before calling this a coverage"
+            )
+            print("       gap: a lane starved of frames also detects fewer coins.")
         print()
 
         print("=== Token Detection Provider Performance ===")
@@ -463,6 +495,8 @@ async def listen_block_subscription(wss_url, provider_name, tracker, known_token
     if known_tokens is None:
         known_tokens = set()
 
+    lane = f"{provider_name}_block"
+
     while True:
         try:
             print(f"[INFO] Connecting block listener to {provider_name}...")
@@ -494,7 +528,7 @@ async def listen_block_subscription(wss_url, provider_name, tracker, known_token
                     try:
                         response = await websocket.recv()
                         data = json.loads(response)
-                        tracker.increment_messages(provider_name)
+                        tracker.increment_messages(lane)
 
                         if data.get("method") != "blockNotification":
                             continue
@@ -565,7 +599,7 @@ async def listen_block_subscription(wss_url, provider_name, tracker, known_token
                                     mint,
                                     decoded["name"],
                                     decoded["symbol"],
-                                    f"{provider_name}_block",
+                                    lane,
                                     time.time(),
                                 )
                                 known_tokens.add(mint)
@@ -599,6 +633,8 @@ async def listen_logs_subscription(wss_url, provider_name, tracker, known_tokens
     if known_tokens is None:
         known_tokens = set()
 
+    lane = f"{provider_name}_logs"
+
     while True:
         try:
             print(f"[INFO] Connecting logs listener to {provider_name}...")
@@ -624,7 +660,7 @@ async def listen_logs_subscription(wss_url, provider_name, tracker, known_tokens
                     try:
                         response = await websocket.recv()
                         data = json.loads(response)
-                        tracker.increment_messages(provider_name)
+                        tracker.increment_messages(lane)
 
                         if data.get("method") != "logsNotification":
                             continue
@@ -687,7 +723,7 @@ async def listen_logs_subscription(wss_url, provider_name, tracker, known_tokens
                                         mint,
                                         parsed.get("name", "Unknown"),
                                         parsed.get("symbol", "UNK"),
-                                        f"{provider_name}_logs",
+                                        lane,
                                         ts,
                                     )
                                     known_tokens.add(mint)
@@ -750,6 +786,8 @@ async def listen_geyser_grpc(
     if known_tokens is None:
         known_tokens = set()
 
+    lane = f"{provider_name}_geyser"
+
     # Built once, outside the retry loop: the reconnect handler below catches
     # every exception and sleeps, so a bad auth type raised in there would
     # reconnect forever instead of reporting a misconfiguration.
@@ -772,7 +810,7 @@ async def listen_geyser_grpc(
             print(f"[INFO] Geyser gRPC listener active for {provider_name}")
 
             async for update in stub.Subscribe(iter([request])):
-                tracker.increment_messages(provider_name)
+                tracker.increment_messages(lane)
 
                 # Skip non-transaction updates
                 if not update.HasField("transaction"):
@@ -828,7 +866,7 @@ async def listen_geyser_grpc(
                         mint,
                         decoded["name"],
                         decoded["symbol"],
-                        f"{provider_name}_geyser",
+                        lane,
                         ts,
                     )
                     known_tokens.add(mint)
@@ -866,6 +904,8 @@ async def listen_deshred_grpc(
     if known_tokens is None:
         known_tokens = set()
 
+    lane = f"{provider_name}_shreds"
+
     creds = build_geyser_credentials(api_token)
 
     while True:
@@ -886,7 +926,7 @@ async def listen_deshred_grpc(
             print(f"[INFO] Deshred listener active for {provider_name}")
 
             async for update in stub.SubscribeDeshred(iter([request])):
-                tracker.increment_messages(provider_name)
+                tracker.increment_messages(lane)
 
                 if not update.HasField("deshred_transaction"):
                     continue
@@ -943,7 +983,7 @@ async def listen_deshred_grpc(
                         mint,
                         decoded["name"],
                         decoded["symbol"],
-                        f"{provider_name}_shreds",
+                        lane,
                         ts,
                     )
                     known_tokens.add(mint)
@@ -961,6 +1001,8 @@ async def listen_pumpportal(provider_name, tracker, known_tokens=None):
     if known_tokens is None:
         known_tokens = set()
 
+    lane = f"{provider_name}_pumpportal"
+
     while True:
         try:
             print("[INFO] Connecting to PumpPortal WebSocket...")
@@ -975,7 +1017,7 @@ async def listen_pumpportal(provider_name, tracker, known_tokens=None):
                     try:
                         message = await websocket.recv()
                         data = json.loads(message)
-                        tracker.increment_messages(provider_name)
+                        tracker.increment_messages(lane)
 
                         # Extract token information
                         token_info = None
@@ -1000,9 +1042,7 @@ async def listen_pumpportal(provider_name, tracker, known_tokens=None):
 
                         # Record the token detection
                         ts = time.time()
-                        tracker.add_token(
-                            mint, name, symbol, f"{provider_name}_pumpportal", ts
-                        )
+                        tracker.add_token(mint, name, symbol, lane, ts)
                         known_tokens.add(mint)
 
                     except Exception as e:
@@ -1019,75 +1059,167 @@ async def listen_pumpportal(provider_name, tracker, known_tokens=None):
 
 # ============ MAIN TEST RUNNER ============
 
+# Each lane is built in the child process, so the parent only ships a kind and
+# a dict of plain strings across the process boundary.
+LANE_COROUTINES = {
+    "block": lambda a, t, k: listen_block_subscription(a["wss"], a["provider"], t, k),
+    "logs": lambda a, t, k: listen_logs_subscription(a["wss"], a["provider"], t, k),
+    "geyser": lambda a, t, k: listen_geyser_grpc(
+        a["endpoint"], a["token"], a["provider"], t, k
+    ),
+    "shreds": lambda a, t, k: listen_deshred_grpc(
+        a["endpoint"], a["token"], a["provider"], t, k
+    ),
+    "pumpportal": lambda a, t, k: listen_pumpportal(a["provider"], t, k),
+}
 
-async def run_comparison_test(providers, test_duration=DEFAULT_DURATION):
-    """Run the comparison test with multiple WebSocket endpoints
 
-    Args:
-        providers: Dict of {provider_name: {'wss': wss_url, 'geyser': (endpoint, api_token)}}
-        test_duration: How long to sample for, in seconds
+class QueueTracker:
+    """Stands in for DetectionTracker inside a lane process.
+
+    Frame counts are batched rather than sent one by one: a busy lane takes tens
+    of thousands of frames in a run, and a queue put per frame would cost more
+    than the lane's own decode.
     """
-    # Initialize our tracker and fetch existing tokens to avoid duplicates
-    tracker = DetectionTracker()
-    known_tokens = await fetch_existing_token_mints()
-    print(f"[INFO] Loaded {len(known_tokens)} existing tokens")
 
-    tasks = []
+    FLUSH_SECONDS = 1.0
 
-    # Start all listeners for each provider
+    def __init__(self, queue):
+        self.queue = queue
+        self.lane = None
+        self.pending = 0
+        self.last_flush = time.time()
+
+    def add_token(self, mint, name, symbol, lane, timestamp):
+        self.queue.put(("token", mint, name, symbol, lane, timestamp))
+
+    def increment_messages(self, lane):
+        self.lane = lane
+        self.pending += 1
+        now = time.time()
+        if now - self.last_flush >= self.FLUSH_SECONDS:
+            self.flush()
+            self.last_flush = now
+
+    def flush(self):
+        if self.pending and self.lane:
+            self.queue.put(("messages", self.lane, self.pending))
+            self.pending = 0
+
+
+def run_lane_process(kind, lane_args, queue, duration, known_tokens):
+    """Run one lane for `duration` seconds and report through `queue`."""
+    tracker = QueueTracker(queue)
+
+    async def main():
+        task = asyncio.create_task(
+            LANE_COROUTINES[kind](lane_args, tracker, set(known_tokens))
+        )
+        await asyncio.sleep(duration)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
+    finally:
+        tracker.flush()
+
+
+def build_lane_specs(providers):
+    """Return [(kind, args)] for every lane a provider has the endpoints for."""
+    lanes = []
     for provider_name, urls in providers.items():
         if urls.get("wss"):
-            print(f"[INFO] Starting block listener for {provider_name}")
-            task = asyncio.create_task(
-                listen_block_subscription(
-                    urls["wss"], provider_name, tracker, known_tokens.copy()
-                )
-            )
-            tasks.append(task)
+            wss = {"wss": urls["wss"], "provider": provider_name}
+            lanes.append(("block", wss))
+            lanes.append(("logs", dict(wss)))
 
-        if urls.get("wss"):
-            print(f"[INFO] Starting logs listener for {provider_name}")
-            task = asyncio.create_task(
-                listen_logs_subscription(
-                    urls["wss"], provider_name, tracker, known_tokens.copy()
-                )
-            )
-            tasks.append(task)
+        endpoint, api_token = urls.get("geyser") or (None, None)
+        if endpoint and api_token:
+            grpc_args = {
+                "endpoint": endpoint,
+                "token": api_token,
+                "provider": provider_name,
+            }
+            lanes.append(("geyser", grpc_args))
+            lanes.append(("shreds", dict(grpc_args)))
 
-        if urls.get("geyser"):
-            endpoint, api_token = urls["geyser"]
-            if endpoint and api_token:
-                print(f"[INFO] Starting Geyser gRPC listener for {provider_name}")
-                task = asyncio.create_task(
-                    listen_geyser_grpc(
-                        endpoint, api_token, provider_name, tracker, known_tokens.copy()
-                    )
-                )
-                tasks.append(task)
+    # PumpPortal is a single third-party feed, not a per-provider lane.
+    lanes.append(("pumpportal", {"provider": "pumpportal"}))
+    return lanes
 
-                print(f"[INFO] Starting deshred listener for {provider_name}")
-                task = asyncio.create_task(
-                    listen_deshred_grpc(
-                        endpoint, api_token, provider_name, tracker, known_tokens.copy()
-                    )
-                )
-                tasks.append(task)
 
-    # Start PumpPortal listener (only once, not per provider)
-    print("[INFO] Starting PumpPortal listener")
-    task = asyncio.create_task(
-        listen_pumpportal("pumpportal", tracker, known_tokens.copy())
-    )
-    tasks.append(task)
+def run_comparison_test(providers, test_duration=DEFAULT_DURATION):
+    """Race every lane, one process each, and report which saw what.
+
+    The lanes get a process apiece because they starve each other inside one
+    event loop: the gRPC lanes saturate it, the logsSubscribe websocket falls
+    behind draining its socket, and the RPC drops that subscription's
+    notifications. The logs lane then reports a fraction of the coins it would
+    otherwise decode, which reads as a hole in the listener rather than an
+    artifact of this harness.
+
+    Args:
+        providers: {provider_name: {'wss': url, 'geyser': (endpoint, token)}}
+        test_duration: How long to sample for, in seconds
+
+    Returns:
+        The DetectionTracker holding every lane's detections
+    """
+    tracker = DetectionTracker()
+    known_tokens = asyncio.run(fetch_existing_token_mints())
+    print(f"[INFO] Loaded {len(known_tokens)} existing tokens")
+
+    # spawn, not fork: grpc.aio and a forked event loop do not survive together.
+    ctx = mp.get_context("spawn")
+    queue = ctx.Queue()
+    seed = sorted(known_tokens)
+
+    processes = []
+    for kind, lane_args in build_lane_specs(providers):
+        print(f"[INFO] Starting {kind} listener for {lane_args['provider']}")
+        process = ctx.Process(
+            target=run_lane_process,
+            args=(kind, lane_args, queue, test_duration, seed),
+            daemon=True,
+        )
+        process.start()
+        processes.append(process)
 
     print(f"[INFO] Test running for {test_duration} seconds...")
-    await asyncio.sleep(test_duration)
+    deadline = time.time() + test_duration
+    # Children exit on their own at the deadline; the grace window is for the
+    # counts they flush on the way out.
+    hard_stop = deadline + LANE_SHUTDOWN_GRACE
 
-    for task in tasks:
-        task.cancel()
+    while True:
+        try:
+            event = queue.get(timeout=0.5)
+        except Empty:
+            past_deadline = time.time() > deadline
+            if past_deadline and not any(p.is_alive() for p in processes):
+                break
+            if time.time() > hard_stop:
+                break
+            continue
 
-    await asyncio.gather(*tasks, return_exceptions=True)
+        if event[0] == "token":
+            _, mint, name, symbol, lane, timestamp = event
+            tracker.add_token(mint, name, symbol, lane, timestamp)
+        elif event[0] == "messages":
+            _, lane, count = event
+            tracker.add_messages(lane, count)
+
+    for process in processes:
+        if process.is_alive():
+            process.terminate()
+    for process in processes:
+        process.join(timeout=5)
+
     tracker.print_summary()
+    return tracker
 
 
 if __name__ == "__main__":
@@ -1127,4 +1259,4 @@ if __name__ == "__main__":
     )
     print(f"[INFO] Providers: {', '.join(providers.keys())}")
 
-    asyncio.run(run_comparison_test(providers, test_duration=args.duration))
+    run_comparison_test(providers, test_duration=args.duration)
