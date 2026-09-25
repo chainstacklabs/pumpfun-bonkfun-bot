@@ -131,6 +131,11 @@ def _resolve_quote_config(
 class UniversalTrader:
     """Universal trading coordinator that works with any supported platform."""
 
+    #: Seconds shutdown cleanup may take before the process exits regardless.
+    #: Cleanup settles for 15s per account before reading it, so this has to
+    #: cover a session's worth of traded coins, not one.
+    _CLEANUP_SHUTDOWN_BUDGET = 120.0
+
     def __init__(
         self,
         rpc_endpoint: str,
@@ -420,7 +425,7 @@ class UniversalTrader:
             logger.exception("Trading stopped due to error")
 
         finally:
-            await self._cleanup_resources()
+            await self._cleanup_without_interruption()
             logger.info("Universal Trader has shut down")
 
     async def _wait_for_token(self) -> TokenInfo | None:
@@ -468,6 +473,49 @@ class UniversalTrader:
                 await listener_task
             except asyncio.CancelledError:
                 pass
+
+    async def _cleanup_without_interruption(self) -> None:
+        """Run cleanup to completion even though shutdown arrives as a cancellation.
+
+        Shutdown reaches this coroutine as a cancellation, and `_cleanup_resources`
+        awaits once per account — a settle wait, then an RPC read. Awaiting it
+        directly meant the first of those re-raised `CancelledError` and every
+        account after it kept its rent, silently: the run ends without even
+        logging that it shut down. Running it as its own task and absorbing the
+        cancellation lets it finish.
+
+        Bounded by `_CLEANUP_SHUTDOWN_BUDGET` so a stuck RPC cannot hold the
+        process open. Rent left behind when the budget expires is not lost — it
+        is reclaimed by `tools/cleanup_accounts.py <MINT>` — so the warning names
+        that rather than retrying here.
+        """
+        task = asyncio.create_task(self._cleanup_resources())
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._CLEANUP_SHUTDOWN_BUDGET
+
+        while not task.done():
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                task.cancel()
+                logger.warning(
+                    f"Cleanup did not finish within {self._CLEANUP_SHUTDOWN_BUDGET}s. "
+                    f"Accounts still open keep their rent; reclaim it with "
+                    f"tools/cleanup_accounts.py <MINT>."
+                )
+                break
+            try:
+                # asyncio.wait neither cancels the task on timeout nor re-raises
+                # what it failed with, so the loop owns both outcomes.
+                await asyncio.wait({task}, timeout=remaining)
+            except asyncio.CancelledError:
+                # The cancellation that started this shutdown, arriving while
+                # cleanup runs. Absorbing it is the point: this is already the
+                # terminal path, and re-raising would strand the rent that the
+                # remaining accounts hold.
+                continue
+
+        if task.done() and not task.cancelled() and task.exception() is not None:
+            logger.error("Cleanup failed", exc_info=task.exception())
 
     async def _cleanup_resources(self) -> None:
         """Perform cleanup operations before shutting down."""
