@@ -26,7 +26,7 @@ Rules for adding or changing a script under `cookbook/`.
   - the two non-runnable helpers take no verb, because they do nothing
 - **RPC and service names lowercase into one token**, never camelCase:
   `blocksubscribe`, `logsubscribe`, `programsubscribe`, `getaccountinfo`,
-  `gettransaction`, `pumpportal`.
+  `gettransaction`.
 - **Anything not specific to a launchpad belongs under `solana/`**, not `pumpfun/`.
 - **Input is a command-line argument, never a constant you edit.** Every script
   builds an `ArgumentParser` in `main()`: required values are positionals,

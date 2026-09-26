@@ -2,14 +2,15 @@
 
 WARNING: this submits real transactions and spends real funds.
 
-For each listener (geyser, logs, blocks, pumpportal) it detects a live token,
+For each listener (geyser, logs, blocks, shreds) it detects a live token,
 buys it, sells it, then closes the base-token ATA so the ~0.002 SOL of rent is
 reclaimed rather than stranded. Tests run sequentially so the same funds are
 recycled across listeners.
 
 Each listener exercises a different event-parsing path into the same v2 trade
-code, which is the point: pumpportal in particular carries no mayhem/cashback/
-quote_mint flags, so it relies entirely on the on-chain curve refresh.
+code, which is the point: a listener that decodes an instruction rather than a
+CreateEvent carries no canonical creator, so it relies on the on-chain curve
+refresh.
 
 Usage:
     uv run tools/live_listener_matrix.py --yes
@@ -89,7 +90,7 @@ def make_listener(listener_type: str):
     """Build a listener of the given type wired to this project's endpoints.
 
     Args:
-        listener_type: One of geyser, logs, blocks, pumpportal
+        listener_type: One of geyser, logs, blocks, shreds
 
     Returns:
         Configured listener instance

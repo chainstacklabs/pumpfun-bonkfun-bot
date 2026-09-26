@@ -151,7 +151,6 @@ class UniversalTrader:
         geyser_endpoint: str | None = None,
         geyser_api_token: str | None = None,
         geyser_auth_type: str = "x-token",
-        pumpportal_url: str = "wss://pumpportal.fun/api/data",
         # Trading configuration
         extreme_fast_mode: bool = False,
         extreme_fast_token_amount: int = 30,
@@ -270,7 +269,6 @@ class UniversalTrader:
             geyser_endpoint=geyser_endpoint,
             geyser_api_token=geyser_api_token,
             geyser_auth_type=geyser_auth_type,
-            pumpportal_url=pumpportal_url,
             platforms=[self.platform],  # Only listen for our platform
         )
 

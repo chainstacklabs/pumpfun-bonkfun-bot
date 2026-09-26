@@ -20,7 +20,7 @@ letsbonk_sell_token_exact_out.py        sell for a fixed amount received
 
 The variant is either an instruction version (`v1`, `v2`, `exact_in`, `exact_out`)
 or the transport (`geyser`, `logsubscribe`, `blocksubscribe`, `programsubscribe`,
-`pumpportal`, `gettransaction`, `getaccountinfo`).
+`gettransaction`, `getaccountinfo`).
 
 ## Running them
 
@@ -62,7 +62,6 @@ Not specific to any of the launchpads below.
 | [`pumpfun/listen/pumpfun_listen_tokens_blocksubscribe.py`](pumpfun/listen/pumpfun_listen_tokens_blocksubscribe.py) | New coins over `blockSubscribe` — whole blocks, slower, not on every provider |
 | [`pumpfun/listen/pumpfun_listen_tokens_geyser.py`](pumpfun/listen/pumpfun_listen_tokens_geyser.py) | New coins over Geyser gRPC — the fastest of the executed-stream listeners |
 | [`pumpfun/listen/pumpfun_listen_tokens_deshred.py`](pumpfun/listen/pumpfun_listen_tokens_deshred.py) | New coins over Geyser `SubscribeDeshred` — earlier, but pre-execution: no logs, no CreateEvent, no outcome, and router-created coins are invisible |
-| [`pumpfun/listen/pumpfun_listen_tokens_pumpportal.py`](pumpfun/listen/pumpfun_listen_tokens_pumpportal.py) | New coins from PumpPortal's feed — third party, misses some coins |
 | [`pumpfun/listen/pumpfun_listen_wallet_trades.py`](pumpfun/listen/pumpfun_listen_wallet_trades.py) | One wallet's bonding-curve buys and sells — copy trading |
 | [`pumpfun/listen/pumpfun_capture_transactions_blocksubscribe.py`](pumpfun/listen/pumpfun_capture_transactions_blocksubscribe.py) | Save live transactions to disk, to build a fixture |
 

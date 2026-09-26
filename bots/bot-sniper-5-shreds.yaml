@@ -108,7 +108,7 @@ filters:
   # Accepts "sol"/"usdc" aliases or raw mint addresses.
   #allowed_quote_mints: ["sol"]
   listener_type: "shreds" # Pre-execution detection; see the header of this file.
-  # Supported on pump_fun only. Other options: "logs", "blocks", "geyser", "pumpportal".
+  # Supported on pump_fun only. Other options: "logs", "blocks", "geyser".
   max_token_age: 0.001 # Maximum token age in seconds for processing
   marry_mode: false # Only buy tokens, skip selling
   yolo_mode: false # Continuously trade tokens

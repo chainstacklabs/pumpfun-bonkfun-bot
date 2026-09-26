@@ -49,7 +49,7 @@ trade:
   # EXTREME FAST mode: skip the curve-stabilization wait and the price check,
   # buying a fixed token amount instead. Faster, but you don't learn the price
   # you paid. With geyser/logs/blocks the bot makes no RPC call at all between
-  # detecting the coin and sending the buy; pumpportal needs one read first.
+  # detecting the coin and sending the buy.
   extreme_fast_mode: true
   extreme_fast_token_amount: 20 # Amount of tokens to buy
 

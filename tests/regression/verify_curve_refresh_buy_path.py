@@ -1,18 +1,19 @@
-"""Verify the pumpportal-sourced buy path reads its own curve state.
+"""Verify a buy off unflagged TokenInfo reads its own curve state.
+
+A TokenInfo the listener did not mark `state_from_event` carries guessed
+creator/flags/token program, so the buy path refreshes them from chain first.
 
 Offline machine checks, no network and no funds moved:
 
-  A. The pumpportal processor derives bonding_curve from the mint instead of
-     trusting the payload's bondingCurveKey, which has been observed stale.
-  B. In extreme_fast_mode, a buy is SKIPPED when the curve state cannot be
+  A. In extreme_fast_mode, a buy is SKIPPED when the curve state cannot be
      read within the refresh budget, instead of submitting a buy built from
      listener-guessed defaults (the "racing a doomed buy" failure).
-  C. The curve refresh reads curve + mint in one slot-consistent
-     getMultipleAccounts round trip and corrects token_program_id (pumpportal
-     cannot know it and guesses Token-2022; legacy coins are SPL Token).
+  B. The curve refresh reads curve + mint in one slot-consistent
+     getMultipleAccounts round trip and corrects token_program_id (the logs
+     CreateEvent path guesses Token-2022; legacy coins are SPL Token).
 
 Usage:
-    uv run tests/regression/verify_pumpportal_buy_path.py
+    uv run tests/regression/verify_curve_refresh_buy_path.py
 """
 
 import asyncio
@@ -31,16 +32,12 @@ from core.pubkeys import WSOL_MINT, SystemAddresses  # noqa: E402
 from interfaces.core import Platform, TokenInfo  # noqa: E402
 from platforms.pumpfun.address_provider import PumpFunAddressProvider  # noqa: E402
 from platforms.pumpfun.curve_manager import PumpFunCurveManager  # noqa: E402
-from platforms.pumpfun.pumpportal_processor import (  # noqa: E402
-    PumpFunPumpPortalProcessor,
-)
 from trading import platform_aware  # noqa: E402
 from trading.platform_aware import PlatformAwareBuyer  # noqa: E402
 from utils.idl_manager import get_idl_manager  # noqa: E402
 
 MINT = Pubkey.from_string("So11111111111111111111111111111111111111112")
 TRADER = Pubkey.from_string("11111111111111111111111111111112")
-WRONG_BC = Pubkey.from_string("Vote111111111111111111111111111111111111111")
 
 PROVIDER = PumpFunAddressProvider()
 
@@ -87,8 +84,8 @@ def _fabricated_curve_bytes(
     return account + bytes(curve_len - len(account))
 
 
-def _pumpportal_token_info(**overrides: object) -> TokenInfo:
-    """TokenInfo shaped like the pumpportal processor's output."""
+def _unflagged_token_info(**overrides: object) -> TokenInfo:
+    """TokenInfo shaped like a listener decode that set no state_from_event."""
     bonding_curve = PROVIDER.derive_pool_address(MINT)
     defaults: dict = {
         "name": "T",
@@ -159,28 +156,8 @@ def _make_buyer(client: _StubClient, **kwargs: float) -> PlatformAwareBuyer:
     )
 
 
-def check_a_processor_derives_bonding_curve() -> bool:
-    """A: payload bondingCurveKey is not trusted; the PDA is derived."""
-    token_data = {
-        "name": "T",
-        "symbol": "T",
-        "mint": str(MINT),
-        "bondingCurveKey": str(WRONG_BC),  # deliberately stale/wrong
-        "traderPublicKey": str(TRADER),
-        "uri": "",
-        "pool": "pump",
-    }
-    token_info = PumpFunPumpPortalProcessor().process_token_data(token_data)
-    expected = PROVIDER.derive_pool_address(MINT)
-    ok = token_info is not None and token_info.bonding_curve == expected
-    if not ok:
-        got = token_info.bonding_curve if token_info else None
-        print(f"    expected derived BC {expected}, got {got}")
-    return ok
-
-
-def check_b_skips_when_curve_unreadable() -> bool:
-    """B: refresh failure -> buy skipped, nothing submitted."""
+def check_a_skips_when_curve_unreadable() -> bool:
+    """A: refresh failure -> buy skipped, nothing submitted."""
 
     class NeverReadable:
         async def get_pool_state(
@@ -195,15 +172,15 @@ def check_b_skips_when_curve_unreadable() -> bool:
     platform_aware.get_platform_implementations = lambda _p, _c: _stub_implementations(
         NeverReadable()
     )
-    result = asyncio.run(buyer.execute(_pumpportal_token_info()))
+    result = asyncio.run(buyer.execute(_unflagged_token_info()))
     ok = not result.success and not client.sent
     if not ok:
         print(f"    success={result.success} submissions={len(client.sent)}")
     return ok
 
 
-def check_b_still_buys_when_curve_readable() -> bool:
-    """B guard: a readable curve still reaches submission."""
+def check_a_still_buys_when_curve_readable() -> bool:
+    """A guard: a readable curve still reaches submission."""
 
     class Readable:
         async def get_pool_state(
@@ -223,7 +200,7 @@ def check_b_still_buys_when_curve_readable() -> bool:
     platform_aware.get_platform_implementations = lambda _p, _c: _stub_implementations(
         Readable()
     )
-    asyncio.run(buyer.execute(_pumpportal_token_info()))
+    asyncio.run(buyer.execute(_unflagged_token_info()))
     ok = len(client.sent) == 1
     if not ok:
         print(f"    submissions={len(client.sent)} (expected 1)")
@@ -231,7 +208,7 @@ def check_b_still_buys_when_curve_readable() -> bool:
 
 
 def _check_curve_manager_batch_read(curve_len: int) -> bool:
-    """C: curve manager reads curve + mint owner in one batch call.
+    """B: curve manager reads curve + mint owner in one batch call.
 
     Args:
         curve_len: Bonding curve account length to fabricate (125 or 151)
@@ -282,18 +259,18 @@ def _check_curve_manager_batch_read(curve_len: int) -> bool:
     return ok
 
 
-def check_c_curve_manager_batch_read() -> bool:
-    """C: curve manager decodes a curve at its as-created length (125 bytes)."""
+def check_b_curve_manager_batch_read() -> bool:
+    """B: curve manager decodes a curve at its as-created length (125 bytes)."""
     return _check_curve_manager_batch_read(125)
 
 
-def check_c_curve_manager_batch_read_extended_curve() -> bool:
-    """C: curve manager decodes a curve extend_account has grown to 151 bytes."""
+def check_b_curve_manager_batch_read_extended_curve() -> bool:
+    """B: curve manager decodes a curve extend_account has grown to 151 bytes."""
     return _check_curve_manager_batch_read(151)
 
 
-def check_c_buyer_corrects_token_program() -> bool:
-    """C: buyer applies the batch-read token program and re-derives the ATA."""
+def check_b_buyer_corrects_token_program() -> bool:
+    """B: buyer applies the batch-read token program and re-derives the ATA."""
 
     class BatchCurveManager:
         async def get_pool_state_and_token_program(
@@ -322,7 +299,7 @@ def check_c_buyer_corrects_token_program() -> bool:
     platform_aware.get_platform_implementations = lambda _p, _c: _stub_implementations(
         BatchCurveManager()
     )
-    token_info = _pumpportal_token_info()
+    token_info = _unflagged_token_info()
     asyncio.run(buyer.execute(token_info))
     expected_ata = PROVIDER.derive_associated_bonding_curve(
         MINT, token_info.bonding_curve, SystemAddresses.TOKEN_PROGRAM
@@ -341,23 +318,19 @@ def check_c_buyer_corrects_token_program() -> bool:
 
 def main() -> int:
     checks = [
+        ("A: unreadable curve -> buy skipped", check_a_skips_when_curve_unreadable),
+        ("A: readable curve -> buy proceeds", check_a_still_buys_when_curve_readable),
         (
-            "A: processor derives bonding_curve from mint",
-            check_a_processor_derives_bonding_curve,
-        ),
-        ("B: unreadable curve -> buy skipped", check_b_skips_when_curve_unreadable),
-        ("B: readable curve -> buy proceeds", check_b_still_buys_when_curve_readable),
-        (
-            "C: curve manager batch-reads curve + mint owner",
-            check_c_curve_manager_batch_read,
+            "B: curve manager batch-reads curve + mint owner",
+            check_b_curve_manager_batch_read,
         ),
         (
-            "C: curve manager batch-reads a 151-byte extended curve",
-            check_c_curve_manager_batch_read_extended_curve,
+            "B: curve manager batch-reads a 151-byte extended curve",
+            check_b_curve_manager_batch_read_extended_curve,
         ),
         (
-            "C: buyer corrects token_program_id and ATA",
-            check_c_buyer_corrects_token_program,
+            "B: buyer corrects token_program_id and ATA",
+            check_b_buyer_corrects_token_program,
         ),
     ]
     failed = 0

@@ -54,7 +54,7 @@ async def _read_pool_state_with_retry(
 
     When `mint` is given and the curve manager supports it, the curve and the
     mint are read in one slot-consistent batch, so the mint's owning token
-    program comes back for free (pumpportal listeners can only guess it).
+    program comes back for free (the logs CreateEvent path can only guess it).
 
     Args:
         curve_manager: Platform curve manager
@@ -99,12 +99,11 @@ async def _read_pool_state_with_retry(
 def _refresh_quote_mint(token_info: TokenInfo, pool_state: dict) -> Pubkey:
     """Sync token_info's quote asset from freshly-read curve state.
 
-    Listeners do not all carry quote_mint (pumpportal carries none of the
-    per-coin flags), and the curve is authoritative. `quote_token_program_id` is
-    re-derived alongside it, because a stale non-None value would win the `or` in
-    `AddressProvider.resolve_quote` and the corrected program would never be
-    looked up. `cached_quote_token_program` is a synchronous dict read, so this
-    stays zero-RPC on the extreme_fast_mode path.
+    Listeners do not all carry quote_mint, and the curve is authoritative.
+    `quote_token_program_id` is re-derived alongside it, because a stale non-None
+    value would win the `or` in `AddressProvider.resolve_quote` and the corrected
+    program would never be looked up. `cached_quote_token_program` is a
+    synchronous dict read, so this stays zero-RPC on the extreme_fast_mode path.
 
     Args:
         token_info: Token information, mutated in place
@@ -467,10 +466,11 @@ class PlatformAwareBuyer(Trader):
     ) -> str | None:
         """Refresh mayhem/cashback/creator/quote_mint/token program from chain.
 
-        Listeners that guess these (pumpportal carries none of them) produce buys
-        the program rejects with NotAuthorized (0x1770) or ConstraintSeeds
-        (0x7d6). PumpPortal also notifies before the curve is readable on a
-        lagging node, so the read retries within curve_refresh_budget.
+        Instruction-parsed TokenInfo takes creator from user-supplied args and
+        an old-format CreateEvent carries no mayhem/cashback/quote_mint; a buy
+        built on either is rejected with NotAuthorized (0x1770) or
+        ConstraintSeeds (0x7d6). A lagging node may not serve the curve yet, so
+        the read retries within curve_refresh_budget.
 
         Args:
             token_info: Token information, mutated in place on success
@@ -484,7 +484,7 @@ class PlatformAwareBuyer(Trader):
         try:
             pool_address = self._get_pool_address(token_info, address_provider)
             # Geyser/logs fire on processed, so the curve is usually readable in
-            # the same slot; pumpportal can race the on-chain commit.
+            # the same slot.
             pool_state, fresh_token_program = await _read_pool_state_with_retry(
                 curve_manager,
                 pool_address,
@@ -528,9 +528,9 @@ class PlatformAwareBuyer(Trader):
     ) -> None:
         """Correct a listener-guessed token program from the mint's real owner.
 
-        PumpPortal payloads carry no token program, so the processor defaults to
-        Token-2022; a legacy-`create` coin is SPL Token and the ATA-create
-        instruction then fails with IncorrectProgramId. The associated bonding
+        A CreateEvent does not say which create variant ran, so the logs path
+        defaults to Token-2022; a legacy-`create` coin is SPL Token and the
+        ATA-create instruction then fails with IncorrectProgramId. The associated bonding
         curve is an ordinary ATA, so it is re-derived under the corrected program.
 
         Args:

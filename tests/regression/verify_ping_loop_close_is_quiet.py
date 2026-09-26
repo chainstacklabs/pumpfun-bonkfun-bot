@@ -49,14 +49,10 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 import monitoring  # noqa: E402
 from monitoring.universal_block_listener import UniversalBlockListener  # noqa: E402
 from monitoring.universal_logs_listener import UniversalLogsListener  # noqa: E402
-from monitoring.universal_pumpportal_listener import (  # noqa: E402
-    UniversalPumpPortalListener,
-)
 
 LISTENERS = (
     UniversalLogsListener,
     UniversalBlockListener,
-    UniversalPumpPortalListener,
 )
 
 NORMAL_CLOSE = Close(1000, "OK")

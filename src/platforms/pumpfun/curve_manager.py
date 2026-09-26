@@ -74,9 +74,9 @@ class PumpFunCurveManager(CurveManager):
         """Read curve state and the mint's owning token program together.
 
         One getMultipleAccounts round trip, so both values come from the same
-        node and slot. Listeners that don't carry the token program (pumpportal
-        guesses Token-2022) can be corrected from the mint account's owner
-        without a second, possibly inconsistent read.
+        node and slot. A TokenInfo whose token program was guessed (the logs
+        CreateEvent path defaults to Token-2022) can be corrected from the mint
+        account's owner without a second, possibly inconsistent read.
 
         Args:
             pool_address: Address of the bonding curve
