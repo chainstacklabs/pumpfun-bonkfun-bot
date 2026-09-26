@@ -107,6 +107,13 @@ class PumpFunEventParser(EventParser):
             "<Q", self._create_event_discriminator_bytes
         )[0]
 
+        # A coin with creator-fee sharing has its BondingCurve.creator rewritten
+        # in the same transaction that creates it, and this event reports the
+        # value written. Absent from older IDLs, hence the get().
+        self._migrate_creator_discriminator_bytes = event_discriminators.get(
+            "MigrateBondingCurveCreatorEvent"
+        )
+
         instruction_discriminators = self._idl_parser.get_instruction_discriminators()
         self._create_instruction_discriminator_bytes = instruction_discriminators[
             "create"
@@ -314,6 +321,9 @@ class PumpFunEventParser(EventParser):
                     associated_bonding_curve = self._derive_associated_bonding_curve(
                         mint, bonding_curve, token_program_id
                     )
+                    creator = self._creator_after_migration(
+                        program_data_entries, mint, creator
+                    )
                     creator_vault = self._derive_creator_vault(creator)
 
                     logger.info(
@@ -371,6 +381,73 @@ class PumpFunEventParser(EventParser):
         except Exception:
             logger.exception("Failed to parse token creation from logs")
             return None
+
+    def _creator_after_migration(
+        self,
+        program_data_entries: list[tuple[int, str, str]],
+        mint: Pubkey,
+        creator: Pubkey,
+    ) -> Pubkey:
+        """Return the creator the bonding curve ends the transaction holding.
+
+        CreateEvent.creator is the wallet that submitted the create, which is
+        what BondingCurve.creator holds for an ordinary coin. A coin with
+        creator-fee sharing is different: the same transaction goes on to call
+        `migrate_bonding_curve_creator`, which overwrites the curve's creator
+        with the sharing-config PDA. This has nothing to do with graduation —
+        the `migrate`/`migrate_v2` instructions that move a completed curve to
+        PumpSwap — it rewrites one field on a curve that has just been created.
+        `buy_v2` derives `creator_vault` from `bonding_curve.creator`, so
+        building the buy from the CreateEvent value derives the wrong vault and
+        the transaction reverts with `ConstraintSeeds` (2006).
+
+        The rewrite announces the value it wrote, in the same log set the
+        CreateEvent came from, so no RPC call is needed to find it and
+        extreme_fast_mode keeps its zero-RPC path. A coin whose creator is
+        rewritten in a *later* transaction is not covered: the launch logs
+        cannot carry an event that has not happened yet, and the buy reverts
+        the same way.
+
+        Args:
+            program_data_entries: `(log index, base64 payload, raw log)` for
+                every `Program data:` line of the transaction
+            mint: Mint of the coin the CreateEvent described, to ignore a
+                migration belonging to a different coin in the same transaction
+            creator: Creator the CreateEvent reported
+
+        Returns:
+            The migrated creator, or `creator` unchanged when the transaction
+            carries no migration for this mint.
+        """
+        if not self._migrate_creator_discriminator_bytes:
+            return creator
+
+        for _log_idx, encoded_data, _full_log in program_data_entries:
+            try:
+                decoded_data = base64.b64decode(encoded_data)
+            except (ValueError, TypeError) as e:
+                logger.debug(f"Skipping an undecodable Program data entry: {e}")
+                continue
+
+            if not decoded_data.startswith(self._migrate_creator_discriminator_bytes):
+                continue
+
+            decoded_event = self._idl_parser.decode_event_data(
+                decoded_data, "MigrateBondingCurveCreatorEvent"
+            )
+            if not decoded_event:
+                continue
+
+            fields = decoded_event.get("fields", {})
+            event_mint = _coerce_pubkey(fields.get("mint"))
+            new_creator = _coerce_pubkey(fields.get("new_creator"))
+            if event_mint != mint or new_creator is None:
+                continue
+
+            logger.info(f"🔁 Bonding curve creator migrated to: {new_creator}")
+            return new_creator
+
+        return creator
 
     def parse_token_creation_from_instruction(
         self, instruction_data: bytes, accounts: list[int], account_keys: list[bytes]
