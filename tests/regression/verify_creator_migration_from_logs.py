@@ -32,14 +32,25 @@ create transaction of mint `FdCYwtez…`, whose buy reverted 2006 live:
   2. That creator equals the independently derived sharing-config PDA, so the
      parser is not just echoing a number out of the log.
   3. `creator_vault` is derived from the migrated creator.
-  4. An ordinary create fixture is unaffected: creator stays the event's.
+  4. An ordinary create fixture is unaffected: its parsed creator equals the
+     `CreateEvent.creator` decoded independently from the same logs.
   5. `state_from_event` is still set, so the coin keeps the zero-RPC path.
+  7. A CreateEvent emitted by another program is not a coin. Trading on one
+     buys a mint that was never created, the same end state as a reverted
+     create. Detection from a pump.fun frame is unchanged.
+  6. A migration payload emitted by a program other than pump.fun is ignored.
+     `Program data:` names no program, so a launcher could otherwise emit eight
+     matching bytes and choose the creator every sniper builds its buy from.
+     The same payload emitted inside a pump.fun frame IS honoured, which is
+     what shows check 6 rejects on the emitter and not on the payload.
 
 Usage:
     uv run tests/regression/verify_creator_migration_from_logs.py
 """
 
+import base64
 import json
+import struct
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -157,13 +168,18 @@ def check_ordinary_create_unchanged() -> bool:
     print("\n4. An ordinary create keeps the CreateEvent creator")
     path, logs = _ordinary_fixture()
     token_info = _parser().parse_token_creation_from_logs(logs, path.stem)
-    derived_vault, _ = Pubkey.find_program_address(
-        [b"creator-vault", bytes(token_info.creator)], PumpFunAddresses.PROGRAM
+    # Decoded from the logs rather than taken from the TokenInfo: deriving the
+    # expected vault from token_info.creator would compare the parser with
+    # itself and pass whatever it produced.
+    event_creator = _create_event_creator(logs)
+    expected_vault, _ = Pubkey.find_program_address(
+        [b"creator-vault", bytes(event_creator)], PumpFunAddresses.PROGRAM
     )
     return _check(
         path.name,
-        token_info.creator_vault == derived_vault,
-        f"creator {token_info.creator}, vault consistent",
+        token_info.creator == event_creator
+        and token_info.creator_vault == expected_vault,
+        f"creator {token_info.creator} vs CreateEvent {event_creator}",
     )
 
 
@@ -178,6 +194,129 @@ def check_zero_rpc_path_kept() -> bool:
     )
 
 
+def _create_event_creator(logs: list[str]) -> Pubkey:
+    """Decode `CreateEvent.creator` straight out of a transaction's logs."""
+    manager = get_idl_manager().get_parser(Platform.PUMP_FUN)
+    want = manager.get_event_discriminators()["CreateEvent"]
+    for log in logs:
+        if "Program data:" not in log:
+            continue
+        raw = base64.b64decode(log.split("Program data: ")[1].strip())
+        if not raw.startswith(want):
+            continue
+        decoded = manager.decode_event_data(raw, "CreateEvent")
+        if decoded:
+            return Pubkey.from_string(str(decoded["fields"]["creator"]))
+    raise SystemExit("No CreateEvent in the fixture logs")  # noqa: TRY003
+
+
+def _forged_migration_log(mint: Pubkey, new_creator: Pubkey) -> str:
+    """Build a `Program data:` line carrying a MigrateBondingCurveCreatorEvent."""
+    disc = (
+        get_idl_manager()
+        .get_parser(Platform.PUMP_FUN)
+        .get_event_discriminators()["MigrateBondingCurveCreatorEvent"]
+    )
+    payload = (
+        disc
+        + struct.pack("<q", 1_790_000_000)
+        + bytes(mint) * 1
+        + bytes(Pubkey.default())  # bonding_curve, unread by the parser
+        + bytes(Pubkey.default())  # sharing_config, unread by the parser
+        + bytes(Pubkey.default())  # old_creator, unread by the parser
+        + bytes(new_creator)
+    )
+    return "Program data: " + base64.b64encode(payload).decode()
+
+
+def _wrap_in_frame(program: str, inner: list[str]) -> list[str]:
+    """Bracket log lines in one program's invocation, as the runtime does."""
+    return [
+        f"Program {program} invoke [2]",
+        *inner,
+        f"Program {program} success",
+    ]
+
+
+def check_foreign_migration_is_ignored() -> bool:
+    print("\n6. A migration payload from another program is ignored")
+    path, logs = _ordinary_fixture()
+    genuine_creator = _create_event_creator(logs)
+    mint = _parser().parse_token_creation_from_logs(logs, path.stem).mint
+    attacker = Pubkey.from_string("SysvarC1ock11111111111111111111111111111111")
+    forged = _forged_migration_log(mint, attacker)
+
+    foreign = logs + _wrap_in_frame(
+        "MEViEyo5m4W6FZTuJLvCTLPYm4Sm1AejpZL4ceFwpump", [forged]
+    )
+    from_foreign = _parser().parse_token_creation_from_logs(foreign, "foreign")
+
+    own = logs + _wrap_in_frame(str(_parser().get_program_id()), [forged])
+    from_own = _parser().parse_token_creation_from_logs(own, "own")
+
+    ok = _check(
+        "emitted by another program",
+        from_foreign is not None and from_foreign.creator == genuine_creator,
+        f"creator stayed {from_foreign.creator if from_foreign else None}",
+    )
+    # Without this the check above would also pass on a payload the parser can
+    # never decode, which would prove nothing about the emitter test.
+    ok &= _check(
+        "same payload emitted by pump.fun",
+        from_own is not None and from_own.creator == attacker,
+        f"creator became {from_own.creator if from_own else None}",
+    )
+    return ok
+
+
+def _create_event_log(logs: list[str]) -> str:
+    """The raw `Program data:` line carrying the CreateEvent."""
+    want = (
+        get_idl_manager()
+        .get_parser(Platform.PUMP_FUN)
+        .get_event_discriminators()["CreateEvent"]
+    )
+    for log in logs:
+        if "Program data:" in log and base64.b64decode(
+            log.split("Program data: ")[1].strip()
+        ).startswith(want):
+            return log
+    raise SystemExit("No CreateEvent line in the fixture logs")  # noqa: TRY003
+
+
+def check_foreign_create_event_is_not_a_coin() -> bool:
+    print("\n7. A CreateEvent emitted by another program is not a coin")
+    _path, logs = _ordinary_fixture()
+    event_log = _create_event_log(logs)
+    pump = str(_parser().get_program_id())
+    attacker = "MEViEyo5m4W6FZTuJLvCTLPYm4Sm1AejpZL4ceFwpump"
+
+    def framed(inner_program: str) -> list[str]:
+        return [
+            f"Program {pump} invoke [1]",
+            "Program log: Instruction: CreateV2",
+            *_wrap_in_frame(inner_program, [event_log]),
+            f"Program {pump} success",
+        ]
+
+    forged = _parser().parse_token_creation_from_logs(framed(attacker), "forged")
+    genuine = _parser().parse_token_creation_from_logs(framed(pump), "genuine")
+
+    ok = _check(
+        "CreateEvent from another program",
+        forged is None,
+        "not detected" if forged is None else f"detected as {forged.symbol}",
+    )
+    # Same payload, same shape, only the emitting frame differs — otherwise the
+    # check above would pass on logs the parser simply cannot read.
+    ok &= _check(
+        "same payload from a pump.fun frame",
+        genuine is not None,
+        f"detected as {genuine.symbol}" if genuine else "not detected",
+    )
+    return ok
+
+
 def main() -> None:
     print("=" * 72)
     print("Verifying the bonding-curve creator migration is read from the logs")
@@ -189,6 +328,8 @@ def main() -> None:
         check_creator_vault_follows(),
         check_ordinary_create_unchanged(),
         check_zero_rpc_path_kept(),
+        check_foreign_migration_is_ignored(),
+        check_foreign_create_event_is_not_a_coin(),
     ]
 
     print("\n" + "=" * 72)
