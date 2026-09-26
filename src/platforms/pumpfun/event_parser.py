@@ -20,6 +20,9 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Fields in a "Program <id> invoke [n]" / "Program <id> success" frame line.
+_FRAME_LOG_FIELDS = 3
+
 # Index of the optional `quote_mint` remaining account on create_v2. Accounts
 # 1-16 are in the IDL; 17-19 are optional remaining accounts appended only when
 # creating a coin with a non-native quote mint. See COIN_CREATION.md in the
@@ -107,6 +110,13 @@ class PumpFunEventParser(EventParser):
             "<Q", self._create_event_discriminator_bytes
         )[0]
 
+        # A coin with creator-fee sharing has its BondingCurve.creator rewritten
+        # in the same transaction that creates it, and this event reports the
+        # value written. Absent from older IDLs, hence the get().
+        self._migrate_creator_discriminator_bytes = event_discriminators.get(
+            "MigrateBondingCurveCreatorEvent"
+        )
+
         instruction_discriminators = self._idl_parser.get_instruction_discriminators()
         self._create_instruction_discriminator_bytes = instruction_discriminators[
             "create"
@@ -168,6 +178,7 @@ class PumpFunEventParser(EventParser):
         try:
             create_instruction_found = False
             program_data_entries = []
+            from_program = self._emitted_by_program(logs)
 
             # First, collect all Program data entries and note when Create instruction happens
             for i, log in enumerate(logs):
@@ -178,6 +189,11 @@ class PumpFunEventParser(EventParser):
                         f"📝 Found {instruction_type} instruction at log index {i}"
                     )
                 elif "Program data:" in log:
+                    # A CreateEvent another program emitted is not pump.fun
+                    # saying a coin exists; trading on one buys a mint that was
+                    # never created.
+                    if from_program is not None and not from_program[i]:
+                        continue
                     # Extract base64 encoded event data
                     encoded_data = log.split("Program data: ")[1].strip()
                     program_data_entries.append((i, encoded_data, log))
@@ -314,6 +330,7 @@ class PumpFunEventParser(EventParser):
                     associated_bonding_curve = self._derive_associated_bonding_curve(
                         mint, bonding_curve, token_program_id
                     )
+                    creator = self._creator_after_migration(logs, mint, creator)
                     creator_vault = self._derive_creator_vault(creator)
 
                     logger.info(
@@ -371,6 +388,137 @@ class PumpFunEventParser(EventParser):
         except Exception:
             logger.exception("Failed to parse token creation from logs")
             return None
+
+    def _emitted_by_program(self, logs: list[str]) -> list[bool] | None:
+        """Flag, per log line, whether pump.fun's own invocation emitted it.
+
+        `Program data:` names no program, so without this any program sharing
+        the transaction can emit a payload the parsers below will read.
+
+        Returns:
+            One bool per log line, or None when the logs carry no invocation
+            frames at all — a reconstructed log list rather than an RPC's, for
+            which there is nothing to attribute by and the callers keep their
+            previous behaviour. A real notification always carries frames.
+        """
+        emitters = self._emitting_program(logs)
+        if not any(emitters):
+            return None
+        program_id = str(self.get_program_id())
+        return [emitter == program_id for emitter in emitters]
+
+    @staticmethod
+    def _emitting_program(logs: list[str]) -> list[str | None]:
+        """Map each log line to the program id whose invocation emitted it.
+
+        The runtime brackets every invocation with `Program <id> invoke [depth]`
+        and a matching `Program <id> success` or `... failed`, so a stack over
+        those lines attributes the lines between them. A line emitted outside
+        any invocation, which should not happen, maps to None.
+
+        Args:
+            logs: The transaction's log lines, in order
+
+        Returns:
+            One entry per log line: the program id that emitted it, or None
+        """
+        emitters: list[str | None] = []
+        stack: list[str] = []
+        for log in logs:
+            # "Program <id> invoke [n]" / "Program <id> success" — three
+            # fields before anything a frame line carries.
+            parts = log.split(" ")
+            is_frame = len(parts) >= _FRAME_LOG_FIELDS and parts[0] == "Program"
+            if is_frame and parts[2].startswith("invoke"):
+                stack.append(parts[1])
+                emitters.append(None)
+                continue
+            if is_frame and parts[2] in ("success", "failed"):
+                emitters.append(None)
+                if stack:
+                    stack.pop()
+                continue
+            emitters.append(stack[-1] if stack else None)
+        return emitters
+
+    def _creator_after_migration(
+        self,
+        logs: list[str],
+        mint: Pubkey,
+        creator: Pubkey,
+    ) -> Pubkey:
+        """Return the creator the bonding curve ends the transaction holding.
+
+        CreateEvent.creator is the wallet that submitted the create, which is
+        what BondingCurve.creator holds for an ordinary coin. A coin with
+        creator-fee sharing is different: the same transaction goes on to call
+        `migrate_bonding_curve_creator`, which overwrites the curve's creator
+        with the sharing-config PDA. This has nothing to do with graduation —
+        the `migrate`/`migrate_v2` instructions that move a completed curve to
+        PumpSwap — it rewrites one field on a curve that has just been created.
+        `buy_v2` derives `creator_vault` from `bonding_curve.creator`, so
+        building the buy from the CreateEvent value derives the wrong vault and
+        the transaction reverts with `ConstraintSeeds` (2006).
+
+        The rewrite announces the value it wrote, in the same log set the
+        CreateEvent came from, so no RPC call is needed to find it and
+        extreme_fast_mode keeps its zero-RPC path. A coin whose creator is
+        rewritten in a *later* transaction is not covered: the launch logs
+        cannot carry an event that has not happened yet, and the buy reverts
+        the same way.
+
+        Only a payload pump.fun itself emitted is considered. `Program data:`
+        carries no program of its own, and any program sharing the transaction
+        can emit eight bytes that match this discriminator; honouring one would
+        let a launcher pick the creator the bot builds its buy from and make
+        every sniper's transaction revert.
+
+        Args:
+            logs: The transaction's log lines, in order
+            mint: Mint of the coin the CreateEvent described, to ignore a
+                migration belonging to a different coin in the same transaction
+            creator: Creator the CreateEvent reported
+
+        Returns:
+            The migrated creator, or `creator` unchanged when the transaction
+            carries no migration for this mint.
+        """
+        if not self._migrate_creator_discriminator_bytes:
+            return creator
+
+        from_program = self._emitted_by_program(logs)
+
+        for index, log in enumerate(logs):
+            if "Program data:" not in log:
+                continue
+            if from_program is not None and not from_program[index]:
+                continue
+
+            try:
+                decoded_data = base64.b64decode(log.split("Program data: ")[1].strip())
+            except (ValueError, TypeError) as e:
+                logger.debug(f"Skipping an undecodable Program data entry: {e}")
+                continue
+
+            if not decoded_data.startswith(self._migrate_creator_discriminator_bytes):
+                continue
+
+            decoded_event = self._idl_parser.decode_event_data(
+                decoded_data, "MigrateBondingCurveCreatorEvent"
+            )
+            if not decoded_event:
+                continue
+
+            fields = decoded_event.get("fields", {})
+            event_mint = _coerce_pubkey(fields.get("mint"))
+            new_creator = _coerce_pubkey(fields.get("new_creator"))
+            if event_mint != mint or new_creator is None:
+                continue
+
+            logger.info(f"🔁 Bonding curve creator migrated to: {new_creator}")
+            return new_creator
+
+        return creator
 
     def parse_token_creation_from_instruction(
         self, instruction_data: bytes, accounts: list[int], account_keys: list[bytes]
