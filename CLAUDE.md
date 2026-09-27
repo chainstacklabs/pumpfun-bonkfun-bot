@@ -112,8 +112,9 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
 - **A listener routes on `meta.logMessages`, never on the envelope decode.** The
   RPC has already decoded the envelope by the time it emits the logs, and they
   read the same for every transaction version; the byte decode is the fallback.
-- The bot **sends** v0 transactions (`MessageV0.try_compile` +
-  `VersionedTransaction`, no lookup tables). Nothing builds a legacy `Message`.
+- `src/` **sends** v0 transactions (`MessageV0.try_compile`, no lookup tables);
+  nothing builds a legacy `Message`. The cookbook launch sends v1 — 4096 bytes,
+  budget inline, no tables — so scope this rule, don't apply it there.
 - `post_rpc` must catch `asyncio.TimeoutError` alongside `aiohttp.ClientError`:
   aiohttp raises the former on a request timeout, it is not a `ClientError`, and
   `str()` on it is empty, so the caller logs a blank reason.
