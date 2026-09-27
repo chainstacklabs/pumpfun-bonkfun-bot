@@ -32,10 +32,12 @@ Offline machine checks, no network and no funds moved:
   4. No ComputeBudget instruction is present.
   5. The budget is in the message config, and the priority fee is the total in
      lamports that the old per-compute-unit figure worked out to.
-  6. The config states a loaded-accounts data size limit large enough for the
-     launch. Left unset the limit is zero rather than the network default, and
-     the transaction is rejected for exceeding it -- invisibly, because the
-     script skips preflight, so the signature simply never lands.
+  6. The config states a loaded-accounts data size limit large enough for what
+     the launch loads on the live chain. Left unset the limit is zero rather
+     than the network default, and the transaction is rejected for exceeding
+     it -- invisibly, because the script skips preflight, so the signature
+     simply never lands. The figure counts the executable data of every program
+     touched, which a local fork does not necessarily charge for.
 
 Usage:
     uv run tests/regression/verify_atomic_launch_v1.py
@@ -70,9 +72,11 @@ COMPUTE_BUDGET_PROGRAM = "ComputeBudget111111111111111111111111111111"
 LEGACY_MICROLAMPORTS_PER_CU = 37_037
 MICROLAMPORTS_PER_LAMPORT = 1_000_000
 
-# A floor, not the requirement: the launch is rejected below this, so a limit at
-# or under it cannot be right.
-TOO_SMALL_FOR_THE_LAUNCH = 128 * 1024
+# What the launch actually loads on mainnet, nearly all of it the executable data
+# of the programs it touches rather than the accounts it names. A local fork does
+# not necessarily count executables, so a limit that passes there can still be
+# rejected on the live chain.
+MAINNET_LOADED_DATA = 13_822_348
 SOLANA_MAX_LOADED_DATA = 64 * 1024 * 1024
 
 
@@ -213,8 +217,8 @@ def check_loaded_data_limit_is_declared() -> bool:
     if not limit:
         print("  no loaded-accounts data size limit; v1 reads that as zero")
         return False
-    if limit <= TOO_SMALL_FOR_THE_LAUNCH:
-        print(f"  {limit} bytes is at or below the measured failing size")
+    if limit < MAINNET_LOADED_DATA:
+        print(f"  {limit} bytes is below what the launch loads on mainnet")
         return False
     if limit > SOLANA_MAX_LOADED_DATA:
         print(f"  {limit} bytes is above the {SOLANA_MAX_LOADED_DATA} cap")
