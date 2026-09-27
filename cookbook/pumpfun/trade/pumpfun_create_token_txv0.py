@@ -1,15 +1,18 @@
-"""Create a pump.fun coin with create_v2, without buying any of it.
+"""Create a pump.fun coin with create_v2 in a v0 transaction, without buying it.
 
 WARNING: this submits a real transaction and spends real funds (transaction fees
 and account rent — no coins are bought).
 
 Usage:
-    uv run cookbook/pumpfun/trade/pumpfun_create_token.py
-    uv run cookbook/pumpfun/trade/pumpfun_create_token.py --name "My Coin" --symbol MINE
-    uv run cookbook/pumpfun/trade/pumpfun_create_token.py --mayhem --holder-reward
-    uv run cookbook/pumpfun/trade/pumpfun_create_token.py --creator-fee-bps 300
+    uv run cookbook/pumpfun/trade/pumpfun_create_token_txv0.py
+    uv run cookbook/pumpfun/trade/pumpfun_create_token_txv0.py --name "My Coin" --symbol MINE
+    uv run cookbook/pumpfun/trade/pumpfun_create_token_txv0.py --mayhem --holder-reward
+    uv run cookbook/pumpfun/trade/pumpfun_create_token_txv0.py --creator-fee-bps 300
 
-`pumpfun_create_and_buy_token_txv1.py` does this and then buys the coin in the same transaction; the `_txv0` variant does it in two. This is the
+`pumpfun_create_token_txv1.py` is the same create sent as a v1 transaction —
+pick whichever the endpoint takes. `pumpfun_create_and_buy_token_txv1.py` does
+this and then buys the coin in the same transaction; its `_txv0` variant does it
+in two. This is the
 create half on its own: everything about a coin — Token-2022, mayhem mode, the
 creator fee, holder rewards, the quote asset — is fixed here and cannot be
 changed afterwards.

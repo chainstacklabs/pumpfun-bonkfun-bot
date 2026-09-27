@@ -31,7 +31,7 @@ acquire it.
 SOL.** pump.fun accepts `--creator-fee-bps` on a SOL-paired coin and stores
 zero, so it is refused there rather than silently ignored.
 
-`pumpfun_create_token.py` is the create half on its own, and
+`pumpfun_create_token_txv1.py` is the create half on its own, and
 `pumpfun_buy_token.py` the buy half.
 """
 

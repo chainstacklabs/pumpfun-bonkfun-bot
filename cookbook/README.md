@@ -87,7 +87,8 @@ and sizes its blind spot.
 | 💸 [`pumpfun/trade/pumpfun_buy_token_exact_quote.py`](pumpfun/trade/pumpfun_buy_token_exact_quote.py) | Spend an exact amount of the quote asset. `--dry-run` simulates |
 | 💸 [`pumpfun/trade/pumpfun_buy_token_exact_sol_in.py`](pumpfun/trade/pumpfun_buy_token_exact_sol_in.py) | Spend an exact amount of SOL. SOL-paired coins only |
 | 💸 [`pumpfun/trade/pumpfun_sell_token.py`](pumpfun/trade/pumpfun_sell_token.py) | Sell your whole position in a coin you name |
-| 💸 [`pumpfun/trade/pumpfun_create_token.py`](pumpfun/trade/pumpfun_create_token.py) | Create a coin with `create_v2`, buying none of it |
+| 💸 [`pumpfun/trade/pumpfun_create_token_txv1.py`](pumpfun/trade/pumpfun_create_token_txv1.py) | Create a coin with `create_v2`, buying none of it, as a v1 transaction |
+| 💸 [`pumpfun/trade/pumpfun_create_token_txv0.py`](pumpfun/trade/pumpfun_create_token_txv0.py) | The same, as a v0 transaction |
 | 💸 [`pumpfun/trade/pumpfun_create_and_buy_token_txv1.py`](pumpfun/trade/pumpfun_create_and_buy_token_txv1.py) | Create a coin and buy it, in one transaction |
 | 💸 [`pumpfun/trade/pumpfun_create_and_buy_token_txv0.py`](pumpfun/trade/pumpfun_create_and_buy_token_txv0.py) | The same, as two transactions, for a v0-only endpoint |
 | 💸 [`pumpfun/trade/pumpfun_snipe_token_blocksubscribe.py`](pumpfun/trade/pumpfun_snipe_token_blocksubscribe.py) | Wait for the next coin created anywhere, then buy it |
