@@ -151,11 +151,8 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
 - **A creator fee only applies to a coin priced in something other than SOL.**
   Send `creator_fee_bps` on a SOL-paired coin and the program accepts the
   argument, emits `CreateEvent.creator_fee_bps = 0` and stores 0 on the curve.
-  Measured against the same quote mint a live fee-bearing coin uses: 250 bps
-  requested, 250 stored with that quote mint, 0 stored with wrapped SOL and 0
-  with no quote accounts at all. `--quote-mint` on
-  `pumpfun_create_token_v2.py` is therefore a precondition for a creator fee,
-  not an unrelated option.
+  The same request against a non-SOL quote mint stores the fee. `--quote-mint`
+  is therefore a precondition for a creator fee, not an unrelated option.
 - The **associated bonding curve is an ordinary ATA**, so its address depends on
   which token program owns the mint: Token2022 for `create_v2` coins, SPL Token
   for legacy `create`. Deriving with the wrong program returns a valid-looking

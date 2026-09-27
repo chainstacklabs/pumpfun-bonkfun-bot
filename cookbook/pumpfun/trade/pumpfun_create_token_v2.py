@@ -9,7 +9,7 @@ Usage:
     uv run cookbook/pumpfun/trade/pumpfun_create_token_v2.py --mayhem --holder-reward
     uv run cookbook/pumpfun/trade/pumpfun_create_token_v2.py --creator-fee-bps 300
 
-`pumpfun_create_and_buy_token_v2.py` does this and then buys the coin. This is the
+`pumpfun_create_and_buy_token_v2_txv1.py` does this and then buys the coin in the same transaction; the `_txv0` variant does it in two. This is the
 create half on its own: everything about a coin — Token-2022, mayhem mode, the
 creator fee, holder rewards, the quote asset — is fixed here and cannot be
 changed afterwards.

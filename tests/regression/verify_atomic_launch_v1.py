@@ -49,7 +49,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "cookbook" / "solana"))
 sys.path.insert(0, str(PROJECT_ROOT / "cookbook" / "pumpfun" / "trade"))
 
-import pumpfun_create_and_buy_token_v2 as launch  # noqa: E402
+import pumpfun_create_and_buy_token_v2_txv1 as launch  # noqa: E402
 import pumpfun_instructions_v2 as pump_v2  # noqa: E402
 from solders.hash import Hash  # noqa: E402
 from solders.instruction import Instruction  # noqa: E402
@@ -70,9 +70,9 @@ COMPUTE_BUDGET_PROGRAM = "ComputeBudget111111111111111111111111111111"
 LEGACY_MICROLAMPORTS_PER_CU = 37_037
 MICROLAMPORTS_PER_LAMPORT = 1_000_000
 
-# Measured against a forked mainnet: the launch is rejected at 128 KiB and lands
-# at 256 KiB, so anything at or below the lower figure is certainly too small.
-MEASURED_TOO_SMALL = 128 * 1024
+# A floor, not the requirement: the launch is rejected below this, so a limit at
+# or under it cannot be right.
+TOO_SMALL_FOR_THE_LAUNCH = 128 * 1024
 SOLANA_MAX_LOADED_DATA = 64 * 1024 * 1024
 
 
@@ -152,7 +152,6 @@ def check_fits_the_v1_limit() -> bool:
     if size > V1_PACKET_LIMIT:
         print(f"  {size} bytes exceeds the {V1_PACKET_LIMIT}-byte v1 limit")
         return False
-    print(f"  {size} bytes of {V1_PACKET_LIMIT}")
     return True
 
 
@@ -214,7 +213,7 @@ def check_loaded_data_limit_is_declared() -> bool:
     if not limit:
         print("  no loaded-accounts data size limit; v1 reads that as zero")
         return False
-    if limit <= MEASURED_TOO_SMALL:
+    if limit <= TOO_SMALL_FOR_THE_LAUNCH:
         print(f"  {limit} bytes is at or below the measured failing size")
         return False
     if limit > SOLANA_MAX_LOADED_DATA:

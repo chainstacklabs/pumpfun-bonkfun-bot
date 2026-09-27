@@ -7,7 +7,7 @@ Usage:
 
 Kept for reference only. pump.fun creates coins with `create_v2` now, which mints
 under Token-2022 and takes the mayhem, cashback, creator-fee and holder-reward
-arguments this instruction has no room for — see `pumpfun_create_and_buy_token_v2.py` for the
+arguments this instruction has no room for — see `pumpfun_create_and_buy_token_v2_txv1.py` for the
 current path. Legacy `create` still lands on chain, but a coin made this way is
 not the kind of coin the rest of these examples decode.
 

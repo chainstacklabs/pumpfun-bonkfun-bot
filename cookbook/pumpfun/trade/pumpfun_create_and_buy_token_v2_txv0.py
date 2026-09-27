@@ -1,24 +1,24 @@
-"""Create a pump.fun coin with create_v2 and buy it, in one transaction.
+"""Create a pump.fun coin with create_v2 and buy it, in two v0 transactions.
 
 WARNING: this submits real transactions and spends real funds.
 
 Usage:
-    uv run cookbook/pumpfun/trade/pumpfun_create_and_buy_token_v2.py
-    uv run cookbook/pumpfun/trade/pumpfun_create_and_buy_token_v2.py --mayhem
-    uv run cookbook/pumpfun/trade/pumpfun_create_and_buy_token_v2.py --creator-fee-bps 300
-    uv run cookbook/pumpfun/trade/pumpfun_create_and_buy_token_v2.py --holder-reward
+    uv run cookbook/pumpfun/trade/pumpfun_create_and_buy_token_v2_txv0.py
+    uv run cookbook/pumpfun/trade/pumpfun_create_and_buy_token_v2_txv0.py --mayhem
+    uv run cookbook/pumpfun/trade/pumpfun_create_and_buy_token_v2_txv0.py --creator-fee-bps 300
+    uv run cookbook/pumpfun/trade/pumpfun_create_and_buy_token_v2_txv0.py --holder-reward
 
-The coin is bought by the same transaction that creates it, so there is no
-window in which someone who saw the create can buy ahead of you.
+Create and buy travel as two separate v0 transactions, because together they do
+not fit what a v0 transaction can carry. **Anyone watching the create can buy
+in the gap between them**; that is the cost of staying on v0, and it is the
+reason the v1 script exists.
 
-That needs a **v1 transaction**. Create and buy together measure 1479 bytes,
-over the 1232 a v0 transaction is held to, and SIMD-0296 raised the limit to
-4096 for v1 — the combined message uses about a third of it. v1 has no address
-lookup tables; the larger limit is there so the full account list goes inline.
+Use this one when the endpoint will not take a v1 send. Everything about the
+coin is the same either way — the quote asset, the creator fee, holder rewards
+and mayhem mode all behave identically.
 
-A v1 message carries the compute budget in its own header, so this script sends
-no `ComputeBudget` instructions at all, and the priority fee is stated as a
-**total in lamports** rather than v0's micro-lamports per compute unit.
+`pumpfun_create_and_buy_token_v2_txv1.py` does it in a single transaction, and
+the coin is then bought by the transaction that creates it.
 
 `--amount` is in whole units of the coin's quote asset -- SOL by default, and
 whatever `--quote-mint` names otherwise. For a non-SOL quote the wallet must
@@ -51,8 +51,9 @@ from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
 from solana.rpc.core import TxOptsModel
 from solders.account import Account
+from solders.compute_budget import set_compute_unit_limit, set_compute_unit_price
 from solders.keypair import Keypair
-from solders.message import MessageV1, TransactionConfig
+from solders.message import MessageV0
 from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
 from spl.token.instructions import create_idempotent_associated_token_account
@@ -64,15 +65,9 @@ PRIVATE_KEY = os.environ.get("SOLANA_PRIVATE_KEY")
 
 BPS_DENOMINATOR: Final[int] = 10_000
 COMPUTE_UNIT_LIMIT: Final[int] = 350_000
-# A v1 message states one absolute figure, where v0 stated micro-lamports per
-# compute unit. 37,037 microlamports/CU across this CU limit is the same spend.
-PRIORITY_FEE_LAMPORTS: Final[int] = 12_963
-# A v1 message must state this: left unset it is zero, not the network default,
-# and the transaction is rejected for exceeding it. With skip_preflight that
-# rejection never reaches the caller -- the signature simply never lands. The
-# launch needs between 128 and 256 KiB; this leaves room for a quote mint whose
-# accounts are larger.
-LOADED_ACCOUNTS_DATA_LIMIT: Final[int] = 1024 * 1024
+# v0 states the priority fee as micro-lamports per compute unit, through a
+# ComputeBudget instruction. The v1 script states one absolute lamport total.
+PRIORITY_FEE_MICROLAMPORTS: Final[int] = 37_037
 
 # Defaults for the command line below, not fixed settings. Mayhem is off because
 # the plain coin is the one a reader gets by typing nothing.
@@ -299,7 +294,9 @@ async def run(  # noqa: PLR0913
         )
         print(f"Expecting {expected_tokens / 10**pump_v2.TOKEN_DECIMALS:,.6f} tokens")
 
-        instructions = [
+        create_instructions = [
+            set_compute_unit_limit(COMPUTE_UNIT_LIMIT),
+            set_compute_unit_price(PRIORITY_FEE_MICROLAMPORTS),
             pump_v2.build_create_v2_instruction(
                 mint=mint,
                 user=payer.pubkey(),
@@ -314,6 +311,11 @@ async def run(  # noqa: PLR0913
                 quote_token_program=quote_program,
             ),
             pump_v2.build_extend_account_instruction(bonding_curve, payer.pubkey()),
+        ]
+
+        buy_instructions = [
+            set_compute_unit_limit(COMPUTE_UNIT_LIMIT),
+            set_compute_unit_price(PRIORITY_FEE_MICROLAMPORTS),
             create_idempotent_associated_token_account(
                 payer.pubkey(),
                 payer.pubkey(),
@@ -333,33 +335,32 @@ async def run(  # noqa: PLR0913
             ),
         ]
 
-        blockhash = (await client.get_latest_blockhash()).value.blockhash
-        # The budget rides in the message header; a v1 transaction carries no
-        # ComputeBudget instructions, and priority_fee is a total in lamports.
-        message = MessageV1.try_compile(
-            payer.pubkey(),
-            instructions,
-            blockhash,
-            TransactionConfig(
-                compute_unit_limit=COMPUTE_UNIT_LIMIT,
-                priority_fee=PRIORITY_FEE_LAMPORTS,
-                loaded_accounts_data_size_limit=LOADED_ACCOUNTS_DATA_LIMIT,
-            ),
-        )
-        # The mint signs too - it is a brand-new account being created.
-        transaction = VersionedTransaction(message, [payer, mint_keypair])
-        print(f"Size:     {len(bytes(transaction))} bytes of v1's 4096")
+        opts = TxOptsModel(skip_preflight=True, preflight_commitment=Confirmed)
 
-        signature = (
-            await client.send_transaction(
-                transaction,
-                TxOptsModel(skip_preflight=True, preflight_commitment=Confirmed),
-            )
-        ).value
-        print(f"\nSent: https://solscan.io/tx/{signature}")
-        await client.confirm_transaction(signature, commitment=Confirmed)
-        await tx_status.assert_transaction_succeeded(client, signature)
-        print("Confirmed: the coin was created and bought by one transaction")
+        blockhash = (await client.get_latest_blockhash()).value.blockhash
+        # The mint signs too - it is a brand-new account being created.
+        create_tx = VersionedTransaction(
+            MessageV0.try_compile(payer.pubkey(), create_instructions, [], blockhash),
+            [payer, mint_keypair],
+        )
+        print("\nSending create...")
+        create_sig = (await client.send_transaction(create_tx, opts)).value
+        print(f"Create sent: https://solscan.io/tx/{create_sig}")
+        await client.confirm_transaction(create_sig, commitment=Confirmed)
+        await tx_status.assert_transaction_succeeded(client, create_sig)
+        print("Create confirmed")
+
+        buy_blockhash = (await client.get_latest_blockhash()).value.blockhash
+        buy_tx = VersionedTransaction(
+            MessageV0.try_compile(payer.pubkey(), buy_instructions, [], buy_blockhash),
+            [payer],
+        )
+        print("\nSending buy...")
+        buy_sig = (await client.send_transaction(buy_tx, opts)).value
+        print(f"Buy sent: https://solscan.io/tx/{buy_sig}")
+        await client.confirm_transaction(buy_sig, commitment=Confirmed)
+        await tx_status.assert_transaction_succeeded(client, buy_sig)
+        print("Buy confirmed")
 
 
 def main() -> None:

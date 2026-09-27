@@ -88,7 +88,8 @@ and sizes its blind spot.
 | 💸 [`pumpfun/trade/pumpfun_buy_token_exact_sol_in.py`](pumpfun/trade/pumpfun_buy_token_exact_sol_in.py) | Spend an exact amount of SOL. SOL-paired coins only |
 | 💸 [`pumpfun/trade/pumpfun_sell_token_v2.py`](pumpfun/trade/pumpfun_sell_token_v2.py) | Sell your whole position in a coin you name |
 | 💸 [`pumpfun/trade/pumpfun_create_token_v2.py`](pumpfun/trade/pumpfun_create_token_v2.py) | Create a coin with `create_v2`, buying none of it |
-| 💸 [`pumpfun/trade/pumpfun_create_and_buy_token_v2.py`](pumpfun/trade/pumpfun_create_and_buy_token_v2.py) | Create a coin and buy it |
+| 💸 [`pumpfun/trade/pumpfun_create_and_buy_token_v2_txv1.py`](pumpfun/trade/pumpfun_create_and_buy_token_v2_txv1.py) | Create a coin and buy it, in one transaction |
+| 💸 [`pumpfun/trade/pumpfun_create_and_buy_token_v2_txv0.py`](pumpfun/trade/pumpfun_create_and_buy_token_v2_txv0.py) | The same, as two transactions, for a v0-only endpoint |
 | 💸 [`pumpfun/trade/pumpfun_snipe_token_blocksubscribe.py`](pumpfun/trade/pumpfun_snipe_token_blocksubscribe.py) | Wait for the next coin created anywhere, then buy it |
 | 💸 [`pumpfun/trade/pumpfun_snipe_token_geyser.py`](pumpfun/trade/pumpfun_snipe_token_geyser.py) | The same snipe, detected over Geyser gRPC |
 | 💸 [`pumpfun/trade/pumpfun_collect_creator_fee_v2.py`](pumpfun/trade/pumpfun_collect_creator_fee_v2.py) | Sweep the creator fees your coins have accrued |

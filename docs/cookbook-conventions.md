@@ -8,8 +8,10 @@ Rules for adding or changing a script under `cookbook/`.
 - **One script, one action.** Duplication across scripts is the accepted cost —
   don't factor shared helpers out of them. `pumpfun_instructions_v2.py` and
   `solana_transaction_status.py` are the two exceptions and the list is closed.
-  Buy and sell never share a file; `pumpfun_create_and_buy_token_v2.py` is the
-  sole two-action script.
+  Buy and sell never share a file. The create-and-buy scripts are the only
+  two-action ones, and they come in a `_txv0` and a `_txv1` form: the Solana
+  transaction version changes whether the launch is atomic, so it is the
+  script that changes, not a flag.
 - **Every script runs on its own**: `uv run cookbook/<path>`, reading `.env`. No
   bot config, no import from `src/`. Anything that needs the bot goes in `tools/`;
   anything that asserts a past bug stays fixed goes in `tests/regression/`.
