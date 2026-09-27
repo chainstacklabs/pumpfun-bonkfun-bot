@@ -128,12 +128,24 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   on the shorter forms, so decode defensively and report a missing arg as unset;
   `utils/idl_parser.py` does, and
   `tests/regression/verify_create_v2_optional_args.py` checks it.
-- `create_v2` accounts 1-16 are in the IDL; accounts **17-19 are optional
-  remaining accounts** (`quote_mint`, `associated_quote_bonding_curve`,
-  `quote_token_program`), all three or none. This is the only way to read a new
-  coin's quote asset from the instruction rather than the event. They are appended
-  for **SOL-paired coins too**, carrying wrapped SOL, so a 19-account `create_v2`
-  is not proof of a non-SOL quote asset. Read `quote_mint` off the curve instead.
+- `create_v2` accounts 1-16 are in the IDL; accounts **17-20 are remaining
+  accounts** (`quote_mint`, `associated_quote_bonding_curve`,
+  `quote_token_program`, `quote_control`), all four or none. The fourth is the
+  `QuoteControl` PDA (`["quote-control"]`), and it is easy to miss because the
+  IDL does not list any of them. They are appended for **SOL-paired coins too**,
+  carrying wrapped SOL, so a 20-account `create_v2` is not proof of a non-SOL
+  quote asset. Read `quote_mint` off the curve instead.
+- **Omitting them is accepted.** A 16-account `create_v2` lands and produces a
+  SOL-paired coin, so nothing tells you the accounts were missing. What it also
+  does is silently drop `creator_fee_bps`, because:
+- **A creator fee only applies to a coin priced in something other than SOL.**
+  Send `creator_fee_bps` on a SOL-paired coin and the program accepts the
+  argument, emits `CreateEvent.creator_fee_bps = 0` and stores 0 on the curve.
+  Measured against the same quote mint a live fee-bearing coin uses: 250 bps
+  requested, 250 stored with that quote mint, 0 stored with wrapped SOL and 0
+  with no quote accounts at all. `--quote-mint` on
+  `pumpfun_create_token_v2.py` is therefore a precondition for a creator fee,
+  not an unrelated option.
 - The **associated bonding curve is an ordinary ATA**, so its address depends on
   which token program owns the mint: Token2022 for `create_v2` coins, SPL Token
   for legacy `create`. Deriving with the wrong program returns a valid-looking
