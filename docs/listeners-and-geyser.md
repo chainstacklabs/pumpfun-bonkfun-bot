@@ -25,6 +25,11 @@ compiler does not emit, so the output needs rewriting.
   absolute figure; v0's micro-lamports-per-compute-unit is gone. Converting
   between them needs the CU limit, so a fee read off a v1 frame is not
   comparable to a v0 one without it.
+- **A v1 message must state its loaded-accounts data size limit.** Left unset
+  the limit is zero rather than the network default, and the transaction is
+  rejected for exceeding it. With `skip_preflight` that rejection never reaches
+  the sender: the signature is returned and simply never lands, which reads as a
+  dropped transaction rather than a rejected one.
 - **solders' builder docstring contradicts this and is wrong.**
   `TransactionConfig.priority_fee` (solders 0.29.0, the current release) is
   documented as micro-lamports. It is not converted — the value is written

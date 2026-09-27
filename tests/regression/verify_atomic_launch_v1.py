@@ -32,6 +32,10 @@ Offline machine checks, no network and no funds moved:
   4. No ComputeBudget instruction is present.
   5. The budget is in the message config, and the priority fee is the total in
      lamports that the old per-compute-unit figure worked out to.
+  6. The config states a loaded-accounts data size limit large enough for the
+     launch. Left unset the limit is zero rather than the network default, and
+     the transaction is rejected for exceeding it -- invisibly, because the
+     script skips preflight, so the signature simply never lands.
 
 Usage:
     uv run tests/regression/verify_atomic_launch_v1.py
@@ -65,6 +69,11 @@ COMPUTE_BUDGET_PROGRAM = "ComputeBudget111111111111111111111111111111"
 # micro-lamports per compute unit with one absolute total.
 LEGACY_MICROLAMPORTS_PER_CU = 37_037
 MICROLAMPORTS_PER_LAMPORT = 1_000_000
+
+# Measured against a forked mainnet: the launch is rejected at 128 KiB and lands
+# at 256 KiB, so anything at or below the lower figure is certainly too small.
+MEASURED_TOO_SMALL = 128 * 1024
+SOLANA_MAX_LOADED_DATA = 64 * 1024 * 1024
 
 
 def build_instructions() -> tuple[list[Instruction], Pubkey, list[Keypair]]:
@@ -114,6 +123,7 @@ def compile_v1(
         TransactionConfig(
             compute_unit_limit=launch.COMPUTE_UNIT_LIMIT,
             priority_fee=launch.PRIORITY_FEE_LAMPORTS,
+            loaded_accounts_data_size_limit=launch.LOADED_ACCOUNTS_DATA_LIMIT,
         ),
     )
     return bytes(VersionedTransaction(message, signers))
@@ -199,6 +209,24 @@ def check_priority_fee_is_a_lamport_total() -> bool:
     return True
 
 
+def check_loaded_data_limit_is_declared() -> bool:
+    limit = getattr(launch, "LOADED_ACCOUNTS_DATA_LIMIT", None)
+    if not limit:
+        print("  no loaded-accounts data size limit; v1 reads that as zero")
+        return False
+    if limit <= MEASURED_TOO_SMALL:
+        print(f"  {limit} bytes is at or below the measured failing size")
+        return False
+    if limit > SOLANA_MAX_LOADED_DATA:
+        print(f"  {limit} bytes is above the {SOLANA_MAX_LOADED_DATA} cap")
+        return False
+    instructions, payer, signers = build_instructions()
+    if struct.pack("<I", limit) not in compile_v1(instructions, payer, signers):
+        print("  the limit is not in the serialized message config")
+        return False
+    return True
+
+
 def main() -> int:
     checks = [
         ("one message holds create and buy", check_single_message_holds_create_and_buy),
@@ -206,6 +234,7 @@ def main() -> int:
         ("v0 could not hold it", check_v0_could_not_hold_it),
         ("no ComputeBudget instructions", check_no_compute_budget_instructions),
         ("priority fee is a lamport total", check_priority_fee_is_a_lamport_total),
+        ("loaded-accounts data limit declared", check_loaded_data_limit_is_declared),
     ]
     failed = 0
     for label, check in checks:

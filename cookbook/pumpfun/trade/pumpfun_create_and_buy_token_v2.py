@@ -67,6 +67,12 @@ COMPUTE_UNIT_LIMIT: Final[int] = 350_000
 # A v1 message states one absolute figure, where v0 stated micro-lamports per
 # compute unit. 37,037 microlamports/CU across this CU limit is the same spend.
 PRIORITY_FEE_LAMPORTS: Final[int] = 12_963
+# A v1 message must state this: left unset it is zero, not the network default,
+# and the transaction is rejected for exceeding it. With skip_preflight that
+# rejection never reaches the caller -- the signature simply never lands. The
+# launch needs between 128 and 256 KiB; this leaves room for a quote mint whose
+# accounts are larger.
+LOADED_ACCOUNTS_DATA_LIMIT: Final[int] = 1024 * 1024
 
 # Defaults for the command line below, not fixed settings. Mayhem is off because
 # the plain coin is the one a reader gets by typing nothing.
@@ -337,6 +343,7 @@ async def run(  # noqa: PLR0913
             TransactionConfig(
                 compute_unit_limit=COMPUTE_UNIT_LIMIT,
                 priority_fee=PRIORITY_FEE_LAMPORTS,
+                loaded_accounts_data_size_limit=LOADED_ACCOUNTS_DATA_LIMIT,
             ),
         )
         # The mint signs too - it is a brand-new account being created.
