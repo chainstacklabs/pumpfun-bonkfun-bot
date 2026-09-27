@@ -35,9 +35,9 @@ Offline machine checks, no network and no funds moved:
      from one explicitly sent as its default.
   5. `--creator` reaches the wire: the creator in the instruction data is the
      argument, not the payer.
-  6. The opening buy is sized from Global, not from constants -- doubling
-     Global's virtual reserves doubles the tokens requested, and raising the
-     creator fee lowers them.
+  6. The opening buy is sized from what it is given, not from constants --
+     doubling the virtual token reserve or halving the opening quote reserve
+     doubles the tokens requested, and raising the creator fee lowers them.
   7. The Global decoder stops cleanly on a buffer shorter than the layout
      rather than raising or fabricating a field.
   8. create_v2 carries all four trailing remaining accounts, in order, with
@@ -248,7 +248,10 @@ def check_creator_argument_reaches_the_wire() -> bool:
 
 
 def check_buy_is_sized_from_global() -> bool:
-    base = launch.size_opening_buy(BASELINE_GLOBAL, 0.001, None)
+    # One SOL at the opening SOL reserve, so the figures stay readable.
+    spend = 1_000_000_000
+    sol_reserve = BASELINE_GLOBAL["initial_virtual_sol_reserves"]
+    base = launch.size_opening_buy(BASELINE_GLOBAL, spend, sol_reserve, None)
 
     doubled_reserves = BASELINE_GLOBAL | {
         "initial_virtual_token_reserves": BASELINE_GLOBAL[
@@ -256,12 +259,19 @@ def check_buy_is_sized_from_global() -> bool:
         ]
         * 2
     }
-    doubled = launch.size_opening_buy(doubled_reserves, 0.001, None)
+    doubled = launch.size_opening_buy(doubled_reserves, spend, sol_reserve, None)
     if doubled != base * 2:
         print(f"  doubling virtual tokens gave {doubled}, expected {base * 2}")
         return False
 
-    pricier = launch.size_opening_buy(BASELINE_GLOBAL, 0.001, 300)
+    # The opening quote reserve is an argument, not a constant: a coin priced in
+    # an asset whose reserve is half as large buys twice the tokens.
+    halved = launch.size_opening_buy(BASELINE_GLOBAL, spend, sol_reserve // 2, None)
+    if halved != base * 2:
+        print(f"  halving the quote reserve gave {halved}, expected {base * 2}")
+        return False
+
+    pricier = launch.size_opening_buy(BASELINE_GLOBAL, spend, sol_reserve, 300)
     if pricier >= base:
         print(f"  a 300 bps creator fee gave {pricier}, not fewer than {base}")
         return False
@@ -269,7 +279,8 @@ def check_buy_is_sized_from_global() -> bool:
     # The fee actually applied is Global's, not a literal 1%.
     free = launch.size_opening_buy(
         BASELINE_GLOBAL | {"fee_basis_points": 0, "creator_fee_basis_points": 0},
-        0.001,
+        spend,
+        sol_reserve,
         None,
     )
     if free <= base:

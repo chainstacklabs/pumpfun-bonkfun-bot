@@ -25,6 +25,10 @@ changed afterwards.
 - **`--creator-fee-bps` only does anything on a coin priced in something other
   than SOL.** pump.fun accepts the argument on a SOL-paired coin and stores
   zero, with no error. Pass `--quote-mint` alongside it.
+- `--quote-mint` is checked against **`QuoteControl`**, not
+  `Global.whitelisted_quote_mints`: the former admits the mints coins are
+  actually priced in, the latter lists one. `pumpfun_read_quote_mints.py`
+  prints the registry.
 
 The `extend_account` instruction that follows the create is what makes the coin
 visible on pump.fun's own frontend. The coin trades without it.
@@ -35,7 +39,7 @@ import asyncio
 import os
 import sys
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 # solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions_v2.py sits beside this file.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "solana"))
@@ -65,6 +69,26 @@ PRIORITY_FEE_MICROLAMPORTS: Final[int] = 37_037
 # Defaults for the command line below, not fixed settings. Mayhem is off because
 # the plain coin is the one a reader gets by typing nothing.
 DEFAULT_MAYHEM = False
+
+
+async def get_parsed_mint(client: AsyncClient, address: Pubkey) -> dict[str, Any]:
+    """Fetch a mint decoded by the RPC, so its Token-2022 extensions are readable.
+
+    Raises:
+        ValueError: If the account does not exist or is not a parsed mint
+    """
+    # solana-py exposes jsonParsed as its own method; passing
+    # encoding="jsonParsed" to get_account_info returns a payload its typed
+    # response cannot deserialize, and fails with a bare SerdeJSONError.
+    response = await client.get_account_info_json_parsed(address)
+    if response.value is None:
+        msg = f"Quote mint not found: {address}"
+        raise ValueError(msg)
+    try:
+        return response.value.data.parsed["info"]
+    except (AttributeError, KeyError, TypeError) as error:
+        msg = f"{address} is not a token mint"
+        raise ValueError(msg) from error
 
 
 async def get_account(client: AsyncClient, address: Pubkey) -> Account:
@@ -150,6 +174,22 @@ async def create(  # noqa: PLR0913
         quote_program = await pump_v2.resolve_quote_token_program(
             quote_mint, lambda pk: get_account(client, pk)
         )
+        if quote_mint != pump_v2.WSOL_MINT:
+            registry = await pump_v2.fetch_quote_control(
+                lambda pk: get_account(client, pk)
+            )
+            # Raises for a mint QuoteControl does not admit.
+            opening = pump_v2.opening_quote_reserves(registry, quote_mint, global_state)
+            multiplier = pump_v2.check_quote_mint_tradable(
+                quote_mint, await get_parsed_mint(client, quote_mint)
+            )
+            print(f"Quote:   {quote_mint}")
+            print(f"  opening virtual quote reserves: {opening:,} raw units")
+            if multiplier is not None and multiplier != 1.0:
+                print(
+                    f"  note: scaled-UI mint, multiplier {multiplier}. Trade "
+                    f"amounts here are raw units, not displayed units."
+                )
         if creator_fee_bps and pump_v2.is_sol_paired(quote_mint):
             print(
                 "  warning: a creator fee has no effect on a SOL-paired coin; "
@@ -170,7 +210,6 @@ async def create(  # noqa: PLR0913
         if on_curve != creator:
             print(f"  -> curve will carry {on_curve} (holder rewards PDA)")
         print(f"Name:    {name} ({symbol})")
-        print(f"Quote:   {quote_mint}")
         print(
             f"Mayhem:  {mayhem}   Creator fee: "
             f"{'omitted' if creator_fee_bps is None else f'{creator_fee_bps} bps'}"

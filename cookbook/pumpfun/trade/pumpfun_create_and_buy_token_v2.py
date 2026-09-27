@@ -12,11 +12,14 @@ It is two transactions rather than one because `buy_v2` takes 27 accounts, which
 pushes a combined create+buy message to 1479 bytes, past the 1232-byte limit a
 v0 transaction is held to. The legacy 18-account `buy` used to fit.
 
-The buy here spends SOL, so this script only launches SOL-paired coins. That
-also puts `--creator-fee-bps` out of reach: pump.fun applies a creator fee only
-to a coin priced in something other than SOL, and stores zero otherwise. To
-launch a coin with a fee, use `pumpfun_create_token_v2.py --quote-mint`, then
-buy it with `pumpfun_buy_token_v2.py`.
+`--amount` is in whole units of the coin's quote asset -- SOL by default, and
+whatever `--quote-mint` names otherwise. For a non-SOL quote the wallet must
+already hold that asset in its associated token account; this script does not
+acquire it.
+
+**A creator fee only takes effect on a coin priced in something other than
+SOL.** pump.fun accepts `--creator-fee-bps` on a SOL-paired coin and stores
+zero, so it is refused there rather than silently ignored.
 
 `pumpfun_create_token_v2.py` is the create half on its own, and
 `pumpfun_buy_token_v2.py` the buy half.
@@ -52,7 +55,6 @@ load_dotenv()
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 PRIVATE_KEY = os.environ.get("SOLANA_PRIVATE_KEY")
 
-LAMPORTS_PER_SOL: Final[int] = 1_000_000_000
 BPS_DENOMINATOR: Final[int] = 10_000
 COMPUTE_UNIT_LIMIT: Final[int] = 350_000
 PRIORITY_FEE_MICROLAMPORTS: Final[int] = 37_037
@@ -80,53 +82,69 @@ async def get_account(client: AsyncClient, address: Pubkey) -> Account:
     return response.value
 
 
-def check_creator_fee(creator_fee_bps: int | None) -> None:
-    """Refuse a creator fee, which this script cannot make effective.
+def check_creator_fee(
+    global_state: dict, creator_fee_bps: int | None, quote_mint: Pubkey
+) -> None:
+    """Refuse a creator fee the program will not accept or will not apply.
 
-    pump.fun applies `creator_fee_bps` only to a coin priced in something other
-    than SOL; on a SOL-paired coin it accepts the argument and stores zero. This
-    script buys with SOL, so it would always be the silent-zero case. The check
-    runs before anything is sent, so no coin is created and then found wanting.
-
-    Args:
-        creator_fee_bps: Requested fee, or None if the arg is being omitted
-
-    Raises:
-        ValueError: If any non-zero fee is requested
-    """
-    if not creator_fee_bps:
-        return
-    msg = (
-        "A creator fee only takes effect on a coin priced in something other "
-        "than SOL, and this script buys with SOL. pump.fun would accept the "
-        "argument and store 0. Create it with "
-        "pumpfun_create_token_v2.py --quote-mint <MINT> --creator-fee-bps "
-        f"{creator_fee_bps}, then buy with pumpfun_buy_token_v2.py."
-    )
-    raise ValueError(msg)
-
-
-def size_opening_buy(
-    global_state: dict, buy_amount_sol: float, creator_fee_bps: int | None
-) -> int:
-    """Tokens to ask for, given what the opening curve and the fees will be.
-
-    Every input comes from Global: the opening reserves set the price, and the
-    two fee rates set how much of the spend never reaches the curve. Hardcoding
-    any of them works only until `set_params` moves it, and the fee total moves
-    per coin as soon as a creator fee is set.
+    Bounds come from Global rather than a literal, because both the switch and
+    the ceiling move under `update_creator_fee_config`.
 
     Args:
         global_state: Decoded Global account
-        buy_amount_sol: SOL to spend
-        creator_fee_bps: Creator fee for this coin, or None to use Global's
-            default rate
+        creator_fee_bps: Requested fee, or None if the arg is being omitted
+        quote_mint: Asset the coin is priced in
+
+    Raises:
+        ValueError: If a fee is requested on a SOL-paired coin, while fees are
+            not configurable, or above the current ceiling
+    """
+    if not creator_fee_bps:
+        return
+    if pump_v2.is_sol_paired(quote_mint) or quote_mint == pump_v2.WSOL_MINT:
+        msg = (
+            "A creator fee only takes effect on a coin priced in something "
+            "other than SOL; pump.fun would accept the argument and store 0. "
+            "Pass --quote-mint."
+        )
+        raise ValueError(msg)
+    if not global_state.get("creator_fee_configurable"):
+        msg = (
+            "Global.creator_fee_configurable is false; the program is not "
+            "accepting a configurable creator fee right now"
+        )
+        raise ValueError(msg)
+    ceiling = global_state.get("max_configurable_creator_fee_bps", 0)
+    if creator_fee_bps > ceiling:
+        msg = (
+            f"--creator-fee-bps {creator_fee_bps} is above Global's current "
+            f"max_configurable_creator_fee_bps of {ceiling}"
+        )
+        raise ValueError(msg)
+
+
+def size_opening_buy(
+    global_state: dict,
+    amount_raw: int,
+    opening_quote_reserves: int,
+    creator_fee_bps: int | None,
+) -> int:
+    """Tokens to ask for, given what the opening curve and the fees will be.
+
+    The reserves and the two fee rates are read, not assumed: the opening quote
+    reserve differs per quote asset by orders of magnitude, and the fee total
+    moves per coin as soon as a creator fee is set.
+
+    Args:
+        global_state: Decoded Global account
+        amount_raw: Spend, in the quote mint's raw units
+        opening_quote_reserves: What the curve opens with, same raw units
+        creator_fee_bps: Creator fee for this coin, or None for Global's rate
 
     Returns:
         Base tokens to request, raw units
     """
     virtual_tokens = global_state["initial_virtual_token_reserves"]
-    virtual_sol = global_state["initial_virtual_sol_reserves"]
     creator_rate = (
         global_state["creator_fee_basis_points"]
         if creator_fee_bps is None
@@ -134,12 +152,50 @@ def size_opening_buy(
     )
     fee_bps = global_state["fee_basis_points"] + creator_rate
 
-    lamports = int(buy_amount_sol * LAMPORTS_PER_SOL)
-    reaching_curve = lamports * (BPS_DENOMINATOR - fee_bps) // BPS_DENOMINATOR
+    reaching_curve = amount_raw * (BPS_DENOMINATOR - fee_bps) // BPS_DENOMINATOR
     # Linear at the opening price rather than constant-product. At these sizes
     # against the opening reserves the curvature is below rounding; the slippage
     # cap is what actually bounds the spend.
-    return reaching_curve * virtual_tokens // virtual_sol
+    return reaching_curve * virtual_tokens // opening_quote_reserves
+
+
+async def check_quote_balance(
+    client: AsyncClient,
+    user: Pubkey,
+    quote_mint: Pubkey,
+    quote_program: Pubkey,
+    needed_raw: int,
+) -> None:
+    """Refuse a buy the wallet cannot pay for in the coin's quote asset.
+
+    A SOL-paired coin settles in native SOL and its quote ATA is only
+    seed-constrained, so it is never read or created. Every other quote asset
+    has to be held already; this script does not acquire one.
+
+    Args:
+        client: Solana RPC client
+        user: Buying wallet
+        quote_mint: Asset the coin is priced in
+        quote_program: Token program owning quote_mint
+        needed_raw: Spend cap, in the quote mint's raw units
+
+    Raises:
+        ValueError: If the wallet's quote account is missing or short
+    """
+    if pump_v2.is_sol_paired(quote_mint) or quote_mint == pump_v2.WSOL_MINT:
+        return
+    ata = pump_v2.find_associated_token_account(user, quote_mint, quote_program)
+    try:
+        balance = await client.get_token_account_balance(ata)
+        held = int(balance.value.amount) if balance.value else 0
+    except Exception:  # noqa: BLE001 - a missing account is the same answer
+        held = 0
+    if held < needed_raw:
+        msg = (
+            f"Wallet holds {held} raw units of {quote_mint} but the buy caps "
+            f"at {needed_raw}. Fund {ata} first."
+        )
+        raise ValueError(msg)
 
 
 async def run(  # noqa: PLR0913
@@ -153,6 +209,7 @@ async def run(  # noqa: PLR0913
     mayhem: bool,
     creator_fee_bps: int | None,
     holder_reward: bool | None,
+    quote_mint: Pubkey,
 ) -> None:
     """Create a coin, then buy it in a second transaction.
 
@@ -166,6 +223,7 @@ async def run(  # noqa: PLR0913
         mayhem: Whether to opt into mayhem mode
         creator_fee_bps: Creator fee; None omits the argument
         holder_reward: Whether the creator fee goes to holders; None omits it
+        quote_mint: Asset the coin is priced in, and that buy_amount is in
     """
     payer = Keypair.from_bytes(base58.b58decode(PRIVATE_KEY))
     mint_keypair = Keypair()
@@ -174,8 +232,21 @@ async def run(  # noqa: PLR0913
     bonding_curve = pump_v2.find_bonding_curve(mint)
 
     async with AsyncClient(RPC_ENDPOINT) as client:
-        check_creator_fee(creator_fee_bps)
         global_state = await pump_v2.fetch_global(lambda pk: get_account(client, pk))
+        check_creator_fee(global_state, creator_fee_bps, quote_mint)
+
+        # Resolve before pricing: this read gives the token program the quote
+        # accounts derive under and the decimals the amounts are scaled by.
+        quote_program = await pump_v2.resolve_quote_token_program(
+            quote_mint, lambda pk: get_account(client, pk)
+        )
+        registry = (
+            {}
+            if quote_mint == pump_v2.WSOL_MINT
+            else await pump_v2.fetch_quote_control(lambda pk: get_account(client, pk))
+        )
+        opening = pump_v2.opening_quote_reserves(registry, quote_mint, global_state)
+        quote_unit = pump_v2.quote_units(quote_mint)
 
         # The creator the curve will carry, which on a holder-reward coin is a
         # PDA the program substitutes rather than anything the caller passed.
@@ -185,8 +256,15 @@ async def run(  # noqa: PLR0913
             mint, creator, is_holder_reward=bool(holder_reward)
         )
 
-        expected_tokens = size_opening_buy(global_state, buy_amount, creator_fee_bps)
-        max_sol_cost = int(buy_amount * LAMPORTS_PER_SOL * (1 + slippage))
+        amount_raw = int(buy_amount * quote_unit)
+        expected_tokens = size_opening_buy(
+            global_state, amount_raw, opening, creator_fee_bps
+        )
+        max_quote_cost = int(amount_raw * (1 + slippage))
+
+        await check_quote_balance(
+            client, payer.pubkey(), quote_mint, quote_program, max_quote_cost
+        )
 
         print(f"Mint:     {mint}")
         print(f"Curve:    {bonding_curve}")
@@ -200,7 +278,10 @@ async def run(  # noqa: PLR0913
             f"{'omitted' if creator_fee_bps is None else f'{creator_fee_bps} bps'}"
             f"   Holder reward: {'omitted' if holder_reward is None else holder_reward}"
         )
-        print(f"Buying:   {buy_amount} SOL, cap {max_sol_cost / LAMPORTS_PER_SOL:.6f}")
+        print(f"Quote:    {quote_mint}")
+        print(
+            f"Buying:   {buy_amount} (raw {amount_raw}), cap {max_quote_cost} raw units"
+        )
         print(f"Expecting {expected_tokens / 10**pump_v2.TOKEN_DECIMALS:,.6f} tokens")
 
         create_instructions = [
@@ -216,6 +297,8 @@ async def run(  # noqa: PLR0913
                 is_mayhem_mode=mayhem,
                 creator_fee_bps=creator_fee_bps,
                 is_holder_reward=holder_reward,
+                quote_mint=quote_mint,
+                quote_token_program=quote_program,
             ),
             pump_v2.build_extend_account_instruction(bonding_curve, payer.pubkey()),
         ]
@@ -234,10 +317,11 @@ async def run(  # noqa: PLR0913
                 creator=on_curve_creator,
                 user=payer.pubkey(),
                 token_amount_raw=expected_tokens,
-                max_quote_cost_raw=max_sol_cost,
-                quote_mint=pump_v2.WSOL_MINT,
+                max_quote_cost_raw=max_quote_cost,
+                quote_mint=quote_mint,
                 is_mayhem_mode=mayhem,
                 base_token_program=pump_v2.TOKEN_2022_PROGRAM,
+                quote_token_program_id=quote_program,
             ),
         ]
 
@@ -287,13 +371,25 @@ def main() -> None:
         "--amount",
         type=float,
         default=DEFAULT_BUY_AMOUNT_SOL,
-        help=f"SOL to spend on the buy (default {DEFAULT_BUY_AMOUNT_SOL})",
+        help=(
+            "Amount to spend on the buy, in whole units of the quote asset "
+            f"(default {DEFAULT_BUY_AMOUNT_SOL})"
+        ),
     )
     parser.add_argument(
         "--slippage",
         type=float,
         default=DEFAULT_SLIPPAGE,
         help=f"Slippage tolerance (default {DEFAULT_SLIPPAGE})",
+    )
+    parser.add_argument(
+        "--quote-mint",
+        type=Pubkey.from_string,
+        default=pump_v2.WSOL_MINT,
+        help=(
+            "Asset the coin is priced in and that --amount is denominated in "
+            "(default wrapped SOL)"
+        ),
     )
     parser.add_argument(
         "--mayhem",
@@ -332,6 +428,7 @@ def main() -> None:
             mayhem=args.mayhem,
             creator_fee_bps=args.creator_fee_bps,
             holder_reward=args.holder_reward,
+            quote_mint=args.quote_mint,
         )
     )
 

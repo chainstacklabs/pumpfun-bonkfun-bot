@@ -9,7 +9,7 @@ github.com/pump-fun/pump-public-docs
 
 import secrets
 import struct
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from construct import Flag, Int64ul, Struct
@@ -659,6 +659,139 @@ async def fetch_global(
             `.data` attribute, as `resolve_quote_token_program` takes
     """
     return decode_global(bytes((await get_account_info(PUMP_GLOBAL)).data))
+
+
+# QuoteControl: admin (32) then 64 reserved bytes, then a vec of
+# (mint, initial_virtual_quote_reserves).
+_QUOTE_CONTROL_MINTS_OFFSET = 8 + 32 + 64
+_QUOTE_CONTROL_ENTRY_SIZE = 32 + 8
+
+
+def decode_quote_control(data: bytes) -> dict[Pubkey, int]:
+    """Decode QuoteControl into quote mint -> opening virtual quote reserves.
+
+    Each admitted mint carries its own opening reserve, which is the coin's
+    starting price in that asset. It is not a scaled version of the SOL one.
+
+    Args:
+        data: Raw account data, discriminator included
+
+    Returns:
+        Mint to initial_virtual_quote_reserves, in the mint's raw units
+
+    Raises:
+        ValueError: If the account is too short to hold the vec length
+    """
+    if len(data) < _QUOTE_CONTROL_MINTS_OFFSET + 4:
+        msg = f"QuoteControl account is only {len(data)} bytes"
+        raise ValueError(msg)
+    count = struct.unpack_from("<I", data, _QUOTE_CONTROL_MINTS_OFFSET)[0]
+    start = _QUOTE_CONTROL_MINTS_OFFSET + 4
+    entries = {}
+    for index in range(count):
+        at = start + index * _QUOTE_CONTROL_ENTRY_SIZE
+        if at + _QUOTE_CONTROL_ENTRY_SIZE > len(data):
+            break
+        entries[Pubkey.from_bytes(data[at : at + 32])] = struct.unpack_from(
+            "<Q", data, at + 32
+        )[0]
+    return entries
+
+
+async def fetch_quote_control(
+    get_account_info: Callable[[Pubkey], Awaitable[Any]],
+) -> dict[Pubkey, int]:
+    """Read and decode the QuoteControl registry.
+
+    Args:
+        get_account_info: Async getter returning an account object with `.data`
+    """
+    account = await get_account_info(find_quote_control())
+    return decode_quote_control(bytes(account.data))
+
+
+def opening_quote_reserves(
+    registry: dict[Pubkey, int], quote_mint: Pubkey, global_state: dict[str, Any]
+) -> int:
+    """Opening virtual quote reserves for a coin priced in `quote_mint`.
+
+    Three sources, because there are three kinds of admitted mint and they do
+    not carry the same figure:
+
+    - wrapped SOL takes `Global.initial_virtual_sol_reserves`;
+    - a `QuoteControl` entry carries its own reserve, which is the coin's
+      opening price in that asset and is not a scaled version of the SOL one;
+    - a mint in the older `Global.whitelisted_quote_mints` that QuoteControl
+      does not list takes `Global.initial_virtual_quote_reserves`. USDC is one,
+      so treating QuoteControl as the whole registry refuses a mint the program
+      accepts.
+
+    Raises rather than substituting a default for an unlisted mint: across the
+    admitted mints the figure spans several orders of magnitude, so a stand-in
+    misprices the opening buy instead of approximating it.
+
+    Args:
+        registry: Decoded QuoteControl, from `decode_quote_control`
+        quote_mint: Asset the coin is priced in
+        global_state: Decoded Global
+
+    Returns:
+        Opening virtual quote reserves, in the quote mint's raw units
+
+    Raises:
+        ValueError: If neither registry admits the mint
+    """
+    if is_sol_paired(quote_mint) or quote_mint == WSOL_MINT:
+        return global_state["initial_virtual_sol_reserves"]
+    reserves = registry.get(quote_mint)
+    if reserves is not None:
+        return reserves
+    if quote_mint in (global_state.get("whitelisted_quote_mints") or []):
+        return global_state["initial_virtual_quote_reserves"]
+    msg = (
+        f"Neither QuoteControl nor Global admits {quote_mint}, so a coin "
+        f"cannot be priced in it. QuoteControl lists {len(registry)} mints; "
+        f"pumpfun_read_quote_mints.py prints them."
+    )
+    raise ValueError(msg)
+
+
+def check_quote_mint_tradable(
+    quote_mint: Pubkey, parsed_info: Mapping[str, Any]
+) -> float | None:
+    """Refuse a quote mint that cannot currently settle a trade.
+
+    Tokenised equities among the admitted mints carry Token-2022 extensions
+    their issuer controls. `pausableConfig` stops every transfer of the mint
+    while it is set, which fails every trade on every coin priced in it, so a
+    paused mint is refused rather than discovered at buy time.
+    `scaledUiAmountConfig` means the displayed amount and the raw amount differ
+    by a multiplier the issuer moves; trade amounts here are raw, and the
+    multiplier is returned so a caller can say so.
+
+    Args:
+        quote_mint: Asset the coin is priced in
+        parsed_info: The `info` mapping from a jsonParsed mint account
+
+    Returns:
+        The scaled-UI multiplier, or None when the mint is not scaled
+
+    Raises:
+        ValueError: If the mint is paused
+    """
+    extensions = {
+        entry.get("extension"): entry.get("state", {})
+        for entry in (parsed_info.get("extensions") or [])
+        if isinstance(entry, dict)
+    }
+    if (extensions.get("pausableConfig") or {}).get("paused"):
+        msg = (
+            f"Quote mint {quote_mint} is paused by its issuer. Every trade on "
+            f"every coin priced in it fails until that is lifted."
+        )
+        raise ValueError(msg)
+    multiplier = (extensions.get("scaledUiAmountConfig") or {}).get("multiplier")
+    return float(multiplier) if multiplier not in (None, "") else None
 
 
 def encode_create_v2_trailing_args(

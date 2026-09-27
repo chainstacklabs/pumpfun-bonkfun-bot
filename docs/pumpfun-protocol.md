@@ -11,9 +11,19 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   coins; USDC (`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`) is one whitelisted
   entry in `Global`, but coins paired with Token-2022 quote mints are live on
   chain too. **Legacy `buy`/`sell` cannot trade non-SOL-paired coins at all.**
-- **`Global.whitelisted_quote_mints` is not the authoritative registry.** A
-  `QuoteControl` account carries its own mint list, which is how a coin pairs with
-  a mint `Global` never lists. Error `6064` accepts SPL Token or Token-2022.
+- **Two registries are live and neither contains the other.** A `QuoteControl`
+  account (PDA `["quote-control"]`) carries its own mint list, which is how a
+  coin pairs with a mint `Global` never lists. But `Global.whitelisted_quote_mints`
+  is not merely a subset: **USDC is in `Global` and not in `QuoteControl`**, so
+  validating against either alone refuses a mint the program accepts. Their
+  opening reserves come from different fields too — a `QuoteControl` entry
+  carries its own, while a `Global`-only mint takes
+  `Global.initial_virtual_quote_reserves`. Error `6064` accepts SPL Token or
+  Token-2022.
+- **The opening reserve is per quote mint, by orders of magnitude.** Across the
+  `QuoteControl` entries the figure runs from the low millions to the high
+  trillions of raw units, so no default approximates a missing one — an unlisted
+  mint has to be refused rather than priced.
 - **The quote mint's token program is resolved from chain, not assumed.**
   `resolve_quote_token_program` (`src/core/pubkeys.py`) reads a mint's owner once
   — pre-seeded with WSOL/USDC so those stay free — and caches it for the process;
