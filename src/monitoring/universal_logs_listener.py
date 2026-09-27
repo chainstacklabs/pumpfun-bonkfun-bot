@@ -219,6 +219,18 @@ class UniversalLogsListener(BaseTokenListener):
                 return None
 
             log_data = data["params"]["result"]["value"]
+
+            # Skip failed txs — logsSubscribe delivers the logs a transaction
+            # emitted before it reverted, so a CreateEvent decoded from one
+            # describes a mint that was never created. Buying it fails at the
+            # ATA-create instruction with IncorrectProgramId, because the mint
+            # address is owned by the system program rather than a token
+            # program, and that reads as a token-program bug rather than a
+            # detection one. The blocks listener guards the same way on
+            # `meta.err`.
+            if log_data.get("err") is not None:
+                return None
+
             logs = log_data.get("logs", [])
             signature = log_data.get("signature", "unknown")
 
