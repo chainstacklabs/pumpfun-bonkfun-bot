@@ -250,6 +250,7 @@ async def run(  # noqa: PLR0913
     async with AsyncClient(RPC_ENDPOINT) as client:
         global_state = await pump.fetch_global(lambda pk: get_account(client, pk))
         check_creator_fee(global_state, creator_fee_bps, quote_mint)
+        pump.check_mayhem_quote_pairing(quote_mint, is_mayhem_mode=mayhem)
 
         # Resolve before pricing: this read gives the token program the quote
         # accounts derive under and the decimals the amounts are scaled by.

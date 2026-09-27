@@ -30,6 +30,9 @@ Offline machine checks, no network and no funds moved:
   6. A paused quote mint is refused.
   7. A scaled-UI quote mint reports its multiplier, and an ordinary mint
      reports none.
+  8. Mayhem mode paired with a non-SOL quote asset is refused before sending.
+     The program rejects the pairing with MayhemModeQuoteMintNotAllowed
+     (6071), and a create that reaches the chain has already cost fees.
 
 Usage:
     uv run tests/regression/verify_quote_asset_selection.py
@@ -162,6 +165,25 @@ def check_scaled_multiplier_is_reported() -> bool:
     return True
 
 
+def check_mayhem_rejects_a_non_sol_quote() -> bool:
+    stranger = Keypair().pubkey()
+    try:
+        pump.check_mayhem_quote_pairing(stranger, is_mayhem_mode=True)
+    except ValueError:
+        pass
+    else:
+        print("  a mayhem coin was allowed a non-SOL quote asset")
+        return False
+    # The pairing is only refused for mayhem, and only for a non-SOL asset.
+    try:
+        pump.check_mayhem_quote_pairing(stranger, is_mayhem_mode=False)
+        pump.check_mayhem_quote_pairing(pump.WSOL_MINT, is_mayhem_mode=True)
+    except ValueError:
+        print("  refused a pairing the program accepts")
+        return False
+    return True
+
+
 def main() -> int:
     checks = [
         ("QuoteControl decodes, short tail dropped", check_registry_decodes),
@@ -180,6 +202,7 @@ def main() -> int:
             "a scaled quote mint reports its multiplier",
             check_scaled_multiplier_is_reported,
         ),
+        ("mayhem refuses a non-SOL quote", check_mayhem_rejects_a_non_sol_quote),
     ]
     failed = 0
     for label, check in checks:

@@ -794,6 +794,32 @@ def check_quote_mint_tradable(
     return float(multiplier) if multiplier not in (None, "") else None
 
 
+def check_mayhem_quote_pairing(quote_mint: Pubkey, *, is_mayhem_mode: bool) -> None:
+    """Refuse a mayhem coin priced in anything but SOL.
+
+    The program rejects the pairing with `MayhemModeQuoteMintNotAllowed` (6071).
+    Checked before sending, because the create otherwise lands as a reverted
+    transaction that has already cost fees.
+
+    Args:
+        quote_mint: Asset the coin would be priced in
+        is_mayhem_mode: Whether the coin opts into mayhem mode
+
+    Raises:
+        ValueError: If a mayhem coin is paired with a non-SOL quote asset
+    """
+    if not is_mayhem_mode:
+        return
+    if is_sol_paired(quote_mint) or quote_mint == WSOL_MINT:
+        return
+    msg = (
+        f"Mayhem mode cannot be combined with a non-SOL quote asset: the "
+        f"program rejects it with MayhemModeQuoteMintNotAllowed (6071). Drop "
+        f"--mayhem, or drop --quote-mint {quote_mint}."
+    )
+    raise ValueError(msg)
+
+
 def encode_create_v2_trailing_args(
     *,
     is_cashback_enabled: bool | None = None,

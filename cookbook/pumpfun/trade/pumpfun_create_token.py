@@ -168,6 +168,7 @@ async def create(  # noqa: PLR0913
     async with AsyncClient(RPC_ENDPOINT) as client:
         global_state = await pump.fetch_global(lambda pk: get_account(client, pk))
         check_creator_fee(global_state, creator_fee_bps)
+        pump.check_mayhem_quote_pairing(quote_mint, is_mayhem_mode=mayhem)
         # The token program is a property of the chosen mint, so it is read, not
         # assumed: create_v2 takes an SPL Token or a Token-2022 quote mint and
         # the associated_quote_bonding_curve ATA derives under whichever it is.

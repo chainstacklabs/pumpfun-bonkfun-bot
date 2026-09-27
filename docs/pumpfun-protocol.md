@@ -20,6 +20,9 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   carries its own, while a `Global`-only mint takes
   `Global.initial_virtual_quote_reserves`. Error `6064` accepts SPL Token or
   Token-2022.
+- **Mayhem mode and a non-SOL quote asset are mutually exclusive.** The
+  program rejects the pairing with `MayhemModeQuoteMintNotAllowed` (6071), so a
+  mayhem coin is always SOL-paired and can never carry a creator fee.
 - **The opening reserve is per quote mint, by orders of magnitude.** Across the
   `QuoteControl` entries the figure runs from the low millions to the high
   trillions of raw units, so no default approximates a missing one — an unlisted
