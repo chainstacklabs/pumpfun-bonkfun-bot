@@ -151,11 +151,14 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
 - **Omitting them is accepted.** A 16-account `create_v2` lands and produces a
   SOL-paired coin, so nothing tells you the accounts were missing. What it also
   does is silently drop `creator_fee_bps`, because:
-- **A creator fee only applies to a coin priced in something other than SOL.**
-  Send `creator_fee_bps` on a SOL-paired coin and the program accepts the
-  argument, emits `CreateEvent.creator_fee_bps = 0` and stores 0 on the curve.
-  The same request against a non-SOL quote mint stores the fee. `--quote-mint`
-  is therefore a precondition for a creator fee, not an unrelated option.
+- **A creator fee is applied only on a coin priced in a `QuoteControl` mint.**
+  Anywhere else the program accepts `creator_fee_bps`, emits
+  `CreateEvent.creator_fee_bps = 0` and stores 0 on the curve, with no error.
+  Measured on mainnet: the fee lands on a `QuoteControl` mint whether that mint
+  is SPL Token or Token-2022, and does not land on wrapped SOL or on USDC —
+  which the older `Global.whitelisted_quote_mints` carries and `QuoteControl`
+  does not. So the deciding property is registry membership, not the token
+  program and not merely "something other than SOL".
 - The **associated bonding curve is an ordinary ATA**, so its address depends on
   which token program owns the mint: Token2022 for `create_v2` coins, SPL Token
   for legacy `create`. Deriving with the wrong program returns a valid-looking

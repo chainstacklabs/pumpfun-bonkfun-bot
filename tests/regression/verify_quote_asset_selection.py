@@ -9,6 +9,11 @@ Two registries are live and neither is a superset of the other.
 and USDC is in the former and not the latter. Validating against either alone
 refuses a mint the program accepts.
 
+They are not interchangeable once a coin carries a creator fee, either: the fee
+is applied only on a coin priced in a `QuoteControl` mint. On wrapped SOL, and
+on a mint only the Global whitelist carries, the program takes the argument and
+stores zero.
+
 The opening virtual quote reserve is per mint and spans orders of magnitude
 across the admitted set, so substituting a default for an unlisted mint
 misprices the opening buy rather than approximating it.
@@ -30,7 +35,10 @@ Offline machine checks, no network and no funds moved:
   6. A paused quote mint is refused.
   7. A scaled-UI quote mint reports its multiplier, and an ordinary mint
      reports none.
-  8. Mayhem mode paired with a non-SOL quote asset is refused before sending.
+  8. A creator fee is refused unless QuoteControl admits the quote mint.
+     Anywhere else the program takes the argument and stores zero, and a mint
+     the older Global whitelist carries -- USDC -- is one of those places.
+  9. Mayhem mode paired with a non-SOL quote asset is refused before sending.
      The program rejects the pairing with MayhemModeQuoteMintNotAllowed
      (6071), and a create that reaches the chain has already cost fees.
 
@@ -165,6 +173,40 @@ def check_scaled_multiplier_is_reported() -> bool:
     return True
 
 
+def check_fee_needs_a_registry_mint() -> bool:
+    listed = Keypair().pubkey()
+    registry = {listed: REGISTRY_RESERVE}
+
+    # Allowed where the fee is actually applied.
+    try:
+        pump.check_creator_fee_quote(registry, listed, 250)
+    except ValueError:
+        print("  refused a fee on a mint QuoteControl admits")
+        return False
+
+    # Refused everywhere it would silently store zero.
+    for label, mint in (
+        ("wrapped SOL", pump.WSOL_MINT),
+        ("a Global-whitelisted mint", USDC),
+        ("an unlisted mint", Keypair().pubkey()),
+    ):
+        try:
+            pump.check_creator_fee_quote(registry, mint, 250)
+        except ValueError:
+            continue
+        print(f"  allowed a fee against {label}, which stores zero")
+        return False
+
+    # No fee requested is never refused, whatever the mint.
+    try:
+        pump.check_creator_fee_quote(registry, pump.WSOL_MINT, None)
+        pump.check_creator_fee_quote(registry, pump.WSOL_MINT, 0)
+    except ValueError:
+        print("  refused a launch that asked for no fee at all")
+        return False
+    return True
+
+
 def check_mayhem_rejects_a_non_sol_quote() -> bool:
     stranger = Keypair().pubkey()
     try:
@@ -202,6 +244,7 @@ def main() -> int:
             "a scaled quote mint reports its multiplier",
             check_scaled_multiplier_is_reported,
         ),
+        ("a fee needs a QuoteControl mint", check_fee_needs_a_registry_mint),
         ("mayhem refuses a non-SOL quote", check_mayhem_rejects_a_non_sol_quote),
     ]
     failed = 0

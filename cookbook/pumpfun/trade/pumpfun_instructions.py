@@ -794,6 +794,40 @@ def check_quote_mint_tradable(
     return float(multiplier) if multiplier not in (None, "") else None
 
 
+def check_creator_fee_quote(
+    registry: dict[Pubkey, int], quote_mint: Pubkey, creator_fee_bps: int | None
+) -> None:
+    """Refuse a creator fee the program will accept and then not apply.
+
+    A creator fee is only honoured on a coin priced in a mint `QuoteControl`
+    admits. Anywhere else -- wrapped SOL, or a mint carried only by the older
+    `Global.whitelisted_quote_mints` such as USDC -- the program takes the
+    argument, emits `CreateEvent.creator_fee_bps = 0` and stores 0 on the curve,
+    with no error. The token program is not what decides it: the fee lands on
+    SPL Token and Token-2022 quote mints alike, provided QuoteControl lists them.
+
+    Args:
+        registry: Decoded QuoteControl, from `decode_quote_control`
+        quote_mint: Asset the coin is priced in
+        creator_fee_bps: Requested fee, or None if the arg is being omitted
+
+    Raises:
+        ValueError: If a fee is requested against a mint QuoteControl does not
+            admit
+    """
+    if not creator_fee_bps:
+        return
+    if quote_mint in registry:
+        return
+    msg = (
+        f"A creator fee is only applied to a coin priced in a mint QuoteControl "
+        f"admits, and {quote_mint} is not one -- the program would accept "
+        f"--creator-fee-bps and store 0. pumpfun_read_quote_mints.py prints the "
+        f"mints that do carry a fee."
+    )
+    raise ValueError(msg)
+
+
 def check_mayhem_quote_pairing(quote_mint: Pubkey, *, is_mayhem_mode: bool) -> None:
     """Refuse a mayhem coin priced in anything but SOL.
 

@@ -175,10 +175,14 @@ async def create(  # noqa: PLR0913
         quote_program = await pump.resolve_quote_token_program(
             quote_mint, lambda pk: get_account(client, pk)
         )
-        if quote_mint != pump.WSOL_MINT:
+        registry: dict = {}
+        if quote_mint != pump.WSOL_MINT or creator_fee_bps:
             registry = await pump.fetch_quote_control(
                 lambda pk: get_account(client, pk)
             )
+        # Refuses a fee against a mint that would silently store zero.
+        pump.check_creator_fee_quote(registry, quote_mint, creator_fee_bps)
+        if quote_mint != pump.WSOL_MINT:
             # Raises for a mint QuoteControl does not admit.
             opening = pump.opening_quote_reserves(registry, quote_mint, global_state)
             multiplier = pump.check_quote_mint_tradable(
@@ -191,11 +195,6 @@ async def create(  # noqa: PLR0913
                     f"  note: scaled-UI mint, multiplier {multiplier}. Trade "
                     f"amounts here are raw units, not displayed units."
                 )
-        if creator_fee_bps and pump.is_sol_paired(quote_mint):
-            print(
-                "  warning: a creator fee has no effect on a SOL-paired coin; "
-                "pump.fun will store 0. Pass --quote-mint to set one."
-            )
 
         # What the curve will actually carry, which is not `creator` on a
         # holder-reward coin. Printed because it is what a buy must derive

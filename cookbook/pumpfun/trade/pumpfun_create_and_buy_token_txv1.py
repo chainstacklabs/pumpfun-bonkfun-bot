@@ -101,32 +101,21 @@ async def get_account(client: AsyncClient, address: Pubkey) -> Account:
     return response.value
 
 
-def check_creator_fee(
-    global_state: dict, creator_fee_bps: int | None, quote_mint: Pubkey
-) -> None:
-    """Refuse a creator fee the program will not accept or will not apply.
+def check_creator_fee(global_state: dict, creator_fee_bps: int | None) -> None:
+    """Bounds-check a creator fee against what the program currently allows.
 
-    Bounds come from Global rather than a literal, because both the switch and
-    the ceiling move under `update_creator_fee_config`.
+    Whether the fee will be *applied* is a separate question decided by the
+    quote asset — see `pump.check_creator_fee_quote`.
 
     Args:
         global_state: Decoded Global account
         creator_fee_bps: Requested fee, or None if the arg is being omitted
-        quote_mint: Asset the coin is priced in
 
     Raises:
-        ValueError: If a fee is requested on a SOL-paired coin, while fees are
-            not configurable, or above the current ceiling
+        ValueError: If fees are not configurable, or the fee is above the cap
     """
     if not creator_fee_bps:
         return
-    if pump.is_sol_paired(quote_mint) or quote_mint == pump.WSOL_MINT:
-        msg = (
-            "A creator fee only takes effect on a coin priced in something "
-            "other than SOL; pump.fun would accept the argument and store 0. "
-            "Pass --quote-mint."
-        )
-        raise ValueError(msg)
     if not global_state.get("creator_fee_configurable"):
         msg = (
             "Global.creator_fee_configurable is false; the program is not "
@@ -252,7 +241,7 @@ async def run(  # noqa: PLR0913
 
     async with AsyncClient(RPC_ENDPOINT) as client:
         global_state = await pump.fetch_global(lambda pk: get_account(client, pk))
-        check_creator_fee(global_state, creator_fee_bps, quote_mint)
+        check_creator_fee(global_state, creator_fee_bps)
         pump.check_mayhem_quote_pairing(quote_mint, is_mayhem_mode=mayhem)
 
         # Resolve before pricing: this read gives the token program the quote
@@ -260,11 +249,13 @@ async def run(  # noqa: PLR0913
         quote_program = await pump.resolve_quote_token_program(
             quote_mint, lambda pk: get_account(client, pk)
         )
-        registry = (
-            {}
-            if quote_mint == pump.WSOL_MINT
-            else await pump.fetch_quote_control(lambda pk: get_account(client, pk))
-        )
+        registry: dict = {}
+        if quote_mint != pump.WSOL_MINT or creator_fee_bps:
+            registry = await pump.fetch_quote_control(
+                lambda pk: get_account(client, pk)
+            )
+        # Refuses a fee against a mint that would silently store zero.
+        pump.check_creator_fee_quote(registry, quote_mint, creator_fee_bps)
         opening = pump.opening_quote_reserves(registry, quote_mint, global_state)
         quote_unit = pump.quote_units(quote_mint)
 

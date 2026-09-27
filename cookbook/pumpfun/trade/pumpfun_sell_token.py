@@ -206,9 +206,7 @@ async def sell_token(
 
         # Fetch bonding curve state to calculate price and determine fee recipient
         curve_state = await get_pump_curve_state(client, bonding_curve)
-        quote_mint = pump.normalize_quote_mint(
-            getattr(curve_state, "quote_mint", None)
-        )
+        quote_mint = pump.normalize_quote_mint(getattr(curve_state, "quote_mint", None))
 
         # Resolve the quote mint before pricing: one read gives both the token
         # program -- Token-2022 for every tokenized equity pump.fun admits -- and
@@ -219,12 +217,15 @@ async def sell_token(
         )
         quote_unit = pump.quote_units(quote_mint)
 
-        token_price_sol = calculate_pump_curve_price(curve_state)
-        print(f"Price per Token: {token_price_sol:.20f} SOL")
+        # Named for the quote asset, not for SOL: the curve prices in whatever
+        # it is paired with, and calling a USDC price "SOL" is how a misread
+        # number gets past a reader who is checking.
+        token_price_quote = calculate_pump_curve_price(curve_state)
+        print(f"Price per Token: {token_price_quote:.20f} per quote unit")
 
         # Minimum payout, in the curve's quote asset raw units.
         amount = token_balance
-        expected_output = float(token_balance_decimal) * float(token_price_sol)
+        expected_output = float(token_balance_decimal) * float(token_price_quote)
         min_quote_output = max(1, int(expected_output * (1 - slippage) * quote_unit))
 
         print(f"Selling {token_balance_decimal} tokens")
