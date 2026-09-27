@@ -7,17 +7,24 @@ Usage:
     uv run cookbook/pumpfun/trade/pumpfun_create_token_v2.py
     uv run cookbook/pumpfun/trade/pumpfun_create_token_v2.py --name "My Coin" --symbol MINE
     uv run cookbook/pumpfun/trade/pumpfun_create_token_v2.py --mayhem --holder-reward
+    uv run cookbook/pumpfun/trade/pumpfun_create_token_v2.py --creator-fee-bps 300
 
-`pumpfun_create_and_buy_token_v2.py` does this and then buys the coin in a second
-transaction. This is the create half on its own: everything about a coin —
-Token-2022, mayhem mode, holder rewards, the quote asset — is fixed here and
-cannot be changed afterwards.
+`pumpfun_create_and_buy_token_v2.py` does this and then buys the coin. This is the
+create half on its own: everything about a coin — Token-2022, mayhem mode, the
+creator fee, holder rewards, the quote asset — is fixed here and cannot be
+changed afterwards.
 
 - The mint is a **keypair you generate**, not something pump.fun hands back. It
   signs the create transaction alongside your wallet.
 - `create_v2` mints under **Token-2022**, so the associated bonding curve is a
   Token-2022 ATA. Deriving it with SPL Token gives a valid-looking address that
   does not exist on chain.
+- `--creator` need not be the wallet that pays. On a `--holder-reward` coin
+  neither is what the curve ends up carrying — the program substitutes its own
+  address so the fee accrues to holders.
+- **`--creator-fee-bps` only does anything on a coin priced in something other
+  than SOL.** pump.fun accepts the argument on a SOL-paired coin and stores
+  zero, with no error. Pass `--quote-mint` alongside it.
 
 The `extend_account` instruction that follows the create is what makes the coin
 visible on pump.fun's own frontend. The coin trades without it.
@@ -26,213 +33,94 @@ visible on pump.fun's own frontend. The coin trades without it.
 import argparse
 import asyncio
 import os
-import struct
 import sys
 from pathlib import Path
 from typing import Final
 
-# solana_transaction_status.py lives in cookbook/solana/.
+# solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions_v2.py sits beside this file.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "solana"))
 
 import base58
+import pumpfun_instructions_v2 as pump_v2
 import solana_transaction_status as tx_status
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
 from solana.rpc.core import TxOptsModel
+from solders.account import Account
 from solders.compute_budget import set_compute_unit_limit, set_compute_unit_price
-from solders.instruction import AccountMeta, Instruction
 from solders.keypair import Keypair
 from solders.message import MessageV0
 from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
-from spl.token.instructions import get_associated_token_address
 
 load_dotenv()
 
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 PRIVATE_KEY = os.environ.get("SOLANA_PRIVATE_KEY")
 
-PUMP_PROGRAM: Final[Pubkey] = Pubkey.from_string(
-    "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
-)
-PUMP_GLOBAL: Final[Pubkey] = Pubkey.from_string(
-    "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"
-)
-PUMP_EVENT_AUTHORITY: Final[Pubkey] = Pubkey.from_string(
-    "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1"
-)
-PUMP_MINT_AUTHORITY: Final[Pubkey] = Pubkey.from_string(
-    "TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM"
-)
-SYSTEM_PROGRAM: Final[Pubkey] = Pubkey.from_string("11111111111111111111111111111111")
-TOKEN_2022_PROGRAM: Final[Pubkey] = Pubkey.from_string(
-    "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
-)
-ASSOCIATED_TOKEN_PROGRAM: Final[Pubkey] = Pubkey.from_string(
-    "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
-)
-
-# Mayhem mode is a separate program with its own accounts, appended to the
-# create_v2 account list only when the coin opts into it.
-MAYHEM_PROGRAM: Final[Pubkey] = Pubkey.from_string(
-    "MAyhSmzXzV1pTf7LsNkrNwkWKTo4ougAJ1PPg47MD4e"
-)
-MAYHEM_GLOBAL_PARAMS: Final[Pubkey] = Pubkey.from_string(
-    "13ec7XdrjF3h3YcqBTFDSReRcUFwbCnJaAQspM4j6DDJ"
-)
-MAYHEM_SOL_VAULT: Final[Pubkey] = Pubkey.from_string(
-    "BwWK17cbHxwWBKZkUYvzxLcNQ1YVyaFezduWbtm2de6s"
-)
-
-# First 8 bytes of sha256("global:<instruction name>").
-CREATE_V2_DISCRIMINATOR: Final[bytes] = bytes([214, 144, 76, 236, 95, 139, 49, 180])
-EXTEND_ACCOUNT_DISCRIMINATOR: Final[bytes] = bytes(
-    [234, 102, 194, 203, 150, 72, 62, 229]
-)
-
 COMPUTE_UNIT_LIMIT: Final[int] = 350_000
 PRIORITY_FEE_MICROLAMPORTS: Final[int] = 37_037
 
-# Defaults for the command line below, not fixed settings.
+# Defaults for the command line below, not fixed settings. Mayhem is off because
+# the plain coin is the one a reader gets by typing nothing.
 DEFAULT_MAYHEM = False
-DEFAULT_HOLDER_REWARD = False
 
 
-def encode_string(value: str) -> bytes:
-    """Encode a string the way Borsh does: a u32 length, then the bytes.
+async def get_account(client: AsyncClient, address: Pubkey) -> Account:
+    """Fetch an account, unwrapping solana-py's `.value` envelope.
+
+    Raises:
+        ValueError: If the account does not exist
+    """
+    response = await client.get_account_info(address, encoding="base64")
+    if response.value is None:
+        msg = f"Account not found: {address}"
+        raise ValueError(msg)
+    return response.value
+
+
+def check_creator_fee(global_state: dict, creator_fee_bps: int | None) -> None:
+    """Refuse a creator fee the program will not accept.
+
+    Bounds come from Global rather than a literal, because both the switch and
+    the ceiling move under `update_creator_fee_config`.
 
     Args:
-        value: The string to encode
+        global_state: Decoded Global account
+        creator_fee_bps: Requested fee, or None if the arg is being omitted
 
-    Returns:
-        Length-prefixed UTF-8 bytes
+    Raises:
+        ValueError: If a fee is requested while fees are not configurable, or
+            above the current ceiling
     """
-    encoded = value.encode("utf-8")
-    return struct.pack("<I", len(encoded)) + encoded
+    if not creator_fee_bps:
+        return
+    if not global_state.get("creator_fee_configurable"):
+        msg = (
+            "Global.creator_fee_configurable is false; the program is not "
+            "accepting a configurable creator fee right now"
+        )
+        raise ValueError(msg)
+    ceiling = global_state.get("max_configurable_creator_fee_bps", 0)
+    if creator_fee_bps > ceiling:
+        msg = (
+            f"--creator-fee-bps {creator_fee_bps} is above Global's current "
+            f"max_configurable_creator_fee_bps of {ceiling}"
+        )
+        raise ValueError(msg)
 
 
-def build_create_v2_instruction(  # noqa: PLR0913
-    mint: Pubkey,
-    user: Pubkey,
+async def create(  # noqa: PLR0913
+    *,
     name: str,
     symbol: str,
     uri: str,
-    *,
-    is_mayhem_mode: bool,
-    is_holder_reward: bool,
-) -> Instruction:
-    """Build the create_v2 instruction.
-
-    Args:
-        mint: The new coin's mint (a keypair you generate)
-        user: Wallet paying for and creating the coin
-        name: Coin name
-        symbol: Coin ticker
-        uri: Metadata URI
-        is_mayhem_mode: Whether the coin opts into mayhem mode
-        is_holder_reward: Whether the creator fee is set aside for holders
-
-    Returns:
-        The create_v2 instruction
-    """
-    bonding_curve = Pubkey.find_program_address(
-        [b"bonding-curve", bytes(mint)], PUMP_PROGRAM
-    )[0]
-    # An ordinary ATA, but under Token-2022 because create_v2 mints there.
-    associated_bonding_curve = Pubkey.find_program_address(
-        [bytes(bonding_curve), bytes(TOKEN_2022_PROGRAM), bytes(mint)],
-        ASSOCIATED_TOKEN_PROGRAM,
-    )[0]
-
-    accounts = [
-        AccountMeta(pubkey=mint, is_signer=True, is_writable=True),
-        AccountMeta(pubkey=PUMP_MINT_AUTHORITY, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=bonding_curve, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=associated_bonding_curve, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=PUMP_GLOBAL, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=user, is_signer=True, is_writable=True),
-        AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=TOKEN_2022_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(
-            pubkey=ASSOCIATED_TOKEN_PROGRAM, is_signer=False, is_writable=False
-        ),
-    ]
-
-    # The five mayhem accounts are mandatory even on a coin that is not a mayhem
-    # coin — the IDL marks none of them optional, and omitting them fails with
-    # AnchorError 3005 (AccountNotEnoughKeys) on sol_vault. The is_mayhem_mode
-    # argument below, not the account list, is what makes a coin a mayhem coin.
-    mayhem_state = Pubkey.find_program_address(
-        [b"mayhem-state", bytes(mint)], MAYHEM_PROGRAM
-    )[0]
-    accounts += [
-        AccountMeta(pubkey=MAYHEM_PROGRAM, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=MAYHEM_GLOBAL_PARAMS, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=MAYHEM_SOL_VAULT, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=mayhem_state, is_signer=False, is_writable=True),
-        AccountMeta(
-            pubkey=get_associated_token_address(
-                MAYHEM_SOL_VAULT, mint, TOKEN_2022_PROGRAM
-            ),
-            is_signer=False,
-            is_writable=True,
-        ),
-    ]
-
-    accounts += [
-        AccountMeta(pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
-    ]
-
-    data = (
-        CREATE_V2_DISCRIMINATOR
-        + encode_string(name)
-        + encode_string(symbol)
-        + encode_string(uri)
-        + bytes(user)  # creator
-        + struct.pack("<?", is_mayhem_mode)
-    )
-
-    if is_holder_reward:
-        # The three trailing args are positional, not independently optional:
-        # reaching is_holder_reward means sending is_cashback_enabled and
-        # creator_fee_bps first, even though both are unused here. Neither is a
-        # discriminated Option — each serializes as its bare inner value, one
-        # byte and a little-endian u64.
-        #
-        # is_cashback_enabled is always False: create_v2 rejects [true] with
-        # error 6082 (CashbackDeprecated).
-        is_cashback_enabled = False
-        creator_fee_bps = 0
-        data += struct.pack("<?", is_cashback_enabled)
-        data += struct.pack("<Q", creator_fee_bps)
-        data += struct.pack("<?", is_holder_reward)
-
-    return Instruction(PUMP_PROGRAM, data, accounts)
-
-
-def build_extend_account_instruction(
-    bonding_curve: Pubkey, user: Pubkey
-) -> Instruction:
-    """Build the extend_account instruction, which takes no arguments.
-
-    Args:
-        bonding_curve: The coin's bonding curve
-        user: Wallet paying for the extra account space
-    """
-    accounts = [
-        AccountMeta(pubkey=bonding_curve, is_signer=False, is_writable=True),
-        AccountMeta(pubkey=user, is_signer=True, is_writable=True),
-        AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
-    ]
-    return Instruction(PUMP_PROGRAM, EXTEND_ACCOUNT_DISCRIMINATOR, accounts)
-
-
-async def create(
-    name: str, symbol: str, uri: str, *, mayhem: bool, holder_reward: bool
+    creator: Pubkey | None,
+    mayhem: bool,
+    creator_fee_bps: int | None,
+    holder_reward: bool | None,
+    quote_mint: Pubkey,
 ) -> None:
     """Create one coin and print its mint.
 
@@ -240,38 +128,74 @@ async def create(
         name: Coin name
         symbol: Coin ticker
         uri: Metadata URI
+        creator: Creator written into the curve; the payer if None
         mayhem: Whether to opt into mayhem mode
-        holder_reward: Whether the creator fee goes to holders
+        creator_fee_bps: Creator fee; None omits the argument. Ignored by the
+            program unless quote_mint is not SOL
+        holder_reward: Whether the creator fee goes to holders; None omits it
+        quote_mint: Asset the coin is priced in
     """
     payer = Keypair.from_bytes(base58.b58decode(PRIVATE_KEY))
     mint_keypair = Keypair()
     mint = mint_keypair.pubkey()
-    bonding_curve = Pubkey.find_program_address(
-        [b"bonding-curve", bytes(mint)], PUMP_PROGRAM
-    )[0]
-
-    print(f"Mint:    {mint}")
-    print(f"Curve:   {bonding_curve}")
-    print(f"Creator: {payer.pubkey()}")
-    print(f"Name:    {name} ({symbol})")
-    print(f"Mayhem:  {mayhem}   Holder reward: {holder_reward}")
-
-    instructions = [
-        set_compute_unit_limit(COMPUTE_UNIT_LIMIT),
-        set_compute_unit_price(PRIORITY_FEE_MICROLAMPORTS),
-        build_create_v2_instruction(
-            mint,
-            payer.pubkey(),
-            name,
-            symbol,
-            uri,
-            is_mayhem_mode=mayhem,
-            is_holder_reward=holder_reward,
-        ),
-        build_extend_account_instruction(bonding_curve, payer.pubkey()),
-    ]
+    creator = creator or payer.pubkey()
+    bonding_curve = pump_v2.find_bonding_curve(mint)
 
     async with AsyncClient(RPC_ENDPOINT) as client:
+        global_state = await pump_v2.fetch_global(lambda pk: get_account(client, pk))
+        check_creator_fee(global_state, creator_fee_bps)
+        # The token program is a property of the chosen mint, so it is read, not
+        # assumed: create_v2 takes an SPL Token or a Token-2022 quote mint and
+        # the associated_quote_bonding_curve ATA derives under whichever it is.
+        quote_program = await pump_v2.resolve_quote_token_program(
+            quote_mint, lambda pk: get_account(client, pk)
+        )
+        if creator_fee_bps and pump_v2.is_sol_paired(quote_mint):
+            print(
+                "  warning: a creator fee has no effect on a SOL-paired coin; "
+                "pump.fun will store 0. Pass --quote-mint to set one."
+            )
+
+        # What the curve will actually carry, which is not `creator` on a
+        # holder-reward coin. Printed because it is what a buy must derive
+        # creator_vault from.
+        on_curve = pump_v2.curve_creator(
+            mint, creator, is_holder_reward=bool(holder_reward)
+        )
+
+        print(f"Mint:    {mint}")
+        print(f"Curve:   {bonding_curve}")
+        print(f"Payer:   {payer.pubkey()}")
+        print(f"Creator: {creator}" + ("  (arg)" if on_curve != creator else ""))
+        if on_curve != creator:
+            print(f"  -> curve will carry {on_curve} (holder rewards PDA)")
+        print(f"Name:    {name} ({symbol})")
+        print(f"Quote:   {quote_mint}")
+        print(
+            f"Mayhem:  {mayhem}   Creator fee: "
+            f"{'omitted' if creator_fee_bps is None else f'{creator_fee_bps} bps'}"
+            f"   Holder reward: {'omitted' if holder_reward is None else holder_reward}"
+        )
+
+        instructions = [
+            set_compute_unit_limit(COMPUTE_UNIT_LIMIT),
+            set_compute_unit_price(PRIORITY_FEE_MICROLAMPORTS),
+            pump_v2.build_create_v2_instruction(
+                mint=mint,
+                user=payer.pubkey(),
+                creator=creator,
+                name=name,
+                symbol=symbol,
+                uri=uri,
+                is_mayhem_mode=mayhem,
+                creator_fee_bps=creator_fee_bps,
+                is_holder_reward=holder_reward,
+                quote_mint=quote_mint,
+                quote_token_program=quote_program,
+            ),
+            pump_v2.build_extend_account_instruction(bonding_curve, payer.pubkey()),
+        ]
+
         blockhash = (await client.get_latest_blockhash()).value.blockhash
         # The mint signs too — it is a brand-new account being created.
         transaction = VersionedTransaction(
@@ -288,7 +212,9 @@ async def create(
         print(f"\nSent: https://explorer.solana.com/tx/{signature}")
         await tx_status.confirm_and_assert(client, signature)
         print("Confirmed")
-        print(f"\nBuy it with:  uv run cookbook/pumpfun/trade/pumpfun_buy_token_v2.py {mint}")
+        print(
+            f"\nBuy it with:  uv run cookbook/pumpfun/trade/pumpfun_buy_token_v2.py {mint}"
+        )
 
 
 def main() -> None:
@@ -300,26 +226,56 @@ def main() -> None:
         "--uri", default="https://example.com/token.json", help="Metadata URI"
     )
     parser.add_argument(
+        "--creator",
+        type=Pubkey.from_string,
+        default=None,
+        help="Creator written into the curve (default: the paying wallet)",
+    )
+    parser.add_argument(
+        "--quote-mint",
+        type=Pubkey.from_string,
+        default=pump_v2.WSOL_MINT,
+        help=(
+            "Asset the coin is priced in (default wrapped SOL). Must be a mint "
+            "QuoteControl admits; required for --creator-fee-bps to take effect"
+        ),
+    )
+    parser.add_argument(
         "--mayhem",
         action=argparse.BooleanOptionalAction,
         default=DEFAULT_MAYHEM,
         help=f"Enable mayhem mode (default {DEFAULT_MAYHEM})",
     )
     parser.add_argument(
+        "--creator-fee-bps",
+        type=int,
+        default=None,
+        help=(
+            "Creator fee in basis points, validated against Global. Omitted "
+            "entirely by default; pass 0 to send an explicit zero"
+        ),
+    )
+    parser.add_argument(
         "--holder-reward",
         action=argparse.BooleanOptionalAction,
-        default=DEFAULT_HOLDER_REWARD,
-        help=f"Set the creator fee aside for holders (default {DEFAULT_HOLDER_REWARD})",
+        default=None,
+        help=(
+            "Set the creator fee aside for holders. Omitted entirely by "
+            "default; --no-holder-reward sends an explicit false"
+        ),
     )
     args = parser.parse_args()
 
     asyncio.run(
         create(
-            args.name,
-            args.symbol,
-            args.uri,
+            name=args.name,
+            symbol=args.symbol,
+            uri=args.uri,
+            creator=args.creator,
             mayhem=args.mayhem,
+            creator_fee_bps=args.creator_fee_bps,
             holder_reward=args.holder_reward,
+            quote_mint=args.quote_mint,
         )
     )
 
