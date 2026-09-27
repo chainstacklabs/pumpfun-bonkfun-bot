@@ -10,7 +10,7 @@ instead of a WebSocket subscription. Geyser is the fastest of the four detection
 methods and the only one that needs a separate endpoint — set `GEYSER_ENDPOINT`,
 `GEYSER_API_TOKEN` and `GEYSER_AUTH_TYPE` in `.env`.
 
-Buying an existing coin, without the listener, is `pumpfun_buy_token_v2.py`.
+Buying an existing coin, without the listener, is `pumpfun_buy_token.py`.
 """
 
 import argparse
@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 import base58
 import grpc
-import pumpfun_instructions_v2 as pump_v2
+import pumpfun_instructions as pump
 import solana_transaction_status as tx_status
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
@@ -50,7 +50,7 @@ from src.geyser.generated import (
 )
 
 # Here and later all the discriminators are precalculated. See cookbook/solana/anchor_calculate_discriminator.py
-EXPECTED_DISCRIMINATOR = pump_v2.BONDING_CURVE_DISCRIMINATOR
+EXPECTED_DISCRIMINATOR = pump.BONDING_CURVE_DISCRIMINATOR
 TOKEN_DECIMALS = 6
 
 # Global constants
@@ -92,7 +92,7 @@ PUMP_CREATE_DISCRIMINATOR = struct.pack("<Q", 8576854823835016728)
 PUMP_CREATE_V2_DISCRIMINATOR = bytes([214, 144, 76, 236, 95, 139, 49, 180])
 
 
-BondingCurveState = pump_v2.BondingCurveState
+BondingCurveState = pump.BondingCurveState
 
 
 async def get_pump_curve_state(
@@ -106,13 +106,13 @@ async def get_pump_curve_state(
     if data[:8] != EXPECTED_DISCRIMINATOR:
         raise ValueError("Invalid curve state discriminator")
 
-    return pump_v2.BondingCurveState(data)
+    return pump.BondingCurveState(data)
 
 
 async def _get_mint_account_info(conn: AsyncClient, address: Pubkey) -> Account:
     """Fetch an account, unwrapping solana-py's `.value` envelope.
 
-    Adapter for `pump_v2.resolve_quote_token_program`, which wants the account
+    Adapter for `pump.resolve_quote_token_program`, which wants the account
     object itself (with `.owner` and `.data`) rather than the RPC wrapper.
 
     Args:
@@ -128,7 +128,7 @@ async def _get_mint_account_info(conn: AsyncClient, address: Pubkey) -> Account:
     return response.value
 
 
-def calculate_pump_curve_price(curve_state: pump_v2.BondingCurveState) -> float:
+def calculate_pump_curve_price(curve_state: pump.BondingCurveState) -> float:
     """Price of one whole token in whole units of the curve's quote asset.
 
     Args:
@@ -292,7 +292,7 @@ async def buy_token(
     async with AsyncClient(RPC_ENDPOINT) as client:
         # Fetch bonding curve state for price, mayhem mode and quote asset.
         curve_state = await get_pump_curve_state(client, bonding_curve)
-        quote_mint = pump_v2.normalize_quote_mint(
+        quote_mint = pump.normalize_quote_mint(
             getattr(curve_state, "quote_mint", None)
         )
 
@@ -300,17 +300,17 @@ async def buy_token(
         # -- Token-2022 for every tokenized equity pump.fun admits, and passing
         # SPL Token for one fails the account constraints -- and the decimals the
         # price and cap are in.
-        quote_token_program_id = await pump_v2.resolve_quote_token_program(
+        quote_token_program_id = await pump.resolve_quote_token_program(
             quote_mint, lambda pk: _get_mint_account_info(client, pk)
         )
-        quote_unit = pump_v2.quote_units(quote_mint)
+        quote_unit = pump.quote_units(quote_mint)
 
         token_price_sol = calculate_pump_curve_price(curve_state)
         token_amount = amount / token_price_sol
         print(f"Quote asset: {quote_mint}")
 
         # buy_v2 takes 27 mandatory accounts in a fixed order for every coin.
-        buy_ix = pump_v2.build_buy_v2_instruction(
+        buy_ix = pump.build_buy_v2_instruction(
             base_mint=mint,
             creator=curve_state.creator,
             user=payer.pubkey(),
@@ -330,7 +330,7 @@ async def buy_token(
         # SOL-paired coins settle in native SOL and only seed-check the quote
         # ATA, so creating it would burn rent for nothing. Any other quote --
         # a stablecoin, another coin, a tokenized equity -- needs a real one.
-        if not pump_v2.is_sol_paired(quote_mint):
+        if not pump.is_sol_paired(quote_mint):
             instructions.append(
                 create_idempotent_associated_token_account(
                     payer.pubkey(),
@@ -400,7 +400,7 @@ async def snipe(amount: float, slippage: float):
     mint = Pubkey.from_string(token_data["mint"])
     bonding_curve = Pubkey.from_string(token_data["bondingCurve"])
     associated_bonding_curve = Pubkey.from_string(token_data["associatedBondingCurve"])
-    creator_vault = pump_v2.find_creator_vault(
+    creator_vault = pump.find_creator_vault(
         Pubkey.from_string(token_data["creator"])
     )
     token_program = Pubkey.from_string(token_data["token_program"])

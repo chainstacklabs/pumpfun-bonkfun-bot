@@ -49,8 +49,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "cookbook" / "solana"))
 sys.path.insert(0, str(PROJECT_ROOT / "cookbook" / "pumpfun" / "trade"))
 
-import pumpfun_create_and_buy_token_v2_txv1 as launch  # noqa: E402
-import pumpfun_instructions_v2 as pump_v2  # noqa: E402
+import pumpfun_create_and_buy_token_txv1 as launch  # noqa: E402
+import pumpfun_instructions as pump  # noqa: E402
 from solders.hash import Hash  # noqa: E402
 from solders.instruction import Instruction  # noqa: E402
 from solders.keypair import Keypair  # noqa: E402
@@ -82,10 +82,10 @@ def build_instructions() -> tuple[list[Instruction], Pubkey, list[Keypair]]:
     mint_kp = Keypair()
     payer = payer_kp.pubkey()
     mint = mint_kp.pubkey()
-    curve = pump_v2.find_bonding_curve(mint)
+    curve = pump.find_bonding_curve(mint)
     return (
         [
-            pump_v2.build_create_v2_instruction(
+            pump.build_create_v2_instruction(
                 mint=mint,
                 user=payer,
                 creator=payer,
@@ -93,18 +93,18 @@ def build_instructions() -> tuple[list[Instruction], Pubkey, list[Keypair]]:
                 symbol="TEST2",
                 uri="https://example.com/token-v2.json",
             ),
-            pump_v2.build_extend_account_instruction(curve, payer),
+            pump.build_extend_account_instruction(curve, payer),
             create_idempotent_associated_token_account(
-                payer, payer, mint, pump_v2.TOKEN_2022_PROGRAM
+                payer, payer, mint, pump.TOKEN_2022_PROGRAM
             ),
-            pump_v2.build_buy_v2_instruction(
+            pump.build_buy_v2_instruction(
                 base_mint=mint,
                 creator=payer,
                 user=payer,
                 token_amount_raw=3_540_900_000,
                 max_quote_cost_raw=130_000,
-                quote_mint=pump_v2.WSOL_MINT,
-                base_token_program=pump_v2.TOKEN_2022_PROGRAM,
+                quote_mint=pump.WSOL_MINT,
+                base_token_program=pump.TOKEN_2022_PROGRAM,
             ),
         ],
         payer,
@@ -137,10 +137,10 @@ def check_single_message_holds_create_and_buy() -> bool:
         print(f"  message holds {len(message.instructions)} instructions")
         return False
     data = [bytes(ix.data)[:8] for ix in message.instructions]
-    if pump_v2.CREATE_V2_DISCRIMINATOR not in data:
+    if pump.CREATE_V2_DISCRIMINATOR not in data:
         print("  no create_v2 in the message")
         return False
-    if pump_v2.BUY_V2_DISCRIMINATOR not in data:
+    if pump.BUY_V2_DISCRIMINATOR not in data:
         print("  no buy_v2 in the message — the launch is not atomic")
         return False
     return True

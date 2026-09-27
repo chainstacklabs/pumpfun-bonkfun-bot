@@ -12,7 +12,7 @@ docstring before running one. Everything else only reads.
 A filename is `<protocol>_<verb>_<noun>[_<variant>].py`:
 
 ```
-pumpfun_buy_token_v2.py                 buy one coin, using the v2 instructions
+pumpfun_buy_token.py                 buy one coin, using the v2 instructions
 pumpfun_snipe_token_geyser.py           wait for a new coin over Geyser, then buy
 pumpfun_listen_tokens_logsubscribe.py   watch for new coins over logsSubscribe
 letsbonk_sell_token_exact_out.py        sell for a fixed amount received
@@ -28,7 +28,7 @@ Every script takes its input on the command line:
 
 ```bash
 uv run cookbook/pumpfun/read/pumpfun_read_price.py <CURVE>
-uv run cookbook/pumpfun/trade/pumpfun_buy_token_v2.py <MINT> 0.001 --slippage 0.3
+uv run cookbook/pumpfun/trade/pumpfun_buy_token.py <MINT> 0.001 --slippage 0.3
 uv run cookbook/pumpswap/pumpswap_buy_token.py <MINT>          # amount defaults
 ```
 
@@ -38,7 +38,7 @@ all — they fall back to the fixture beside them.
 Two modules are imported by other scripts rather than run:
 [`solana/solana_transaction_status.py`](solana/solana_transaction_status.py) (did the
 transaction actually succeed) and
-[`pumpfun/trade/pumpfun_instructions_v2.py`](pumpfun/trade/pumpfun_instructions_v2.py)
+[`pumpfun/trade/pumpfun_instructions.py`](pumpfun/trade/pumpfun_instructions.py)
 (the `buy_v2` / `sell_v2` account layouts).
 
 ## Solana and Anchor basics
@@ -83,19 +83,19 @@ and sizes its blind spot.
 
 | Script | What it does |
 |---|---|
-| 💸 [`pumpfun/trade/pumpfun_buy_token_v2.py`](pumpfun/trade/pumpfun_buy_token_v2.py) | Buy a coin you name. `--dry-run` simulates instead of spending |
-| 💸 [`pumpfun/trade/pumpfun_buy_token_exact_quote_v2.py`](pumpfun/trade/pumpfun_buy_token_exact_quote_v2.py) | Spend an exact amount of the quote asset. `--dry-run` simulates |
+| 💸 [`pumpfun/trade/pumpfun_buy_token.py`](pumpfun/trade/pumpfun_buy_token.py) | Buy a coin you name. `--dry-run` simulates instead of spending |
+| 💸 [`pumpfun/trade/pumpfun_buy_token_exact_quote.py`](pumpfun/trade/pumpfun_buy_token_exact_quote.py) | Spend an exact amount of the quote asset. `--dry-run` simulates |
 | 💸 [`pumpfun/trade/pumpfun_buy_token_exact_sol_in.py`](pumpfun/trade/pumpfun_buy_token_exact_sol_in.py) | Spend an exact amount of SOL. SOL-paired coins only |
-| 💸 [`pumpfun/trade/pumpfun_sell_token_v2.py`](pumpfun/trade/pumpfun_sell_token_v2.py) | Sell your whole position in a coin you name |
-| 💸 [`pumpfun/trade/pumpfun_create_token_v2.py`](pumpfun/trade/pumpfun_create_token_v2.py) | Create a coin with `create_v2`, buying none of it |
-| 💸 [`pumpfun/trade/pumpfun_create_and_buy_token_v2_txv1.py`](pumpfun/trade/pumpfun_create_and_buy_token_v2_txv1.py) | Create a coin and buy it, in one transaction |
-| 💸 [`pumpfun/trade/pumpfun_create_and_buy_token_v2_txv0.py`](pumpfun/trade/pumpfun_create_and_buy_token_v2_txv0.py) | The same, as two transactions, for a v0-only endpoint |
+| 💸 [`pumpfun/trade/pumpfun_sell_token.py`](pumpfun/trade/pumpfun_sell_token.py) | Sell your whole position in a coin you name |
+| 💸 [`pumpfun/trade/pumpfun_create_token.py`](pumpfun/trade/pumpfun_create_token.py) | Create a coin with `create_v2`, buying none of it |
+| 💸 [`pumpfun/trade/pumpfun_create_and_buy_token_txv1.py`](pumpfun/trade/pumpfun_create_and_buy_token_txv1.py) | Create a coin and buy it, in one transaction |
+| 💸 [`pumpfun/trade/pumpfun_create_and_buy_token_txv0.py`](pumpfun/trade/pumpfun_create_and_buy_token_txv0.py) | The same, as two transactions, for a v0-only endpoint |
 | 💸 [`pumpfun/trade/pumpfun_snipe_token_blocksubscribe.py`](pumpfun/trade/pumpfun_snipe_token_blocksubscribe.py) | Wait for the next coin created anywhere, then buy it |
 | 💸 [`pumpfun/trade/pumpfun_snipe_token_geyser.py`](pumpfun/trade/pumpfun_snipe_token_geyser.py) | The same snipe, detected over Geyser gRPC |
-| 💸 [`pumpfun/trade/pumpfun_collect_creator_fee_v2.py`](pumpfun/trade/pumpfun_collect_creator_fee_v2.py) | Sweep the creator fees your coins have accrued |
-| 💸 [`pumpfun/trade/pumpfun_claim_cashback_v2.py`](pumpfun/trade/pumpfun_claim_cashback_v2.py) | Pay out cashback accrued on an existing cashback coin |
+| 💸 [`pumpfun/trade/pumpfun_collect_creator_fee.py`](pumpfun/trade/pumpfun_collect_creator_fee.py) | Sweep the creator fees your coins have accrued |
+| 💸 [`pumpfun/trade/pumpfun_claim_cashback.py`](pumpfun/trade/pumpfun_claim_cashback.py) | Pay out cashback accrued on an existing cashback coin |
 
-Start at `pumpfun_buy_token_v2.py`; the two snipers are that same trade behind a
+Start at `pumpfun_buy_token.py`; the two snipers are that same trade behind a
 listener.
 
 The buys differ in which side you pin down: `buy_v2` fixes the tokens you receive
@@ -156,7 +156,7 @@ were made with them, but don't copy these for new work.
 
 | Script | What it does |
 |---|---|
-| 💸 [`legacy/pumpfun_create_and_buy_token_v1.py`](legacy/pumpfun_create_and_buy_token_v1.py) | Create a coin with the pre-Token-2022 `create` instruction |
+| 💸 [`legacy/pumpfun_create_and_buy_token_legacy.py`](legacy/pumpfun_create_and_buy_token_legacy.py) | Create a coin with the pre-Token-2022 `create` instruction |
 
 ## Not in here
 

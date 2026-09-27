@@ -3,9 +3,9 @@
 WARNING: this submits a real transaction and spends real funds.
 
 Usage:
-    uv run cookbook/pumpfun/trade/pumpfun_sell_token_v2.py <MINT>
+    uv run cookbook/pumpfun/trade/pumpfun_sell_token.py <MINT>
 
-The mirror of `pumpfun_buy_token_v2.py`. It reads how many tokens you hold, reads the curve
+The mirror of `pumpfun_buy_token.py`. It reads how many tokens you hold, reads the curve
 for a price, and sells the lot with a slippage floor underneath.
 
 One thing to know before you run it:
@@ -21,11 +21,11 @@ import os
 import sys
 from pathlib import Path
 
-# solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions_v2.py sits beside this file.
+# solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions.py sits beside this file.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "solana"))
 
 import base58
-import pumpfun_instructions_v2 as pump_v2
+import pumpfun_instructions as pump
 import solana_transaction_status as tx_status
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
@@ -43,7 +43,7 @@ from spl.token.instructions import (
 )
 
 # Here and later all the discriminators are precalculated. See cookbook/solana/anchor_calculate_discriminator.py
-EXPECTED_DISCRIMINATOR = pump_v2.BONDING_CURVE_DISCRIMINATOR
+EXPECTED_DISCRIMINATOR = pump.BONDING_CURVE_DISCRIMINATOR
 TOKEN_DECIMALS = 6
 # Default for the command line below, not a fixed setting.
 DEFAULT_SLIPPAGE = 0.25
@@ -73,7 +73,7 @@ load_dotenv()
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 
 
-BondingCurveState = pump_v2.BondingCurveState
+BondingCurveState = pump.BondingCurveState
 
 
 async def get_pump_curve_state(
@@ -87,7 +87,7 @@ async def get_pump_curve_state(
     if data[:8] != EXPECTED_DISCRIMINATOR:
         raise ValueError("Invalid curve state discriminator")
 
-    return pump_v2.BondingCurveState(data)
+    return pump.BondingCurveState(data)
 
 
 def get_bonding_curve_address(mint: Pubkey) -> tuple[Pubkey, int]:
@@ -116,7 +116,7 @@ def find_creator_vault(creator: Pubkey) -> Pubkey:
     return derived_address
 
 
-def calculate_pump_curve_price(curve_state: pump_v2.BondingCurveState) -> float:
+def calculate_pump_curve_price(curve_state: pump.BondingCurveState) -> float:
     """Price of one whole token in whole units of the curve's quote asset.
 
     Args:
@@ -144,7 +144,7 @@ async def get_token_balance(conn: AsyncClient, associated_token_account: Pubkey)
 async def _get_mint_account_info(client: AsyncClient, address: Pubkey) -> Account:
     """Fetch an account, unwrapping AsyncClient's `.value` envelope.
 
-    Adapter for `pump_v2.resolve_quote_token_program`, which expects a
+    Adapter for `pump.resolve_quote_token_program`, which expects a
     getter returning the account object (with an `.owner` attribute)
     directly rather than solana-py's RPC response wrapper.
 
@@ -206,7 +206,7 @@ async def sell_token(
 
         # Fetch bonding curve state to calculate price and determine fee recipient
         curve_state = await get_pump_curve_state(client, bonding_curve)
-        quote_mint = pump_v2.normalize_quote_mint(
+        quote_mint = pump.normalize_quote_mint(
             getattr(curve_state, "quote_mint", None)
         )
 
@@ -214,10 +214,10 @@ async def sell_token(
         # program -- Token-2022 for every tokenized equity pump.fun admits -- and
         # the decimals the price and slippage floor are in. Pricing first floors
         # the sell against a number off by a power of ten.
-        quote_token_program_id = await pump_v2.resolve_quote_token_program(
+        quote_token_program_id = await pump.resolve_quote_token_program(
             quote_mint, lambda pk: _get_mint_account_info(client, pk)
         )
-        quote_unit = pump_v2.quote_units(quote_mint)
+        quote_unit = pump.quote_units(quote_mint)
 
         token_price_sol = calculate_pump_curve_price(curve_state)
         print(f"Price per Token: {token_price_sol:.20f} SOL")
@@ -235,7 +235,7 @@ async def sell_token(
 
         # sell_v2 takes the same 26 mandatory accounts for every coin — no
         # cashback/mayhem branching on the account list any more.
-        sell_ix = pump_v2.build_sell_v2_instruction(
+        sell_ix = pump.build_sell_v2_instruction(
             base_mint=mint,
             creator=curve_state.creator,
             user=payer.pubkey(),
@@ -249,7 +249,7 @@ async def sell_token(
 
         instructions = [set_compute_unit_price(1_000)]
         # Non-SOL proceeds land in the seller's quote ATA, which must exist.
-        if not pump_v2.is_sol_paired(quote_mint):
+        if not pump.is_sol_paired(quote_mint):
             instructions.append(
                 create_idempotent_associated_token_account(
                     payer.pubkey(),

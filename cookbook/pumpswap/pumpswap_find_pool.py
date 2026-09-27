@@ -186,7 +186,7 @@ async def show_pool(token_mint: Pubkey) -> None:
         print(
             f"No PumpSwap pool for {token_mint}.\n"
             "It has not graduated off its bonding curve yet — trade it with\n"
-            "cookbook/pumpfun/trade/pumpfun_buy_token_v2.py instead."
+            "cookbook/pumpfun/trade/pumpfun_buy_token.py instead."
         )
         return
     if not canonical:

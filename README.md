@@ -156,7 +156,7 @@ The quickest way in:
 ```bash
 uv run cookbook/solana/solana_read_balances.py               # what you hold
 uv run cookbook/pumpfun/read/pumpfun_read_price.py <CURVE>   # what it costs
-uv run cookbook/pumpfun/trade/pumpfun_buy_token_v2.py <MINT> --dry-run
+uv run cookbook/pumpfun/trade/pumpfun_buy_token.py <MINT> --dry-run
 ```
 
 A filename tells you the chain, the action and the instruction version before you

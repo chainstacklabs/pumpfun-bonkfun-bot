@@ -4,12 +4,12 @@ WARNING: this submits a real transaction and spends real funds (transaction fees
 and account rent — no coins are bought).
 
 Usage:
-    uv run cookbook/pumpfun/trade/pumpfun_create_token_v2.py
-    uv run cookbook/pumpfun/trade/pumpfun_create_token_v2.py --name "My Coin" --symbol MINE
-    uv run cookbook/pumpfun/trade/pumpfun_create_token_v2.py --mayhem --holder-reward
-    uv run cookbook/pumpfun/trade/pumpfun_create_token_v2.py --creator-fee-bps 300
+    uv run cookbook/pumpfun/trade/pumpfun_create_token.py
+    uv run cookbook/pumpfun/trade/pumpfun_create_token.py --name "My Coin" --symbol MINE
+    uv run cookbook/pumpfun/trade/pumpfun_create_token.py --mayhem --holder-reward
+    uv run cookbook/pumpfun/trade/pumpfun_create_token.py --creator-fee-bps 300
 
-`pumpfun_create_and_buy_token_v2_txv1.py` does this and then buys the coin in the same transaction; the `_txv0` variant does it in two. This is the
+`pumpfun_create_and_buy_token_txv1.py` does this and then buys the coin in the same transaction; the `_txv0` variant does it in two. This is the
 create half on its own: everything about a coin — Token-2022, mayhem mode, the
 creator fee, holder rewards, the quote asset — is fixed here and cannot be
 changed afterwards.
@@ -41,11 +41,11 @@ import sys
 from pathlib import Path
 from typing import Any, Final
 
-# solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions_v2.py sits beside this file.
+# solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions.py sits beside this file.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "solana"))
 
 import base58
-import pumpfun_instructions_v2 as pump_v2
+import pumpfun_instructions as pump
 import solana_transaction_status as tx_status
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
@@ -163,24 +163,24 @@ async def create(  # noqa: PLR0913
     mint_keypair = Keypair()
     mint = mint_keypair.pubkey()
     creator = creator or payer.pubkey()
-    bonding_curve = pump_v2.find_bonding_curve(mint)
+    bonding_curve = pump.find_bonding_curve(mint)
 
     async with AsyncClient(RPC_ENDPOINT) as client:
-        global_state = await pump_v2.fetch_global(lambda pk: get_account(client, pk))
+        global_state = await pump.fetch_global(lambda pk: get_account(client, pk))
         check_creator_fee(global_state, creator_fee_bps)
         # The token program is a property of the chosen mint, so it is read, not
         # assumed: create_v2 takes an SPL Token or a Token-2022 quote mint and
         # the associated_quote_bonding_curve ATA derives under whichever it is.
-        quote_program = await pump_v2.resolve_quote_token_program(
+        quote_program = await pump.resolve_quote_token_program(
             quote_mint, lambda pk: get_account(client, pk)
         )
-        if quote_mint != pump_v2.WSOL_MINT:
-            registry = await pump_v2.fetch_quote_control(
+        if quote_mint != pump.WSOL_MINT:
+            registry = await pump.fetch_quote_control(
                 lambda pk: get_account(client, pk)
             )
             # Raises for a mint QuoteControl does not admit.
-            opening = pump_v2.opening_quote_reserves(registry, quote_mint, global_state)
-            multiplier = pump_v2.check_quote_mint_tradable(
+            opening = pump.opening_quote_reserves(registry, quote_mint, global_state)
+            multiplier = pump.check_quote_mint_tradable(
                 quote_mint, await get_parsed_mint(client, quote_mint)
             )
             print(f"Quote:   {quote_mint}")
@@ -190,7 +190,7 @@ async def create(  # noqa: PLR0913
                     f"  note: scaled-UI mint, multiplier {multiplier}. Trade "
                     f"amounts here are raw units, not displayed units."
                 )
-        if creator_fee_bps and pump_v2.is_sol_paired(quote_mint):
+        if creator_fee_bps and pump.is_sol_paired(quote_mint):
             print(
                 "  warning: a creator fee has no effect on a SOL-paired coin; "
                 "pump.fun will store 0. Pass --quote-mint to set one."
@@ -199,7 +199,7 @@ async def create(  # noqa: PLR0913
         # What the curve will actually carry, which is not `creator` on a
         # holder-reward coin. Printed because it is what a buy must derive
         # creator_vault from.
-        on_curve = pump_v2.curve_creator(
+        on_curve = pump.curve_creator(
             mint, creator, is_holder_reward=bool(holder_reward)
         )
 
@@ -219,7 +219,7 @@ async def create(  # noqa: PLR0913
         instructions = [
             set_compute_unit_limit(COMPUTE_UNIT_LIMIT),
             set_compute_unit_price(PRIORITY_FEE_MICROLAMPORTS),
-            pump_v2.build_create_v2_instruction(
+            pump.build_create_v2_instruction(
                 mint=mint,
                 user=payer.pubkey(),
                 creator=creator,
@@ -232,7 +232,7 @@ async def create(  # noqa: PLR0913
                 quote_mint=quote_mint,
                 quote_token_program=quote_program,
             ),
-            pump_v2.build_extend_account_instruction(bonding_curve, payer.pubkey()),
+            pump.build_extend_account_instruction(bonding_curve, payer.pubkey()),
         ]
 
         blockhash = (await client.get_latest_blockhash()).value.blockhash
@@ -252,7 +252,7 @@ async def create(  # noqa: PLR0913
         await tx_status.confirm_and_assert(client, signature)
         print("Confirmed")
         print(
-            f"\nBuy it with:  uv run cookbook/pumpfun/trade/pumpfun_buy_token_v2.py {mint}"
+            f"\nBuy it with:  uv run cookbook/pumpfun/trade/pumpfun_buy_token.py {mint}"
         )
 
 
@@ -273,7 +273,7 @@ def main() -> None:
     parser.add_argument(
         "--quote-mint",
         type=Pubkey.from_string,
-        default=pump_v2.WSOL_MINT,
+        default=pump.WSOL_MINT,
         help=(
             "Asset the coin is priced in (default wrapped SOL). Must be a mint "
             "QuoteControl admits; required for --creator-fee-bps to take effect"

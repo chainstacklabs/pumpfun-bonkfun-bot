@@ -28,11 +28,11 @@ import struct
 import sys
 from pathlib import Path
 
-# solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions_v2.py sits beside this file.
+# solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions.py sits beside this file.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "solana"))
 
 import base58
-import pumpfun_instructions_v2 as pump_v2
+import pumpfun_instructions as pump
 import solana_transaction_status as tx_status
 import websockets
 from dotenv import load_dotenv
@@ -51,7 +51,7 @@ from spl.token.instructions import (
 )
 
 # Here and later all the discriminators are precalculated. See cookbook/solana/anchor_calculate_discriminator.py
-EXPECTED_DISCRIMINATOR = pump_v2.BONDING_CURVE_DISCRIMINATOR
+EXPECTED_DISCRIMINATOR = pump.BONDING_CURVE_DISCRIMINATOR
 TOKEN_DECIMALS = 6
 
 COMPUTE_BUDGET_PROGRAM = Pubkey.from_string(
@@ -94,14 +94,14 @@ RPC_WEBSOCKET = os.environ.get("SOLANA_NODE_WSS_ENDPOINT")
 WEBSOCKET_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
 
 
-# The bonding curve account and the v2 instruction layout live in pump_v2 so
-# every example shares one copy. See cookbook/pumpfun/trade/pumpfun_instructions_v2.py.
-BondingCurveState = pump_v2.BondingCurveState
+# The bonding curve account and the v2 instruction layout live in pump so
+# every example shares one copy. See cookbook/pumpfun/trade/pumpfun_instructions.py.
+BondingCurveState = pump.BondingCurveState
 
 
 async def get_pump_curve_state(
     conn: AsyncClient, curve_address: Pubkey
-) -> pump_v2.BondingCurveState:
+) -> pump.BondingCurveState:
     """Fetch and parse a bonding curve account.
 
     Args:
@@ -118,13 +118,13 @@ async def get_pump_curve_state(
     if not response.value or not response.value.data:
         raise ValueError("Invalid curve state: No data")
 
-    return pump_v2.BondingCurveState(response.value.data)
+    return pump.BondingCurveState(response.value.data)
 
 
 async def _get_account_info(conn: AsyncClient, address: Pubkey) -> Account:
     """Fetch an account, unwrapping AsyncClient's `.value` envelope.
 
-    Adapter for `pump_v2.resolve_quote_token_program`, which expects a
+    Adapter for `pump.resolve_quote_token_program`, which expects a
     getter returning the account object (with an `.owner` attribute)
     directly rather than solana-py's RPC response wrapper.
 
@@ -141,7 +141,7 @@ async def _get_account_info(conn: AsyncClient, address: Pubkey) -> Account:
     return response.value
 
 
-def calculate_pump_curve_price(curve_state: pump_v2.BondingCurveState) -> float:
+def calculate_pump_curve_price(curve_state: pump.BondingCurveState) -> float:
     """Price of one whole token in whole quote units.
 
     Args:
@@ -196,7 +196,7 @@ async def buy_token(
 
         # Amounts are denominated in the curve's quote asset, which is not
         # necessarily SOL any more.
-        quote_mint = pump_v2.normalize_quote_mint(
+        quote_mint = pump.normalize_quote_mint(
             getattr(curve_state, "quote_mint", None)
         )
 
@@ -204,10 +204,10 @@ async def buy_token(
         # program -- Token-2022 for every tokenized equity pump.fun admits -- and
         # the decimals the price and cap are in. Price first and both numbers are
         # off by a power of ten in the same direction, so they compound.
-        quote_token_program_id = await pump_v2.resolve_quote_token_program(
+        quote_token_program_id = await pump.resolve_quote_token_program(
             quote_mint, lambda pk: _get_account_info(client, pk)
         )
-        quote_unit = pump_v2.quote_units(quote_mint)
+        quote_unit = pump.quote_units(quote_mint)
 
         token_price_sol = calculate_pump_curve_price(curve_state)
         token_amount = amount / token_price_sol
@@ -217,7 +217,7 @@ async def buy_token(
         print(f"Buying {token_amount:.6f} tokens, max cost {max_quote_cost} raw units")
 
         # buy_v2 takes 27 mandatory accounts in a fixed order for every coin.
-        buy_ix = pump_v2.build_buy_v2_instruction(
+        buy_ix = pump.build_buy_v2_instruction(
             base_mint=mint,
             creator=curve_state.creator,
             user=payer.pubkey(),
@@ -243,7 +243,7 @@ async def buy_token(
         ]
         # SOL-paired coins settle in native SOL and only seed-check the quote
         # ATA, so creating it would waste rent. Other quotes need a real account.
-        if not pump_v2.is_sol_paired(quote_mint):
+        if not pump.is_sol_paired(quote_mint):
             instructions.append(
                 create_idempotent_associated_token_account(
                     payer.pubkey(),
@@ -388,7 +388,7 @@ def token_info_from_logs(logs):
         mint = Pubkey.from_string(event["mint"])
         curve = Pubkey.from_string(event["bondingCurve"])
         event["associatedBondingCurve"] = str(
-            pump_v2.find_associated_token_account(curve, mint, token_program)
+            pump.find_associated_token_account(curve, mint, token_program)
         )
         event["token_program"] = str(token_program)
         event["is_token_2022"] = token_program == TOKEN_2022_PROGRAM
@@ -467,7 +467,7 @@ async def snipe(amount: float, slippage: float, *, cu_optimized: bool = False):
     mint = Pubkey.from_string(token_data["mint"])
     bonding_curve = Pubkey.from_string(token_data["bondingCurve"])
     associated_bonding_curve = Pubkey.from_string(token_data["associatedBondingCurve"])
-    creator_vault = pump_v2.find_creator_vault(
+    creator_vault = pump.find_creator_vault(
         Pubkey.from_string(token_data["creator"])
     )
     token_program = Pubkey.from_string(token_data["token_program"])

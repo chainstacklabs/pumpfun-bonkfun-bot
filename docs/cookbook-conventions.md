@@ -6,7 +6,7 @@ Rules for adding or changing a script under `cookbook/`.
 ## What belongs here
 
 - **One script, one action.** Duplication across scripts is the accepted cost —
-  don't factor shared helpers out of them. `pumpfun_instructions_v2.py` and
+  don't factor shared helpers out of them. `pumpfun_instructions.py` and
   `solana_transaction_status.py` are the two exceptions and the list is closed.
   Buy and sell never share a file. The create-and-buy scripts are the only
   two-action ones, and they come in a `_txv0` and a `_txv1` form: the Solana
@@ -24,7 +24,12 @@ Rules for adding or changing a script under `cookbook/`.
   - verb: `buy`, `sell`, `create`, `snipe`, `listen`, `watch`, `read`, `derive`,
     `decode`, `check`, `capture`, `find`
   - noun: `token`, `price`, `curve`, `pool`, `balances`, `transaction`, `migrations`
-  - variant: instruction version (`v1`, `v2`, `exact_in`, `exact_out`) or transport
+  - variant: what the reader is choosing between — `exact_in`/`exact_out`, a
+    transport, or `txv0`/`txv1` for the Solana transaction version
+  - **Don't put the pump instruction version in a basename.** The cookbook ships
+    one form of each action, so `_v2` tells the reader nothing and reads as a
+    Solana transaction version, which is a different thing entirely. Name the
+    instruction in the docstring instead. The retired path is `legacy/`.
   - the two non-runnable helpers take no verb, because they do nothing
 - **RPC and service names lowercase into one token**, never camelCase:
   `blocksubscribe`, `logsubscribe`, `programsubscribe`, `getaccountinfo`,

@@ -60,13 +60,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "cookbook" / "pumpfun" / "trade"))
 sys.path.insert(0, str(PROJECT_ROOT / "cookbook" / "solana"))
 
-import pumpfun_instructions_v2 as pump_v2  # noqa: E402
+import pumpfun_instructions as pump  # noqa: E402
 from solders.keypair import Keypair  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 from solders.transaction import VersionedTransaction  # noqa: E402
 
 sys.path.insert(0, str(PROJECT_ROOT / "cookbook" / "pumpfun" / "trade"))
-import pumpfun_create_and_buy_token_v2_txv1 as launch  # noqa: E402
+import pumpfun_create_and_buy_token_txv1 as launch  # noqa: E402
 
 DECODE_DIR = PROJECT_ROOT / "cookbook" / "pumpfun" / "decode"
 
@@ -103,7 +103,7 @@ def _from_envelope(value: object) -> list[bytes]:
     return [
         bytes(ix.data)
         for ix in tx.message.instructions
-        if bytes(ix.data)[:8] == pump_v2.CREATE_V2_DISCRIMINATOR
+        if bytes(ix.data)[:8] == pump.CREATE_V2_DISCRIMINATOR
     ]
 
 
@@ -118,7 +118,7 @@ def _walk(node: object, found: list[bytes]) -> None:
     for key, value in node.items():
         if key == "data" and isinstance(value, str):
             raw = _decode_any(value)
-            if raw and raw[:8] == pump_v2.CREATE_V2_DISCRIMINATOR:
+            if raw and raw[:8] == pump.CREATE_V2_DISCRIMINATOR:
                 found.append(raw)
         elif key == "transaction":
             found.extend(_from_envelope(value))
@@ -160,9 +160,9 @@ def check_holder_reward_creator_is_substituted() -> bool:
     mint = Keypair().pubkey()
     payer = Keypair().pubkey()
     argument = Keypair().pubkey()
-    on_curve = pump_v2.curve_creator(mint, argument, is_holder_reward=True)
+    on_curve = pump.curve_creator(mint, argument, is_holder_reward=True)
     expected = Pubkey.find_program_address(
-        [b"holder-rewards", bytes(mint)], pump_v2.PUMP_PROGRAM
+        [b"holder-rewards", bytes(mint)], pump.PUMP_PROGRAM
     )[0]
     if on_curve != expected:
         print(f"  expected holder-rewards PDA {expected}, got {on_curve}")
@@ -171,7 +171,7 @@ def check_holder_reward_creator_is_substituted() -> bool:
         print("  substituted creator collided with the wallet or the argument")
         return False
     # The vault the buy derives must follow the curve, not the signer.
-    if pump_v2.find_creator_vault(on_curve) == pump_v2.find_creator_vault(argument):
+    if pump.find_creator_vault(on_curve) == pump.find_creator_vault(argument):
         print("  creator_vault did not move with the substituted creator")
         return False
     return True
@@ -180,7 +180,7 @@ def check_holder_reward_creator_is_substituted() -> bool:
 def check_plain_coin_keeps_its_creator() -> bool:
     mint = Keypair().pubkey()
     argument = Keypair().pubkey()
-    return pump_v2.curve_creator(mint, argument, is_holder_reward=False) == argument
+    return pump.curve_creator(mint, argument, is_holder_reward=False) == argument
 
 
 def check_fixtures_round_trip() -> bool:
@@ -191,7 +191,7 @@ def check_fixtures_round_trip() -> bool:
     ok = True
     for data in datas:
         _, trailing = split_after_mayhem(data)
-        rebuilt = pump_v2.encode_create_v2_trailing_args(**read_trailing(trailing))
+        rebuilt = pump.encode_create_v2_trailing_args(**read_trailing(trailing))
         if rebuilt != trailing:
             print(f"  {len(trailing)}-byte form: {trailing.hex()} -> {rebuilt.hex()}")
             ok = False
@@ -201,7 +201,7 @@ def check_fixtures_round_trip() -> bool:
 
 
 def check_all_four_wire_forms_reachable() -> bool:
-    encode = pump_v2.encode_create_v2_trailing_args
+    encode = pump.encode_create_v2_trailing_args
     cases = {
         0: encode(),
         1: encode(is_cashback_enabled=False),
@@ -226,7 +226,7 @@ def check_creator_argument_reaches_the_wire() -> bool:
     mint = Keypair().pubkey()
     payer = Keypair().pubkey()
     creator = Keypair().pubkey()
-    ix = pump_v2.build_create_v2_instruction(
+    ix = pump.build_create_v2_instruction(
         mint=mint,
         user=payer,
         creator=creator,
@@ -293,7 +293,7 @@ def check_quote_accounts_are_present() -> bool:
     mint = Keypair().pubkey()
     payer = Keypair().pubkey()
     quote = Pubkey.from_string("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
-    ix = pump_v2.build_create_v2_instruction(
+    ix = pump.build_create_v2_instruction(
         mint=mint,
         user=payer,
         creator=payer,
@@ -301,26 +301,26 @@ def check_quote_accounts_are_present() -> bool:
         symbol="s",
         uri="u",
         quote_mint=quote,
-        quote_token_program=pump_v2.TOKEN_PROGRAM,
+        quote_token_program=pump.TOKEN_PROGRAM,
     )
     expected_accounts = 20
     if len(ix.accounts) != expected_accounts:
         print(f"  expected {expected_accounts} accounts, got {len(ix.accounts)}")
         return False
     tail = [meta.pubkey for meta in ix.accounts[-4:]]
-    curve = pump_v2.find_bonding_curve(mint)
+    curve = pump.find_bonding_curve(mint)
     want = [
         quote,
-        pump_v2.find_associated_token_account(curve, quote, pump_v2.TOKEN_PROGRAM),
-        pump_v2.TOKEN_PROGRAM,
-        pump_v2.find_quote_control(),
+        pump.find_associated_token_account(curve, quote, pump.TOKEN_PROGRAM),
+        pump.TOKEN_PROGRAM,
+        pump.find_quote_control(),
     ]
     if tail != want:
         print(f"  trailing accounts are {tail}, expected {want}")
         return False
     # The quote ATA follows the quote mint's program, not the base mint's.
-    if tail[1] == pump_v2.find_associated_token_account(
-        curve, quote, pump_v2.TOKEN_2022_PROGRAM
+    if tail[1] == pump.find_associated_token_account(
+        curve, quote, pump.TOKEN_2022_PROGRAM
     ):
         print("  quote ATA derived under the base token program")
         return False
@@ -329,13 +329,13 @@ def check_quote_accounts_are_present() -> bool:
 
 def check_global_decoder_tolerates_a_short_buffer() -> bool:
     full = bytes(8) + bytes(2000)
-    decoded = pump_v2.decode_global(full)
+    decoded = pump.decode_global(full)
     if "is_holder_reward_enabled" not in decoded:
         print("  a long buffer did not decode the whole layout")
         return False
     # 200 bytes reaches creator_fee_basis_points (ends at 162) but stops well
     # short of creator_fee_configurable (1046).
-    truncated = pump_v2.decode_global(bytes(200))
+    truncated = pump.decode_global(bytes(200))
     if "fee_basis_points" not in truncated:
         print("  a short buffer dropped a field it does hold")
         return False

@@ -8,7 +8,7 @@ Usage:
 
 SOL only. This instruction pre-dates non-SOL quote assets and has no quote
 accounts at all, so it cannot trade a coin priced in USDC, in another coin, or in
-a tokenized equity — `pumpfun_buy_token_exact_quote_v2.py` is the one that can.
+a tokenized equity — `pumpfun_buy_token_exact_quote.py` is the one that can.
 
 **The IDL lists 16 accounts and the program requires 18.** The missing two are
 the `bonding-curve-v2` PDA and a buyback fee recipient; sending the IDL's list
@@ -36,12 +36,12 @@ import os
 import sys
 from pathlib import Path
 
-# solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions_v2.py
+# solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions.py
 # sits beside this file.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "solana"))
 
 import base58
-import pumpfun_instructions_v2 as pump_v2
+import pumpfun_instructions as pump
 import solana_transaction_status as tx_status
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
@@ -95,19 +95,19 @@ async def buy_exact_sol(
     payer = Keypair.from_bytes(base58.b58decode(PRIVATE_KEY))
 
     async with AsyncClient(RPC_ENDPOINT) as client:
-        bonding_curve = pump_v2.find_bonding_curve(mint)
-        curve = pump_v2.BondingCurveState(
+        bonding_curve = pump.find_bonding_curve(mint)
+        curve = pump.BondingCurveState(
             (await get_account(client, bonding_curve)).data
         )
 
         if curve.complete:
             print(f"{mint} has graduated to PumpSwap — see pumpswap/ instead.")
             return
-        if not pump_v2.is_sol_paired(curve.quote_mint):
+        if not pump.is_sol_paired(curve.quote_mint):
             print(
                 f"{mint} is priced in {curve.quote_mint}, not SOL.\n"
                 f"buy_exact_sol_in has no quote accounts and cannot trade it — use\n"
-                f"pumpfun_buy_token_exact_quote_v2.py instead."
+                f"pumpfun_buy_token_exact_quote.py instead."
             )
             return
 
@@ -121,7 +121,7 @@ async def buy_exact_sol(
         # prices anything. The floor below is what the program enforces.
         estimated_tokens = sol / price
         min_tokens_raw = int(
-            estimated_tokens * (1 - slippage) * 10**pump_v2.TOKEN_DECIMALS
+            estimated_tokens * (1 - slippage) * 10**pump.TOKEN_DECIMALS
         )
 
         print(f"Mint:       {mint}")
@@ -129,7 +129,7 @@ async def buy_exact_sol(
         print(f"Spending:   {sol} SOL ({lamports} lamports, fees included)")
         print(f"Estimate:   ~{estimated_tokens:.6f} tokens, before fees")
         print(
-            f"Accepting:  >= {min_tokens_raw / 10**pump_v2.TOKEN_DECIMALS:.6f} tokens"
+            f"Accepting:  >= {min_tokens_raw / 10**pump.TOKEN_DECIMALS:.6f} tokens"
         )
 
         instructions = [
@@ -140,7 +140,7 @@ async def buy_exact_sol(
                 mint,
                 token_program_id=base_token_program,
             ),
-            pump_v2.build_buy_exact_sol_in_instruction(
+            pump.build_buy_exact_sol_in_instruction(
                 mint=mint,
                 creator=curve.creator,
                 user=payer.pubkey(),

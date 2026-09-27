@@ -3,11 +3,11 @@
 WARNING: this submits real transactions and spends real funds.
 
 Usage:
-    uv run cookbook/legacy/pumpfun_create_and_buy_token_v1.py
+    uv run cookbook/legacy/pumpfun_create_and_buy_token_legacy.py
 
 Kept for reference only. pump.fun creates coins with `create_v2` now, which mints
 under Token-2022 and takes the mayhem, cashback, creator-fee and holder-reward
-arguments this instruction has no room for — see `pumpfun_create_and_buy_token_v2_txv1.py` for the
+arguments this instruction has no room for — see `pumpfun_create_and_buy_token_txv1.py` for the
 current path. Legacy `create` still lands on chain, but a coin made this way is
 not the kind of coin the rest of these examples decode.
 
@@ -23,13 +23,13 @@ import sys
 from pathlib import Path
 from typing import Final
 
-# solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions_v2.py lives with the
+# solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions.py lives with the
 # current pump.fun trade examples.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "solana"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pumpfun" / "trade"))
 
 import base58
-import pumpfun_instructions_v2 as pump_v2
+import pumpfun_instructions as pump
 import solana_transaction_status as tx_status
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
@@ -237,12 +237,12 @@ def create_buy_instruction(
 
     Several parameters are accepted only for backwards compatibility and are
     derived or dropped internally: buy_v2 takes no track_volume argument, and
-    pump_v2 selects the fee recipient from the documented set. This script mints
+    pump selects the fee recipient from the documented set. This script mints
     the coin with `creator = payer`, so the buyer is also the creator.
 
     Args:
-        global_state: Unused; pump_v2 uses the canonical global PDA
-        fee_recipient: Unused; pump_v2 selects from the documented set
+        global_state: Unused; pump uses the canonical global PDA
+        fee_recipient: Unused; pump selects from the documented set
         mint: Base token mint just created
         bonding_curve: Unused; derived from the mint
         associated_bonding_curve: Unused; derived
@@ -258,13 +258,13 @@ def create_buy_instruction(
     Returns:
         The buy_v2 instruction
     """
-    return pump_v2.build_buy_v2_instruction(
+    return pump.build_buy_v2_instruction(
         base_mint=mint,
         creator=user,
         user=user,
         token_amount_raw=token_amount,
         max_quote_cost_raw=max_sol_cost,
-        quote_mint=pump_v2.WSOL_MINT,
+        quote_mint=pump.WSOL_MINT,
         is_mayhem_mode=is_mayhem_mode,
         base_token_program=SYSTEM_TOKEN_PROGRAM,
     )

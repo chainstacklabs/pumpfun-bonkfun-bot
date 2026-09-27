@@ -42,7 +42,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "cookbook" / "pumpfun" / "trade"))
 
-import pumpfun_instructions_v2 as pump_v2  # noqa: E402
+import pumpfun_instructions as pump  # noqa: E402
 from solders.keypair import Keypair  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
@@ -73,11 +73,11 @@ def build_quote_control(entries: list[tuple[Pubkey, int]], *, truncate: bool) ->
 
 def check_registry_decodes() -> bool:
     mints = [(Keypair().pubkey(), 1_000 * (i + 1)) for i in range(4)]
-    decoded = pump_v2.decode_quote_control(build_quote_control(mints, truncate=False))
+    decoded = pump.decode_quote_control(build_quote_control(mints, truncate=False))
     if decoded != dict(mints):
         print(f"  decoded {len(decoded)} entries, expected {len(mints)}")
         return False
-    clipped = pump_v2.decode_quote_control(build_quote_control(mints, truncate=True))
+    clipped = pump.decode_quote_control(build_quote_control(mints, truncate=True))
     if len(clipped) != len(mints) - 1:
         print(f"  a truncated tail gave {len(clipped)} entries, expected 3")
         return False
@@ -87,7 +87,7 @@ def check_registry_decodes() -> bool:
 def check_registry_mint_prices_from_its_entry() -> bool:
     mint = Keypair().pubkey()
     registry = {mint: REGISTRY_RESERVE}
-    got = pump_v2.opening_quote_reserves(registry, mint, GLOBAL)
+    got = pump.opening_quote_reserves(registry, mint, GLOBAL)
     if got != REGISTRY_RESERVE:
         print(f"  got {got}, expected the registry entry")
         return False
@@ -99,7 +99,7 @@ def check_registry_mint_prices_from_its_entry() -> bool:
 
 
 def check_global_whitelisted_mint_is_accepted() -> bool:
-    got = pump_v2.opening_quote_reserves({}, USDC, GLOBAL)
+    got = pump.opening_quote_reserves({}, USDC, GLOBAL)
     if got != GLOBAL["initial_virtual_quote_reserves"]:
         print(f"  got {got}, expected Global's initial_virtual_quote_reserves")
         return False
@@ -107,14 +107,14 @@ def check_global_whitelisted_mint_is_accepted() -> bool:
 
 
 def check_wrapped_sol_uses_the_sol_reserve() -> bool:
-    got = pump_v2.opening_quote_reserves({}, pump_v2.WSOL_MINT, GLOBAL)
+    got = pump.opening_quote_reserves({}, pump.WSOL_MINT, GLOBAL)
     return got == GLOBAL["initial_virtual_sol_reserves"]
 
 
 def check_unlisted_mint_raises() -> bool:
     stranger = Keypair().pubkey()
     try:
-        got = pump_v2.opening_quote_reserves({}, stranger, GLOBAL)
+        got = pump.opening_quote_reserves({}, stranger, GLOBAL)
     except ValueError:
         return True
     print(f"  returned {got} for a mint neither registry admits")
@@ -127,7 +127,7 @@ def check_paused_mint_is_refused() -> bool:
         "extensions": [{"extension": "pausableConfig", "state": {"paused": True}}]
     }
     try:
-        pump_v2.check_quote_mint_tradable(mint, paused)
+        pump.check_quote_mint_tradable(mint, paused)
     except ValueError:
         pass
     else:
@@ -135,7 +135,7 @@ def check_paused_mint_is_refused() -> bool:
         return False
     live = {"extensions": [{"extension": "pausableConfig", "state": {"paused": False}}]}
     try:
-        pump_v2.check_quote_mint_tradable(mint, live)
+        pump.check_quote_mint_tradable(mint, live)
     except ValueError:
         print("  an unpaused mint was refused")
         return False
@@ -152,11 +152,11 @@ def check_scaled_multiplier_is_reported() -> bool:
             }
         ]
     }
-    got = pump_v2.check_quote_mint_tradable(mint, scaled)
+    got = pump.check_quote_mint_tradable(mint, scaled)
     if got is None or abs(got - SCALED_MULTIPLIER) > FLOAT_TOLERANCE:
         print(f"  multiplier came back as {got}")
         return False
-    if pump_v2.check_quote_mint_tradable(mint, {"extensions": []}) is not None:
+    if pump.check_quote_mint_tradable(mint, {"extensions": []}) is not None:
         print("  an unscaled mint reported a multiplier")
         return False
     return True
