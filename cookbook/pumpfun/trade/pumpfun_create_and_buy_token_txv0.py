@@ -38,7 +38,7 @@ import asyncio
 import os
 import sys
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 # solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions.py sits beside this file.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "solana"))
@@ -77,6 +77,23 @@ DEFAULT_TOKEN_URI = "https://example.com/token-v2.json"
 DEFAULT_BUY_AMOUNT_SOL = 0.0001
 DEFAULT_SLIPPAGE = 0.3
 DEFAULT_MAYHEM = False
+
+
+async def get_parsed_mint(client: AsyncClient, address: Pubkey) -> dict[str, Any]:
+    """Fetch a mint decoded by the RPC, so its Token-2022 extensions are readable.
+
+    Raises:
+        ValueError: If the account does not exist or is not a parsed mint
+    """
+    response = await client.get_account_info_json_parsed(address)
+    if response.value is None:
+        msg = f"Quote mint not found: {address}"
+        raise ValueError(msg)
+    try:
+        return response.value.data.parsed["info"]
+    except (AttributeError, KeyError, TypeError) as error:
+        msg = f"{address} is not a token mint"
+        raise ValueError(msg) from error
 
 
 async def get_account(client: AsyncClient, address: Pubkey) -> Account:
@@ -158,6 +175,33 @@ def size_opening_buy(
     return reaching_curve * virtual_tokens // opening_quote_reserves
 
 
+async def check_quote_mint_usable(client: AsyncClient, quote_mint: Pubkey) -> None:
+    """Refuse a quote mint the buy could not settle in, before anything is sent.
+
+    A paused mint blocks every transfer of itself, so the buy cannot land.
+    Discovering that after the create has already gone out leaves a coin nobody
+    bought, and on the two-transaction path the create is a separate signature
+    that has already cost rent.
+
+    Args:
+        client: Solana RPC client
+        quote_mint: Asset the coin is priced in
+
+    Raises:
+        ValueError: If the mint is paused, missing, or not a mint at all
+    """
+    if quote_mint == pump.WSOL_MINT:
+        return
+    multiplier = pump.check_quote_mint_tradable(
+        quote_mint, await get_parsed_mint(client, quote_mint)
+    )
+    if multiplier is not None and multiplier != 1.0:
+        print(
+            f"  note: scaled-UI quote mint, multiplier {multiplier}. "
+            f"--amount is in raw units, not displayed units."
+        )
+
+
 async def check_quote_balance(
     client: AsyncClient,
     user: Pubkey,
@@ -195,6 +239,44 @@ async def check_quote_balance(
             f"at {needed_raw}. Fund {ata} first."
         )
         raise ValueError(msg)
+
+
+def describe_launch(  # noqa: PLR0913
+    *,
+    mint: Pubkey,
+    bonding_curve: Pubkey,
+    payer: Pubkey,
+    creator: Pubkey,
+    on_curve_creator: Pubkey,
+    name: str,
+    symbol: str,
+    mayhem: bool,
+    creator_fee_bps: int | None,
+    holder_reward: bool | None,
+    quote_mint: Pubkey,
+    buy_amount: float,
+    amount_raw: int,
+    max_quote_cost: int,
+    expected_tokens: int,
+) -> None:
+    """Print what is about to be launched.
+
+    Kept out of `run` because it is a dozen statements of formatting that say
+    nothing about what the script does.
+    """
+    fee = "omitted" if creator_fee_bps is None else f"{creator_fee_bps} bps"
+    holder = "omitted" if holder_reward is None else holder_reward
+    print(f"Mint:     {mint}")
+    print(f"Curve:    {bonding_curve}")
+    print(f"Payer:    {payer}")
+    print(f"Creator:  {creator}")
+    if on_curve_creator != creator:
+        print(f"  -> curve will carry {on_curve_creator} (holder rewards PDA)")
+    print(f"Name:     {name} ({symbol})")
+    print(f"Mayhem:   {mayhem}   Creator fee: {fee}   Holder reward: {holder}")
+    print(f"Quote:    {quote_mint}")
+    print(f"Buying:   {buy_amount} (raw {amount_raw}), cap {max_quote_cost} raw units")
+    print(f"Expecting {expected_tokens / 10**pump.TOKEN_DECIMALS:,.6f} tokens")
 
 
 async def run(  # noqa: PLR0913
@@ -250,6 +332,8 @@ async def run(  # noqa: PLR0913
         opening = pump.opening_quote_reserves(registry, quote_mint, global_state)
         quote_unit = pump.quote_units(quote_mint)
 
+        await check_quote_mint_usable(client, quote_mint)
+
         # The creator the curve will carry, which on a holder-reward coin is a
         # PDA the program substitutes rather than anything the caller passed.
         # The buy derives creator_vault from this, so taking it from the flag
@@ -268,23 +352,23 @@ async def run(  # noqa: PLR0913
             client, payer.pubkey(), quote_mint, quote_program, max_quote_cost
         )
 
-        print(f"Mint:     {mint}")
-        print(f"Curve:    {bonding_curve}")
-        print(f"Payer:    {payer.pubkey()}")
-        print(f"Creator:  {creator}")
-        if on_curve_creator != creator:
-            print(f"  -> curve will carry {on_curve_creator} (holder rewards PDA)")
-        print(f"Name:     {name} ({symbol})")
-        print(
-            f"Mayhem:   {mayhem}   Creator fee: "
-            f"{'omitted' if creator_fee_bps is None else f'{creator_fee_bps} bps'}"
-            f"   Holder reward: {'omitted' if holder_reward is None else holder_reward}"
+        describe_launch(
+            mint=mint,
+            bonding_curve=bonding_curve,
+            payer=payer.pubkey(),
+            creator=creator,
+            on_curve_creator=on_curve_creator,
+            name=name,
+            symbol=symbol,
+            mayhem=mayhem,
+            creator_fee_bps=creator_fee_bps,
+            holder_reward=holder_reward,
+            quote_mint=quote_mint,
+            buy_amount=buy_amount,
+            amount_raw=amount_raw,
+            max_quote_cost=max_quote_cost,
+            expected_tokens=expected_tokens,
         )
-        print(f"Quote:    {quote_mint}")
-        print(
-            f"Buying:   {buy_amount} (raw {amount_raw}), cap {max_quote_cost} raw units"
-        )
-        print(f"Expecting {expected_tokens / 10**pump.TOKEN_DECIMALS:,.6f} tokens")
 
         create_instructions = [
             set_compute_unit_limit(COMPUTE_UNIT_LIMIT),

@@ -40,7 +40,7 @@ import asyncio
 import os
 import sys
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 # solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions.py sits beside this file.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "solana"))
@@ -86,6 +86,23 @@ DEFAULT_TOKEN_URI = "https://example.com/token-v2.json"
 DEFAULT_BUY_AMOUNT_SOL = 0.0001
 DEFAULT_SLIPPAGE = 0.3
 DEFAULT_MAYHEM = False
+
+
+async def get_parsed_mint(client: AsyncClient, address: Pubkey) -> dict[str, Any]:
+    """Fetch a mint decoded by the RPC, so its Token-2022 extensions are readable.
+
+    Raises:
+        ValueError: If the account does not exist or is not a parsed mint
+    """
+    response = await client.get_account_info_json_parsed(address)
+    if response.value is None:
+        msg = f"Quote mint not found: {address}"
+        raise ValueError(msg)
+    try:
+        return response.value.data.parsed["info"]
+    except (AttributeError, KeyError, TypeError) as error:
+        msg = f"{address} is not a token mint"
+        raise ValueError(msg) from error
 
 
 async def get_account(client: AsyncClient, address: Pubkey) -> Account:
@@ -167,6 +184,33 @@ def size_opening_buy(
     return reaching_curve * virtual_tokens // opening_quote_reserves
 
 
+async def check_quote_mint_usable(client: AsyncClient, quote_mint: Pubkey) -> None:
+    """Refuse a quote mint the buy could not settle in, before anything is sent.
+
+    A paused mint blocks every transfer of itself, so the buy cannot land.
+    Discovering that after the create has already gone out leaves a coin nobody
+    bought, and on the two-transaction path the create is a separate signature
+    that has already cost rent.
+
+    Args:
+        client: Solana RPC client
+        quote_mint: Asset the coin is priced in
+
+    Raises:
+        ValueError: If the mint is paused, missing, or not a mint at all
+    """
+    if quote_mint == pump.WSOL_MINT:
+        return
+    multiplier = pump.check_quote_mint_tradable(
+        quote_mint, await get_parsed_mint(client, quote_mint)
+    )
+    if multiplier is not None and multiplier != 1.0:
+        print(
+            f"  note: scaled-UI quote mint, multiplier {multiplier}. "
+            f"--amount is in raw units, not displayed units."
+        )
+
+
 async def check_quote_balance(
     client: AsyncClient,
     user: Pubkey,
@@ -219,14 +263,14 @@ async def run(  # noqa: PLR0913
     holder_reward: bool | None,
     quote_mint: Pubkey,
 ) -> None:
-    """Create a coin, then buy it in a second transaction.
+    """Create a coin and buy it, in the same v1 transaction.
 
     Args:
         name: Coin name
         symbol: Coin ticker
         uri: Metadata URI
         creator: Creator written into the curve; the payer if None
-        buy_amount: SOL to spend on the buy
+        buy_amount: Amount to spend on the buy, in whole quote units
         slippage: Fraction of headroom allowed above the quoted cost
         mayhem: Whether to opt into mayhem mode
         creator_fee_bps: Creator fee; None omits the argument
@@ -258,6 +302,8 @@ async def run(  # noqa: PLR0913
         pump.check_creator_fee_quote(registry, quote_mint, creator_fee_bps)
         opening = pump.opening_quote_reserves(registry, quote_mint, global_state)
         quote_unit = pump.quote_units(quote_mint)
+
+        await check_quote_mint_usable(client, quote_mint)
 
         # The creator the curve will carry, which on a holder-reward coin is a
         # PDA the program substitutes rather than anything the caller passed.
