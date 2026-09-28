@@ -9,7 +9,7 @@ github.com/pump-fun/pump-public-docs
 
 import secrets
 import struct
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from construct import Flag, Int64ul, Struct
@@ -51,7 +51,21 @@ BONDING_CURVE_DISCRIMINATOR = struct.pack("<Q", 6966180631402821399)
 
 _SHORT_CURVE_MSG = "Bonding curve data ends before {name} at byte {offset}"
 
+# create_v2 mints under this authority, and the five mayhem accounts below are
+# mandatory on every create_v2 whatever is_mayhem_mode says -- the IDL marks none
+# of them optional and omitting them fails with AnchorError 3005
+# (AccountNotEnoughKeys) on sol_vault. The argument, not the account list, is what
+# makes a coin a mayhem coin.
+PUMP_MINT_AUTHORITY = Pubkey.from_string("TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM")
+MAYHEM_PROGRAM = Pubkey.from_string("MAyhSmzXzV1pTf7LsNkrNwkWKTo4ougAJ1PPg47MD4e")
+MAYHEM_GLOBAL_PARAMS = Pubkey.from_string(
+    "13ec7XdrjF3h3YcqBTFDSReRcUFwbCnJaAQspM4j6DDJ"
+)
+MAYHEM_SOL_VAULT = Pubkey.from_string("BwWK17cbHxwWBKZkUYvzxLcNQ1YVyaFezduWbtm2de6s")
+
 # Instruction discriminators (first 8 bytes of sha256("global:<name>")).
+CREATE_V2_DISCRIMINATOR = bytes([214, 144, 76, 236, 95, 139, 49, 180])
+EXTEND_ACCOUNT_DISCRIMINATOR = bytes([234, 102, 194, 203, 150, 72, 62, 229])
 BUY_V2_DISCRIMINATOR = bytes([184, 23, 238, 97, 103, 197, 211, 61])
 SELL_V2_DISCRIMINATOR = bytes([93, 246, 130, 60, 231, 233, 64, 178])
 # buy_exact_quote_in_v2 takes the same 27 accounts as buy_v2, in the same
@@ -188,7 +202,7 @@ def quote_units(quote_mint: Pubkey) -> int:
     return 10**decimals
 
 
-def quote_token_program(quote_mint: Pubkey) -> Pubkey:
+def quote_token_program_for(quote_mint: Pubkey) -> Pubkey:
     """Token program owning a quote mint, defaulting to SPL Token.
 
     Returns:
@@ -302,6 +316,55 @@ def find_sharing_config(base_mint: Pubkey) -> Pubkey:
     )[0]
 
 
+def find_mayhem_state(mint: Pubkey) -> Pubkey:
+    """Derive a coin's mayhem state PDA (under the mayhem program).
+
+    The seed is hyphenated, unlike the pump program's volume-accumulator seeds.
+
+    Args:
+        mint: Base token mint
+    """
+    return Pubkey.find_program_address([b"mayhem-state", bytes(mint)], MAYHEM_PROGRAM)[
+        0
+    ]
+
+
+def find_holder_rewards(mint: Pubkey) -> Pubkey:
+    """Derive the address that replaces the creator on a holder-reward coin.
+
+    A coin created with `is_holder_reward` does not carry its creator in
+    `BondingCurve.creator`; the program substitutes this PDA so the creator fee
+    accrues to holders. Trades must derive `creator_vault` from it, not from the
+    wallet that signed the create, or the vault seeds do not match (2006).
+
+    Args:
+        mint: Base token mint
+    """
+    return Pubkey.find_program_address([b"holder-rewards", bytes(mint)], PUMP_PROGRAM)[
+        0
+    ]
+
+
+def find_quote_control() -> Pubkey:
+    """Derive the QuoteControl PDA, the registry of permitted quote mints.
+
+    `Global.whitelisted_quote_mints` is the older, much shorter list; this
+    account is the one a create is actually checked against.
+    """
+    return Pubkey.find_program_address([b"quote-control"], PUMP_PROGRAM)[0]
+
+
+def curve_creator(mint: Pubkey, creator: Pubkey, *, is_holder_reward: bool) -> Pubkey:
+    """The creator a coin's bonding curve will actually carry.
+
+    Args:
+        mint: Base token mint
+        creator: Creator passed to create_v2
+        is_holder_reward: Whether the coin was created as a holder-reward coin
+    """
+    return find_holder_rewards(mint) if is_holder_reward else creator
+
+
 def find_associated_token_account(
     owner: Pubkey, mint: Pubkey, token_program: Pubkey
 ) -> Pubkey:
@@ -360,6 +423,9 @@ class BondingCurveState:
     is_cashback_coin: bool
     quote_mint: Pubkey | None
     is_sol_paired: bool
+    creator_fee_bps: int | None
+    can_edit_creator_fee: bool | None
+    is_holder_reward: bool | None
 
     _STRUCT = Struct(
         "virtual_token_reserves" / Int64ul,
@@ -374,6 +440,12 @@ class BondingCurveState:
     _MAYHEM_OFFSET = 81
     _CASHBACK_OFFSET = 82
     _QUOTE_MINT_OFFSET = 83
+    # The three fields create_v2 added after quote_mint, filling the 36 reserved
+    # bytes the old 151-byte layout carried. A legacy `create` curve ends before
+    # them, so they read as None rather than as a value the coin never had.
+    _CREATOR_FEE_BPS_OFFSET = 115
+    _CAN_EDIT_CREATOR_FEE_OFFSET = 123
+    _IS_HOLDER_REWARD_OFFSET = 124
 
     def __init__(self, data: bytes) -> None:
         """Parse bonding curve account data.
@@ -412,6 +484,14 @@ class BondingCurveState:
         self.quote_mint = normalize_quote_mint(raw_quote_mint)
         self.is_sol_paired = is_sol_paired(raw_quote_mint)
 
+        self.creator_fee_bps = self._read_u64(data, self._CREATOR_FEE_BPS_OFFSET)
+        self.can_edit_creator_fee = self._read_optional_flag(
+            data, self._CAN_EDIT_CREATOR_FEE_OFFSET
+        )
+        self.is_holder_reward = self._read_optional_flag(
+            data, self._IS_HOLDER_REWARD_OFFSET
+        )
+
     @staticmethod
     def _read_pubkey(data: bytes, offset: int) -> Pubkey | None:
         """Read a 32-byte pubkey if the data extends that far.
@@ -426,6 +506,40 @@ class BondingCurveState:
         if len(data) < offset + 32:
             return None
         return Pubkey.from_bytes(data[offset : offset + 32])
+
+    @staticmethod
+    def _read_u64(data: bytes, offset: int) -> int | None:
+        """Read a little-endian u64 if the data extends that far.
+
+        Args:
+            data: Raw account data
+            offset: Byte offset
+
+        Returns:
+            Value, or None if the field is absent
+        """
+        if len(data) < offset + 8:
+            return None
+        return struct.unpack_from("<Q", data, offset)[0]
+
+    @staticmethod
+    def _read_optional_flag(data: bytes, offset: int) -> bool | None:
+        """Read a single-byte bool that a shorter curve legitimately lacks.
+
+        Unlike `_read_flag`, absence is an answer here: a legacy `create` curve
+        predates these fields, and None says the coin cannot have the property
+        rather than that it does not.
+
+        Args:
+            data: Raw account data
+            offset: Byte offset
+
+        Returns:
+            Flag value, or None if the field is absent
+        """
+        if len(data) <= offset:
+            return None
+        return bool(data[offset])
 
     @staticmethod
     def _read_flag(data: bytes, offset: int, name: str) -> bool:
@@ -462,6 +576,472 @@ class BondingCurveState:
         )
 
 
+# Global's fields in declaration order, walked rather than indexed: an offset
+# table silently reads the wrong field the day a field is inserted above it,
+# and every value below is one set_params call away from changing.
+_GLOBAL_LAYOUT: tuple[tuple[str, str], ...] = (
+    ("initialized", "bool"),
+    ("authority", "pubkey"),
+    ("fee_recipient", "pubkey"),
+    ("initial_virtual_token_reserves", "u64"),
+    ("initial_virtual_sol_reserves", "u64"),
+    ("initial_real_token_reserves", "u64"),
+    ("token_total_supply", "u64"),
+    ("fee_basis_points", "u64"),
+    ("withdraw_authority", "pubkey"),
+    ("enable_migrate", "bool"),
+    ("pool_migration_fee", "u64"),
+    ("creator_fee_basis_points", "u64"),
+    ("fee_recipients", "pubkey[7]"),
+    ("set_creator_authority", "pubkey"),
+    ("admin_set_creator_authority", "pubkey"),
+    ("create_v2_enabled", "bool"),
+    ("whitelist_pda", "pubkey"),
+    ("reserved_fee_recipient", "pubkey"),
+    ("mayhem_mode_enabled", "bool"),
+    ("reserved_fee_recipients", "pubkey[7]"),
+    ("is_cashback_enabled", "bool"),
+    ("buyback_fee_recipients", "pubkey[8]"),
+    ("buyback_basis_points", "u64"),
+    ("initial_virtual_quote_reserves", "u64"),
+    ("whitelisted_quote_mints", "pubkey[1]"),
+    ("creator_fee_configurable", "bool"),
+    ("max_configurable_creator_fee_bps", "u64"),
+    ("holder_reward_claim_authority", "pubkey"),
+    ("is_holder_reward_enabled", "bool"),
+)
+
+_GLOBAL_SIZES = {"bool": 1, "u64": 8, "pubkey": 32}
+
+
+def decode_global(data: bytes) -> dict[str, Any]:
+    """Decode the pump.fun Global account.
+
+    Stops at the last field the buffer holds rather than raising, so a Global
+    that has grown a new trailing field still yields every field before it.
+
+    Args:
+        data: Raw account data, discriminator included
+
+    Returns:
+        Field name to value; pubkey arrays come back as lists
+    """
+    fields: dict[str, Any] = {}
+    offset = 8
+    for name, kind in _GLOBAL_LAYOUT:
+        base, _, count = kind.partition("[")
+        repeat = int(count.rstrip("]")) if count else 1
+        width = _GLOBAL_SIZES[base] * repeat
+        if offset + width > len(data):
+            break
+        chunk = data[offset : offset + width]
+        if base == "bool":
+            fields[name] = bool(chunk[0])
+        elif base == "u64":
+            fields[name] = struct.unpack("<Q", chunk)[0]
+        elif count:
+            fields[name] = [
+                Pubkey.from_bytes(chunk[i : i + 32]) for i in range(0, width, 32)
+            ]
+        else:
+            fields[name] = Pubkey.from_bytes(chunk)
+        offset += width
+    return fields
+
+
+async def fetch_global(
+    get_account_info: Callable[[Pubkey], Awaitable[Any]],
+) -> dict[str, Any]:
+    """Read and decode Global.
+
+    Args:
+        get_account_info: Async getter returning an account object with a
+            `.data` attribute, as `resolve_quote_token_program` takes
+    """
+    return decode_global(bytes((await get_account_info(PUMP_GLOBAL)).data))
+
+
+# QuoteControl: admin (32) then 64 reserved bytes, then a vec of
+# (mint, initial_virtual_quote_reserves).
+_QUOTE_CONTROL_MINTS_OFFSET = 8 + 32 + 64
+_QUOTE_CONTROL_ENTRY_SIZE = 32 + 8
+
+
+def decode_quote_control(data: bytes) -> dict[Pubkey, int]:
+    """Decode QuoteControl into quote mint -> opening virtual quote reserves.
+
+    Each admitted mint carries its own opening reserve, which is the coin's
+    starting price in that asset. It is not a scaled version of the SOL one.
+
+    Args:
+        data: Raw account data, discriminator included
+
+    Returns:
+        Mint to initial_virtual_quote_reserves, in the mint's raw units
+
+    Raises:
+        ValueError: If the account is too short to hold the vec length
+    """
+    if len(data) < _QUOTE_CONTROL_MINTS_OFFSET + 4:
+        msg = f"QuoteControl account is only {len(data)} bytes"
+        raise ValueError(msg)
+    count = struct.unpack_from("<I", data, _QUOTE_CONTROL_MINTS_OFFSET)[0]
+    start = _QUOTE_CONTROL_MINTS_OFFSET + 4
+    entries = {}
+    for index in range(count):
+        at = start + index * _QUOTE_CONTROL_ENTRY_SIZE
+        if at + _QUOTE_CONTROL_ENTRY_SIZE > len(data):
+            break
+        entries[Pubkey.from_bytes(data[at : at + 32])] = struct.unpack_from(
+            "<Q", data, at + 32
+        )[0]
+    return entries
+
+
+async def fetch_quote_control(
+    get_account_info: Callable[[Pubkey], Awaitable[Any]],
+) -> dict[Pubkey, int]:
+    """Read and decode the QuoteControl registry.
+
+    Args:
+        get_account_info: Async getter returning an account object with `.data`
+    """
+    account = await get_account_info(find_quote_control())
+    return decode_quote_control(bytes(account.data))
+
+
+def opening_quote_reserves(
+    registry: dict[Pubkey, int], quote_mint: Pubkey, global_state: dict[str, Any]
+) -> int:
+    """Opening virtual quote reserves for a coin priced in `quote_mint`.
+
+    Three sources, because there are three kinds of admitted mint and they do
+    not carry the same figure:
+
+    - wrapped SOL takes `Global.initial_virtual_sol_reserves`;
+    - a `QuoteControl` entry carries its own reserve, which is the coin's
+      opening price in that asset and is not a scaled version of the SOL one;
+    - a mint in the older `Global.whitelisted_quote_mints` that QuoteControl
+      does not list takes `Global.initial_virtual_quote_reserves`. USDC is one,
+      so treating QuoteControl as the whole registry refuses a mint the program
+      accepts.
+
+    Raises rather than substituting a default for an unlisted mint: across the
+    admitted mints the figure spans several orders of magnitude, so a stand-in
+    misprices the opening buy instead of approximating it.
+
+    Args:
+        registry: Decoded QuoteControl, from `decode_quote_control`
+        quote_mint: Asset the coin is priced in
+        global_state: Decoded Global
+
+    Returns:
+        Opening virtual quote reserves, in the quote mint's raw units
+
+    Raises:
+        ValueError: If neither registry admits the mint
+    """
+    if is_sol_paired(quote_mint) or quote_mint == WSOL_MINT:
+        return global_state["initial_virtual_sol_reserves"]
+    reserves = registry.get(quote_mint)
+    if reserves is not None:
+        return reserves
+    if quote_mint in (global_state.get("whitelisted_quote_mints") or []):
+        return global_state["initial_virtual_quote_reserves"]
+    msg = (
+        f"Neither QuoteControl nor Global admits {quote_mint}, so a coin "
+        f"cannot be priced in it. QuoteControl lists {len(registry)} mints; "
+        f"pumpfun_read_quote_mints.py prints them."
+    )
+    raise ValueError(msg)
+
+
+def check_quote_mint_tradable(
+    quote_mint: Pubkey, parsed_info: Mapping[str, Any]
+) -> float | None:
+    """Refuse a quote mint that cannot currently settle a trade.
+
+    Tokenised equities among the admitted mints carry Token-2022 extensions
+    their issuer controls. `pausableConfig` stops every transfer of the mint
+    while it is set, which fails every trade on every coin priced in it, so a
+    paused mint is refused rather than discovered at buy time.
+    `scaledUiAmountConfig` means a wallet shows a balance the issuer scales by a
+    multiplier it can move, so the displayed figure is not the one the token's
+    own decimals give. Amounts in these scripts come from the decimals, so the
+    multiplier is returned for a caller to warn about rather than to apply.
+
+    Args:
+        quote_mint: Asset the coin is priced in
+        parsed_info: The `info` mapping from a jsonParsed mint account
+
+    Returns:
+        The scaled-UI multiplier, or None when the mint is not scaled
+
+    Raises:
+        ValueError: If the mint is paused
+    """
+    extensions = {
+        entry.get("extension"): entry.get("state", {})
+        for entry in (parsed_info.get("extensions") or [])
+        if isinstance(entry, dict)
+    }
+    if (extensions.get("pausableConfig") or {}).get("paused"):
+        msg = (
+            f"Quote mint {quote_mint} is paused by its issuer. Every trade on "
+            f"every coin priced in it fails until that is lifted."
+        )
+        raise ValueError(msg)
+    multiplier = (extensions.get("scaledUiAmountConfig") or {}).get("multiplier")
+    return float(multiplier) if multiplier not in (None, "") else None
+
+
+def check_creator_fee_quote(
+    registry: dict[Pubkey, int], quote_mint: Pubkey, creator_fee_bps: int | None
+) -> None:
+    """Refuse a creator fee the program will accept and then not apply.
+
+    A creator fee is only honoured on a coin priced in a mint `QuoteControl`
+    admits. Anywhere else -- wrapped SOL, or a mint carried only by the older
+    `Global.whitelisted_quote_mints` such as USDC -- the program takes the
+    argument, emits `CreateEvent.creator_fee_bps = 0` and stores 0 on the curve,
+    with no error. The token program is not what decides it: the fee lands on
+    SPL Token and Token-2022 quote mints alike, provided QuoteControl lists them.
+
+    Args:
+        registry: Decoded QuoteControl, from `decode_quote_control`
+        quote_mint: Asset the coin is priced in
+        creator_fee_bps: Requested fee, or None if the arg is being omitted
+
+    Raises:
+        ValueError: If a fee is requested against a mint QuoteControl does not
+            admit
+    """
+    if not creator_fee_bps:
+        return
+    if quote_mint in registry:
+        return
+    msg = (
+        f"A creator fee is only applied to a coin priced in a mint QuoteControl "
+        f"admits, and {quote_mint} is not one -- the program would accept "
+        f"--creator-fee-bps and store 0. pumpfun_read_quote_mints.py prints the "
+        f"mints that do carry a fee."
+    )
+    raise ValueError(msg)
+
+
+def check_mayhem_quote_pairing(quote_mint: Pubkey, *, is_mayhem_mode: bool) -> None:
+    """Refuse a mayhem coin priced in anything but SOL.
+
+    The program rejects the pairing with `MayhemModeQuoteMintNotAllowed` (6071).
+    Checked before sending, because the create otherwise lands as a reverted
+    transaction that has already cost fees.
+
+    Args:
+        quote_mint: Asset the coin would be priced in
+        is_mayhem_mode: Whether the coin opts into mayhem mode
+
+    Raises:
+        ValueError: If a mayhem coin is paired with a non-SOL quote asset
+    """
+    if not is_mayhem_mode:
+        return
+    if is_sol_paired(quote_mint) or quote_mint == WSOL_MINT:
+        return
+    msg = (
+        f"Mayhem mode cannot be combined with a non-SOL quote asset: the "
+        f"program rejects it with MayhemModeQuoteMintNotAllowed (6071). Drop "
+        f"--mayhem, or drop --quote-mint {quote_mint}."
+    )
+    raise ValueError(msg)
+
+
+def encode_create_v2_trailing_args(
+    *,
+    is_cashback_enabled: bool | None = None,
+    creator_fee_bps: int | None = None,
+    is_holder_reward: bool | None = None,
+) -> bytes:
+    """Encode create_v2's three trailing args.
+
+    They are positional with no presence tag, so setting a later one forces the
+    earlier ones onto the wire, while a shorter form cannot have set a later one.
+    Four wire lengths follow `is_mayhem_mode`: 0, 1, 9 and 10 bytes. Neither
+    OptionBool nor OptionU64 is a discriminated Option -- each is a single-field
+    struct serializing as its bare inner value.
+
+    `None` means omit, mirroring the decoder, which reports an absent arg as
+    unset rather than as its default. That distinction is the caller's to make
+    and cannot be inferred: coins on chain send `is_cashback_enabled=False`, and
+    `creator_fee_bps=0`, explicitly, so collapsing a default to an omission
+    would make those wire forms unreachable. Pass 0 or False to send the value,
+    leave it None to leave it off.
+
+    An earlier arg left None while a later one is set is filled with the value
+    the program would have defaulted it to.
+
+    Args:
+        is_cashback_enabled: create_v2 rejects True with 6082
+            (CashbackDeprecated); settable anyway so the encoder matches the
+            instruction rather than the subset currently accepted
+        creator_fee_bps: Bounded by Global's max_configurable_creator_fee_bps
+        is_holder_reward: Sets the creator fee aside for holders
+
+    Returns:
+        0, 1, 9 or 10 bytes to append after is_mayhem_mode
+    """
+    send_holder = is_holder_reward is not None
+    send_fee = send_holder or creator_fee_bps is not None
+    send_cashback = send_fee or is_cashback_enabled is not None
+    if not send_cashback:
+        return b""
+
+    data = struct.pack("<?", bool(is_cashback_enabled))
+    if send_fee:
+        data += struct.pack("<Q", creator_fee_bps or 0)
+    if send_holder:
+        data += struct.pack("<?", bool(is_holder_reward))
+    return data
+
+
+def build_create_v2_instruction(  # noqa: PLR0913
+    *,
+    mint: Pubkey,
+    user: Pubkey,
+    creator: Pubkey,
+    name: str,
+    symbol: str,
+    uri: str,
+    is_mayhem_mode: bool = False,
+    creator_fee_bps: int | None = None,
+    is_holder_reward: bool | None = None,
+    quote_mint: Pubkey = WSOL_MINT,
+    quote_token_program: Pubkey | None = None,
+) -> Instruction:
+    """Build create_v2, which mints the coin under Token-2022.
+
+    Args:
+        mint: The new coin's mint, a keypair you generate; it signs too
+        user: Wallet paying for the accounts
+        creator: Creator written into the curve, which need not be `user`. On a
+            holder-reward coin the program substitutes its own address anyway --
+            see `curve_creator`
+        name: Coin name
+        symbol: Coin ticker
+        uri: Metadata URI
+        is_mayhem_mode: Whether the coin opts into mayhem mode
+        creator_fee_bps: Creator fee, bounded by Global's
+            max_configurable_creator_fee_bps and only settable while
+            creator_fee_configurable. None omits the arg entirely
+        is_holder_reward: Set the creator fee aside for holders instead. None
+            omits the arg, which is itself proof the coin is not one
+        quote_mint: Asset the coin is priced in. Wrapped SOL gives an ordinary
+            SOL-paired coin. **A creator fee only takes effect on a coin priced
+            in something other than SOL** -- pump.fun accepts creator_fee_bps on
+            a SOL-paired coin and stores zero
+        quote_token_program: Token program owning quote_mint. Resolve it from
+            chain with `resolve_quote_token_program`; omit only for a mint in
+            QUOTE_TOKEN_PROGRAMS
+
+    Returns:
+        The create_v2 instruction, 20 accounts
+    """
+    bonding_curve = find_bonding_curve(mint)
+    accounts = [
+        AccountMeta(pubkey=mint, is_signer=True, is_writable=True),
+        AccountMeta(pubkey=PUMP_MINT_AUTHORITY, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=bonding_curve, is_signer=False, is_writable=True),
+        AccountMeta(
+            pubkey=find_associated_token_account(
+                bonding_curve, mint, TOKEN_2022_PROGRAM
+            ),
+            is_signer=False,
+            is_writable=True,
+        ),
+        AccountMeta(pubkey=PUMP_GLOBAL, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=user, is_signer=True, is_writable=True),
+        AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=TOKEN_2022_PROGRAM, is_signer=False, is_writable=False),
+        AccountMeta(
+            pubkey=ASSOCIATED_TOKEN_PROGRAM, is_signer=False, is_writable=False
+        ),
+        AccountMeta(pubkey=MAYHEM_PROGRAM, is_signer=False, is_writable=True),
+        AccountMeta(pubkey=MAYHEM_GLOBAL_PARAMS, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=MAYHEM_SOL_VAULT, is_signer=False, is_writable=True),
+        AccountMeta(pubkey=find_mayhem_state(mint), is_signer=False, is_writable=True),
+        AccountMeta(
+            pubkey=find_associated_token_account(
+                MAYHEM_SOL_VAULT, mint, TOKEN_2022_PROGRAM
+            ),
+            is_signer=False,
+            is_writable=True,
+        ),
+        AccountMeta(pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
+    ]
+
+    # Accounts 17-20 are remaining accounts: all four or none. They are sent for
+    # SOL-paired coins too, carrying wrapped SOL, so a 20-account create_v2 is
+    # not by itself evidence of a non-SOL quote asset -- read quote_mint off the
+    # curve for that. Omitting them is what silently drops a creator fee.
+    quote_program = quote_token_program or quote_token_program_for(quote_mint)
+    accounts += [
+        AccountMeta(pubkey=quote_mint, is_signer=False, is_writable=False),
+        AccountMeta(
+            pubkey=find_associated_token_account(
+                bonding_curve, quote_mint, quote_program
+            ),
+            is_signer=False,
+            is_writable=True,
+        ),
+        AccountMeta(pubkey=quote_program, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=find_quote_control(), is_signer=False, is_writable=False),
+    ]
+
+    def borsh_string(value: str) -> bytes:
+        encoded = value.encode("utf-8")
+        return struct.pack("<I", len(encoded)) + encoded
+
+    data = (
+        CREATE_V2_DISCRIMINATOR
+        + borsh_string(name)
+        + borsh_string(symbol)
+        + borsh_string(uri)
+        + bytes(creator)
+        + struct.pack("<?", is_mayhem_mode)
+        + encode_create_v2_trailing_args(
+            creator_fee_bps=creator_fee_bps, is_holder_reward=is_holder_reward
+        )
+    )
+    return Instruction(PUMP_PROGRAM, data, accounts)
+
+
+def build_extend_account_instruction(
+    bonding_curve: Pubkey, user: Pubkey
+) -> Instruction:
+    """Build extend_account, which takes no arguments.
+
+    Growing the curve past the 125 bytes create_v2 allocates is what makes a coin
+    visible on pump.fun's frontend. The coin trades without it.
+
+    Args:
+        bonding_curve: The coin's bonding curve
+        user: Wallet paying for the extra space
+    """
+    return Instruction(
+        PUMP_PROGRAM,
+        EXTEND_ACCOUNT_DISCRIMINATOR,
+        [
+            AccountMeta(pubkey=bonding_curve, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=user, is_signer=True, is_writable=True),
+            AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
+            AccountMeta(
+                pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False
+            ),
+            AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
+        ],
+    )
+
+
 def build_v2_accounts(
     *,
     base_mint: Pubkey,
@@ -491,7 +1071,7 @@ def build_v2_accounts(
     Returns:
         Ordered AccountMeta list (27 entries for buy_v2, 26 for sell_v2)
     """
-    quote_program = quote_token_program_id or quote_token_program(quote_mint)
+    quote_program = quote_token_program_id or quote_token_program_for(quote_mint)
     bonding_curve = find_bonding_curve(base_mint)
     creator_vault = find_creator_vault(creator)
     user_volume_accumulator = find_user_volume_accumulator(user)
@@ -763,7 +1343,7 @@ def build_collect_creator_fee_v2_instruction(
     Returns:
         The collect_creator_fee_v2 instruction
     """
-    program = quote_token_program_id or quote_token_program(quote_mint)
+    program = quote_token_program_id or quote_token_program_for(quote_mint)
     vault = find_creator_vault(creator)
     accounts = [
         AccountMeta(pubkey=creator, is_signer=False, is_writable=True),
@@ -815,7 +1395,7 @@ def build_claim_cashback_v2_instruction(
     Returns:
         The claim_cashback_v2 instruction
     """
-    program = quote_token_program_id or quote_token_program(quote_mint)
+    program = quote_token_program_id or quote_token_program_for(quote_mint)
     accumulator = find_user_volume_accumulator(user)
     accounts = [
         AccountMeta(pubkey=user, is_signer=False, is_writable=True),

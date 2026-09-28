@@ -387,7 +387,7 @@ def check_quote_config() -> list[str]:
 
 
 def check_examples_toolkit() -> list[str]:
-    """Check cookbook/pumpfun/trade/pumpfun_instructions_v2.py agrees with the IDL and with src/.
+    """Check cookbook/pumpfun/trade/pumpfun_instructions.py agrees with the IDL and with src/.
 
     The examples carry their own standalone copy of the v2 layout so they stay
     readable without importing src/. That copy is exactly the kind of thing that
@@ -396,7 +396,7 @@ def check_examples_toolkit() -> list[str]:
     Returns:
         List of problems (empty if the toolkit agrees)
     """
-    import pumpfun_instructions_v2 as pump_v2
+    import pumpfun_instructions as pump
 
     from platforms.pumpfun.address_provider import PumpFunAddresses
 
@@ -409,46 +409,46 @@ def check_examples_toolkit() -> list[str]:
     for label, theirs, ours in (
         (
             "normal",
-            pump_v2.NORMAL_FEE_RECIPIENTS,
+            pump.NORMAL_FEE_RECIPIENTS,
             PumpFunAddresses.NORMAL_FEE_RECIPIENTS,
         ),
         (
             "reserved",
-            pump_v2.RESERVED_FEE_RECIPIENTS,
+            pump.RESERVED_FEE_RECIPIENTS,
             PumpFunAddresses.RESERVED_FEE_RECIPIENTS,
         ),
         (
             "buyback",
-            pump_v2.BUYBACK_FEE_RECIPIENTS,
+            pump.BUYBACK_FEE_RECIPIENTS,
             PumpFunAddresses.BUYBACK_FEE_RECIPIENTS,
         ),
     ):
         if theirs != ours:
-            problems.append(f"pump_v2 {label} fee recipients differ from src/")
+            problems.append(f"pump {label} fee recipients differ from src/")
 
     # Discriminators must match the IDL.
     idl = json.loads(IDL_PATH.read_text())
     by_name = {i["name"]: i for i in idl["instructions"]}
     for name, disc in (
-        ("buy_v2", pump_v2.BUY_V2_DISCRIMINATOR),
-        ("sell_v2", pump_v2.SELL_V2_DISCRIMINATOR),
+        ("buy_v2", pump.BUY_V2_DISCRIMINATOR),
+        ("sell_v2", pump.SELL_V2_DISCRIMINATOR),
     ):
         expected = bytes(by_name[name]["discriminator"])
         if disc != expected:
             problems.append(
-                f"pump_v2 {name} discriminator {list(disc)} != IDL {list(expected)}"
+                f"pump {name} discriminator {list(disc)} != IDL {list(expected)}"
             )
 
     # Account lists must match the IDL in order and writability, for both
     # quote assets and both mayhem states.
     for quote_mint, label in (
-        (pump_v2.WSOL_MINT, "SOL"),
-        (pump_v2.USDC_MINT, "USDC"),
+        (pump.WSOL_MINT, "SOL"),
+        (pump.USDC_MINT, "USDC"),
     ):
         for mayhem in (False, True):
             for name, builder in (
-                ("buy_v2", pump_v2.build_buy_v2_instruction),
-                ("sell_v2", pump_v2.build_sell_v2_instruction),
+                ("buy_v2", pump.build_buy_v2_instruction),
+                ("sell_v2", pump.build_sell_v2_instruction),
             ):
                 kwargs = {
                     "base_mint": mint,
@@ -469,7 +469,7 @@ def check_examples_toolkit() -> list[str]:
                 idl_accounts = by_name[name]["accounts"]
                 if len(instruction.accounts) != len(idl_accounts):
                     problems.append(
-                        f"pump_v2 {name} ({label}, mayhem={mayhem}): "
+                        f"pump {name} ({label}, mayhem={mayhem}): "
                         f"{len(instruction.accounts)} accounts != IDL "
                         f"{len(idl_accounts)}"
                     )
@@ -479,7 +479,7 @@ def check_examples_toolkit() -> list[str]:
                 ):
                     if meta.is_writable != bool(idl_account.get("writable")):
                         problems.append(
-                            f"pump_v2 {name}[{index}] {idl_account['name']} "
+                            f"pump {name}[{index}] {idl_account['name']} "
                             f"({label}, mayhem={mayhem}): writable "
                             f"{meta.is_writable} != IDL "
                             f"{bool(idl_account.get('writable'))}"
@@ -502,7 +502,7 @@ def check_examples_toolkit() -> list[str]:
                         continue
                     if resolved[account_name] != meta.pubkey:
                         problems.append(
-                            f"pump_v2 {name} {account_name} ({label}, "
+                            f"pump {name} {account_name} ({label}, "
                             f"mayhem={mayhem}): {meta.pubkey} != src/ "
                             f"{resolved[account_name]}"
                         )
@@ -535,7 +535,7 @@ def main() -> int:
     for name, check in (
         ("instruction encoding", check_instruction_encoding),
         ("quote config resolution", check_quote_config),
-        ("cookbook pump_v2 toolkit", check_examples_toolkit),
+        ("cookbook pump toolkit", check_examples_toolkit),
     ):
         problems = check()
         status = "OK" if not problems else f"{len(problems)} PROBLEM(S)"

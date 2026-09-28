@@ -57,7 +57,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "cookbook" / "pumpfun" / "trade"))
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-import pumpfun_instructions_v2 as pump_v2  # noqa: E402
+import pumpfun_instructions as pump  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
 from core import pubkeys as core_pubkeys  # noqa: E402
@@ -89,9 +89,9 @@ class _FakeMintAccount:
 
 def check_unresolved_mint_raises() -> None:
     """An unknown quote mint must fail loudly, never default to 9 decimals."""
-    assert AAPLX not in pump_v2.QUOTE_DECIMALS, "fixture mint must start unknown"
+    assert AAPLX not in pump.QUOTE_DECIMALS, "fixture mint must start unknown"
     try:
-        pump_v2.quote_units(AAPLX)
+        pump.quote_units(AAPLX)
     except ValueError as exc:
         assert "resolve_quote_token_program" in str(exc), (
             f"the error must say how to fix it, got: {exc}"
@@ -103,8 +103,8 @@ def check_unresolved_mint_raises() -> None:
         )
 
     # The pre-seeded pair still answers without a lookup.
-    assert pump_v2.quote_units(pump_v2.WSOL_MINT) == 10**9
-    assert pump_v2.quote_units(pump_v2.USDC_MINT) == 10**6
+    assert pump.quote_units(pump.WSOL_MINT) == 10**9
+    assert pump.quote_units(pump.USDC_MINT) == 10**6
 
 
 async def check_resolution_caches_decimals() -> None:
@@ -113,17 +113,17 @@ async def check_resolution_caches_decimals() -> None:
 
     async def get_account(address: Pubkey) -> _FakeMintAccount:
         reads.append(address)
-        return _FakeMintAccount(pump_v2.TOKEN_2022_PROGRAM, AAPLX_DECIMALS)
+        return _FakeMintAccount(pump.TOKEN_2022_PROGRAM, AAPLX_DECIMALS)
 
-    program = await pump_v2.resolve_quote_token_program(AAPLX, get_account)
-    assert program == pump_v2.TOKEN_2022_PROGRAM, program
-    assert pump_v2.quote_units(AAPLX) == 10**AAPLX_DECIMALS, (
+    program = await pump.resolve_quote_token_program(AAPLX, get_account)
+    assert program == pump.TOKEN_2022_PROGRAM, program
+    assert pump.quote_units(AAPLX) == 10**AAPLX_DECIMALS, (
         "decimals were not cached by the token-program resolution"
     )
     assert len(reads) == 1, f"expected one account read, made {len(reads)}"
 
     # Second call must be free.
-    await pump_v2.resolve_quote_token_program(AAPLX, get_account)
+    await pump.resolve_quote_token_program(AAPLX, get_account)
     assert len(reads) == 1, "a resolved mint was fetched again"
 
 
@@ -160,7 +160,7 @@ def check_scripts_resolve_before_pricing() -> None:
         # Only scripts that share the helper module's cache are in scope here.
         # Scripts carrying their own arithmetic are covered by
         # check_no_assumed_quote_decimals instead.
-        if "pumpfun_instructions_v2" not in source:
+        if "pumpfun_instructions" not in source:
             continue
         tree = ast.parse(source)
         for node in ast.walk(tree):

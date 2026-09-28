@@ -3,9 +3,9 @@
 WARNING: this submits a real transaction and spends real funds (the network fee).
 
 Usage:
-    uv run cookbook/pumpfun/trade/pumpfun_claim_cashback_v2.py
-    uv run cookbook/pumpfun/trade/pumpfun_claim_cashback_v2.py --quote <QUOTE_MINT>
-    uv run cookbook/pumpfun/trade/pumpfun_claim_cashback_v2.py --user <PUBKEY>
+    uv run cookbook/pumpfun/trade/pumpfun_claim_cashback.py
+    uv run cookbook/pumpfun/trade/pumpfun_claim_cashback.py --quote <QUOTE_MINT>
+    uv run cookbook/pumpfun/trade/pumpfun_claim_cashback.py --user <PUBKEY>
 
 Trading a cashback coin credits your `user_volume_accumulator`, and this moves
 what has built up there into your token account.
@@ -27,12 +27,12 @@ import os
 import sys
 from pathlib import Path
 
-# solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions_v2.py
+# solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions.py
 # sits beside this file.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "solana"))
 
 import base58
-import pumpfun_instructions_v2 as pump_v2
+import pumpfun_instructions as pump
 import solana_transaction_status as tx_status
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
@@ -70,10 +70,10 @@ async def claim(user: Pubkey, quote_mint: Pubkey, *, dry_run: bool) -> None:
                 raise ValueError(f"Account not found: {address}")
             return response.value
 
-        quote_token_program = await pump_v2.resolve_quote_token_program(
+        quote_token_program = await pump.resolve_quote_token_program(
             quote_mint, get_account
         )
-        accumulator = pump_v2.find_user_volume_accumulator(user)
+        accumulator = pump.find_user_volume_accumulator(user)
 
         print(f"User:        {user}")
         print(f"Quote asset: {quote_mint}")
@@ -88,7 +88,7 @@ async def claim(user: Pubkey, quote_mint: Pubkey, *, dry_run: bool) -> None:
 
         instructions = [
             set_compute_unit_price(PRIORITY_FEE_MICROLAMPORTS),
-            pump_v2.build_claim_cashback_v2_instruction(
+            pump.build_claim_cashback_v2_instruction(
                 user=user,
                 quote_mint=quote_mint,
                 quote_token_program_id=quote_token_program,
@@ -134,9 +134,9 @@ def main() -> None:
         else Keypair.from_bytes(base58.b58decode(PRIVATE_KEY)).pubkey()
     )
     quote_mint = (
-        pump_v2.normalize_quote_mint(Pubkey.from_string(args.quote))
+        pump.normalize_quote_mint(Pubkey.from_string(args.quote))
         if args.quote
-        else pump_v2.WSOL_MINT
+        else pump.WSOL_MINT
     )
 
     asyncio.run(claim(user, quote_mint, dry_run=args.dry_run))

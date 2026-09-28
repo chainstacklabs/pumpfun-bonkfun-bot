@@ -13,6 +13,9 @@ individual scripts for a subset.
 | `verify_v2_account_layout.py` | buy_v2/sell_v2 account layouts, PDA/ATA derivations, encoding — against `idl/pump_fun_idl.json` |
 | `verify_curve_account_sizes.py` | 125/151/256-byte curves all decode, and nothing filters on account length |
 | `verify_create_v2_optional_args.py` | omitted trailing option-typed `create_v2` args decode as unset; mandatory args still fail |
+| `verify_create_v2_launch_args.py` | the launch path derives a holder-reward coin's curve creator, reaches all four trailing-arg wire forms, and sizes the opening buy from `Global` |
+| `verify_atomic_launch_v1.py` | the launch is one v1 transaction holding create and buy, fits 4096 bytes where v0 could not hold it, sends no ComputeBudget instructions, and states the priority fee as a lamport total |
+| `verify_quote_asset_selection.py` | both quote registries are consulted, each admitted mint prices from its own opening reserve, an unlisted mint is refused, and a paused mint is rejected up front |
 | `verify_transaction_v1.py` | every reader asks `maxSupportedTransactionVersion: 1`; a v1 `create_v2` is detected from logs alone with the envelope unreadable, and from the envelope alone with the logs stripped; the same two routes over geyser, plus the inline v1 budget |
 | `verify_shreds_listener.py` | pre-execution creates decode from the instruction alone: `user` at `create_v2` account 5, a holder-reward creator derived as `PDA(["holder-rewards", mint])`, truncated trailing args decoding as not-holder-reward, lookup-table accounts resolved, and nothing reading a `meta` the stream has no field for |
 | `verify_block_null_guard.py` | a `blockSubscribe` frame with `value.block: null` is skipped, not logged as an error |

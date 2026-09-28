@@ -3,9 +3,9 @@
 WARNING: this submits a real transaction and spends real funds (the network fee).
 
 Usage:
-    uv run cookbook/pumpfun/trade/pumpfun_collect_creator_fee_v2.py
-    uv run cookbook/pumpfun/trade/pumpfun_collect_creator_fee_v2.py --quote <QUOTE_MINT>
-    uv run cookbook/pumpfun/trade/pumpfun_collect_creator_fee_v2.py --creator <PUBKEY>
+    uv run cookbook/pumpfun/trade/pumpfun_collect_creator_fee.py
+    uv run cookbook/pumpfun/trade/pumpfun_collect_creator_fee.py --quote <QUOTE_MINT>
+    uv run cookbook/pumpfun/trade/pumpfun_collect_creator_fee.py --creator <PUBKEY>
 
 Every trade on a coin pays its creator a fee, which accumulates in a
 `creator-vault` PDA rather than landing in the creator's wallet, and sits there
@@ -29,12 +29,12 @@ import os
 import sys
 from pathlib import Path
 
-# solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions_v2.py
+# solana_transaction_status.py lives in cookbook/solana/; pumpfun_instructions.py
 # sits beside this file.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "solana"))
 
 import base58
-import pumpfun_instructions_v2 as pump_v2
+import pumpfun_instructions as pump
 import solana_transaction_status as tx_status
 from dotenv import load_dotenv
 from solana.rpc.async_api import AsyncClient
@@ -72,10 +72,10 @@ async def collect(creator: Pubkey, quote_mint: Pubkey, *, dry_run: bool) -> None
                 raise ValueError(f"Account not found: {address}")
             return response.value
 
-        quote_token_program = await pump_v2.resolve_quote_token_program(
+        quote_token_program = await pump.resolve_quote_token_program(
             quote_mint, get_account
         )
-        vault = pump_v2.find_creator_vault(creator)
+        vault = pump.find_creator_vault(creator)
 
         print(f"Creator:     {creator}")
         print(f"Quote asset: {quote_mint}")
@@ -83,13 +83,13 @@ async def collect(creator: Pubkey, quote_mint: Pubkey, *, dry_run: bool) -> None
 
         # A SOL vault holds lamports directly; a token vault holds them in the
         # vault's ATA for the quote mint.
-        if pump_v2.is_sol_paired(quote_mint):
+        if pump.is_sol_paired(quote_mint):
             balance = (await client.get_balance(vault)).value
             print(f"Vault holds: {balance} lamports (rent included)")
 
         instructions = [
             set_compute_unit_price(PRIORITY_FEE_MICROLAMPORTS),
-            pump_v2.build_collect_creator_fee_v2_instruction(
+            pump.build_collect_creator_fee_v2_instruction(
                 creator=creator,
                 quote_mint=quote_mint,
                 quote_token_program_id=quote_token_program,
@@ -141,9 +141,9 @@ def main() -> None:
         else Keypair.from_bytes(base58.b58decode(PRIVATE_KEY)).pubkey()
     )
     quote_mint = (
-        pump_v2.normalize_quote_mint(Pubkey.from_string(args.quote))
+        pump.normalize_quote_mint(Pubkey.from_string(args.quote))
         if args.quote
-        else pump_v2.WSOL_MINT
+        else pump.WSOL_MINT
     )
 
     asyncio.run(collect(creator, quote_mint, dry_run=args.dry_run))

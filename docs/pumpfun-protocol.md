@@ -11,9 +11,22 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   coins; USDC (`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`) is one whitelisted
   entry in `Global`, but coins paired with Token-2022 quote mints are live on
   chain too. **Legacy `buy`/`sell` cannot trade non-SOL-paired coins at all.**
-- **`Global.whitelisted_quote_mints` is not the authoritative registry.** A
-  `QuoteControl` account carries its own mint list, which is how a coin pairs with
-  a mint `Global` never lists. Error `6064` accepts SPL Token or Token-2022.
+- **Two registries are live and neither contains the other.** A `QuoteControl`
+  account (PDA `["quote-control"]`) carries its own mint list, which is how a
+  coin pairs with a mint `Global` never lists. But `Global.whitelisted_quote_mints`
+  is not merely a subset: **USDC is in `Global` and not in `QuoteControl`**, so
+  validating against either alone refuses a mint the program accepts. Their
+  opening reserves come from different fields too — a `QuoteControl` entry
+  carries its own, while a `Global`-only mint takes
+  `Global.initial_virtual_quote_reserves`. Error `6064` accepts SPL Token or
+  Token-2022.
+- **Mayhem mode and a non-SOL quote asset are mutually exclusive.** The
+  program rejects the pairing with `MayhemModeQuoteMintNotAllowed` (6071), so a
+  mayhem coin is always SOL-paired and can never carry a creator fee.
+- **The opening reserve is per quote mint, by orders of magnitude.** Across the
+  `QuoteControl` entries the figure runs from the low millions to the high
+  trillions of raw units, so no default approximates a missing one — an unlisted
+  mint has to be refused rather than priced.
 - **The quote mint's token program is resolved from chain, not assumed.**
   `resolve_quote_token_program` (`src/core/pubkeys.py`) reads a mint's owner once
   — pre-seeded with WSOL/USDC so those stay free — and caches it for the process;
@@ -128,12 +141,24 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   on the shorter forms, so decode defensively and report a missing arg as unset;
   `utils/idl_parser.py` does, and
   `tests/regression/verify_create_v2_optional_args.py` checks it.
-- `create_v2` accounts 1-16 are in the IDL; accounts **17-19 are optional
-  remaining accounts** (`quote_mint`, `associated_quote_bonding_curve`,
-  `quote_token_program`), all three or none. This is the only way to read a new
-  coin's quote asset from the instruction rather than the event. They are appended
-  for **SOL-paired coins too**, carrying wrapped SOL, so a 19-account `create_v2`
-  is not proof of a non-SOL quote asset. Read `quote_mint` off the curve instead.
+- `create_v2` accounts 1-16 are in the IDL; accounts **17-20 are remaining
+  accounts** (`quote_mint`, `associated_quote_bonding_curve`,
+  `quote_token_program`, `quote_control`), all four or none. The fourth is the
+  `QuoteControl` PDA (`["quote-control"]`), and it is easy to miss because the
+  IDL does not list any of them. They are appended for **SOL-paired coins too**,
+  carrying wrapped SOL, so a 20-account `create_v2` is not proof of a non-SOL
+  quote asset. Read `quote_mint` off the curve instead.
+- **Omitting them is accepted.** A 16-account `create_v2` lands and produces a
+  SOL-paired coin, so nothing tells you the accounts were missing. What it also
+  does is silently drop `creator_fee_bps`, because:
+- **A creator fee is applied only on a coin priced in a `QuoteControl` mint.**
+  Anywhere else the program accepts `creator_fee_bps`, emits
+  `CreateEvent.creator_fee_bps = 0` and stores 0 on the curve, with no error.
+  Measured on mainnet: the fee lands on a `QuoteControl` mint whether that mint
+  is SPL Token or Token-2022, and does not land on wrapped SOL or on USDC —
+  which the older `Global.whitelisted_quote_mints` carries and `QuoteControl`
+  does not. So the deciding property is registry membership, not the token
+  program and not merely "something other than SOL".
 - The **associated bonding curve is an ordinary ATA**, so its address depends on
   which token program owns the mint: Token2022 for `create_v2` coins, SPL Token
   for legacy `create`. Deriving with the wrong program returns a valid-looking

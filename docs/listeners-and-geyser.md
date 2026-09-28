@@ -20,6 +20,21 @@ compiler does not emit, so the output needs rewriting.
   (priority fee in **total lamports**, CU limit, loaded-accounts data size, heap)
   that v1 moved off the ComputeBudget instructions, so a v1 coin has no
   ComputeBudget instructions to read a budget from at all.
+- **Total lamports is the whole model, not just the unit.** SIMD-0385 puts the
+  fee at config mask bits `[0, 1]` as an 8-byte LE u64 and defines it as one
+  absolute figure; v0's micro-lamports-per-compute-unit is gone. Converting
+  between them needs the CU limit, so a fee read off a v1 frame is not
+  comparable to a v0 one without it.
+- **A v1 message must state its loaded-accounts data size limit.** Left unset
+  the limit is zero rather than the network default, and the transaction is
+  rejected for exceeding it. With `skip_preflight` that rejection never reaches
+  the sender: the signature is returned and simply never lands, which reads as a
+  dropped transaction rather than a rejected one.
+- **solders' builder docstring contradicts this and is wrong.**
+  `TransactionConfig.priority_fee` (solders 0.29.0, the current release) is
+  documented as micro-lamports. It is not converted — the value is written
+  verbatim into the u64 the spec defines as lamports, so believing the docstring
+  overpays by the CU limit. Trust the SIMD and this note, not the docstring.
 - Older protos **skip `config` as an unknown field rather than failing**, so a
   stale stub degrades in silence: frames still decode, only the budget goes
   missing. `verify_transaction_v1.py` pins the geyser route on a committed frame
