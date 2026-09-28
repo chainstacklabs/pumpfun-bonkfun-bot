@@ -197,8 +197,9 @@ async def check_quote_mint_usable(client: AsyncClient, quote_mint: Pubkey) -> No
     )
     if multiplier is not None and multiplier != 1.0:
         print(
-            f"  note: scaled-UI quote mint, multiplier {multiplier}. "
-            f"--amount is in raw units, not displayed units."
+            f"  note: this quote mint applies a display multiplier of "
+            f"{multiplier}, so a wallet shows a different figure. --amount is "
+            f"in whole token units from the mint's decimals."
         )
 
 

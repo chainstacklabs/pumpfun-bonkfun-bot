@@ -195,8 +195,9 @@ async def create(  # noqa: PLR0913
             print(f"  opening virtual quote reserves: {opening:,} raw units")
             if multiplier is not None and multiplier != 1.0:
                 print(
-                    f"  note: scaled-UI mint, multiplier {multiplier}. Trade "
-                    f"amounts here are raw units, not displayed units."
+                    f"  note: this quote mint applies a display multiplier of "
+                    f"{multiplier}, so a wallet shows a different figure than "
+                    f"the mint's decimals give. Trading it goes by the decimals."
                 )
 
         # What the curve will actually carry, which is not `creator` on a

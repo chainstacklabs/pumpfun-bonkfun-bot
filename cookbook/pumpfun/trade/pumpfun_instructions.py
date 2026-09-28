@@ -765,9 +765,10 @@ def check_quote_mint_tradable(
     their issuer controls. `pausableConfig` stops every transfer of the mint
     while it is set, which fails every trade on every coin priced in it, so a
     paused mint is refused rather than discovered at buy time.
-    `scaledUiAmountConfig` means the displayed amount and the raw amount differ
-    by a multiplier the issuer moves; trade amounts here are raw, and the
-    multiplier is returned so a caller can say so.
+    `scaledUiAmountConfig` means a wallet shows a balance the issuer scales by a
+    multiplier it can move, so the displayed figure is not the one the token's
+    own decimals give. Amounts in these scripts come from the decimals, so the
+    multiplier is returned for a caller to warn about rather than to apply.
 
     Args:
         quote_mint: Asset the coin is priced in
