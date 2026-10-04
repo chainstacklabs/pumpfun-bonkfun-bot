@@ -118,14 +118,10 @@ POOL_VIRTUAL_QUOTE_RESERVES_SIZE = 16
 POOL_MAYHEM_MODE_MIN_SIZE = 244  # Minimum size for pool data with mayhem flag
 
 # GlobalConfig structure offsets
-GLOBALCONFIG_DISCRIMINATOR_SIZE = 8
-GLOBALCONFIG_ADMIN_SIZE = 32
-GLOBALCONFIG_DEFAULT_FEE_RECIPIENT_SIZE = 32
-GLOBALCONFIG_RESERVED_FEE_OFFSET = (
-    GLOBALCONFIG_DISCRIMINATOR_SIZE
-    + GLOBALCONFIG_ADMIN_SIZE
-    + GLOBALCONFIG_DEFAULT_FEE_RECIPIENT_SIZE
-)
+# GlobalConfig.reserved_fee_recipient, the mayhem-mode fee recipient: after the
+# discriminator, admin, lp and protocol fee bps (u64 each), disable_flags (u8),
+# protocol_fee_recipients[8], coin_creator_fee bps (u64) and two authorities.
+GLOBALCONFIG_RESERVED_FEE_OFFSET = 8 + 32 + 8 + 8 + 1 + 8 * 32 + 8 + 32 + 32
 
 # Fee recipients
 STANDARD_PUMPSWAP_FEE_RECIPIENT = Pubkey.from_string(

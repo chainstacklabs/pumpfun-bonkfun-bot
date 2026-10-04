@@ -1,25 +1,12 @@
 """Raydium LaunchLab buy_exact_in / sell_exact_in instructions, for any quote mint."""
 
-import secrets
 import struct
 
 from solders.instruction import AccountMeta, Instruction
 from solders.pubkey import Pubkey
-from solders.system_program import CreateAccountWithSeedParams, create_account_with_seed
-from spl.token.instructions import (
-    close_account,
-    create_idempotent_associated_token_account,
-    get_associated_token_address,
-    initialize_account,
-)
-from spl.token.models import CloseAccountParams, InitializeAccountParams
+from spl.token.instructions import create_idempotent_associated_token_account
 
-from core.pubkeys import (
-    TOKEN_ACCOUNT_RENT_EXEMPT_RESERVE,
-    TOKEN_ACCOUNT_SIZE,
-    WSOL_MINT,
-    SystemAddresses,
-)
+from core.quote_account import quote_settlement_account
 from interfaces.core import InstructionBuilder, TokenInfo
 from platforms.launchlab.address_provider import LaunchLabAddressProvider
 from utils.idl_parser import IDLParser
@@ -139,58 +126,9 @@ class LaunchLabInstructionBuilder(InstructionBuilder):
     def _quote_account(
         self, accounts: dict[str, Pubkey], user: Pubkey, funding: int
     ) -> tuple[Pubkey, list[Instruction], list[Instruction]]:
-        """The account the quote side settles through, with its setup and teardown.
-
-        Returns:
-            (account, instructions before the swap, instructions after it)
-        """
-        quote_mint = accounts["quote_token_mint"]
-        if quote_mint != WSOL_MINT:
-            quote_program = accounts["quote_token_program"]
-            create_ata = create_idempotent_associated_token_account(
-                user, user, quote_mint, quote_program
-            )
-            ata = get_associated_token_address(user, quote_mint, quote_program)
-            return ata, [create_ata], []
-
-        # A fresh seed per trade: two trades in flight never collide on one
-        # address, and any WSOL the wallet already holds is left alone.
-        seed = secrets.token_hex(16)
-        wsol_account = Pubkey.create_with_seed(
-            user, seed, SystemAddresses.TOKEN_PROGRAM
+        return quote_settlement_account(
+            user, accounts["quote_token_mint"], accounts["quote_token_program"], funding
         )
-        open_ixs = [
-            create_account_with_seed(
-                CreateAccountWithSeedParams(
-                    from_pubkey=user,
-                    to_pubkey=wsol_account,
-                    base=user,
-                    seed=seed,
-                    lamports=funding + TOKEN_ACCOUNT_RENT_EXEMPT_RESERVE,
-                    space=TOKEN_ACCOUNT_SIZE,
-                    owner=SystemAddresses.TOKEN_PROGRAM,
-                )
-            ),
-            initialize_account(
-                InitializeAccountParams(
-                    program_id=SystemAddresses.TOKEN_PROGRAM,
-                    account=wsol_account,
-                    mint=WSOL_MINT,
-                    owner=user,
-                )
-            ),
-        ]
-        close_ixs = [
-            close_account(
-                CloseAccountParams(
-                    program_id=SystemAddresses.TOKEN_PROGRAM,
-                    account=wsol_account,
-                    dest=user,
-                    owner=user,
-                )
-            )
-        ]
-        return wsol_account, open_ixs, close_ixs
 
     def _swap(
         self,

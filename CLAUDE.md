@@ -178,10 +178,10 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
 - `confirm_transaction` and `verify_transaction_succeeded` deliberately stay
   bools. Returning the enum would be silent: every member is truthy, so every
   `if await client.confirm_transaction(sig):` would start passing unconditionally.
-- `calculate_price` returns `0.0` for a curve with no virtual token reserves — it
-  does not raise, and the seller rejects it before its own error handling. Never
-  store a non-positive read as the last known price or floor a sell against one;
-  `0.0` also satisfies the stop-loss comparison.
+- `calculate_price` returns `0.0` for a curve with no virtual token reserves, and
+  raises `CurveGraduatedError` for a graduated one; price and sell then go through
+  the platform's `GraduatedMarket`. Never store a non-positive read as the last
+  known price or floor a sell against one; `0.0` satisfies the stop-loss check.
 
 ## Config notes
 

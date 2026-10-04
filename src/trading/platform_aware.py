@@ -697,6 +697,8 @@ class PlatformAwareSeller(Trader):
             # the transfer fee on the way into the pool and takes its curve fee
             # from the quote side. Zero where the pool state carries neither.
             sell_deductions = (0.0, 0)
+            # Unknown when the refresh below fails; the curve is the default.
+            graduated = False
 
             # The sell account list is 16 (non-cashback) vs 17 (cashback) and
             # fee_recipient differs in mayhem mode; both can change between buy
@@ -721,6 +723,7 @@ class PlatformAwareSeller(Trader):
                     pool_state.get("fee_fraction", 0.0),
                     pool_state.get("transfer_fee_bps", 0),
                 )
+                graduated = pool_state.get("graduated", False)
                 # The program may delegate BC.creator to a PFEE-owned PDA after
                 # the initial creator buy, so the create-time vault on
                 # token_info goes stale before the sell lands and the sell
@@ -745,6 +748,31 @@ class PlatformAwareSeller(Trader):
                     f"using token_info values is_mayhem_mode={token_info.is_mayhem_mode}, "
                     f"is_cashback_coin={token_info.is_cashback_coin}"
                 )
+
+            # A graduated curve takes no sells; the coin trades in the AMM pool
+            # it migrated to, which builds the sell instead.
+            seller = instruction_builder
+            if graduated:
+                market = implementations.graduated_market
+                try:
+                    if market is None:
+                        raise ValueError(  # noqa: TRY301
+                            f"no post-graduation market for {token_info.platform.value}"
+                        )
+                    market_state = await market.get_market_state(token_info)
+                except ValueError as e:
+                    return TradeResult(
+                        success=False,
+                        platform=token_info.platform,
+                        error_message=f"{token_info.symbol} has graduated: {e}",
+                        failure_reason=TradeFailureReason.SUBMIT_FAILED,
+                    )
+                logger.info(
+                    f"{token_info.symbol} has graduated; selling into "
+                    f"{market_state['pool']}"
+                )
+                seller = market
+                sell_deductions = (market_state["fee_fraction"], sell_deductions[1])
 
             quote_unit = quote_units_per_token(quote_mint)
             quote_label = quote_symbol(quote_mint)
@@ -793,7 +821,7 @@ class PlatformAwareSeller(Trader):
             )
 
             # Build sell instructions using platform-specific builder
-            instructions = await instruction_builder.build_sell_instruction(
+            instructions = await seller.build_sell_instruction(
                 token_info,
                 self.wallet.pubkey,
                 token_balance,  # amount_in (tokens)
@@ -802,7 +830,7 @@ class PlatformAwareSeller(Trader):
             )
 
             # Get accounts for priority fee calculation
-            priority_accounts = instruction_builder.get_required_accounts_for_sell(
+            priority_accounts = seller.get_required_accounts_for_sell(
                 token_info, self.wallet.pubkey, address_provider
             )
 
@@ -814,7 +842,7 @@ class PlatformAwareSeller(Trader):
                 priority_fee=await self.priority_fee_manager.calculate_priority_fee(
                     priority_accounts
                 ),
-                compute_unit_limit=instruction_builder.get_sell_compute_unit_limit(
+                compute_unit_limit=seller.get_sell_compute_unit_limit(
                     self._get_cu_override("sell", token_info.platform)
                 ),
                 account_data_size_limit=self._get_cu_override(

@@ -115,6 +115,19 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   byte-identical to upstream, so it cannot be the reference: it lists 23 for `buy`
   against 25-26 on chain, and 21 for `sell` against 23-26.
 
+## Graduation
+
+A complete curve has handed its reserves to PumpSwap: every reserve reads zero
+and `complete` is set. The curve manager reports `graduated` instead of raising
+on the zero reserves, and `calculate_price` raises `CurveGraduatedError`.
+
+The pool a migration creates is canonical and derived, not searched for:
+`PDA(["pool", u16 0, pool_authority, base_mint, quote_mint])` under pump-amm, with
+`pool_authority = PDA(["pool-authority", base_mint])` under the pump.fun program.
+`platforms/pumpfun/pumpswap_market.py` sells into it with the account rules
+above, taking the fee, mayhem and buyback recipients from PumpSwap's
+`GlobalConfig` — the mayhem one is `reserved_fee_recipient`, at offset 385.
+
 ## Coin creation
 
 - `create_v2` takes **eight args**: `name (str), symbol (str), uri (str),

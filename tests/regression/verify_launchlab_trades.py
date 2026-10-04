@@ -187,6 +187,7 @@ def _pool_before(entry: dict, event: dict, base_decimals: int = 6) -> dict:
         "global_config": Pubkey.from_string(entry["global_config"]),
         "platform_config": Pubkey.from_string(entry["platform_config"]),
         "base_mint": Pubkey.from_string(entry["base_mint"]),
+        "status": 0,
     }
 
 

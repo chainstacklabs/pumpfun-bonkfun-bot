@@ -292,6 +292,60 @@ class InstructionBuilder(ABC):
         pass
 
 
+class CurveGraduatedError(Exception):
+    """The bonding curve has graduated and takes no more trades.
+
+    Raised by `CurveManager.calculate_price`; the coin's price is now its
+    `GraduatedMarket`'s.
+    """
+
+
+class GraduatedMarket(ABC):
+    """The AMM pool a coin trades in once its bonding curve has graduated.
+
+    A curve that has graduated can no longer be sold into. Its sell methods
+    match `InstructionBuilder`'s, so the seller swaps one for the other.
+    """
+
+    @abstractmethod
+    async def get_market_state(self, token_info: TokenInfo) -> dict[str, Any]:
+        """Read the pool the coin migrated to.
+
+        Returns:
+            At least `price_per_token`, in whole quote units per whole token,
+            and `fee_fraction`, the share of a sell's proceeds taken as fees
+
+        Raises:
+            ValueError: If the pool does not exist yet — migration lands a
+                moment after graduation — or cannot be read
+        """
+
+    @abstractmethod
+    async def build_sell_instruction(
+        self,
+        token_info: TokenInfo,
+        user: Pubkey,
+        amount_in: int,
+        minimum_amount_out: int,
+        address_provider: AddressProvider,
+    ) -> list[Instruction]:
+        """Build a sell of exactly `amount_in` raw base tokens into the pool.
+
+        Args:
+            minimum_amount_out: Raw quote units that must be paid out
+        """
+
+    @abstractmethod
+    def get_required_accounts_for_sell(
+        self, token_info: TokenInfo, user: Pubkey, address_provider: AddressProvider
+    ) -> list[Pubkey]:
+        """Writable accounts a sell locks, for priority-fee estimation."""
+
+    @abstractmethod
+    def get_sell_compute_unit_limit(self, config_override: int | None = None) -> int:
+        """Compute units for a sell into the pool."""
+
+
 class CurveManager(ABC):
     """Abstract interface for platform-specific price calculations and pool state management."""
 
