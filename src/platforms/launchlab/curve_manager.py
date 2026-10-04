@@ -7,7 +7,7 @@ from typing import Any
 from solders.pubkey import Pubkey
 
 from core.client import SolanaClient
-from interfaces.core import CurveManager
+from interfaces.core import CurveGraduatedError, CurveManager
 from platforms.launchlab.curve_math import (
     FEE_RATE_DENOMINATOR,
     buy_amount_out,
@@ -52,6 +52,7 @@ class LaunchLabCurveManager(CurveManager):
     - `fee_rate`: total curve fee in parts per million, and `fee_fraction`
     - `transfer_fee_bps` / `transfer_fee_max`: the coin's Token-2022 transfer
       fee, zero for a mint without one
+    - `graduated`: the curve takes no more trades; the coin trades on CPMM
     """
 
     def __init__(self, client: SolanaClient, idl_parser: IDLParser) -> None:
@@ -176,11 +177,23 @@ class LaunchLabCurveManager(CurveManager):
             "fee_fraction": fee_rate / FEE_RATE_DENOMINATOR,
             "transfer_fee_bps": transfer_bps,
             "transfer_fee_max": transfer_max,
+            # Status 1 is waiting for Raydium to migrate it, 2 is migrated. The
+            # curve takes no trades either way, and a migrated pool keeps its
+            # final reserves, so its price would read as frozen.
+            "graduated": pool["status"] != 0,
         }
 
     async def calculate_price(self, pool_address: Pubkey) -> float:
-        """Spot price in whole quote units per whole token; 0.0 for an empty curve."""
-        return (await self.get_pool_state(pool_address))["price_per_token"]
+        """Spot price in whole quote units per whole token; 0.0 for an empty curve.
+
+        Raises:
+            CurveGraduatedError: If the curve has graduated — a migrated pool
+                keeps its final reserves, so its price would read as frozen
+        """
+        pool_state = await self.get_pool_state(pool_address)
+        if pool_state["graduated"]:
+            raise CurveGraduatedError(str(pool_address))
+        return pool_state["price_per_token"]
 
     async def calculate_buy_amount_out(
         self, pool_address: Pubkey, amount_in: int

@@ -29,6 +29,7 @@ from core.pubkeys import (
 from core.wallet import Wallet
 from interfaces.core import (
     ConfirmationStatus,
+    CurveGraduatedError,
     Platform,
     TokenInfo,
     TradeFailureReason,
@@ -321,6 +322,8 @@ class UniversalTrader:
         self.token_queue: asyncio.Queue = asyncio.Queue()
         self.processing: bool = False
         self.processed_tokens: set[str] = set()
+        # Coins whose graduation has been logged, so it is said once.
+        self._graduated_mints: set[Pubkey] = set()
         self.token_timestamps: dict[str, float] = {}
 
     async def _resolve_quote_token_programs(self) -> None:
@@ -899,6 +902,33 @@ class UniversalTrader:
         )
         return ExitSellVerdict.STOP
 
+    async def _read_price(self, token_info: TokenInfo) -> float:
+        """The coin's price where it trades now: its curve, or after graduation its AMM pool.
+
+        Returns:
+            Whole quote units per whole token; 0.0 for a pool with nothing in it
+
+        Raises:
+            ValueError: If a graduated coin's pool cannot be priced yet — it
+                lands a moment after graduation
+        """
+        implementations = self.platform_implementations
+        try:
+            return await implementations.curve_manager.calculate_price(
+                self._get_pool_address(token_info)
+            )
+        except CurveGraduatedError:
+            market = implementations.graduated_market
+            if market is None:
+                raise ValueError(  # noqa: TRY003
+                    f"{token_info.symbol} has graduated and "
+                    f"{self.platform.value} has no post-graduation market"
+                ) from None
+            if token_info.mint not in self._graduated_mints:
+                self._graduated_mints.add(token_info.mint)
+                logger.info(f"{token_info.symbol} has graduated; pricing off its pool")
+            return (await market.get_market_state(token_info))["price_per_token"]
+
     async def _current_price_or(self, token_info: TokenInfo, fallback: float) -> float:
         """Read the current price, falling back to the last known one.
 
@@ -910,10 +940,7 @@ class UniversalTrader:
             The freshly read price, or `fallback` if it could not be read
         """
         try:
-            curve_manager = self.platform_implementations.curve_manager
-            price = await curve_manager.calculate_price(
-                self._get_pool_address(token_info)
-            )
+            price = await self._read_price(token_info)
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 f"Could not re-read price for {token_info.symbol} ({e}); "
@@ -936,9 +963,6 @@ class UniversalTrader:
             f"Starting position monitoring (check interval: {self.price_check_interval}s)"
         )
 
-        # Platform-agnostic pool address for price monitoring
-        pool_address = self._get_pool_address(token_info)
-        curve_manager = self.platform_implementations.curve_manager
         exit_sell_attempts = 0
         # Every price below is denominated in the coin's quote asset, which is
         # not always SOL.
@@ -951,7 +975,7 @@ class UniversalTrader:
 
         while position.is_active:
             try:
-                current_price = await curve_manager.calculate_price(pool_address)
+                current_price = await self._read_price(token_info)
                 # A curve with no virtual token reserves prices at 0.0 rather
                 # than raising, and the seller rejects a non-positive price
                 # before its own try block, so a stored 0.0 would escape the

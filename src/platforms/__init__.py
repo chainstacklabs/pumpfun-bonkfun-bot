@@ -8,6 +8,7 @@ from interfaces.core import (
     AddressProvider,
     CurveManager,
     EventParser,
+    GraduatedMarket,
     InstructionBuilder,
     Platform,
 )
@@ -25,6 +26,8 @@ class PlatformImplementations:
     instruction_builder: InstructionBuilder
     curve_manager: CurveManager
     event_parser: EventParser
+    # Where the coin trades once its curve graduates; None where unsupported.
+    graduated_market: GraduatedMarket | None = None
 
 
 class PlatformRegistry:
@@ -41,6 +44,7 @@ class PlatformRegistry:
         instruction_builder_class: type[InstructionBuilder],
         curve_manager_class: type[CurveManager],
         event_parser_class: type[EventParser],
+        graduated_market_class: type[GraduatedMarket] | None = None,
     ) -> None:
         """Register platform implementations.
 
@@ -52,6 +56,7 @@ class PlatformRegistry:
             "instruction_builder": instruction_builder_class,
             "curve_manager": curve_manager_class,
             "event_parser": event_parser_class,
+            "graduated_market": graduated_market_class,
         }
 
     def create_platform_implementations(
@@ -112,11 +117,13 @@ class PlatformRegistry:
             curve_manager = impl_classes["curve_manager"](client)
             event_parser = impl_classes["event_parser"]()
 
+        market_class = impl_classes["graduated_market"]
         implementations = PlatformImplementations(
             address_provider=address_provider,
             instruction_builder=instruction_builder,
             curve_manager=curve_manager,
             event_parser=event_parser,
+            graduated_market=market_class(client) if market_class else None,
         )
 
         self._instances[cache_key] = implementations
@@ -192,6 +199,7 @@ class PlatformFactory:
                 PumpFunEventParser,
                 PumpFunInstructionBuilder,
             )
+            from platforms.pumpfun.pumpswap_market import PumpSwapMarket
 
             self.registry.register_platform(
                 Platform.PUMP_FUN,
@@ -199,6 +207,7 @@ class PlatformFactory:
                 PumpFunInstructionBuilder,
                 PumpFunCurveManager,
                 PumpFunEventParser,
+                PumpSwapMarket,
             )
 
         except ImportError as e:
@@ -212,6 +221,7 @@ class PlatformFactory:
                 LetsBonkEventParser,
                 LetsBonkInstructionBuilder,
             )
+            from platforms.launchlab.cpmm_market import CpmmMarket
 
             self.registry.register_platform(
                 Platform.LETS_BONK,
@@ -219,6 +229,7 @@ class PlatformFactory:
                 LetsBonkInstructionBuilder,
                 LetsBonkCurveManager,
                 LetsBonkEventParser,
+                CpmmMarket,
             )
 
         except ImportError as e:
@@ -231,6 +242,7 @@ class PlatformFactory:
                 StonkFunEventParser,
                 StonkFunInstructionBuilder,
             )
+            from platforms.launchlab.cpmm_market import CpmmMarket
 
             self.registry.register_platform(
                 Platform.STONK_FUN,
@@ -238,6 +250,7 @@ class PlatformFactory:
                 StonkFunInstructionBuilder,
                 StonkFunCurveManager,
                 StonkFunEventParser,
+                CpmmMarket,
             )
 
         except ImportError as e:

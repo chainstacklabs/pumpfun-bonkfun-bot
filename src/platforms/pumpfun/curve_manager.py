@@ -11,7 +11,7 @@ from core.pubkeys import (
     is_sol_paired,
     normalize_quote_mint,
 )
-from interfaces.core import CurveManager, Platform
+from interfaces.core import CurveGraduatedError, CurveManager, Platform
 from utils.idl_parser import IDLParser
 from utils.logger import get_logger
 
@@ -122,6 +122,8 @@ class PumpFunCurveManager(CurveManager):
         """
         pool_state = await self.get_pool_state(pool_address)
 
+        if pool_state["graduated"]:
+            raise CurveGraduatedError(str(pool_address))
         if pool_state["virtual_token_reserves"] <= 0:
             return 0.0
 
@@ -256,6 +258,8 @@ class PumpFunCurveManager(CurveManager):
             "real_quote_reserves": decoded_curve_state.get("real_quote_reserves", 0),
             "token_total_supply": decoded_curve_state.get("token_total_supply", 0),
             "complete": decoded_curve_state.get("complete", False),
+            # The coin now trades on PumpSwap; the curve's reserves are zero.
+            "graduated": decoded_curve_state.get("complete", False),
             "creator": decoded_curve_state.get("creator", ""),
             "is_mayhem_mode": decoded_curve_state.get("is_mayhem_mode", False),
             # Decoded for every coin. create_v2 no longer mints cashback coins
@@ -272,7 +276,13 @@ class PumpFunCurveManager(CurveManager):
         curve_data["virtual_sol_reserves"] = curve_data["virtual_quote_reserves"]
         curve_data["real_sol_reserves"] = curve_data["real_quote_reserves"]
 
-        # Calculate additional metrics
+        # A graduated curve has handed its reserves to PumpSwap and has no
+        # price; reporting that, rather than raising, lets a holder route the
+        # sell to the pool.
+        if curve_data["graduated"]:
+            curve_data["price_per_token"] = None
+            return curve_data
+
         # Validate reserves are positive before calculating price
         if curve_data["virtual_token_reserves"] <= 0:
             raise ValueError(

@@ -80,8 +80,25 @@ StonkFun reward coins are Token-2022 mints with a 1% or 3% transfer fee.
   first. Standard coins' mints have no transfer-fee extension, and harvesting
   against one fails, so only harvest when the account holds withheld fees.
 
+## Graduation
+
+When a curve raises its target, Raydium's migrate wallet moves it to a pool, and
+the curve takes no more trades. `PoolState.status` is 1 while it waits and 2 once
+migrated; a migrated pool keeps its final reserves, so the curve manager reports
+`graduated` and `calculate_price` raises rather than return a frozen price.
+
+`migrate_type` 1 means Raydium CPMM, which is where every StonkFun coin goes. The
+CPMM pool is `PDA(["pool", amm_config, token_0, token_1])` under the CPMM program,
+with `amm_config` the platform's `PlatformConfig.cpswap_config` and the two mints
+ordered by their bytes, so it is derived, never searched for. A sell is
+`swap_base_input`, 13 accounts; the creator fee accrues inside the pool and adds
+none. Price is the vault balances less the protocol, fund and creator fees still
+sitting in them. `migrate_type` 0, Raydium AMM v4, has no market in the bot; a
+coin there is reported, not sold.
+
 ## Verifiers
 
-`verify_launchlab_trades`, `verify_launchlab_launch_parsing` and
-`verify_cleanup_harvests_withheld_fees` cover all of the above against captured
+`verify_launchlab_trades`, `verify_launchlab_launch_parsing`,
+`verify_cleanup_harvests_withheld_fees` and `verify_sell_after_graduation` cover
+all of the above against captured
 mainnet transactions.

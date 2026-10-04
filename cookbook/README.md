@@ -164,6 +164,8 @@ SOL, a tokenized stock, another coin. Amounts are in that asset. *Reward* coins 
 | [`stonkfun/read/stonkfun_read_pool.py`](stonkfun/read/stonkfun_read_pool.py) | Price, quote asset, fees, transfer fee and graduation progress for one coin |
 | 💸 [`stonkfun/trade/stonkfun_buy_token.py`](stonkfun/trade/stonkfun_buy_token.py) | Spend an exact amount of the quote asset. `--dry-run` simulates |
 | 💸 [`stonkfun/trade/stonkfun_sell_token.py`](stonkfun/trade/stonkfun_sell_token.py) | Sell your position; `--close` also harvests withheld fees and closes the account |
+| 💸 [`stonkfun/trade/stonkfun_buy_token_cpmm.py`](stonkfun/trade/stonkfun_buy_token_cpmm.py) | Buy a graduated coin from its Raydium CPMM pool. `--dry-run` simulates |
+| 💸 [`stonkfun/trade/stonkfun_sell_token_cpmm.py`](stonkfun/trade/stonkfun_sell_token_cpmm.py) | Sell a graduated coin into its Raydium CPMM pool |
 
 ## legacy
 
