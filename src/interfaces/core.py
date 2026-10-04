@@ -204,8 +204,10 @@ class InstructionBuilder(ABC):
 
         Args:
             user: User's wallet address
-            amount_in: Amount of quote tokens to spend
-            minimum_amount_out: Minimum base tokens expected
+            amount_in: Raw quote units: all of it is spent when
+                `spends_exact_amount_in`, otherwise it is the most to spend
+            minimum_amount_out: Raw base tokens: the floor that must arrive
+                when `spends_exact_amount_in`, otherwise the exact count to buy
             address_provider: Platform address provider
 
         Returns:
