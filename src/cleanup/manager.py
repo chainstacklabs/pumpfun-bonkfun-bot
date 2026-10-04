@@ -1,5 +1,7 @@
 import asyncio
+import struct
 
+from solders.instruction import AccountMeta, Instruction
 from solders.pubkey import Pubkey
 from spl.token.instructions import burn, close_account
 from spl.token.models import BurnParams, CloseAccountParams
@@ -11,6 +13,41 @@ from core.wallet import Wallet
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Token-2022 account layout: 165-byte base account, one account-type byte, then
+# type-length-value extensions. TransferFeeAmount holds the fee withheld here.
+_EXTENSIONS_OFFSET = 166
+_TRANSFER_FEE_AMOUNT = 2
+# TransferFeeExtension, then HarvestWithheldTokensToMint.
+_HARVEST_WITHHELD_TO_MINT = bytes([26, 4])
+
+
+def withheld_transfer_fee(account_data: bytes) -> int:
+    """Raw transfer fee withheld in a Token-2022 token account, 0 if none.
+
+    Token-2022 refuses to close an account while this is non-zero.
+    """
+    offset = _EXTENSIONS_OFFSET
+    while offset + 4 <= len(account_data):
+        kind, length = struct.unpack_from("<HH", account_data, offset)
+        if kind == 0 and length == 0:
+            break
+        if kind == _TRANSFER_FEE_AMOUNT:
+            return struct.unpack_from("<Q", account_data, offset + 4)[0]
+        offset += 4 + length
+    return 0
+
+
+def harvest_withheld_to_mint(mint: Pubkey, token_account: Pubkey) -> Instruction:
+    """Move the fee withheld in `token_account` into its mint. Needs no signer."""
+    return Instruction(
+        SystemAddresses.TOKEN_2022_PROGRAM,
+        _HARVEST_WITHHELD_TO_MINT,
+        [
+            AccountMeta(mint, is_signer=False, is_writable=True),
+            AccountMeta(token_account, is_signer=False, is_writable=True),
+        ],
+    )
 
 
 class AccountCleanupManager:
@@ -60,7 +97,7 @@ class AccountCleanupManager:
 
         try:
             try:
-                await self.client.get_account_info(ata)
+                account = await self.client.get_account_info(ata)
             except ValueError:
                 logger.info(f"ATA {ata} does not exist or already closed.")
                 return
@@ -98,6 +135,13 @@ class AccountCleanupManager:
                     f"because CLEANUP_FORCE_CLOSE_WITH_BURN is disabled."
                 )
                 return
+
+            # A coin with a transfer fee withholds it inside the receiving
+            # account, and Token-2022 will not close an account holding any.
+            withheld = withheld_transfer_fee(bytes(account.data))
+            if withheld and token_program_id == SystemAddresses.TOKEN_2022_PROGRAM:
+                logger.info(f"Harvesting {withheld} withheld fee units from {ata}")
+                instructions.append(harvest_withheld_to_mint(mint, ata))
 
             # Include close account instruction
             logger.info(f"Closing ATA: {ata}")

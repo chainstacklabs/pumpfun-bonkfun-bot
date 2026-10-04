@@ -40,8 +40,11 @@ individual scripts for a subset.
 | `verify_cookbook_arguments.py` | every cookbook script takes its input as a command-line argument |
 | `verify_documentation_links.py` | no known-dead URL is back; `--live` fetches every one and fails on 4xx/5xx |
 | `verify_no_rpc_credentials_logged.py` | credentials masked in every log record, including a URL passed as a non-`str` argument, and every site that installs a root handler installs the redaction first |
-| `verify_pumpfun_prices_without_hardcoded_sol_unit.py` | nothing in `core/`, `trading/` or `platforms/pumpfun/` scales an amount by `LAMPORTS_PER_SOL`; the letsbonk sites left out of scope are still the documented ones |
+| `verify_prices_without_hardcoded_sol_unit.py` | nothing in `core/`, `trading/` or `platforms/` scales an amount by `LAMPORTS_PER_SOL` |
 | `verify_pumpswap_account_layout.py` | pump-amm's `pool-v2` account is gated on `coin_creator`, the buyback pair stays last, and base-token decimals are resolved rather than assumed; `--live` re-reads the authorized recipients from `GlobalConfig` |
+| `verify_launchlab_trades.py` | against real StonkFun trades, the LaunchLab curve math reproduces each buy and sell to the unit — fee rate read from the configs, transfer fee from the mint; price comes from virtual plus real reserves; the swap names the on-chain 18 accounts with fee vaults keyed by the pool's quote mint; an exact-in buy gets the configured amount unpadded; buy and sell floors are net of curve fee and transfer fee; single-token mode waits past a coin its filters refuse instead of exiting on it |
+| `verify_launchlab_launch_parsing.py` | legacy, v0 and v1 StonkFun launches parse from every account slot over blockSubscribe and geyser alike, lookup-table accounts included; the creator slot wins over the payer; a router-issued launch is found; letsbonk and StonkFun each keep to their own platform configs; LaunchLab listeners subscribe on platform configs, pump.fun on its program |
+| `verify_cleanup_harvests_withheld_fees.py` | cleanup harvests withheld Token-2022 transfer fees into the mint before closing a token account, and sends a bare close when nothing is withheld |
 
 Two mainnet simulations, also no funds moved:
 

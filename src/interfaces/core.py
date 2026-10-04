@@ -14,6 +14,7 @@ class Platform(Enum):
 
     PUMP_FUN = "pump_fun"
     LETS_BONK = "lets_bonk"
+    STONK_FUN = "stonk_fun"
 
 
 class ConfirmationStatus(Enum):
@@ -95,6 +96,11 @@ class TokenInfo:
     quote_token_program_id: Pubkey | None = None
     virtual_quote_reserves: int | None = None
 
+    # Token-2022 transfer fee on the coin itself, in basis points. Withheld on
+    # every transfer, so a buy delivers this much less and a sell sends this
+    # much less into the pool. Zero on pump.fun; set on LaunchLab reward coins.
+    transfer_fee_bps: int = 0
+
     # True when creator, mayhem/cashback flags and quote_mint were read from the
     # on-chain CreateEvent, letting extreme_fast_mode skip the pre-buy curve
     # refresh — zero RPC calls between detection and submission. Listeners that
@@ -174,6 +180,16 @@ class InstructionBuilder(ABC):
     def platform(self) -> Platform:
         """Get the platform this builder serves."""
         pass
+
+    @property
+    def spends_exact_amount_in(self) -> bool:
+        """Whether a buy spends all of `amount_in` rather than capping at it.
+
+        False means `amount_in` is a ceiling and the trader pads it for
+        slippage. True means the program spends exactly what it is given, so a
+        padded value would overspend by the padding.
+        """
+        return False
 
     @abstractmethod
     async def build_buy_instruction(
@@ -426,6 +442,18 @@ class EventParser(ABC):
             Program ID for event filtering
         """
         pass
+
+    def get_stream_filter_accounts(self) -> list[Pubkey]:
+        """Get the accounts the executed-stream listeners subscribe on.
+
+        Geyser and blockSubscribe deliver every transaction mentioning one of
+        these. Defaults to the program id. A platform that shares its program
+        with others narrows this to accounts only its own transactions touch.
+
+        Returns:
+            Accounts to subscribe on
+        """
+        return [self.get_program_id()]
 
     def get_creation_filter_accounts(self) -> list[Pubkey]:
         """Get accounts to subscribe on when only creations are wanted.

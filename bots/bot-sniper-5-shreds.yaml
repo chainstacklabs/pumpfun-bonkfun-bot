@@ -22,7 +22,7 @@ private_key: "${SOLANA_PRIVATE_KEY}"
 enabled: false # You can turn off the bot w/o removing its config
 separate_process: true
 
-# Options: "pump_fun" (default), "lets_bonk"
+# Options: "pump_fun" (default), "lets_bonk", "stonk_fun"
 platform: "pump_fun"
 
 # Geyser connection. Shreds mode uses the same endpoint and credentials as the

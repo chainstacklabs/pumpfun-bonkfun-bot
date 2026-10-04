@@ -100,7 +100,7 @@ class PlatformRegistry:
         address_provider = impl_classes["address_provider"]()
 
         # For platforms with IDL support, pass the parser to relevant classes
-        if idl_parser and platform in [Platform.LETS_BONK, Platform.PUMP_FUN]:
+        if idl_parser:
             instruction_builder = impl_classes["instruction_builder"](
                 idl_parser=idl_parser
             )
@@ -223,6 +223,25 @@ class PlatformFactory:
 
         except ImportError as e:
             print(f"Warning: Could not register LetsBonk platform: {e}")
+
+        try:
+            from platforms.stonkfun import (
+                StonkFunAddressProvider,
+                StonkFunCurveManager,
+                StonkFunEventParser,
+                StonkFunInstructionBuilder,
+            )
+
+            self.registry.register_platform(
+                Platform.STONK_FUN,
+                StonkFunAddressProvider,
+                StonkFunInstructionBuilder,
+                StonkFunCurveManager,
+                StonkFunEventParser,
+            )
+
+        except ImportError as e:
+            print(f"Warning: Could not register StonkFun platform: {e}")
 
     def create_for_platform(
         self, platform: Platform, client: SolanaClient, **config: Any

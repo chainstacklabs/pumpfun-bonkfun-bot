@@ -12,7 +12,7 @@
   • <a target="_blank" href="https://console.chainstack.com/user/account/create">Start for free</a> •
 </p>
 
-A Solana trading bot for **pump.fun** and **letsbonk.fun**. It watches for token creation, buys, and exits on a strategy you configure. [`cookbook/`](cookbook/) holds one standalone script per action, useful on their own even if you never run the bot.
+A Solana trading bot for **pump.fun**, **letsbonk.fun** and **StonkFun**. It watches for token creation, buys, and exits on a strategy you configure. [`cookbook/`](cookbook/) holds one standalone script per action, useful on their own even if you never run the bot.
 
 For the full walkthrough, see [Solana: Creating a trading and sniping pump.fun bot](https://docs.chainstack.com/docs/solana-creating-a-pumpfun-bot). It lags behind the code, so treat this README as the source of truth for setup and configuration.
 
@@ -72,8 +72,9 @@ Each YAML file in `bots/` is one bot instance. They ship with commented defaults
 | `bot-sniper-2-logs.yaml` | `logs` — `logsSubscribe`, supported everywhere | `pump_fun` |
 | `bot-sniper-3-blocks.yaml` | `blocks` — `blockSubscribe`, not supported by every provider | `pump_fun` |
 | `bot-sniper-5-shreds.yaml` | `shreds` — pre-execution, ahead of `geyser`, cannot see router-created coins | `pump_fun` |
+| `bot-sniper-6-stonkfun.yaml` | `geyser` | `stonk_fun`, `enabled: false` |
 
-Set `platform: "pump_fun"` or `platform: "lets_bonk"`. pump.fun supports all four listeners; letsbonk.fun supports `blocks` and `geyser` but **not** `logs` or `shreds`. The bot validates the pairing at startup and refuses to run an invalid one.
+Set `platform` to `"pump_fun"`, `"lets_bonk"` or `"stonk_fun"`. pump.fun supports all four listeners; letsbonk.fun and StonkFun support `blocks` and `geyser` but **not** `logs` or `shreds`. The bot validates the pairing at startup and refuses to run an invalid one.
 
 Set `enabled: false` to keep a config around without running it. Every bot with `enabled: true` starts when you run the bot.
 
@@ -133,6 +134,12 @@ filters:
 
 Keys accept the aliases `sol` / `wsol` / `usdc` or a raw base58 mint. A coin whose quote mint has no configured amount is skipped rather than bought with a wrongly-scaled amount, so a config that lists nothing here trades SOL-paired coins only. Buying a USDC-paired coin needs USDC in the wallet plus a little SOL for fees and ATA rent.
 
+### StonkFun
+
+StonkFun coins are Raydium LaunchLab pools, the same program letsbonk.fun runs on, and most are paired with tokenized stocks (xStocks) rather than SOL. The same `quote_amounts` rules apply: list a raw mint with an amount in its own units, hold that asset in the wallet, and expect sells to pay out in it. Without an entry the bot buys SOL-paired StonkFun coins only.
+
+*Reward* coins charge a Token-2022 transfer fee of 1% or 3% on every transfer, the buy and the sell included. The bot sizes its slippage floors net of that fee and of the 1.25% curve fee. Set `filters.max_transfer_fee_bps` to skip coins above a rate (`0` keeps to standard coins only). How LaunchLab prices and settles a trade is in [docs/launchlab-protocol.md](docs/launchlab-protocol.md).
+
 ## Cookbook
 
 [`cookbook/`](cookbook/) is one script per thing you might want to do. Each runs on
@@ -149,6 +156,7 @@ its own with `uv run <path>`, reads `.env` directly, and needs no bot config.
 | `cookbook/solana/` | Chain-level basics: balances, transaction status, Anchor discriminators |
 | `cookbook/pumpswap/` | Pool discovery and manual buy/sell on the AMM |
 | `cookbook/letsbonk/` | Exact-in / exact-out buys and sells on letsbonk.fun |
+| `cookbook/stonkfun/` | New StonkFun coins over Geyser and `blockSubscribe`, pool state, and buys and sells in any quote asset |
 | `cookbook/legacy/` | Instructions pump.fun has moved on from |
 
 The quickest way in:

@@ -20,7 +20,7 @@ Rules for adding or changing a script under `cookbook/`.
 - **Files are `<protocol>_<verb>_<noun>[_<variant>].py`**, all snake_case. The
   protocol repeats what the directory says, on purpose — a basename is what shows
   up in an editor tab, a grep hit or a docs link.
-  - protocol: `pumpfun`, `pumpswap`, `letsbonk`, `solana`, `anchor`
+  - protocol: `pumpfun`, `pumpswap`, `letsbonk`, `stonkfun`, `solana`, `anchor`
   - verb: `buy`, `sell`, `create`, `snipe`, `listen`, `watch`, `read`, `derive`,
     `decode`, `check`, `capture`, `find`
   - noun: `token`, `price`, `curve`, `pool`, `balances`, `transaction`, `migrations`
@@ -43,7 +43,7 @@ Rules for adding or changing a script under `cookbook/`.
     so the script dies before printing its own usage.
   - Don't read config from environment variables either — `.env` is for
     endpoints and keys, not for trade parameters no usage line mentions.
-  - `sys.argv` never appears at module level. The seven listeners take no input
+  - `sys.argv` never appears at module level. The nine listeners take no input
     and are exempt; they are listed in the verifier.
 - Fixtures are `raw_<what>_from_<method>.json`, next to the script that reads them.
 - **Cite a URL only after checking it resolves.**

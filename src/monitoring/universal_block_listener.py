@@ -48,9 +48,12 @@ class UniversalBlockListener(BaseTokenListener):
 
         # Get event parsers for all platforms
         self.platform_parsers = {}
+        # Accounts to subscribe on; a pump.fun parser names its program, a
+        # LaunchLab one its platform configs.
         self.platform_program_ids = []
-        # Map program IDs to their parsers for faster lookup
-        self.program_id_to_parser = {}
+        # (program id, platform, parser): a list, not a dict keyed by program,
+        # because several platforms can share one program.
+        self.program_id_to_parser = []
 
         for platform in self.platforms:
             try:
@@ -70,8 +73,10 @@ class UniversalBlockListener(BaseTokenListener):
                 parser = implementations.event_parser
                 self.platform_parsers[platform] = parser
                 program_id_str = str(parser.get_program_id())
-                self.platform_program_ids.append(program_id_str)
-                self.program_id_to_parser[program_id_str] = (platform, parser)
+                self.platform_program_ids += [
+                    str(account) for account in parser.get_stream_filter_accounts()
+                ]
+                self.program_id_to_parser.append((program_id_str, platform, parser))
 
                 logger.info(
                     f"Registered platform {platform.value} with program ID {parser.get_program_id()}"
@@ -184,7 +189,7 @@ class UniversalBlockListener(BaseTokenListener):
             )
 
             await websocket.send(subscription_message)
-            logger.info(f"Subscribed to blocks mentioning program: {program_id}")
+            logger.info(f"Subscribed to blocks mentioning: {program_id}")
 
     async def _ping_loop(self, websocket: websockets.WebSocketServerProtocol) -> None:
         """Keep connection alive with pings.
@@ -343,7 +348,7 @@ class UniversalBlockListener(BaseTokenListener):
         if not logs:
             return None
 
-        for program_id, (_platform, parser) in self.program_id_to_parser.items():
+        for program_id, _platform, parser in self.program_id_to_parser:
             if not any(program_id in line for line in logs):
                 continue
             # parse_token_creation_from_block contains its own failures and

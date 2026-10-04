@@ -208,6 +208,9 @@ class PlatformAwareBuyer(Trader):
             # Read from the curve on the regular path, back-derived from the
             # fixed token count in extreme_fast_mode, which reads no curve.
             token_price_sol: float | None = None
+            # Read from chain on the regular path only; extreme_fast_mode sizes
+            # without it.
+            pool_state: dict = {}
 
             if self.extreme_fast_mode:
                 # Zero-RPC hot path: when the CreateEvent carried the canonical
@@ -275,12 +278,25 @@ class PlatformAwareBuyer(Trader):
                         f"zero/invalid price"
                     )
                 token_amount = quote_amount / token_price_sol
+                # LaunchLab takes its curve fee from the spend and, on a reward
+                # coin, withholds the transfer fee from the tokens delivered.
+                # Both are known, so leave them out of the expected amount
+                # rather than spending slippage tolerance on them.
+                token_amount *= 1 - pool_state.get("fee_fraction", 0.0)
+                token_amount *= 1 - pool_state.get("transfer_fee_bps", 0) / 10_000
 
             minimum_token_amount = token_amount * (1 - self.slippage)
             minimum_token_amount_raw = int(minimum_token_amount * 10**TOKEN_DECIMALS)
 
-            # Max spend with slippage, in the quote mint's raw units.
-            max_quote_amount_raw = int(quote_amount * quote_unit * (1 + self.slippage))
+            # An exact-in program spends all of amount_in, so it gets the
+            # configured amount; otherwise amount_in is a ceiling padded for
+            # slippage. In the quote mint's raw units either way.
+            if getattr(instruction_builder, "spends_exact_amount_in", False):
+                max_quote_amount_raw = int(quote_amount * quote_unit)
+            else:
+                max_quote_amount_raw = int(
+                    quote_amount * quote_unit * (1 + self.slippage)
+                )
 
             instructions = await instruction_builder.build_buy_instruction(
                 token_info,
@@ -407,9 +423,8 @@ class PlatformAwareBuyer(Trader):
         if token_info.platform == Platform.PUMP_FUN:
             if hasattr(token_info, "bonding_curve") and token_info.bonding_curve:
                 return token_info.bonding_curve
-        elif token_info.platform == Platform.LETS_BONK:
-            if hasattr(token_info, "pool_state") and token_info.pool_state:
-                return token_info.pool_state
+        elif token_info.pool_state:
+            return token_info.pool_state
 
         return address_provider.derive_pool_address(token_info.mint)
 
@@ -506,17 +521,21 @@ class PlatformAwareBuyer(Trader):
         # The quote asset decides which balance is spent and how amounts scale,
         # so it must come from the curve rather than a listener guess.
         _refresh_quote_mint(token_info, pool_state)
+        token_info.transfer_fee_bps = pool_state.get(
+            "transfer_fee_bps", token_info.transfer_fee_bps
+        )
         fresh_creator = pool_state.get("creator")
-        if fresh_creator and hasattr(address_provider, "derive_creator_vault"):
+        if fresh_creator:
             new_creator = (
                 Pubkey.from_string(fresh_creator)
                 if isinstance(fresh_creator, str)
                 else fresh_creator
             )
             token_info.creator = new_creator
-            token_info.creator_vault = address_provider.derive_creator_vault(
-                new_creator
-            )
+            if hasattr(address_provider, "derive_creator_vault"):
+                token_info.creator_vault = address_provider.derive_creator_vault(
+                    new_creator
+                )
         self._apply_token_program(token_info, fresh_token_program, address_provider)
         return None
 
@@ -565,7 +584,7 @@ class PlatformAwareBuyer(Trader):
     ) -> Pubkey:
         """Get the address where SOL is sent during a buy transaction.
 
-        pump.fun: the bonding curve. letsbonk: the quote_vault (WSOL vault).
+        pump.fun: the bonding curve. LaunchLab platforms: the pool's quote vault.
 
         Args:
             address_provider: Platform-specific address provider
@@ -580,10 +599,8 @@ class PlatformAwareBuyer(Trader):
             if hasattr(token_info, "bonding_curve") and token_info.bonding_curve:
                 return token_info.bonding_curve
             return address_provider.derive_pool_address(token_info.mint)
-        elif token_info.platform == Platform.LETS_BONK:
-            if hasattr(token_info, "quote_vault") and token_info.quote_vault:
-                return token_info.quote_vault
-            return address_provider.derive_quote_vault(token_info.mint)
+        elif token_info.quote_vault:
+            return token_info.quote_vault
 
         raise NotImplementedError(
             f"SOL destination not implemented for platform {token_info.platform.value}. "
@@ -674,6 +691,10 @@ class PlatformAwareSeller(Trader):
 
             # Fall back to the listener's quote asset if the refresh fails.
             quote_mint = normalize_quote_mint(token_info.quote_mint)
+            # Protocol deductions on a sell, known up front: LaunchLab withholds
+            # the transfer fee on the way into the pool and takes its curve fee
+            # from the quote side. Zero where the pool state carries neither.
+            sell_deductions = (0.0, 0)
 
             # The sell account list is 16 (non-cashback) vs 17 (cashback) and
             # fee_recipient differs in mayhem mode; both can change between buy
@@ -694,6 +715,10 @@ class PlatformAwareSeller(Trader):
                     "is_cashback_coin", token_info.is_cashback_coin
                 )
                 quote_mint = _refresh_quote_mint(token_info, pool_state)
+                sell_deductions = (
+                    pool_state.get("fee_fraction", 0.0),
+                    pool_state.get("transfer_fee_bps", 0),
+                )
                 # The program may delegate BC.creator to a PFEE-owned PDA after
                 # the initial creator buy, so the create-time vault on
                 # token_info goes stale before the sell lands and the sell
@@ -708,9 +733,10 @@ class PlatformAwareSeller(Trader):
                         else fresh_creator
                     )
                     token_info.creator = new_creator
-                    token_info.creator_vault = address_provider.derive_creator_vault(
-                        new_creator
-                    )
+                    if hasattr(address_provider, "derive_creator_vault"):
+                        token_info.creator_vault = (
+                            address_provider.derive_creator_vault(new_creator)
+                        )
             except Exception as e:  # noqa: BLE001
                 logger.warning(
                     f"Could not refresh curve flags before sell ({e}); "
@@ -741,7 +767,13 @@ class PlatformAwareSeller(Trader):
 
             # Calculate expected quote output with slippage protection, in the
             # quote mint's raw units.
-            expected_quote_output = token_balance_decimal * token_price_sol
+            fee_fraction, transfer_fee_bps = sell_deductions
+            expected_quote_output = (
+                token_balance_decimal
+                * (1 - transfer_fee_bps / 10_000)
+                * token_price_sol
+                * (1 - fee_fraction)
+            )
             min_quote_output = max(
                 1,
                 int((expected_quote_output * (1 - self.slippage)) * quote_unit),
@@ -845,9 +877,8 @@ class PlatformAwareSeller(Trader):
         if token_info.platform == Platform.PUMP_FUN:
             if hasattr(token_info, "bonding_curve") and token_info.bonding_curve:
                 return token_info.bonding_curve
-        elif token_info.platform == Platform.LETS_BONK:
-            if hasattr(token_info, "pool_state") and token_info.pool_state:
-                return token_info.pool_state
+        elif token_info.pool_state:
+            return token_info.pool_state
 
         # Fallback to deriving the address using platform provider
         return address_provider.derive_pool_address(token_info.mint)

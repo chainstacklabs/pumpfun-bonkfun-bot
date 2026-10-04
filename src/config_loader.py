@@ -40,6 +40,13 @@ CONFIG_VALIDATION_RULES = [
         "trade.max_exit_sell_attempts must be between 1 and 100",
     ),
     (
+        "filters.max_transfer_fee_bps",
+        int,
+        0,
+        10_000,
+        "filters.max_transfer_fee_bps must be between 0 and 10000",
+    ),
+    (
         "priority_fees.fixed_amount",
         int,
         0,
@@ -81,13 +88,14 @@ VALID_VALUES = {
     "filters.listener_type": ["logs", "blocks", "geyser", "shreds"],
     "cleanup.mode": ["disabled", "on_fail", "after_sell", "post_session"],
     "trade.exit_strategy": ["time_based", "tp_sl", "manual"],
-    "platform": ["pump_fun", "lets_bonk"],
+    "platform": ["pump_fun", "lets_bonk", "stonk_fun"],
 }
 
 # Platform-specific listener compatibility
 PLATFORM_LISTENER_COMPATIBILITY = {
     Platform.PUMP_FUN: ["logs", "blocks", "geyser", "shreds"],
     Platform.LETS_BONK: ["blocks", "geyser"],
+    Platform.STONK_FUN: ["blocks", "geyser"],
 }
 
 

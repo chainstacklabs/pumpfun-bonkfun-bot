@@ -124,7 +124,9 @@ class UniversalGeyserListener(BaseTokenListener):
                 )
                 parser = implementations.event_parser
                 self.platform_parsers[platform] = parser
-                self.platform_program_ids.add(parser.get_program_id())
+                # A pump.fun parser names its program; a LaunchLab one its
+                # platform configs, keeping other launchpads out of the stream.
+                self.platform_program_ids.update(parser.get_stream_filter_accounts())
 
                 logger.info(
                     f"Registered platform {platform.value} with program ID {parser.get_program_id()}"
@@ -188,7 +190,7 @@ class UniversalGeyserListener(BaseTokenListener):
                     f"Monitoring platforms: {[p.value for p in self.platforms]}"
                 )
                 logger.info(
-                    f"Monitoring program IDs: {[str(pid) for pid in self.platform_program_ids]}"
+                    f"Monitoring accounts: {[str(pid) for pid in self.platform_program_ids]}"
                 )
 
                 try:

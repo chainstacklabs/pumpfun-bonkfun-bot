@@ -10,7 +10,7 @@ private_key: "${SOLANA_PRIVATE_KEY}"
 enabled: true # You can turn off the bot w/o removing its config
 separate_process: true
 
-# Options: "pump_fun" (default), "lets_bonk"
+# Options: "pump_fun" (default), "lets_bonk", "stonk_fun"
 platform: "pump_fun"
 
 # Geyser configuration (fastest method for getting updates)
