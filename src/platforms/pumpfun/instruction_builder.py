@@ -133,7 +133,8 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         Args:
             user: User's wallet address
             amount_in: Maximum quote amount to spend (raw quote units)
-            minimum_amount_out: Minimum tokens expected (raw token units)
+            minimum_amount_out: Exact tokens to buy (raw token units); the
+                slippage cap is amount_in
             address_provider: Platform address provider
 
         Returns:
@@ -161,7 +162,7 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             user: User's wallet address
             amount_in: Maximum quote amount to spend (raw quote units:
                 lamports for SOL-paired coins, 1e-6 USDC for USDC-paired)
-            minimum_amount_out: Base tokens to buy (raw token units)
+            minimum_amount_out: Exact base tokens to buy (raw token units)
             address_provider: Platform address provider
 
         Returns:
@@ -290,7 +291,7 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         Args:
             user: User's wallet address
             amount_in: Amount of SOL to spend (in lamports)
-            minimum_amount_out: Minimum tokens expected (raw token units)
+            minimum_amount_out: Exact tokens to buy (raw token units)
             address_provider: Platform address provider
 
         Returns:

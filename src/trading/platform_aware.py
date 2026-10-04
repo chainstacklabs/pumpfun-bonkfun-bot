@@ -285,24 +285,26 @@ class PlatformAwareBuyer(Trader):
                 token_amount *= 1 - pool_state.get("fee_fraction", 0.0)
                 token_amount *= 1 - pool_state.get("transfer_fee_bps", 0) / 10_000
 
-            minimum_token_amount = token_amount * (1 - self.slippage)
-            minimum_token_amount_raw = int(minimum_token_amount * 10**TOKEN_DECIMALS)
-
-            # An exact-in program spends all of amount_in, so it gets the
-            # configured amount; otherwise amount_in is a ceiling padded for
-            # slippage. In the quote mint's raw units either way.
+            # Slippage goes on whichever side the program leaves open. An
+            # exact-in program spends all of amount_in, so it gets the
+            # configured amount and a token floor. Otherwise the token count
+            # is exact (pump.fun buy_v2) and amount_in is the ceiling.
             if getattr(instruction_builder, "spends_exact_amount_in", False):
                 max_quote_amount_raw = int(quote_amount * quote_unit)
+                token_amount_raw = int(
+                    token_amount * (1 - self.slippage) * 10**TOKEN_DECIMALS
+                )
             else:
                 max_quote_amount_raw = int(
                     quote_amount * quote_unit * (1 + self.slippage)
                 )
+                token_amount_raw = int(token_amount * 10**TOKEN_DECIMALS)
 
             instructions = await instruction_builder.build_buy_instruction(
                 token_info,
                 self.wallet.pubkey,
                 max_quote_amount_raw,  # amount_in (raw quote units)
-                minimum_token_amount_raw,  # minimum_amount_out (tokens)
+                token_amount_raw,  # minimum_amount_out (tokens)
                 address_provider,
             )
 

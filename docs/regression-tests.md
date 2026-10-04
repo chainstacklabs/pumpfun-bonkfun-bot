@@ -28,6 +28,7 @@ individual scripts for a subset.
 | `verify_curve_refresh_buy_path.py` | a TokenInfo without `state_from_event` refreshes first: an unreadable curve skips the buy, and curve + mint are read in one slot-consistent batch that corrects the token program |
 | `verify_cleanup_survives_shutdown.py` | shutdown cleanup runs to completion through the cancellation that triggered it, bounded, and a cleanup that hangs or raises still lets the process exit |
 | `verify_token_queue_shutdown.py` | cancelling the token queue processor ends it without raising, and `task_done()` stays balanced on the paths that took an item |
+| `verify_pumpfun_buy_token_amount.py` | a pump.fun `buy_v2` asks for the whole sized token count with slippage on the cost ceiling, in extreme_fast_mode and on the regular path |
 | `verify_buy_result_not_lost.py` | a landed buy is never reported failed, and a reverted one never reported landed |
 | `verify_tx_status_checks.py` | every path reads `meta.err`; `--live` replays known reverted signatures |
 | `verify_tp_sl_exit_price.py` | the tp/sl exit prices off the trigger price, and a reverted sell is retried, bounded |
