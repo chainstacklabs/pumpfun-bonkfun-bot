@@ -48,6 +48,8 @@ NO_INPUT = {
     "pumpfun_listen_migrations_logsubscribe.py",
     "pumpfun_listen_migrations_programsubscribe.py",
     "pumpfun_capture_transactions_blocksubscribe.py",
+    "stonkfun_listen_tokens_geyser.py",
+    "stonkfun_listen_tokens_blocksubscribe.py",
 }
 
 

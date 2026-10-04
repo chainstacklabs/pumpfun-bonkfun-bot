@@ -121,7 +121,7 @@ class ListenerFactory:
         """
         if platform == Platform.PUMP_FUN:
             return ["logs", "blocks", "geyser", "shreds"]
-        elif platform == Platform.LETS_BONK:
+        elif platform in (Platform.LETS_BONK, Platform.STONK_FUN):
             return ["blocks", "geyser"]
         else:
             return ["blocks", "geyser"]  # Default universal listeners

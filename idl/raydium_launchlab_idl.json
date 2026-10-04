@@ -36,6 +36,7 @@
                         "The user performing the swap operation",
                         "Must sign the transaction and pay for fees"
                     ],
+                    "writable": true,
                     "signer": true
                 },
                 {
@@ -133,50 +134,24 @@
                 {
                     "name": "quote_token_mint",
                     "docs": [
-                        "The mint of the quote token"
+                        "The mint of the quote token",
+                        "Used for transfer fee calculations if applicable"
                     ]
                 },
                 {
                     "name": "base_token_program",
                     "docs": [
-                        "SPL Token program for base token transfers"
+                        "Token program owning the base token: either SPL Token or Token-2022"
                     ]
                 },
                 {
                     "name": "quote_token_program",
                     "docs": [
-                        "SPL Token program for quote token transfers"
-                    ],
-                    "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                        "Token program owning the quote token: either SPL Token or Token-2022"
+                    ]
                 },
                 {
-                    "name": "event_authority",
-                    "pda": {
-                        "seeds": [
-                            {
-                                "kind": "const",
-                                "value": [
-                                    95,
-                                    95,
-                                    101,
-                                    118,
-                                    101,
-                                    110,
-                                    116,
-                                    95,
-                                    97,
-                                    117,
-                                    116,
-                                    104,
-                                    111,
-                                    114,
-                                    105,
-                                    116,
-                                    121
-                                ]
-                            }
-                        ]
-                    }
+                    "name": "event_authority"
                 },
                 {
                     "name": "program"
@@ -225,6 +200,7 @@
                         "The user performing the swap operation",
                         "Must sign the transaction and pay for fees"
                     ],
+                    "writable": true,
                     "signer": true
                 },
                 {
@@ -322,50 +298,24 @@
                 {
                     "name": "quote_token_mint",
                     "docs": [
-                        "The mint of the quote token"
+                        "The mint of the quote token",
+                        "Used for transfer fee calculations if applicable"
                     ]
                 },
                 {
                     "name": "base_token_program",
                     "docs": [
-                        "SPL Token program for base token transfers"
+                        "Token program owning the base token: either SPL Token or Token-2022"
                     ]
                 },
                 {
                     "name": "quote_token_program",
                     "docs": [
-                        "SPL Token program for quote token transfers"
-                    ],
-                    "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                        "Token program owning the quote token: either SPL Token or Token-2022"
+                    ]
                 },
                 {
-                    "name": "event_authority",
-                    "pda": {
-                        "seeds": [
-                            {
-                                "kind": "const",
-                                "value": [
-                                    95,
-                                    95,
-                                    101,
-                                    118,
-                                    101,
-                                    110,
-                                    116,
-                                    95,
-                                    97,
-                                    117,
-                                    116,
-                                    104,
-                                    111,
-                                    114,
-                                    105,
-                                    116,
-                                    121
-                                ]
-                            }
-                        ]
-                    }
+                    "name": "event_authority"
                 },
                 {
                     "name": "program"
@@ -538,9 +488,8 @@
                 {
                     "name": "token_program",
                     "docs": [
-                        "SPL Token program for the quote token"
-                    ],
-                    "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                        "Token program owning the quote token: either SPL Token or Token-2022"
+                    ]
                 },
                 {
                     "name": "system_program",
@@ -705,9 +654,8 @@
                 {
                     "name": "token_program",
                     "docs": [
-                        "SPL program for input token transfers"
-                    ],
-                    "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                        "Token program owning the quote token: either SPL Token or Token-2022"
+                    ]
                 },
                 {
                     "name": "system_program",
@@ -888,9 +836,8 @@
                 {
                     "name": "token_program",
                     "docs": [
-                        "SPL program for input token transfers"
-                    ],
-                    "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                        "Token program owning the quote token: either SPL Token or Token-2022"
+                    ]
                 },
                 {
                     "name": "system_program",
@@ -1084,10 +1031,9 @@
                 {
                     "name": "base_token_program",
                     "docs": [
-                        "SPL Token program for the base token",
-                        "Must be the standard Token program"
-                    ],
-                    "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                        "SPL Token program or Token-2022 program for the base token",
+                        "Bound to the base mint's owner via `base_token_mint.mint::token_program`"
+                    ]
                 },
                 {
                     "name": "system_program",
@@ -1102,6 +1048,263 @@
                         "Required for associated token program"
                     ],
                     "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+                }
+            ],
+            "args": []
+        },
+        {
+            "name": "close_platform_allow_config",
+            "docs": [
+                "Stop allowing the global config to be used to create pools with the platform config",
+                "# Arguments",
+                "",
+                "* `ctx` - The context of accounts",
+                ""
+            ],
+            "discriminator": [
+                82,
+                205,
+                36,
+                216,
+                16,
+                6,
+                240,
+                215
+            ],
+            "accounts": [
+                {
+                    "name": "platform_admin",
+                    "docs": [
+                        "The owner of the platform config, it receives the rent of the closed account"
+                    ],
+                    "writable": true,
+                    "signer": true
+                },
+                {
+                    "name": "platform_config",
+                    "docs": [
+                        "The platform config the global config was allowed for"
+                    ],
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "const",
+                                "value": [
+                                    112,
+                                    108,
+                                    97,
+                                    116,
+                                    102,
+                                    111,
+                                    114,
+                                    109,
+                                    95,
+                                    99,
+                                    111,
+                                    110,
+                                    102,
+                                    105,
+                                    103
+                                ]
+                            },
+                            {
+                                "kind": "account",
+                                "path": "platform_admin"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "global_config",
+                    "docs": [
+                        "The global config the platform no longer allows"
+                    ]
+                },
+                {
+                    "name": "platform_allow_config",
+                    "docs": [
+                        "The account that records the allowed global config"
+                    ],
+                    "writable": true,
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "const",
+                                "value": [
+                                    112,
+                                    108,
+                                    97,
+                                    116,
+                                    102,
+                                    111,
+                                    114,
+                                    109,
+                                    95,
+                                    97,
+                                    108,
+                                    108,
+                                    111,
+                                    119,
+                                    95,
+                                    99,
+                                    111,
+                                    110,
+                                    102,
+                                    105,
+                                    103
+                                ]
+                            },
+                            {
+                                "kind": "account",
+                                "path": "platform_config"
+                            },
+                            {
+                                "kind": "account",
+                                "path": "global_config"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "args": []
+        },
+        {
+            "name": "close_platform_curve_rule",
+            "docs": [
+                "Close the launch param rule of the global config, the platform then no longer",
+                "restricts the launch params of the global config",
+                "# Arguments",
+                "",
+                "* `ctx` - The context of accounts",
+                ""
+            ],
+            "discriminator": [
+                194,
+                114,
+                82,
+                45,
+                136,
+                88,
+                169,
+                159
+            ],
+            "accounts": [
+                {
+                    "name": "curve_rule_authority",
+                    "docs": [
+                        "The curve rule manager of the platform config or the platform admin itself,",
+                        "it receives the rent of the closed account, see PlatformConfig::curve_rule_manager"
+                    ],
+                    "writable": true,
+                    "signer": true
+                },
+                {
+                    "name": "platform_config",
+                    "docs": [
+                        "The platform config the rule belongs to, it can only be managed by the dedicated",
+                        "curve rule manager wallet or by the platform admin"
+                    ]
+                },
+                {
+                    "name": "global_config",
+                    "docs": [
+                        "The global config the rule applies to"
+                    ]
+                },
+                {
+                    "name": "platform_curve_rule",
+                    "docs": [
+                        "The launch param rule to be closed"
+                    ],
+                    "writable": true,
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "const",
+                                "value": [
+                                    112,
+                                    108,
+                                    97,
+                                    116,
+                                    102,
+                                    111,
+                                    114,
+                                    109,
+                                    95,
+                                    99,
+                                    117,
+                                    114,
+                                    118,
+                                    101,
+                                    95,
+                                    114,
+                                    117,
+                                    108,
+                                    101
+                                ]
+                            },
+                            {
+                                "kind": "account",
+                                "path": "platform_config"
+                            },
+                            {
+                                "kind": "account",
+                                "path": "global_config"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "args": []
+        },
+        {
+            "name": "collect_excess_lamports",
+            "docs": [
+                "Collect excess lamports, including the token accounts and mints owned by the",
+                "program authorities and the program pda accounts.",
+                "# Arguments",
+                "",
+                "* `ctx` - The context of accounts",
+                ""
+            ],
+            "discriminator": [
+                28,
+                189,
+                19,
+                40,
+                164,
+                176,
+                118,
+                17
+            ],
+            "accounts": [
+                {
+                    "name": "collect_lamports_wallet",
+                    "docs": [
+                        "Only admin or collect_lamports can collect lamports"
+                    ],
+                    "writable": true,
+                    "signer": true
+                },
+                {
+                    "name": "authority",
+                    "docs": [
+                        "authority, the platform fee vault authority or the creator fee vault authority"
+                    ]
+                },
+                {
+                    "name": "token_program",
+                    "docs": [
+                        "The SPL program to perform token transfers"
+                    ],
+                    "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                },
+                {
+                    "name": "token_program_2022",
+                    "docs": [
+                        "The SPL program 2022 to perform token transfers"
+                    ],
+                    "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
                 }
             ],
             "args": []
@@ -1196,9 +1399,8 @@
                 {
                     "name": "token_program",
                     "docs": [
-                        "SPL program for input token transfers"
-                    ],
-                    "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                        "Token program owning the quote token: either SPL Token or Token-2022"
+                    ]
                 }
             ],
             "args": []
@@ -1293,9 +1495,8 @@
                 {
                     "name": "token_program",
                     "docs": [
-                        "SPL program for input token transfers"
-                    ],
-                    "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                        "Token program owning the quote token: either SPL Token or Token-2022"
+                    ]
                 }
             ],
             "args": []
@@ -1327,12 +1528,11 @@
                     "name": "owner",
                     "docs": [
                         "The protocol owner/admin account",
-                        "Must match the predefined admin address",
+                        "Must match the predefined admin address or the create config authority",
                         "Has authority to create and modify protocol configurations"
                     ],
                     "writable": true,
-                    "signer": true,
-                    "address": "GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ"
+                    "signer": true
                 },
                 {
                     "name": "global_config",
@@ -1381,7 +1581,8 @@
                     "name": "quote_token_mint",
                     "docs": [
                         "The mint address of the quote token (token used for buying)",
-                        "This will be the standard token used for all pools with this config"
+                        "This will be the standard token used for all pools with this config",
+                        "May be owned by either the SPL Token program or the Token-2022 program"
                     ]
                 },
                 {
@@ -1434,6 +1635,130 @@
                     "type": "u64"
                 }
             ]
+        },
+        {
+            "name": "create_platform_allow_config",
+            "docs": [
+                "Allow the global config to be used to create pools with the platform config,",
+                "it takes effect only when platform_config.restrict_global_config is 1",
+                "# Arguments",
+                "",
+                "* `ctx` - The context of accounts",
+                ""
+            ],
+            "discriminator": [
+                69,
+                71,
+                168,
+                7,
+                214,
+                250,
+                107,
+                102
+            ],
+            "accounts": [
+                {
+                    "name": "platform_admin",
+                    "docs": [
+                        "The owner of the platform config, it pays for the initialization costs"
+                    ],
+                    "writable": true,
+                    "signer": true
+                },
+                {
+                    "name": "platform_config",
+                    "docs": [
+                        "The platform config the global config is allowed for"
+                    ],
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "const",
+                                "value": [
+                                    112,
+                                    108,
+                                    97,
+                                    116,
+                                    102,
+                                    111,
+                                    114,
+                                    109,
+                                    95,
+                                    99,
+                                    111,
+                                    110,
+                                    102,
+                                    105,
+                                    103
+                                ]
+                            },
+                            {
+                                "kind": "account",
+                                "path": "platform_admin"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "global_config",
+                    "docs": [
+                        "The global config the platform allows to create pools with"
+                    ]
+                },
+                {
+                    "name": "platform_allow_config",
+                    "docs": [
+                        "The account that records the allowed global config"
+                    ],
+                    "writable": true,
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "const",
+                                "value": [
+                                    112,
+                                    108,
+                                    97,
+                                    116,
+                                    102,
+                                    111,
+                                    114,
+                                    109,
+                                    95,
+                                    97,
+                                    108,
+                                    108,
+                                    111,
+                                    119,
+                                    95,
+                                    99,
+                                    111,
+                                    110,
+                                    102,
+                                    105,
+                                    103
+                                ]
+                            },
+                            {
+                                "kind": "account",
+                                "path": "platform_config"
+                            },
+                            {
+                                "kind": "account",
+                                "path": "global_config"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "system_program",
+                    "docs": [
+                        "Required for account creation"
+                    ],
+                    "address": "11111111111111111111111111111111"
+                }
+            ],
+            "args": []
         },
         {
             "name": "create_platform_config",
@@ -1521,6 +1846,9 @@
                 },
                 {
                     "name": "transfer_fee_extension_authority"
+                },
+                {
+                    "name": "platform_vesting_wallet"
                 }
             ],
             "args": [
@@ -1533,6 +1861,202 @@
                     }
                 }
             ]
+        },
+        {
+            "name": "create_platform_curve_rule",
+            "docs": [
+                "Create an empty launch param rule for the global config, the check groups are",
+                "added with the `update_platform_curve_rule` instruction. It is signed by the",
+                "curve rule manager wallet or by the platform admin.",
+                "It takes effect only when platform_config.restrict_curve_param is 1",
+                "# Arguments",
+                "",
+                "* `ctx` - The context of accounts",
+                ""
+            ],
+            "discriminator": [
+                148,
+                71,
+                180,
+                136,
+                122,
+                144,
+                59,
+                21
+            ],
+            "accounts": [
+                {
+                    "name": "curve_rule_authority",
+                    "docs": [
+                        "The curve rule manager of the platform config or the platform admin itself,",
+                        "it pays for the initialization costs, see PlatformConfig::curve_rule_manager"
+                    ],
+                    "writable": true,
+                    "signer": true
+                },
+                {
+                    "name": "platform_config",
+                    "docs": [
+                        "The platform config the rule belongs to, it can only be managed by the dedicated",
+                        "curve rule manager wallet or by the platform admin"
+                    ]
+                },
+                {
+                    "name": "global_config",
+                    "docs": [
+                        "The global config the rule applies to"
+                    ]
+                },
+                {
+                    "name": "platform_curve_rule",
+                    "docs": [
+                        "The account that records the launch param check groups of the global config"
+                    ],
+                    "writable": true,
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "const",
+                                "value": [
+                                    112,
+                                    108,
+                                    97,
+                                    116,
+                                    102,
+                                    111,
+                                    114,
+                                    109,
+                                    95,
+                                    99,
+                                    117,
+                                    114,
+                                    118,
+                                    101,
+                                    95,
+                                    114,
+                                    117,
+                                    108,
+                                    101
+                                ]
+                            },
+                            {
+                                "kind": "account",
+                                "path": "platform_config"
+                            },
+                            {
+                                "kind": "account",
+                                "path": "global_config"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "system_program",
+                    "docs": [
+                        "Required for account creation"
+                    ],
+                    "address": "11111111111111111111111111111111"
+                }
+            ],
+            "args": []
+        },
+        {
+            "name": "create_platform_vesting_account",
+            "docs": [
+                "Create vesting account",
+                "# Arguments",
+                "",
+                "* `ctx` - The context of accounts",
+                "* `share` - The share amount of base token to be vested",
+                ""
+            ],
+            "discriminator": [
+                146,
+                71,
+                173,
+                69,
+                98,
+                19,
+                15,
+                106
+            ],
+            "accounts": [
+                {
+                    "name": "platform_vesting_wallet",
+                    "docs": [
+                        "The account paying for the initialization costs",
+                        "This can be any account with sufficient SOL to cover the transaction"
+                    ],
+                    "writable": true,
+                    "signer": true
+                },
+                {
+                    "name": "beneficiary",
+                    "docs": [
+                        "The beneficiary is used to receive the allocated linear release of tokens.",
+                        "Once this account is set, it cannot be modified, so please ensure the validity of this account,",
+                        "otherwise, the unlocked tokens will not be claimable."
+                    ],
+                    "writable": true
+                },
+                {
+                    "name": "platform_config",
+                    "docs": [
+                        "Platform config account to be changed"
+                    ]
+                },
+                {
+                    "name": "pool_state",
+                    "docs": [
+                        "The pool state account"
+                    ],
+                    "writable": true
+                },
+                {
+                    "name": "platform_vesting_record",
+                    "docs": [
+                        "The vesting record account"
+                    ],
+                    "writable": true,
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "const",
+                                "value": [
+                                    112,
+                                    111,
+                                    111,
+                                    108,
+                                    95,
+                                    118,
+                                    101,
+                                    115,
+                                    116,
+                                    105,
+                                    110,
+                                    103
+                                ]
+                            },
+                            {
+                                "kind": "account",
+                                "path": "pool_state"
+                            },
+                            {
+                                "kind": "account",
+                                "path": "beneficiary"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "system_program",
+                    "docs": [
+                        "Required for account creation"
+                    ],
+                    "address": "11111111111111111111111111111111"
+                }
+            ],
+            "args": []
         },
         {
             "name": "create_vesting_account",
@@ -1634,7 +2158,7 @@
         {
             "name": "initialize",
             "docs": [
-                "Initializes a new trading pool",
+                "Deprecated, it always fails with `NotApproved`, use `initialize_v2`",
                 "# Arguments",
                 "",
                 "* `ctx` - The context of accounts containing pool and token information",
@@ -1869,33 +2393,7 @@
                     "address": "SysvarRent111111111111111111111111111111111"
                 },
                 {
-                    "name": "event_authority",
-                    "pda": {
-                        "seeds": [
-                            {
-                                "kind": "const",
-                                "value": [
-                                    95,
-                                    95,
-                                    101,
-                                    118,
-                                    101,
-                                    110,
-                                    116,
-                                    95,
-                                    97,
-                                    117,
-                                    116,
-                                    104,
-                                    111,
-                                    114,
-                                    105,
-                                    116,
-                                    121
-                                ]
-                            }
-                        ]
-                    }
+                    "name": "event_authority"
                 },
                 {
                     "name": "program"
@@ -1903,7 +2401,7 @@
             ],
             "args": [
                 {
-                    "name": "base_mint_param",
+                    "name": "_base_mint_param",
                     "type": {
                         "defined": {
                             "name": "MintParams"
@@ -1911,7 +2409,7 @@
                     }
                 },
                 {
-                    "name": "curve_param",
+                    "name": "_curve_param",
                     "type": {
                         "defined": {
                             "name": "CurveParams"
@@ -1919,7 +2417,7 @@
                     }
                 },
                 {
-                    "name": "vesting_param",
+                    "name": "_vesting_param",
                     "type": {
                         "defined": {
                             "name": "VestingParams"
@@ -1931,7 +2429,8 @@
         {
             "name": "initialize_v2",
             "docs": [
-                "Initializes a new trading pool",
+                "Initializes a new trading pool,",
+                "pool created by this instruction must be migrated to cpswap after fundraising ends, i.e., curve_param.migrate_type = 1",
                 "# Arguments",
                 "",
                 "* `ctx` - The context of accounts containing pool and token information",
@@ -2139,9 +2638,8 @@
                 {
                     "name": "quote_token_program",
                     "docs": [
-                        "SPL Token program for the quote token"
-                    ],
-                    "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                        "Token program owning the quote token: either SPL Token or Token-2022"
+                    ]
                 },
                 {
                     "name": "metadata_program",
@@ -2166,33 +2664,7 @@
                     "address": "SysvarRent111111111111111111111111111111111"
                 },
                 {
-                    "name": "event_authority",
-                    "pda": {
-                        "seeds": [
-                            {
-                                "kind": "const",
-                                "value": [
-                                    95,
-                                    95,
-                                    101,
-                                    118,
-                                    101,
-                                    110,
-                                    116,
-                                    95,
-                                    97,
-                                    117,
-                                    116,
-                                    104,
-                                    111,
-                                    114,
-                                    105,
-                                    116,
-                                    121
-                                ]
-                            }
-                        ]
-                    }
+                    "name": "event_authority"
                 },
                 {
                     "name": "program"
@@ -2436,9 +2908,8 @@
                 {
                     "name": "quote_token_program",
                     "docs": [
-                        "SPL Token program for the quote token"
-                    ],
-                    "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                        "Token program owning the quote token: either SPL Token or Token-2022"
+                    ]
                 },
                 {
                     "name": "system_program",
@@ -2448,33 +2919,7 @@
                     "address": "11111111111111111111111111111111"
                 },
                 {
-                    "name": "event_authority",
-                    "pda": {
-                        "seeds": [
-                            {
-                                "kind": "const",
-                                "value": [
-                                    95,
-                                    95,
-                                    101,
-                                    118,
-                                    101,
-                                    110,
-                                    116,
-                                    95,
-                                    97,
-                                    117,
-                                    116,
-                                    104,
-                                    111,
-                                    114,
-                                    105,
-                                    116,
-                                    121
-                                ]
-                            }
-                        ]
-                    }
+                    "name": "event_authority"
                 },
                 {
                     "name": "program"
@@ -2566,58 +3011,9 @@
                     ]
                 },
                 {
-                    "name": "openbook_program",
-                    "address": "srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX"
-                },
-                {
                     "name": "market",
                     "docs": [
                         "Account created and asigned to openbook_program but not been initialized"
-                    ],
-                    "writable": true
-                },
-                {
-                    "name": "request_queue",
-                    "docs": [
-                        "Account created and asigned to openbook_program but not been initialized"
-                    ],
-                    "writable": true
-                },
-                {
-                    "name": "event_queue",
-                    "docs": [
-                        "Account created and asigned to openbook_program but not been initialized"
-                    ],
-                    "writable": true
-                },
-                {
-                    "name": "bids",
-                    "docs": [
-                        "Account created and asigned to openbook_program but not been initialized"
-                    ],
-                    "writable": true
-                },
-                {
-                    "name": "asks",
-                    "docs": [
-                        "Account created and asigned to openbook_program but not been initialized"
-                    ],
-                    "writable": true
-                },
-                {
-                    "name": "market_vault_signer"
-                },
-                {
-                    "name": "market_base_vault",
-                    "docs": [
-                        "Token account that holds the market's base tokens"
-                    ],
-                    "writable": true
-                },
-                {
-                    "name": "market_quote_vault",
-                    "docs": [
-                        "Token account that holds the market's quote tokens"
                     ],
                     "writable": true
                 },
@@ -2689,57 +3085,6 @@
                                     105,
                                     116,
                                     121
-                                ]
-                            }
-                        ],
-                        "program": {
-                            "kind": "account",
-                            "path": "amm_program"
-                        }
-                    }
-                },
-                {
-                    "name": "amm_open_orders",
-                    "writable": true,
-                    "pda": {
-                        "seeds": [
-                            {
-                                "kind": "account",
-                                "path": "amm_program"
-                            },
-                            {
-                                "kind": "account",
-                                "path": "market"
-                            },
-                            {
-                                "kind": "const",
-                                "value": [
-                                    111,
-                                    112,
-                                    101,
-                                    110,
-                                    95,
-                                    111,
-                                    114,
-                                    100,
-                                    101,
-                                    114,
-                                    95,
-                                    97,
-                                    115,
-                                    115,
-                                    111,
-                                    99,
-                                    105,
-                                    97,
-                                    116,
-                                    101,
-                                    100,
-                                    95,
-                                    115,
-                                    101,
-                                    101,
-                                    100
                                 ]
                             }
                         ],
@@ -3104,20 +3449,7 @@
                     "address": "SysvarRent111111111111111111111111111111111"
                 }
             ],
-            "args": [
-                {
-                    "name": "base_lot_size",
-                    "type": "u64"
-                },
-                {
-                    "name": "quote_lot_size",
-                    "type": "u64"
-                },
-                {
-                    "name": "market_vault_signer_nonce",
-                    "type": "u8"
-                }
-            ]
+            "args": []
         },
         {
             "name": "migrate_to_cpswap",
@@ -3150,14 +3482,16 @@
                 {
                     "name": "base_mint",
                     "docs": [
-                        "The mint for the base token (token being sold)"
+                        "The mint for the base token (token being sold)",
+                        "May be owned by either token program, the instruction picks the matching one"
                     ],
                     "writable": true
                 },
                 {
                     "name": "quote_mint",
                     "docs": [
-                        "The mint for the quote token (token used to buy)"
+                        "The mint for the quote token (token used to buy)",
+                        "May be owned by either token program, the instruction picks the matching one"
                     ]
                 },
                 {
@@ -3506,18 +3840,21 @@
                     "writable": true
                 },
                 {
-                    "name": "base_token_program",
+                    "name": "token_program",
                     "docs": [
-                        "SPL Token program for the base token",
-                        "Must be the standard Token program"
-                    ]
-                },
-                {
-                    "name": "quote_token_program",
-                    "docs": [
-                        "SPL Token program for the quote token"
+                        "The legacy SPL Token program.",
+                        "Always required: the cpswap lp mint and the locked liquidity fee NFT live on it, and it",
+                        "serves the base or quote token whenever that mint is a legacy mint."
                     ],
                     "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                },
+                {
+                    "name": "token_program_2022",
+                    "docs": [
+                        "The Token-2022 program, serving the base or quote token when that mint is a",
+                        "Token-2022 mint. Always required, even when neither mint uses it."
+                    ],
+                    "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
                 },
                 {
                     "name": "associated_token_program",
@@ -3551,37 +3888,53 @@
             "args": []
         },
         {
-            "name": "remove_platform_curve_param",
+            "name": "remove_platform_curve_rule",
             "docs": [
-                "Remove platform launch param",
+                "Remove one check group of the launch param rule",
                 "# Arguments",
                 "",
                 "* `ctx` - The context of accounts",
-                "* `index` - The index of the curve param to remove",
+                "* `group_id` - The id of the group to remove",
                 ""
             ],
             "discriminator": [
-                27,
-                30,
-                62,
-                169,
-                93,
-                224,
-                24,
-                145
+                236,
+                77,
+                154,
+                138,
+                32,
+                145,
+                127,
+                219
             ],
             "accounts": [
                 {
-                    "name": "platform_admin",
+                    "name": "curve_rule_authority",
                     "docs": [
-                        "The account paying for the initialization costs"
+                        "The curve rule manager of the platform config or the platform admin itself,",
+                        "it receives the rent the account shrinks by,",
+                        "see PlatformConfig::curve_rule_manager"
                     ],
+                    "writable": true,
                     "signer": true
                 },
                 {
                     "name": "platform_config",
                     "docs": [
-                        "Platform config account to be changed"
+                        "The platform config the rule belongs to, it can only be managed by the dedicated",
+                        "curve rule manager wallet or by the platform admin"
+                    ]
+                },
+                {
+                    "name": "global_config",
+                    "docs": [
+                        "The global config the rule applies to"
+                    ]
+                },
+                {
+                    "name": "platform_curve_rule",
+                    "docs": [
+                        "The launch param rule to be changed"
                     ],
                     "writable": true,
                     "pda": {
@@ -3599,25 +3952,40 @@
                                     109,
                                     95,
                                     99,
-                                    111,
-                                    110,
-                                    102,
-                                    105,
-                                    103
+                                    117,
+                                    114,
+                                    118,
+                                    101,
+                                    95,
+                                    114,
+                                    117,
+                                    108,
+                                    101
                                 ]
                             },
                             {
                                 "kind": "account",
-                                "path": "platform_admin"
+                                "path": "platform_config"
+                            },
+                            {
+                                "kind": "account",
+                                "path": "global_config"
                             }
                         ]
                     }
+                },
+                {
+                    "name": "system_program",
+                    "docs": [
+                        "Required to settle the rent of the resized account"
+                    ],
+                    "address": "11111111111111111111111111111111"
                 }
             ],
             "args": [
                 {
-                    "name": "index",
-                    "type": "u8"
+                    "name": "group_id",
+                    "type": "u16"
                 }
             ]
         },
@@ -3650,6 +4018,7 @@
                         "The user performing the swap operation",
                         "Must sign the transaction and pay for fees"
                     ],
+                    "writable": true,
                     "signer": true
                 },
                 {
@@ -3747,50 +4116,24 @@
                 {
                     "name": "quote_token_mint",
                     "docs": [
-                        "The mint of the quote token"
+                        "The mint of the quote token",
+                        "Used for transfer fee calculations if applicable"
                     ]
                 },
                 {
                     "name": "base_token_program",
                     "docs": [
-                        "SPL Token program for base token transfers"
+                        "Token program owning the base token: either SPL Token or Token-2022"
                     ]
                 },
                 {
                     "name": "quote_token_program",
                     "docs": [
-                        "SPL Token program for quote token transfers"
-                    ],
-                    "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                        "Token program owning the quote token: either SPL Token or Token-2022"
+                    ]
                 },
                 {
-                    "name": "event_authority",
-                    "pda": {
-                        "seeds": [
-                            {
-                                "kind": "const",
-                                "value": [
-                                    95,
-                                    95,
-                                    101,
-                                    118,
-                                    101,
-                                    110,
-                                    116,
-                                    95,
-                                    97,
-                                    117,
-                                    116,
-                                    104,
-                                    111,
-                                    114,
-                                    105,
-                                    116,
-                                    121
-                                ]
-                            }
-                        ]
-                    }
+                    "name": "event_authority"
                 },
                 {
                     "name": "program"
@@ -3840,6 +4183,7 @@
                         "The user performing the swap operation",
                         "Must sign the transaction and pay for fees"
                     ],
+                    "writable": true,
                     "signer": true
                 },
                 {
@@ -3937,50 +4281,24 @@
                 {
                     "name": "quote_token_mint",
                     "docs": [
-                        "The mint of the quote token"
+                        "The mint of the quote token",
+                        "Used for transfer fee calculations if applicable"
                     ]
                 },
                 {
                     "name": "base_token_program",
                     "docs": [
-                        "SPL Token program for base token transfers"
+                        "Token program owning the base token: either SPL Token or Token-2022"
                     ]
                 },
                 {
                     "name": "quote_token_program",
                     "docs": [
-                        "SPL Token program for quote token transfers"
-                    ],
-                    "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                        "Token program owning the quote token: either SPL Token or Token-2022"
+                    ]
                 },
                 {
-                    "name": "event_authority",
-                    "pda": {
-                        "seeds": [
-                            {
-                                "kind": "const",
-                                "value": [
-                                    95,
-                                    95,
-                                    101,
-                                    118,
-                                    101,
-                                    110,
-                                    116,
-                                    95,
-                                    97,
-                                    117,
-                                    116,
-                                    104,
-                                    111,
-                                    114,
-                                    105,
-                                    116,
-                                    121
-                                ]
-                            }
-                        ]
-                    }
+                    "name": "event_authority"
                 },
                 {
                     "name": "program"
@@ -4030,8 +4348,7 @@
                     "docs": [
                         "The global config owner or admin"
                     ],
-                    "signer": true,
-                    "address": "GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ"
+                    "signer": true
                 },
                 {
                     "name": "global_config",
@@ -4128,30 +4445,35 @@
             ]
         },
         {
-            "name": "update_platform_curve_param",
+            "name": "update_platform_curve_rule",
             "docs": [
-                "Update platform launch param",
+                "Add or replace one check group of the launch param rule.",
+                "The constraints of a group must all hold together, a launch is allowed when it",
+                "satisfies any group, a group with no constraint allows everything.",
                 "# Arguments",
                 "",
                 "* `ctx` - The context of accounts",
-                "* `bonding_curve_param` - Parameter to update",
+                "* `group_id` - The stable id of the group, an existing group with the id is replaced",
+                "* `constraints` - The constraints of the group, see `param_field` and `param_op`",
                 ""
             ],
             "discriminator": [
-                138,
-                144,
-                138,
-                250,
-                220,
-                128,
-                4,
-                57
+                90,
+                100,
+                206,
+                196,
+                54,
+                117,
+                120,
+                139
             ],
             "accounts": [
                 {
-                    "name": "platform_admin",
+                    "name": "curve_rule_authority",
                     "docs": [
-                        "The account paying for the initialization costs"
+                        "The curve rule manager of the platform config or the platform admin itself,",
+                        "it pays the rent the account grows by, and receives the rent it shrinks by,",
+                        "see PlatformConfig::curve_rule_manager"
                     ],
                     "writable": true,
                     "signer": true
@@ -4159,7 +4481,20 @@
                 {
                     "name": "platform_config",
                     "docs": [
-                        "Platform config account to be changed"
+                        "The platform config the rule belongs to, it can only be managed by the dedicated",
+                        "curve rule manager wallet or by the platform admin"
+                    ]
+                },
+                {
+                    "name": "global_config",
+                    "docs": [
+                        "The global config the rule applies to"
+                    ]
+                },
+                {
+                    "name": "platform_curve_rule",
+                    "docs": [
+                        "The launch param rule to be changed"
                     ],
                     "writable": true,
                     "pda": {
@@ -4177,45 +4512,48 @@
                                     109,
                                     95,
                                     99,
-                                    111,
-                                    110,
-                                    102,
-                                    105,
-                                    103
+                                    117,
+                                    114,
+                                    118,
+                                    101,
+                                    95,
+                                    114,
+                                    117,
+                                    108,
+                                    101
                                 ]
                             },
                             {
                                 "kind": "account",
-                                "path": "platform_admin"
+                                "path": "platform_config"
+                            },
+                            {
+                                "kind": "account",
+                                "path": "global_config"
                             }
                         ]
                     }
                 },
                 {
-                    "name": "global_config",
-                    "docs": [
-                        "Global configuration account containing protocol-wide settings",
-                        "Includes settings like quote token mint and fee parameters"
-                    ]
-                },
-                {
                     "name": "system_program",
                     "docs": [
-                        "System program for lamport transfers"
+                        "Required to settle the rent of the resized account"
                     ],
                     "address": "11111111111111111111111111111111"
                 }
             ],
             "args": [
                 {
-                    "name": "index",
-                    "type": "u8"
+                    "name": "group_id",
+                    "type": "u16"
                 },
                 {
-                    "name": "bonding_curve_param",
+                    "name": "constraints",
                     "type": {
-                        "defined": {
-                            "name": "BondingCurveParam"
+                        "vec": {
+                            "defined": {
+                                "name": "ParamConstraint"
+                            }
                         }
                     }
                 }
@@ -4237,6 +4575,19 @@
             ]
         },
         {
+            "name": "PlatformAllowConfig",
+            "discriminator": [
+                248,
+                57,
+                34,
+                138,
+                222,
+                238,
+                186,
+                75
+            ]
+        },
+        {
             "name": "PlatformConfig",
             "discriminator": [
                 160,
@@ -4247,6 +4598,19 @@
                 83,
                 230,
                 160
+            ]
+        },
+        {
+            "name": "PlatformCurveRule",
+            "discriminator": [
+                12,
+                20,
+                122,
+                169,
+                247,
+                155,
+                104,
+                234
             ]
         },
         {
@@ -4435,6 +4799,61 @@
             "code": 6020,
             "name": "CurveParamIsNotExist",
             "msg": "Curve param is not exist"
+        },
+        {
+            "code": 6021,
+            "name": "InvalidTotalLockedAmount",
+            "msg": "Total locked amount must great or equal to the platform vesting share amount"
+        },
+        {
+            "code": 6022,
+            "name": "InvalidPlatformAllowConfig",
+            "msg": "Invalid platform allow config account"
+        },
+        {
+            "code": 6023,
+            "name": "CalculateOverflow",
+            "msg": "Calculation overflowed"
+        },
+        {
+            "code": 6024,
+            "name": "InvalidPlatformCurveRule",
+            "msg": "Invalid platform curve rule account"
+        },
+        {
+            "code": 6025,
+            "name": "CurveParamNotMatchPlatformRule",
+            "msg": "The curve param does not match any check group of the platform curve rule"
+        },
+        {
+            "code": 6026,
+            "name": "CurveRuleGroupNotExist",
+            "msg": "The curve rule group is not exist"
+        },
+        {
+            "code": 6027,
+            "name": "CurveRuleGroupsExceeded",
+            "msg": "The number of curve rule groups exceeds the limit"
+        },
+        {
+            "code": 6028,
+            "name": "InvalidCurveRuleConstraint",
+            "msg": "The curve rule constraint is invalid"
+        },
+        {
+            "code": 6029,
+            "name": "InvalidCurveRuleAuthority",
+            "msg": "The signer is neither the curve rule manager nor the platform admin"
+        },
+        {
+            "code": 6030,
+            "name": "CurveRuleFieldNotSupportedByCurve",
+            "msg": "The curve rule field is not supported by the curve of the global config"
+        },
+        {
+            "code": 6031,
+            "name": "LamportsCalculateError",
+            "msg": "Lamports calculate error"
         }
     ],
     "types": [
@@ -4451,78 +4870,6 @@
                     },
                     {
                         "name": "BothToken"
-                    }
-                ]
-            }
-        },
-        {
-            "name": "BondingCurveParam",
-            "type": {
-                "kind": "struct",
-                "fields": [
-                    {
-                        "name": "migrate_type",
-                        "docs": [
-                            "Migrate to AMM or CpSwap, 0: amm， 1: cpswap，",
-                            "Neither 0 nor 1: invalid"
-                        ],
-                        "type": "u8"
-                    },
-                    {
-                        "name": "migrate_cpmm_fee_on",
-                        "docs": [
-                            "The migrate fee on, 0 means fee on the quote token, 1 means fee on both token",
-                            "Neither 0 nor 1: invalid"
-                        ],
-                        "type": "u8"
-                    },
-                    {
-                        "name": "supply",
-                        "docs": [
-                            "The supply of the token,",
-                            "0: invalid"
-                        ],
-                        "type": "u64"
-                    },
-                    {
-                        "name": "total_base_sell",
-                        "docs": [
-                            "The total base sell of the token",
-                            "0: invalid"
-                        ],
-                        "type": "u64"
-                    },
-                    {
-                        "name": "total_quote_fund_raising",
-                        "docs": [
-                            "The total quote fund raising of the token",
-                            "0: invalid"
-                        ],
-                        "type": "u64"
-                    },
-                    {
-                        "name": "total_locked_amount",
-                        "docs": [
-                            "total amount of tokens to be unlocked",
-                            "u64::MAX: invalid"
-                        ],
-                        "type": "u64"
-                    },
-                    {
-                        "name": "cliff_period",
-                        "docs": [
-                            "Waiting time in seconds before unlocking after fundraising ends",
-                            "u64::MAX: invalid"
-                        ],
-                        "type": "u64"
-                    },
-                    {
-                        "name": "unlock_period",
-                        "docs": [
-                            "Unlocking period in seconds",
-                            "u64::MAX: invalid"
-                        ],
-                        "type": "u64"
                     }
                 ]
             }
@@ -4640,6 +4987,45 @@
                                 }
                             }
                         ]
+                    }
+                ]
+            }
+        },
+        {
+            "name": "CurveRuleGroup",
+            "docs": [
+                "A set of constraints that must all hold together, e.g.",
+                "`supply = 50W && total_base_sell >= 20W`."
+            ],
+            "type": {
+                "kind": "struct",
+                "fields": [
+                    {
+                        "name": "group_id",
+                        "docs": [
+                            "The stable id of the group, used to update or remove it"
+                        ],
+                        "type": "u16"
+                    },
+                    {
+                        "name": "epoch",
+                        "docs": [
+                            "The epoch the group was written"
+                        ],
+                        "type": "u64"
+                    },
+                    {
+                        "name": "constraints",
+                        "docs": [
+                            "The constraints of the group, an empty list allows everything"
+                        ],
+                        "type": {
+                            "vec": {
+                                "defined": {
+                                    "name": "ParamConstraint"
+                                }
+                            }
+                        }
                     }
                 ]
             }
@@ -4787,6 +5173,18 @@
                         "type": "pubkey"
                     },
                     {
+                        "name": "padding_alignment",
+                        "docs": [
+                            "padding alignment"
+                        ],
+                        "type": {
+                            "array": [
+                                "u8",
+                                8
+                            ]
+                        }
+                    },
+                    {
                         "name": "padding",
                         "docs": [
                             "padding for future updates"
@@ -4794,7 +5192,7 @@
                         "type": {
                             "array": [
                                 "u64",
-                                16
+                                15
                             ]
                         }
                     }
@@ -4878,6 +5276,76 @@
                     {
                         "name": "uri",
                         "type": "string"
+                    }
+                ]
+            }
+        },
+        {
+            "name": "ParamConstraint",
+            "docs": [
+                "A single check on one launch parameter, e.g. `(SUPPLY, GTE, 1_000_000)`.",
+                "A range check is expressed with two constraints(`GTE` + `LTE`) in the same group."
+            ],
+            "type": {
+                "kind": "struct",
+                "fields": [
+                    {
+                        "name": "field",
+                        "docs": [
+                            "The parameter this constraint applies to, see `param_field`"
+                        ],
+                        "type": "u8"
+                    },
+                    {
+                        "name": "op",
+                        "docs": [
+                            "The comparison operator, see `param_op`"
+                        ],
+                        "type": "u8"
+                    },
+                    {
+                        "name": "value",
+                        "docs": [
+                            "The value to compare the actual launch parameter with"
+                        ],
+                        "type": "u128"
+                    }
+                ]
+            }
+        },
+        {
+            "name": "PlatformAllowConfig",
+            "docs": [
+                "The existence of this account means the platform allows the global config to be used",
+                "with its platform config, it is only checked when the platform restricts the global",
+                "config, see PlatformConfig::restrict_global_config"
+            ],
+            "type": {
+                "kind": "struct",
+                "fields": [
+                    {
+                        "name": "bump",
+                        "type": "u8"
+                    },
+                    {
+                        "name": "platform_config",
+                        "type": "pubkey"
+                    },
+                    {
+                        "name": "global_config",
+                        "type": "pubkey"
+                    },
+                    {
+                        "name": "padding",
+                        "docs": [
+                            "padding for future updates"
+                        ],
+                        "type": {
+                            "array": [
+                                "u64",
+                                8
+                            ]
+                        }
                     }
                 ]
             }
@@ -4996,28 +5464,60 @@
                         "type": "pubkey"
                     },
                     {
+                        "name": "platform_vesting_wallet",
+                        "type": "pubkey"
+                    },
+                    {
+                        "name": "platform_vesting_scale",
+                        "type": "u64"
+                    },
+                    {
+                        "name": "platform_cp_creator",
+                        "docs": [
+                            "If a valid platform_cp_creator is configured for the platform,",
+                            "it will be used as the creator for the AMM pool during migration to cpswap pool."
+                        ],
+                        "type": "pubkey"
+                    },
+                    {
+                        "name": "restrict_global_config",
+                        "docs": [
+                            "Whether the platform restricts the global config used to create pools with this",
+                            "platform config, 0: no restriction, 1: only the allowed global config can be used,"
+                        ],
+                        "type": "u8"
+                    },
+                    {
+                        "name": "restrict_curve_param",
+                        "docs": [
+                            "Whether the platform restricts the launch params of the pools created with this",
+                            "platform config, 0: no restriction, 1: the launch params must satisfy the",
+                            "`PlatformCurveRule` account of the used global config"
+                        ],
+                        "type": "u8"
+                    },
+                    {
+                        "name": "curve_rule_manager",
+                        "docs": [
+                            "The wallet allowed to manage the `PlatformCurveRule` accounts of this platform",
+                            "config, the platform admin is often a multisig wallet which is inconvenient for",
+                            "the day to day rule changes. The platform admin can always manage the rules too,",
+                            "and it is the only one that can set this wallet."
+                        ],
+                        "type": "pubkey"
+                    },
+                    {
                         "name": "padding",
                         "docs": [
-                            "padding for future updates"
+                            "padding for future updates. The last 4 bytes were the length prefix of the removed",
+                            "`curve_params` vec, the migration left them zeroed, so the layout keeps exactly the",
+                            "byte count every platform config already has."
                         ],
                         "type": {
                             "array": [
                                 "u8",
-                                180
+                                78
                             ]
-                        }
-                    },
-                    {
-                        "name": "curve_params",
-                        "docs": [
-                            "The parameters for launching the pool"
-                        ],
-                        "type": {
-                            "vec": {
-                                "defined": {
-                                    "name": "PlatformCurveParam"
-                                }
-                            }
                         }
                     }
                 ]
@@ -5067,6 +5567,14 @@
                     {
                         "name": "creator_fee_rate",
                         "type": "u64"
+                    },
+                    {
+                        "name": "platform_vesting_scale",
+                        "type": "u64"
+                    },
+                    {
+                        "name": "vesting_wallet",
+                        "type": "pubkey"
                     }
                 ]
             }
@@ -5134,46 +5642,89 @@
                                 }
                             }
                         ]
+                    },
+                    {
+                        "name": "VestingWallet",
+                        "fields": [
+                            "pubkey"
+                        ]
+                    },
+                    {
+                        "name": "PlatformVestingScale",
+                        "fields": [
+                            "u64"
+                        ]
+                    },
+                    {
+                        "name": "PlatformCPCreator",
+                        "fields": [
+                            "pubkey"
+                        ]
+                    },
+                    {
+                        "name": "RestrictGlobalConfig",
+                        "fields": [
+                            "u64"
+                        ]
+                    },
+                    {
+                        "name": "RestrictCurveParam",
+                        "fields": [
+                            "u64"
+                        ]
+                    },
+                    {
+                        "name": "CurveRuleManager",
+                        "fields": [
+                            "pubkey"
+                        ]
                     }
                 ]
             }
         },
         {
-            "name": "PlatformCurveParam",
+            "name": "PlatformCurveRule",
+            "docs": [
+                "The platform launch parameter rule for one global config.",
+                "",
+                "The existence of this account is only checked when the platform restricts the launch",
+                "parameters, see `PlatformConfig::restrict_curve_param`. It narrows the launch parameters",
+                "down from what the global config allows, it can never loosen them."
+            ],
             "type": {
                 "kind": "struct",
                 "fields": [
                     {
-                        "name": "epoch",
-                        "docs": [
-                            "The epoch for update interval, 0 means not update"
-                        ],
-                        "type": "u64"
+                        "name": "bump",
+                        "type": "u8"
                     },
                     {
-                        "name": "index",
+                        "name": "version",
                         "docs": [
-                            "The curve params index"
+                            "The layout version of the account"
                         ],
                         "type": "u8"
                     },
                     {
-                        "name": "global_config",
+                        "name": "platform_config",
                         "docs": [
-                            "The global config address"
+                            "The platform config the rule belongs to"
                         ],
                         "type": "pubkey"
                     },
                     {
-                        "name": "bonding_curve_param",
+                        "name": "global_config",
                         "docs": [
-                            "bonding curve param"
+                            "The global config the rule applies to"
                         ],
-                        "type": {
-                            "defined": {
-                                "name": "BondingCurveParam"
-                            }
-                        }
+                        "type": "pubkey"
+                    },
+                    {
+                        "name": "epoch",
+                        "docs": [
+                            "The epoch of the last update"
+                        ],
+                        "type": "u64"
                     },
                     {
                         "name": "padding",
@@ -5183,8 +5734,23 @@
                         "type": {
                             "array": [
                                 "u64",
-                                50
+                                8
                             ]
+                        }
+                    },
+                    {
+                        "name": "groups",
+                        "docs": [
+                            "The check groups, a launch is allowed when it satisfies any of them.",
+                            "An empty list means the platform does not restrict the launch parameters of",
+                            "this global config."
+                        ],
+                        "type": {
+                            "vec": {
+                                "defined": {
+                                    "name": "CurveRuleGroup"
+                                }
+                            }
                         }
                     }
                 ]
@@ -5231,6 +5797,10 @@
                     },
                     {
                         "name": "creator_fee_rate",
+                        "type": "u64"
+                    },
+                    {
+                        "name": "platform_vesting_scale",
                         "type": "u64"
                     }
                 ]
@@ -5341,7 +5911,7 @@
                     {
                         "name": "migrate_type",
                         "docs": [
-                            "Migrate to AMM or CpSwap, 0: amm， 1: cpswap"
+                            "Migrate to AMM or CpSwap, 0: amm\uff0c 1: cpswap"
                         ],
                         "type": "u8"
                     },
@@ -5509,6 +6079,13 @@
                         }
                     },
                     {
+                        "name": "platform_vesting_share",
+                        "docs": [
+                            "platform vesting token amount"
+                        ],
+                        "type": "u64"
+                    },
+                    {
                         "name": "padding",
                         "docs": [
                             "padding for future updates"
@@ -5516,7 +6093,7 @@
                         "type": {
                             "array": [
                                 "u8",
-                                62
+                                54
                             ]
                         }
                     }

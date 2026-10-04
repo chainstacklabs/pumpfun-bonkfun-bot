@@ -28,6 +28,7 @@ class IDLManager:
         # Define IDL paths for each platform
         self._idl_paths = {
             Platform.LETS_BONK: project_root / "idl" / "raydium_launchlab_idl.json",
+            Platform.STONK_FUN: project_root / "idl" / "raydium_launchlab_idl.json",
             Platform.PUMP_FUN: project_root / "idl" / "pump_fun_idl.json",
         }
 

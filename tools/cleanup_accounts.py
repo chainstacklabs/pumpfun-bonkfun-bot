@@ -16,6 +16,7 @@ from solders.pubkey import Pubkey
 from spl.token.instructions import burn, close_account
 from spl.token.models import BurnParams, CloseAccountParams
 
+from cleanup.manager import harvest_withheld_to_mint, withheld_transfer_fee
 from core.client import SolanaClient
 from core.pubkeys import SystemAddresses
 from core.wallet import Wallet
@@ -76,7 +77,7 @@ async def close_account_if_exists(
     """Safely close a token account if it exists and reclaim rent."""
     try:
         try:
-            await client.get_account_info(account)
+            account_info = await client.get_account_info(account)
         except ValueError:
             logger.info(f"Account does not exist or already closed: {account}")
             return
@@ -107,6 +108,12 @@ async def close_account_if_exists(
                 )
             )
             instructions.append(burn_ix)
+
+        # Token-2022 will not close an account holding withheld transfer fees.
+        withheld = withheld_transfer_fee(bytes(account_info.data))
+        if withheld and token_program == SystemAddresses.TOKEN_2022_PROGRAM:
+            logger.info(f"Harvesting {withheld} withheld fee units from {account}")
+            instructions.append(harvest_withheld_to_mint(mint, account))
 
         # Account exists, attempt to close it
         logger.info(f"Closing account: {account}")

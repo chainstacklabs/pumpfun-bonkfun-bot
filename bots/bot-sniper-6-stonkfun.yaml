@@ -1,7 +1,7 @@
 # Parameters for one bot instance. Review the values before running.
 
 # Bot identification and connection settings
-name: "bot-sniper-3"
+name: "bot-sniper-6-stonkfun"
 env_file: ".env"
 rpc_endpoint: "${SOLANA_NODE_RPC_ENDPOINT}"
 wss_endpoint: "${SOLANA_NODE_WSS_ENDPOINT}"
@@ -11,25 +11,36 @@ enabled: false # You can turn off the bot w/o removing its config
 separate_process: true
 
 # Options: "pump_fun" (default), "lets_bonk", "stonk_fun"
-platform: "pump_fun"
+# StonkFun coins are Raydium LaunchLab pools paired with whatever quote asset
+# the launcher picked: SOL, a tokenized stock (xStocks), another coin. Supports
+# the "geyser" and "blocks" listeners.
+platform: "stonk_fun"
 
 # Geyser configuration (fastest method for getting updates)
 geyser:
   endpoint: "${GEYSER_ENDPOINT}"
   api_token: "${GEYSER_API_TOKEN}"
-  auth_type: "basic" # or "x-token"
+  auth_type: "x-token" # or "basic"
 
 # Trade execution: amount per trade and acceptable price deviation
 trade:
-  buy_amount: 0.0001 # Amount of SOL to spend when buying (in SOL)
+  buy_amount: 0.001 # Amount of SOL to spend on a SOL-paired coin (in SOL)
   buy_slippage: 0.3 # Maximum acceptable price deviation (0.3 = 30%)
   sell_slippage: 0.3
+
+  # Spend amounts for coins paired against a non-SOL quote asset, in that
+  # mint's own whole units. Most StonkFun coins are paired with xStocks; the
+  # wallet must already hold the asset, and a sell pays out in it, so a run
+  # trading these ends holding the quote asset, not SOL. A coin whose quote
+  # mint has no entry here is skipped. SOL uses buy_amount above.
+  #quote_amounts:
+  #  Xs3oZwbHvqis4NYcf4YKWmEia2eC84wSiVrcYcTqpH8: 0.001 # SPCXX
 
   # Exit strategy configuration
   exit_strategy: "time_based" # Options: "time_based", "tp_sl", "manual"
   #take_profit_percentage: 0.1 # Take profit at 10% gain (0.1 = 10%)
   #stop_loss_percentage: 0.1 # Stop loss at 10% loss (0.1 = 10%)
-  max_hold_time: 15 # Maximum hold time in seconds for TP/SL strategy, for time_based - see wait_after_buy
+  max_hold_time: 5 # Maximum hold time in seconds for TP/SL strategy, for time_based - see wait_after_buy
   #price_check_interval: 2 # Check price every 2 seconds
   # A tp/sl exit sell can revert when the price moves under it. The bot re-reads
   # the price and retries; after this many attempts it gives up and leaves the
@@ -40,8 +51,11 @@ trade:
   # buying a fixed token amount instead. Faster, but you don't learn the price
   # you paid. With geyser/logs/blocks the bot makes no RPC call at all between
   # detecting the coin and sending the buy.
+  # On LaunchLab the buy spends exactly buy_amount; this is the fewest tokens
+  # it may deliver. A fresh SOL-paired StonkFun coin prices near 0.00000003
+  # SOL, so 0.001 SOL buys about 34,000 tokens before slippage.
   extreme_fast_mode: true
-  extreme_fast_token_amount: 20 # Amount of tokens to buy
+  extreme_fast_token_amount: 20_000 # Fewest tokens the buy may deliver
 
   # How long that read may take, in seconds, before the coin is SKIPPED. Raise
   # it to buy more coins on a slow endpoint, lower it to skip faster. Buying
@@ -57,9 +71,9 @@ trade:
 priority_fees:
   enable_dynamic: false # Use latest transactions to estimate required fee (getRecentPrioritizationFees)
   enable_fixed: true # Use fixed amount below
-  fixed_amount: 200_000 # Base fee in microlamports
+  fixed_amount: 1_000_000 # Base fee in microlamports
   extra_percentage: 0.0 # Percentage increase on riority fee regardless of the calculation method (0.1 = 10%)
-  hard_cap: 200_000 # Maximum allowable fee in microlamports to prevent excessive spending
+  hard_cap: 1_000_000 # Maximum allowable fee in microlamports to prevent excessive spending
 
 # Compute unit limits for transaction processing
 # Operation-specific defaults are used if not specified: buy=100K, sell=60K
@@ -80,16 +94,29 @@ compute_units:
 filters:
   match_string: null # Only process tokens with this string in name/symbol
   bro_address: null # Only trade tokens created by this user address
-  listener_type: "blocks" # Method for detecting new tokens: "logs", "blocks", or "geyser"
+  # Restrict which quote assets to trade. Omit (or set null) to allow any quote
+  # mint that has an amount configured under trade.quote_amounts.
+  # Accepts "sol"/"usdc" aliases or raw mint addresses.
+  #allowed_quote_mints: ["sol"]
+  # Skip coins whose Token-2022 transfer fee exceeds this, in basis points.
+  # StonkFun "reward" coins charge 100 or 300 on every transfer, the buy and the
+  # sell included; "standard" coins charge none. Omit to take every coin.
+  #max_transfer_fee_bps: 100
+  listener_type: "geyser" # "geyser" or "blocks" for stonk_fun
   max_token_age: 0.001 # Maximum token age in seconds for processing
   marry_mode: false # Only buy tokens, skip selling
   yolo_mode: false # Continuously trade tokens
+
+# Single-token mode waits this long for a coin it can buy, then exits. SOL-paired
+# StonkFun coins arrive minutes apart, so the 120s default is usually too short.
+timing:
+  token_wait_timeout: 1800
 
 # Retry and timeout settings
 retries:
   max_attempts: 1 # Number of attempts for transaction submission
   wait_after_creation: 15 # Seconds to wait after token creation (only if EXTREME FAST is disabled)
-  wait_after_buy: 15 # Holding period after buy transaction
+  wait_after_buy: 5 # Holding period after buy transaction
   wait_before_new_token: 15 # Pause between token trades
 
 # Token and account management

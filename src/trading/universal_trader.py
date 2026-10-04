@@ -160,6 +160,7 @@ class UniversalTrader:
         # Quote asset configuration (pump.fun non-SOL pairs)
         quote_amounts: dict[str, float] | None = None,
         allowed_quote_mints: list[str] | None = None,
+        max_transfer_fee_bps: int | None = None,
         # Exit strategy configuration
         exit_strategy: str = "time_based",
         take_profit_percentage: float | None = None,
@@ -235,6 +236,9 @@ class UniversalTrader:
         self.quote_amounts, self.allowed_quote_mints = _resolve_quote_config(
             buy_amount, quote_amounts, allowed_quote_mints
         )
+        # None takes every coin; a LaunchLab reward coin's transfer fee is paid
+        # on the buy and again on the sell.
+        self.max_transfer_fee_bps = max_transfer_fee_bps
 
         # Create platform-aware traders
         self.buyer, self.seller = (
@@ -436,13 +440,17 @@ class UniversalTrader:
             nonlocal found_token
             token_key = str(token.mint)
 
-            # Only process if not already processed and fresh
-            if token_key not in self.processed_tokens:
-                # Record when the token was discovered
-                self.token_timestamps[token_key] = monotonic()
-                found_token = token
-                self.processed_tokens.add(token_key)
-                token_found.set()
+            if token_key in self.processed_tokens:
+                return
+            self.processed_tokens.add(token_key)
+            skip_reason = self._skip_reason(token)
+            if skip_reason:
+                logger.info(f"Skipping {token.symbol} - {skip_reason}; still waiting")
+                return
+            # Record when the token was discovered
+            self.token_timestamps[token_key] = monotonic()
+            found_token = token
+            token_found.set()
 
         listener_task = asyncio.create_task(
             self.token_listener.listen_for_tokens(
@@ -606,6 +614,27 @@ class UniversalTrader:
                 if took_item:
                     self.token_queue.task_done()
 
+    def _skip_reason(self, token_info: TokenInfo) -> str | None:
+        """Why the configured filters refuse this coin, or None to trade it.
+
+        Checked on detection as well as before the buy: single-token mode would
+        otherwise spend its one token on a coin it was never going to buy.
+        """
+        quote_mint = normalize_quote_mint(token_info.quote_mint)
+        if self.allowed_quote_mints is not None and quote_mint not in self.allowed_quote_mints:
+            return f"quote mint {quote_mint} not in allowed_quote_mints"
+        if quote_mint not in self.quote_amounts:
+            return f"no buy amount configured for quote mint {quote_mint}"
+        if (
+            self.max_transfer_fee_bps is not None
+            and token_info.transfer_fee_bps > self.max_transfer_fee_bps
+        ):
+            return (
+                f"transfer fee {token_info.transfer_fee_bps} bps exceeds "
+                f"max_transfer_fee_bps {self.max_transfer_fee_bps}"
+            )
+        return None
+
     async def _handle_token(self, token_info: TokenInfo) -> None:
         """Handle a new token creation event."""
         try:
@@ -616,23 +645,11 @@ class UniversalTrader:
                 )
                 return
 
-            # Cheaper to drop an unconfigured quote asset here than on-chain.
+            skip_reason = self._skip_reason(token_info)
+            if skip_reason:
+                logger.info(f"Skipping {token_info.symbol} - {skip_reason}")
+                return
             token_quote_mint = normalize_quote_mint(token_info.quote_mint)
-            if (
-                self.allowed_quote_mints is not None
-                and token_quote_mint not in self.allowed_quote_mints
-            ):
-                logger.info(
-                    f"Skipping {token_info.symbol} - quote mint {token_quote_mint} "
-                    f"not in allowed_quote_mints"
-                )
-                return
-            if token_quote_mint not in self.quote_amounts:
-                logger.info(
-                    f"Skipping {token_info.symbol} - no buy amount configured for "
-                    f"quote mint {token_quote_mint}"
-                )
-                return
 
             # Wait for pool/curve to stabilize (unless in extreme fast mode)
             if not self.extreme_fast_mode:

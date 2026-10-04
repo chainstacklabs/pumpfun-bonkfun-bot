@@ -1,6 +1,6 @@
 # Cookbook
 
-One script per thing you might want to do on pump.fun, PumpSwap and letsbonk.fun.
+One script per thing you might want to do on pump.fun, PumpSwap, letsbonk.fun and StonkFun.
 Each is standalone: run it with `uv run <path>`, no bot config, no framework. They
 read `.env` directly, and most take the mint or curve address as the first argument.
 
@@ -149,6 +149,21 @@ spend, *exact out* fixes what you receive.
 | 💸 [`letsbonk/letsbonk_sell_token_exact_in.py`](letsbonk/letsbonk_sell_token_exact_in.py) | Sell a fixed number of tokens |
 | 💸 [`letsbonk/letsbonk_sell_token_exact_out.py`](letsbonk/letsbonk_sell_token_exact_out.py) | Sell for a fixed amount received |
 | [`letsbonk/letsbonk_idl_parser.py`](letsbonk/letsbonk_idl_parser.py) | Loads the LaunchLab IDL for the four above |
+
+## StonkFun
+
+StonkFun runs no program of its own: every coin is a Raydium LaunchLab pool under one of
+StonkFun's two platform configs, paired with whatever quote asset its launcher picked —
+SOL, a tokenized stock, another coin. Amounts are in that asset. *Reward* coins carry a
+1% or 3% Token-2022 transfer fee on every transfer; the scripts account for it.
+
+| Script | What it does |
+|---|---|
+| [`stonkfun/listen/stonkfun_listen_tokens_geyser.py`](stonkfun/listen/stonkfun_listen_tokens_geyser.py) | New coins over Geyser gRPC, decoded from the launch instruction |
+| [`stonkfun/listen/stonkfun_listen_tokens_blocksubscribe.py`](stonkfun/listen/stonkfun_listen_tokens_blocksubscribe.py) | The same over `blockSubscribe` |
+| [`stonkfun/read/stonkfun_read_pool.py`](stonkfun/read/stonkfun_read_pool.py) | Price, quote asset, fees, transfer fee and graduation progress for one coin |
+| 💸 [`stonkfun/trade/stonkfun_buy_token.py`](stonkfun/trade/stonkfun_buy_token.py) | Spend an exact amount of the quote asset. `--dry-run` simulates |
+| 💸 [`stonkfun/trade/stonkfun_sell_token.py`](stonkfun/trade/stonkfun_sell_token.py) | Sell your position; `--close` also harvests withheld fees and closes the account |
 
 ## legacy
 
