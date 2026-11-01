@@ -742,6 +742,7 @@ class UniversalTrader:
             symbol=token_info.symbol,
             entry_price=buy_result.price,
             quantity=buy_result.amount,
+            quantity_raw=buy_result.amount_raw,
             take_profit_percentage=self.take_profit_percentage,
             stop_loss_percentage=self.stop_loss_percentage,
             max_hold_time=self.max_hold_time,
@@ -779,7 +780,10 @@ class UniversalTrader:
 
         for attempt in range(1, self.max_exit_sell_attempts + 1):
             sell_result: TradeResult = await self.seller.execute(
-                token_info, token_amount=buy_result.amount, token_price=token_price
+                token_info,
+                token_amount=buy_result.amount,
+                token_price=token_price,
+                token_amount_raw=buy_result.amount_raw,
             )
 
             if sell_result.success:
@@ -1118,6 +1122,7 @@ class UniversalTrader:
             token_info,
             token_amount=position.quantity,
             token_price=price,
+            token_amount_raw=position.quantity_raw,
         )
 
         if sell_result.success:

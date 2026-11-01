@@ -98,7 +98,11 @@ class RecordingSeller:
         self.prices_seen: list[float] = []
 
     async def execute(
-        self, token_info: TokenInfo, token_amount: float, token_price: float
+        self,
+        token_info: TokenInfo,
+        token_amount: float,
+        token_price: float,
+        token_amount_raw: int | None = None,
     ) -> TradeResult:
         """Record the attempt and return the scripted outcome.
 

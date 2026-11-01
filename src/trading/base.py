@@ -19,6 +19,8 @@ class TradeResult:
     tx_signature: str | None = None
     error_message: str | None = None
     amount: float | None = None
+    #: `amount` in raw token units, exact. None when only an estimate exists.
+    amount_raw: int | None = None
     price: float | None = None
     # Why a failed trade failed, when the caller has to decide whether
     # resubmitting is safe. None on success, and on failures that predate the
@@ -37,6 +39,7 @@ class TradeResult:
             "tx_signature": self.tx_signature,
             "error_message": self.error_message,
             "amount": self.amount,
+            "amount_raw": self.amount_raw,
             "price": self.price,
             "failure_reason": (
                 self.failure_reason.value if self.failure_reason else None
