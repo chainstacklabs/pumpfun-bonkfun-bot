@@ -18,7 +18,8 @@ through the real pump.fun instruction builder; instruction data is decoded:
   D. The sell's `sell_v2` amount is `amount_raw` exactly when it is passed.
   E. Both exit paths in the trader hand the raw amount to the seller, and the
      tp/sl position keeps it.
-  F. An exact-in buy spends the configured amount to the raw unit.
+  F. An exact-in buy spends the configured amount to the raw unit, and when
+     the spend cannot be read back, prices the position from that amount.
 
 Usage:
     uv run tests/regression/verify_exact_token_amounts.py
@@ -254,13 +255,28 @@ class _ExactInBuilder:
 
 
 def check_f_exact_in_spend() -> bool:
-    """F: an exact-in buy spends the configured amount to the raw unit."""
+    """F: an exact-in buy spends the configured amount, and prices from it."""
     amount = 0.00013  # 130,000 lamports; as a float product, 129,999
     builder = _ExactInBuilder()
     _buy(_Client(tokens_raw=1), amount=amount, builder=builder)
-    ok = int(amount * 10**9) == 129_999 and builder.amount_in == 130_000
+    no_spend = _buy(
+        _Client(tokens_raw=LOSSY_RAW, spent=None),
+        amount=amount,
+        builder=_ExactInBuilder(),
+    )
+    # Without the spend, the price must pair the submitted amount with the
+    # tokens received, not keep the pre-trade estimate.
+    price = (130_000 / 10**9) / (LOSSY_RAW / 10**6)
+    ok = (
+        int(amount * 10**9) == 129_999
+        and builder.amount_in == 130_000
+        and abs(no_spend.price - price) < price * 1e-9
+    )
     if not ok:
-        print(f"    float={int(amount * 10**9)} spent={builder.amount_in}")
+        print(
+            f"    float={int(amount * 10**9)} spent={builder.amount_in} "
+            f"price={no_spend.price} expected={price}"
+        )
     return ok
 
 
@@ -278,7 +294,10 @@ def main() -> int:
         ),
         ("D: the sell uses the exact raw count", check_d_sell_uses_exact_raw),
         ("E: the trader passes the raw count to every sell", check_e_trader_passes_raw),
-        ("F: an exact-in buy spends the configured amount", check_f_exact_in_spend),
+        (
+            "F: an exact-in buy spends and prices from its amount",
+            check_f_exact_in_spend,
+        ),
     ]
     passed = 0
     for label, check in checks:

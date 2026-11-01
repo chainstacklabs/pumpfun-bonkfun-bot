@@ -290,7 +290,8 @@ class PlatformAwareBuyer(Trader):
             # exact-in program spends all of amount_in, so it gets the
             # configured amount and a token floor. Otherwise the token count
             # is exact (pump.fun buy_v2) and amount_in is the ceiling.
-            if getattr(instruction_builder, "spends_exact_amount_in", False):
+            exact_in = getattr(instruction_builder, "spends_exact_amount_in", False)
+            if exact_in:
                 # The configured spend is a decimal like 0.003; scaling the float
                 # can land one raw unit short of it.
                 max_quote_amount_raw = int(Decimal(str(quote_amount)) * quote_unit)
@@ -368,6 +369,11 @@ class PlatformAwareBuyer(Trader):
                         f"(expected: {token_amount:.6f})"
                     )
                     token_amount = actual_amount
+                    if quote_spent is None and exact_in and tokens_raw > 0:
+                        # An exact-in buy spent what it submitted; pairing the
+                        # actual count with the estimated price would set an
+                        # unreachable sell floor.
+                        quote_spent = max_quote_amount_raw
                     if quote_spent is not None and tokens_raw > 0:
                         actual_price = (quote_spent / quote_unit) / actual_amount
                         logger.info(
