@@ -358,23 +358,26 @@ class PlatformAwareBuyer(Trader):
                 # The exact raw count, carried to the sell: converting the float
                 # back can come out a raw unit short and leave dust behind.
                 amount_raw = None
-                if tokens_raw is not None and quote_spent is not None:
+                if tokens_raw is not None:
+                    # The token count stands on its own; a missing spend only
+                    # leaves the price at its estimate.
                     amount_raw = tokens_raw
                     actual_amount = tokens_raw / 10**TOKEN_DECIMALS
-                    actual_price = (quote_spent / quote_unit) / actual_amount
                     logger.info(
                         f"Actual tokens received: {actual_amount:.6f} "
                         f"(expected: {token_amount:.6f})"
                     )
-                    logger.info(
-                        f"Actual {quote_label} spent: "
-                        f"{quote_spent / quote_unit:.10f} {quote_label}"
-                    )
-                    logger.info(
-                        f"Actual price: {actual_price:.10f} {quote_label}/token"
-                    )
                     token_amount = actual_amount
-                    token_price_sol = actual_price
+                    if quote_spent is not None and tokens_raw > 0:
+                        actual_price = (quote_spent / quote_unit) / actual_amount
+                        logger.info(
+                            f"Actual {quote_label} spent: "
+                            f"{quote_spent / quote_unit:.10f} {quote_label}"
+                        )
+                        logger.info(
+                            f"Actual price: {actual_price:.10f} {quote_label}/token"
+                        )
+                        token_price_sol = actual_price
                 else:
                     # confirm_transaction already read meta.err, so the buy
                     # executed — only the amounts could not be read back.

@@ -11,7 +11,8 @@ Offline machine checks, no network and no funds moved. Buyer and seller run
 through the real pump.fun instruction builder; instruction data is decoded:
 
   A. The chosen raw count really is one the float round trip loses.
-  B. A landed buy reports the transaction's raw token count as `amount_raw`.
+  B. A landed buy reports the transaction's raw token count as `amount_raw`,
+     also when the spend could not be read back.
   C. When the amounts cannot be parsed back, `amount_raw` is the wallet's raw
      balance, capped at what the buy asked for.
   D. The sell's `sell_v2` amount is `amount_raw` exactly when it is passed.
@@ -79,10 +80,11 @@ def _token_info() -> TokenInfo:
 
 
 class _Client:
-    def __init__(self, *, tokens_raw=None, balance_raw=None) -> None:
+    def __init__(self, *, tokens_raw=None, balance_raw=None, spent=1_000_000) -> None:
         self.sent: list = []
         self.tokens_raw = tokens_raw
         self.balance_raw = balance_raw
+        self.spent = spent
 
     async def build_and_send_transaction(self, instructions, *_a, **_k) -> str:
         self.sent.append(instructions)
@@ -97,7 +99,7 @@ class _Client:
     async def get_buy_transaction_details(self, *_a, **_k):
         if self.tokens_raw is None:
             return None, None
-        return self.tokens_raw, 1_000_000
+        return self.tokens_raw, self.spent
 
     async def get_token_account_balance(self, _ata) -> int:
         return self.balance_raw
@@ -166,11 +168,17 @@ def check_a_round_trip_is_lossy() -> bool:
 
 
 def check_b_buy_reports_exact_raw() -> bool:
-    """B: amount_raw is the transaction's raw token count."""
-    result = _buy(_Client(tokens_raw=LOSSY_RAW))
-    ok = result.success and result.amount_raw == LOSSY_RAW
+    """B: amount_raw is the transaction's raw token count, spend read or not."""
+    full = _buy(_Client(tokens_raw=LOSSY_RAW))
+    # No spend and no balance: only the transaction's token count is left.
+    no_spend = _buy(_Client(tokens_raw=LOSSY_RAW, spent=None, balance_raw=None))
+    ok = (
+        full.success
+        and full.amount_raw == LOSSY_RAW
+        and no_spend.amount_raw == LOSSY_RAW
+    )
     if not ok:
-        print(f"    success={result.success} amount_raw={result.amount_raw}")
+        print(f"    full={full.amount_raw} no_spend={no_spend.amount_raw}")
     return ok
 
 
