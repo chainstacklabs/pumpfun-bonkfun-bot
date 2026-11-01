@@ -1,6 +1,7 @@
 """Platform-aware trader implementations built on the interface system."""
 
 import asyncio
+from decimal import Decimal
 from time import monotonic
 
 from solders.pubkey import Pubkey
@@ -289,8 +290,11 @@ class PlatformAwareBuyer(Trader):
             # exact-in program spends all of amount_in, so it gets the
             # configured amount and a token floor. Otherwise the token count
             # is exact (pump.fun buy_v2) and amount_in is the ceiling.
-            if getattr(instruction_builder, "spends_exact_amount_in", False):
-                max_quote_amount_raw = int(quote_amount * quote_unit)
+            exact_in = getattr(instruction_builder, "spends_exact_amount_in", False)
+            if exact_in:
+                # The configured spend is a decimal like 0.003; scaling the float
+                # can land one raw unit short of it.
+                max_quote_amount_raw = int(Decimal(str(quote_amount)) * quote_unit)
                 token_amount_raw = int(
                     token_amount * (1 - self.slippage) * 10**TOKEN_DECIMALS
                 )
@@ -352,22 +356,34 @@ class PlatformAwareBuyer(Trader):
                     quote_mint=quote_mint,
                 )
 
-                if tokens_raw is not None and quote_spent is not None:
+                # The exact raw count, carried to the sell: converting the float
+                # back can come out a raw unit short and leave dust behind.
+                amount_raw = None
+                if tokens_raw is not None:
+                    # The token count stands on its own; a missing spend only
+                    # leaves the price at its estimate.
+                    amount_raw = tokens_raw
                     actual_amount = tokens_raw / 10**TOKEN_DECIMALS
-                    actual_price = (quote_spent / quote_unit) / actual_amount
                     logger.info(
                         f"Actual tokens received: {actual_amount:.6f} "
                         f"(expected: {token_amount:.6f})"
                     )
-                    logger.info(
-                        f"Actual {quote_label} spent: "
-                        f"{quote_spent / quote_unit:.10f} {quote_label}"
-                    )
-                    logger.info(
-                        f"Actual price: {actual_price:.10f} {quote_label}/token"
-                    )
                     token_amount = actual_amount
-                    token_price_sol = actual_price
+                    if quote_spent is None and exact_in and tokens_raw > 0:
+                        # An exact-in buy spent what it submitted; pairing the
+                        # actual count with the estimated price would set an
+                        # unreachable sell floor.
+                        quote_spent = max_quote_amount_raw
+                    if quote_spent is not None and tokens_raw > 0:
+                        actual_price = (quote_spent / quote_unit) / actual_amount
+                        logger.info(
+                            f"Actual {quote_label} spent: "
+                            f"{quote_spent / quote_unit:.10f} {quote_label}"
+                        )
+                        logger.info(
+                            f"Actual price: {actual_price:.10f} {quote_label}/token"
+                        )
+                        token_price_sol = actual_price
                 else:
                     # confirm_transaction already read meta.err, so the buy
                     # executed — only the amounts could not be read back.
@@ -379,8 +395,9 @@ class PlatformAwareBuyer(Trader):
                         f"quote_spent={quote_spent}) from tx {tx_signature}; "
                         f"the buy did land, falling back to the wallet balance"
                     )
-                    balance = await self._read_token_balance(token_info)
-                    if balance is not None and balance > 0:
+                    balance_raw = await self._read_token_balance(token_info)
+                    if balance_raw is not None and balance_raw > 0:
+                        balance = balance_raw / 10**TOKEN_DECIMALS
                         # The balance is cumulative, so cap it at what this buy
                         # asked for: the rest was already held, and selling it
                         # would liquidate an unrelated position. An exact delta
@@ -390,7 +407,10 @@ class PlatformAwareBuyer(Trader):
                             f"Token balance after buy: {balance:.6f}, selling at "
                             f"most the {token_amount:.6f} this buy asked for"
                         )
-                        token_amount = min(balance, token_amount)
+                        amount_raw = min(
+                            balance_raw, int(token_amount * 10**TOKEN_DECIMALS)
+                        )
+                        token_amount = amount_raw / 10**TOKEN_DECIMALS
                     else:
                         logger.warning(
                             f"Token balance unreadable too; holding the expected "
@@ -403,6 +423,7 @@ class PlatformAwareBuyer(Trader):
                     platform=token_info.platform,
                     tx_signature=tx_signature,
                     amount=token_amount,
+                    amount_raw=amount_raw,
                     price=token_price_sol,
                 )
             else:
@@ -430,7 +451,7 @@ class PlatformAwareBuyer(Trader):
 
         return address_provider.derive_pool_address(token_info.mint)
 
-    async def _read_token_balance(self, token_info: TokenInfo) -> float | None:
+    async def _read_token_balance(self, token_info: TokenInfo) -> int | None:
         """Read how many of a coin the wallet actually holds.
 
         Used only when a landed buy's amounts could not be parsed back out of the
@@ -441,7 +462,7 @@ class PlatformAwareBuyer(Trader):
             token_info: Token information carrying the mint and token program
 
         Returns:
-            Balance in whole tokens, or None if it cannot be read
+            Balance in raw token units, or None if it cannot be read
         """
         token_program = (
             token_info.token_program_id or SystemAddresses.TOKEN_2022_PROGRAM
@@ -454,7 +475,7 @@ class PlatformAwareBuyer(Trader):
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Could not read token balance for {token_info.mint}: {e}")
             return None
-        return balance_raw / 10**TOKEN_DECIMALS
+        return balance_raw
 
     def _can_skip_refresh(self, token_info: TokenInfo) -> bool:
         """Whether the pre-buy curve read can be skipped entirely.
@@ -647,7 +668,11 @@ class PlatformAwareSeller(Trader):
         self.compute_units = compute_units or {}
 
     async def execute(
-        self, token_info: TokenInfo, token_amount: float, token_price: float
+        self,
+        token_info: TokenInfo,
+        token_amount: float,
+        token_price: float,
+        token_amount_raw: int | None = None,
     ) -> TradeResult:
         """Execute sell operation using platform-specific implementations.
 
@@ -660,6 +685,9 @@ class PlatformAwareSeller(Trader):
                 the freshest price available: a stale price above the market sets
                 a floor the pool cannot pay and the sell reverts (pump.fun 6003
                 TooLittleSolReceived).
+            token_amount_raw: `token_amount` in raw units, exact. Pass it when the
+                buy read it: rebuilt from the float, the amount can come out a raw
+                unit short and leave dust in the token account.
 
         Returns:
             TradeResult with operation outcome
@@ -779,7 +807,11 @@ class PlatformAwareSeller(Trader):
 
             # Use pre-known amount and price (no RPC delay)
             token_balance_decimal = token_amount
-            token_balance = int(token_amount * 10**TOKEN_DECIMALS)
+            token_balance = (
+                token_amount_raw
+                if token_amount_raw is not None
+                else int(token_amount * 10**TOKEN_DECIMALS)
+            )
             token_price_sol = token_price
 
             logger.info(f"Token balance: {token_balance_decimal:.6f}")

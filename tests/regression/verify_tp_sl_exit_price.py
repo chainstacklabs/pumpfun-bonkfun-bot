@@ -89,7 +89,11 @@ class StubSeller:
     prices_seen: list[float] = field(default_factory=list)
 
     async def execute(
-        self, token_info: TokenInfo, token_amount: float, token_price: float
+        self,
+        token_info: TokenInfo,
+        token_amount: float,
+        token_price: float,
+        token_amount_raw: int | None = None,
     ) -> TradeResult:
         self.prices_seen.append(token_price)
         if len(self.prices_seen) <= self.fail_first:

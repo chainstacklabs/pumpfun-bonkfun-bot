@@ -28,6 +28,8 @@ class Position:
     entry_price: float
     quantity: float
     entry_time: datetime
+    #: `quantity` in raw token units, exact; the sell uses it when known.
+    quantity_raw: int | None = None
 
     # Exit conditions
     take_profit_price: float | None = None
@@ -50,6 +52,7 @@ class Position:
         take_profit_percentage: float | None = None,
         stop_loss_percentage: float | None = None,
         max_hold_time: int | None = None,
+        quantity_raw: int | None = None,
     ) -> "Position":
         """Create a position from a successful buy transaction.
 
@@ -61,6 +64,7 @@ class Position:
             take_profit_percentage: Take profit percentage (0.5 = 50% profit)
             stop_loss_percentage: Stop loss percentage (0.2 = 20% loss)
             max_hold_time: Maximum hold time in seconds
+            quantity_raw: `quantity` in raw token units, when the buy read it exactly
 
         Returns:
             Position instance
@@ -78,6 +82,7 @@ class Position:
             symbol=symbol,
             entry_price=entry_price,
             quantity=quantity,
+            quantity_raw=quantity_raw,
             entry_time=datetime.utcnow(),
             take_profit_price=take_profit_price,
             stop_loss_price=stop_loss_price,
