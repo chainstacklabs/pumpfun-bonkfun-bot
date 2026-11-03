@@ -296,9 +296,10 @@ class UniversalTrader:
         try:
             for token_info in await positions.resume():
                 self._track_traded(token_info)
-                # Held already: the intake must not buy it again, e.g. when a
-                # coin resumed from its curve migrates under `entry: migration`.
-                intake.processed_tokens.add(str(token_info.mint))
+            # Every coin left in the file may still be held, monitored or not:
+            # the intake must not buy it again, e.g. when it migrates under
+            # `entry: migration`, or the new buy would replace its record.
+            intake.processed_tokens.update(positions.stored_mints())
             # Resumed positions hold slots like any other.
             await positions.wait_for_free_slot()
 

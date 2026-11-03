@@ -185,11 +185,14 @@ bought sells what is held. A position whose balance cannot be read stays in the
 file and is tried again on the next start, and so does one whose exit gave up.
 Delete an entry from the file to stop the bot managing that coin.
 
-The file belongs to the bot's `name`, so names must be unique: a second enabled
-bot with a name already in use is not started. Renaming a bot leaves its old
-file behind; rename the file too. A position bought on another `platform` than
-the bot's current one stays in the file and is not monitored. A file the bot
-cannot read is moved aside to `<name>.json.unreadable`.
+The file is named after the bot's `name`, with any character other than letters,
+digits, `.`, `_` and `-` replaced by `_`. Enabled bots in `bots/` that would
+share a file all start, each with `positions/<name>@<config file>.json` and a
+warning; give each bot its own name to keep the plain file. Renaming a bot
+leaves its old file behind; rename the file too. A position bought on another
+`platform` than the bot's current one stays in the file and is not monitored.
+No coin in the file is bought again, monitored or not. A file the bot cannot
+read is moved aside to `<name>.json.unreadable`.
 
 ### Encrypted wallet
 

@@ -235,6 +235,10 @@ class PositionManager:
                 # and cleanup still has to run after them.
                 continue
 
+    def stored_mints(self) -> set[str]:
+        """Every mint in the store, resumed or not; empty without a store."""
+        return set() if self.store is None else self.store.mints()
+
     async def resume(self) -> list[TokenInfo]:
         """Hold again each position a previous run left in the store.
 

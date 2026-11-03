@@ -21,15 +21,18 @@ its buy until its sell, and the next start resumes it:
      down, or its account closed) is cleared and never sold.
   H. A wallet holding less than was bought sells what it holds.
   I. A position whose balance cannot be read is neither sold nor cleared.
-  J. A record that does not decode stays in the file; a file that cannot be
-     read (not JSON, not UTF-8, no permission) is moved aside, never over an
-     earlier one, and one that cannot be moved is never written over.
+  J. A record that does not decode (also a hand-edited amount that is not a
+     number) stays in the file; a file that cannot be read (not JSON, not
+     UTF-8, no permission) is moved aside, never over an earlier one, and one
+     that cannot be moved is never written over.
   K. The trader resumes before it takes a coin: resumed positions hold slots
      (all of them, also beyond `max_open_positions`), are cleaned up after the
-     session, are never bought again when seen anew, and single-token mode
-     waits for them also when no new coin comes.
+     session, are never bought again when seen anew (nor is any other coin
+     left in the file), and single-token mode waits for them also when no new
+     coin comes.
   L. `bot_runner` keeps each bot's positions in `positions/<name>.json`, which
-     git ignores, and starts no second enabled bot under a name in use.
+     git ignores, with the name made safe as a file name; enabled bots sharing
+     a name all start, each with `positions/<name>@<config file>.json`.
   M. A position bought on another platform than the bot's stays in the file and
      is not resumed: this bot cannot price it.
 
@@ -544,6 +547,7 @@ def check_j_bad_records_are_kept(tmp: Path) -> bool:
     store.remove(good.mint)
     if _stored(path) != {"bad"}:
         problems.append(f"after a write the file holds {_stored(path)}")
+    problems += _check_j_bad_amounts(tmp)
 
     path.write_text("{not json")
     if PositionStore(path).load():
@@ -558,6 +562,38 @@ def check_j_bad_records_are_kept(tmp: Path) -> bool:
         problems.append("a second unreadable file overwrote the first one aside")
     problems += _check_j_unreadable_bytes(tmp)
     return _report(problems)
+
+
+def _check_j_bad_amounts(tmp: Path) -> list[str]:
+    """Hand-edited buy amounts that are not usable numbers: kept, not loaded."""
+    problems = []
+    path = tmp / "j-amounts.json"
+    good = _token("GOOD")
+    PositionStore(path).add(good, _buy(), _now())
+    data = json.loads(path.read_text())
+    template = data["positions"][0]
+    edits = {
+        "str": {"amount": "1.0", "amount_raw": None},
+        "bool": {"amount_raw": True},
+        "neg": {"amount_raw": -1},
+        "nan": {"price": float("nan")},
+        "null": {"amount": None, "amount_raw": None},
+    }
+    for name, edit in edits.items():
+        record = json.loads(json.dumps(template))
+        record["mint"] = name
+        record["buy"].update(edit)
+        data["positions"].append(record)
+    path.write_text(json.dumps(data))
+    try:
+        loaded = PositionStore(path).load()
+    except Exception as e:  # noqa: BLE001
+        return [f"bad amounts: load raised {type(e).__name__}: {e}"]
+    if [p.token_info.mint for p in loaded] != [good.mint]:
+        problems.append(f"bad amounts: loaded {[p.buy_result for p in loaded]}")
+    if _stored(path) != {str(good.mint), *edits}:
+        problems.append(f"bad amounts: the file holds {_stored(path)}")
+    return problems
 
 
 def _check_j_unreadable_bytes(tmp: Path) -> list[str]:
@@ -732,6 +768,34 @@ async def _check_k_held_not_rebought(tmp: Path) -> list[str]:
     return problems
 
 
+async def _check_k_unmonitored_not_rebought(tmp: Path) -> list[str]:
+    problems = []
+    # Coins left in the file without being resumed (balance unreadable; a record
+    # with a hand-edited amount) may still be held: the listener reports both,
+    # and neither is bought, so no new buy replaces their records.
+    path = tmp / "k5.json"
+    dark, odd = _token("DARK"), _token("ODD")
+    store = PositionStore(path)
+    for token in (dark, odd):
+        store.add(token, _buy(), _now())
+    data = json.loads(path.read_text())
+    data["positions"][1]["buy"].update(amount="1.0", amount_raw=None)
+    path.write_text(json.dumps(data))
+    trader, events, _release = await _trader_run(path, [dark, odd])
+    trader.solana_client.down = True
+    try:
+        await asyncio.wait_for(trader.start(), 5)
+    except Exception as e:  # noqa: BLE001
+        problems.append(f"unmonitored: start raised {type(e).__name__}: {e}")
+    if any(event.startswith("buy") for event in events):
+        problems.append(f"a coin left in the file was bought again: {events}")
+    if not {str(dark.mint), str(odd.mint)} <= trader.intake.processed_tokens:
+        problems.append("a coin left in the file is not marked processed")
+    if _stored(path) != {str(dark.mint), str(odd.mint)}:
+        problems.append(f"unmonitored: the file holds {_stored(path)}")
+    return problems
+
+
 async def _check_k(tmp: Path) -> list[str]:
     problems = []
     # Limit 1: the resumed position holds the only slot, so the new coin waits.
@@ -763,6 +827,7 @@ async def _check_k(tmp: Path) -> list[str]:
         problems.append(f"limit 1: {events}, expected {want}")
     problems += await _check_k_over_limit(tmp)
     problems += await _check_k_held_not_rebought(tmp)
+    problems += await _check_k_unmonitored_not_rebought(tmp)
 
     # Single-token mode with no new coin still waits for the resumed position.
     path = tmp / "k2.json"
@@ -816,16 +881,19 @@ def check_m_other_platform_is_kept(tmp: Path) -> bool:
     return _report(asyncio.run(_check_m(tmp)))
 
 
-def _run_all_bots_started(tmp: Path, configs: dict[str, dict]) -> list[str]:
-    """Which of `configs` (file stem -> config) `run_all_bots` starts."""
-    started: list[str] = []
+def _run_all_bots_started(
+    tmp: Path, configs: dict[str, dict]
+) -> list[tuple[str, str | None]]:
+    """Which of `configs` (file stem -> config) `run_all_bots` starts, and the
+    positions file each is handed (None: the one named after the bot)."""
+    started: list[tuple[str, str | None]] = []
     bots = tmp / "bots"
     bots.mkdir(parents=True)
     for stem in configs:
         (bots / f"{stem}.yaml").write_text("")
 
-    async def start_bot(config_path: str) -> None:
-        started.append(Path(config_path).stem)
+    async def start_bot(config_path: str, positions_file: str | None = None) -> None:
+        started.append((Path(config_path).stem, positions_file))
 
     originals = (bot_runner.load_bot_config, bot_runner.start_bot)
     bot_runner.load_bot_config = lambda config_path: configs[Path(config_path).stem]
@@ -838,6 +906,31 @@ def _run_all_bots_started(tmp: Path, configs: dict[str, dict]) -> list[str]:
         os.chdir(cwd)
         bot_runner.load_bot_config, bot_runner.start_bot = originals
     return started
+
+
+def _start_bot_settings(config: dict, positions_file: str | None) -> TraderSettings:
+    """The settings `start_bot` hands the trader, with the trader stubbed."""
+    seen: list[TraderSettings] = []
+
+    class _Trader:
+        def __init__(self, settings: TraderSettings) -> None:
+            seen.append(settings)
+
+        async def start(self) -> None:
+            return None
+
+    names = ("load_bot_config", "setup_logging", "print_config_summary")
+    originals = [getattr(bot_runner, n) for n in (*names, "UniversalTrader")]
+    bot_runner.load_bot_config = lambda _path: config
+    bot_runner.setup_logging = lambda _name: None
+    bot_runner.print_config_summary = lambda _cfg: None
+    bot_runner.UniversalTrader = _Trader
+    try:
+        asyncio.run(bot_runner.start_bot("bots/any.yaml", positions_file))
+    finally:
+        for n, original in zip((*names, "UniversalTrader"), originals, strict=True):
+            setattr(bot_runner, n, original)
+    return seen[0]
 
 
 def check_l_runner_and_gitignore(tmp: Path) -> bool:
@@ -861,15 +954,55 @@ def check_l_runner_and_gitignore(tmp: Path) -> bool:
     if ignored.returncode != 0:
         problems.append("git does not ignore positions/")
 
-    def bot(name: str, enabled: bool = True) -> dict:  # noqa: FBT001, FBT002
-        return {"name": name, "enabled": enabled, "filters": {"listener_type": "logs"}}
+    # A name is made safe as a file name: it never leaves positions/.
+    for name, want in [
+        ("../up", "positions/.._up.json"),
+        ("a/b\\c d", "positions/a_b_c_d.json"),
+        ("..", "positions/...json"),
+    ]:
+        got = bot_runner.build_trader_settings(
+            {**config, "name": name}, Platform.PUMP_FUN
+        ).positions_file
+        if got != want:
+            problems.append(f"name {name!r}: positions_file {got!r}, expected {want!r}")
+
+    # start_bot hands the runner's file to the trader, or the bot's own.
+    for given, want in [
+        (None, "positions/sniper-x.json"),
+        ("positions/sniper-x@b.json", "positions/sniper-x@b.json"),
+    ]:
+        got = _start_bot_settings(config, given).positions_file
+        if got != want:
+            problems.append(f"start_bot with {given!r}: {got!r}, expected {want!r}")
+
+    def bot(name: str, enabled: bool = True, listener: str = "logs") -> dict:  # noqa: FBT001, FBT002
+        return {
+            "name": name,
+            "enabled": enabled,
+            "filters": {"listener_type": listener},
+        }
 
     started = _run_all_bots_started(
         tmp / "l",
-        {"a": bot("x", enabled=False), "b": bot("x"), "c": bot("x"), "d": bot("y")},
+        {
+            "a": bot("x", enabled=False),
+            "b": bot("x"),
+            "c": bot("x"),
+            "d": bot("y"),
+            "e": bot("y", listener="no-such-listener"),  # never starts
+            "f": bot("z/1"),
+            "g": bot("z_1"),  # the same file as z/1
+        },
     )
-    if started != ["b", "d"]:
-        problems.append(f"started {started}: two enabled bots shared a name")
+    want = [
+        ("b", "positions/x@b.json"),
+        ("c", "positions/x@c.json"),
+        ("d", None),
+        ("f", "positions/z_1@f.json"),
+        ("g", "positions/z_1@g.json"),
+    ]
+    if started != want:
+        problems.append(f"started {started}, expected {want}")
     return _report(problems)
 
 
@@ -894,7 +1027,7 @@ def main() -> None:
                 ("I: unreadable balance: kept, not sold", lambda: check_i_unreadable_balance_is_kept(tmp)),
                 ("J: bad records and files are kept", lambda: check_j_bad_records_are_kept(tmp)),
                 ("K: the trader resumes before taking a coin", lambda: check_k_trader_resumes_first(tmp)),
-                ("L: positions/<name>.json, git-ignored, names unique", lambda: check_l_runner_and_gitignore(tmp)),
+                ("L: positions/<name>.json, git-ignored, one file per bot", lambda: check_l_runner_and_gitignore(tmp)),
                 ("M: a position from another platform is kept", lambda: check_m_other_platform_is_kept(tmp)),
             ]  # fmt: skip
             results = []

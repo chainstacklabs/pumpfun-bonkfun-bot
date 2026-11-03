@@ -8,6 +8,7 @@ temporary file, so a crash leaves either the old or the new version.
 
 import dataclasses
 import json
+import math
 import os
 import typing
 from dataclasses import dataclass
@@ -60,6 +61,29 @@ def decode_token_info(encoded: dict) -> TokenInfo:
             value = Platform(value)
         values[field.name] = value
     return TokenInfo(**values)
+
+
+def _check_buy(buy: dict) -> None:
+    """Raise TypeError unless the stored buy's amounts are usable numbers.
+
+    `amount` and `price` are finite numbers, `amount_raw` a whole number of raw
+    units or null. A hand-edited `"1.0"` would otherwise fail later, outside
+    the per-record guard, and stop the bot on every start.
+    """
+
+    def real(value: object) -> bool:
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+        )
+
+    raw = buy.get("amount_raw")
+    raw_ok = raw is None or (
+        isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0
+    )
+    if not (real(buy["amount"]) and real(buy["price"]) and raw_ok):
+        raise TypeError
 
 
 @dataclass(frozen=True)
@@ -116,6 +140,7 @@ class PositionStore:
         for mint, record in self._records.items():
             try:
                 buy = record["buy"]
+                _check_buy(buy)
                 positions.append(
                     StoredPosition(
                         token_info=decode_token_info(record["token_info"]),
@@ -130,7 +155,7 @@ class PositionStore:
                         entry_time=datetime.fromisoformat(record["entry_time"]),
                     )
                 )
-            except (ValueError, KeyError, TypeError):
+            except (ValueError, KeyError, TypeError, AttributeError):
                 logger.exception(
                     f"Position for {mint} in {self.path} does not decode; "
                     f"left in the file, not monitored"
@@ -153,6 +178,10 @@ class PositionStore:
             f"Positions file {self.path} is unreadable; moved to {aside}. "
             f"Positions in it are not monitored."
         )
+
+    def mints(self) -> set[str]:
+        """Every mint in the file as last loaded or written, decodable or not."""
+        return set(self._records)
 
     def add(
         self, token_info: TokenInfo, buy_result: TradeResult, entry_time: datetime
