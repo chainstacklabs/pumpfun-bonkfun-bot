@@ -181,7 +181,9 @@ sells at once, priced at the market rather than at its old buy price.
 The wallet decides what is left to sell. A position whose coin the wallet no
 longer holds (sold by hand, or burned by `post_session` cleanup with
 `force_close_with_burn`) is cleared, not sold again; one holding less than was
-bought sells what is held. A position whose balance cannot be read stays in the
+bought sells what is held. The bot clears a position only when three balance
+reads, a second apart, all find nothing, since an RPC node lagging behind may
+not show a fresh buy yet. A position whose balance cannot be read stays in the
 file and is tried again on the next start, and so does one whose exit gave up.
 Delete an entry from the file to stop the bot managing that coin.
 

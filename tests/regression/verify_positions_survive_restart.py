@@ -35,6 +35,10 @@ its buy until its sell, and the next start resumes it:
      a name all start, each with `positions/<name>@<config file>.json`.
   M. A position bought on another platform than the bot's stays in the file and
      is not resumed: this bot cannot price it.
+  N. Clearing needs every balance read, spaced apart, to find nothing: one
+     "not found" or empty answer followed by the balance (an RPC node lagging
+     behind a fresh buy) resumes the position, and a failed read among the
+     empty answers keeps it in the file unsold.
 
 Offline: the RPC client, seller and prices are stubs; the position manager, its
 store and the trader are the real ones. Runs in a temporary directory.
@@ -51,6 +55,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -112,23 +117,38 @@ def _token_account(mint: Pubkey, raw: int) -> SimpleNamespace:
     return SimpleNamespace(data=data, owner=TOKEN_PROGRAM)
 
 
+def _ata(token: TokenInfo) -> Pubkey:
+    return WALLET.get_associated_token_address(token.mint, token.token_program_id)
+
+
 class _Client:
-    """Token accounts by address; `down` makes every read fail."""
+    """Token accounts by address; `down` makes every read fail.
+
+    `script` holds answers an address gives first, before its real account: an
+    exception to raise or an account to return. `reads` times every read.
+    """
 
     rpc_endpoint = ""
 
     def __init__(self) -> None:
         self.accounts: dict[Pubkey, SimpleNamespace] = {}
+        self.script: dict[Pubkey, list[Exception | SimpleNamespace]] = {}
+        self.reads: dict[Pubkey, list[float]] = {}
         self.down = False
         self.status = ConfirmationStatus.SUCCESS
 
     def hold(self, token: TokenInfo, raw: int) -> None:
-        ata = WALLET.get_associated_token_address(token.mint, token.token_program_id)
-        self.accounts[ata] = _token_account(token.mint, raw)
+        self.accounts[_ata(token)] = _token_account(token.mint, raw)
 
     async def get_account_info(self, pubkey: Pubkey) -> SimpleNamespace:
+        self.reads.setdefault(pubkey, []).append(time.monotonic())
         if self.down:
             raise RuntimeError("rpc down")  # noqa: TRY003
+        if self.script.get(pubkey):
+            answer = self.script[pubkey].pop(0)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
         if pubkey not in self.accounts:
             raise ValueError(f"Account {pubkey} not found")  # noqa: TRY003
         return self.accounts[pubkey]
@@ -884,6 +904,55 @@ def check_m_other_platform_is_kept(tmp: Path) -> bool:
     return _report(asyncio.run(_check_m(tmp)))
 
 
+async def _check_n(tmp: Path) -> list[str]:
+    not_found = ValueError("not found")
+    lag, empty, unsure, gone = (
+        _token(s) for s in ("LAG", "EMPTYFIRST", "UNSURE", "GONE")
+    )
+    rigs = {}
+    for token in (lag, empty, unsure, gone):
+        path = tmp / f"n-{token.symbol}.json"
+        PositionStore(path).add(token, _buy(), _now() - timedelta(seconds=120))
+        rigs[token.symbol] = _Rig(path)
+    # The node has not seen the buy's account yet, then has.
+    rigs["LAG"].client.hold(lag, BOUGHT_RAW)
+    rigs["LAG"].client.script[_ata(lag)] = [not_found]
+    rigs["EMPTYFIRST"].client.hold(empty, BOUGHT_RAW)
+    rigs["EMPTYFIRST"].client.script[_ata(empty)] = [_token_account(empty.mint, 0)]
+    # No account on any answer, but one read fails: not proven gone.
+    rigs["UNSURE"].client.script[_ata(unsure)] = [not_found, RuntimeError("hiccup")]
+    # GONE has no account on any read.
+    resumed = await asyncio.gather(*(rig.pm.resume() for rig in rigs.values()))
+    resumed = {t.symbol for tokens in resumed for t in tokens}
+    for rig in rigs.values():
+        await _until(lambda rig=rig: rig.pm.open_count == 0, 2)
+
+    problems = []
+    if resumed != {"LAG", "EMPTYFIRST"}:
+        problems.append(f"resumed {sorted(resumed)}, expected LAG and EMPTYFIRST")
+    for symbol in ("LAG", "EMPTYFIRST"):
+        if rigs[symbol].seller.sells != [(symbol, BOUGHT_RAW, 1.0)]:
+            problems.append(
+                f"{symbol}: one empty answer then the balance must resume and "
+                f"sell it, sells {rigs[symbol].seller.sells}"
+            )
+    if rigs["UNSURE"].seller.sells or rigs["UNSURE"].stored() != {str(unsure.mint)}:
+        problems.append("UNSURE: a failed read among empty ones cleared or sold it")
+    if rigs["GONE"].seller.sells or rigs["GONE"].stored():
+        problems.append("GONE: not found on every read, yet not cleared")
+    reads = rigs["GONE"].client.reads.get(_ata(gone), [])
+    if len(reads) < 3 or reads[-1] - reads[0] < 1.8:  # noqa: PLR2004
+        problems.append(
+            f"GONE cleared on {len(reads)} read(s) over "
+            f"{(reads[-1] - reads[0]) if reads else 0:.1f}s, expected 3 spaced reads"
+        )
+    return problems
+
+
+def check_n_clearing_needs_every_read_empty(tmp: Path) -> bool:
+    return _report(asyncio.run(_check_n(tmp)))
+
+
 def _run_all_bots_started(
     tmp: Path, configs: dict[str, dict]
 ) -> list[tuple[str, str | None]]:
@@ -1051,6 +1120,7 @@ def main() -> None:
                 ("K: the trader resumes before taking a coin", lambda: check_k_trader_resumes_first(tmp)),
                 ("L: positions/<name>.json, git-ignored, one file per bot", lambda: check_l_runner_and_gitignore(tmp)),
                 ("M: a position from another platform is kept", lambda: check_m_other_platform_is_kept(tmp)),
+                ("N: clearing needs every spaced read empty", lambda: check_n_clearing_needs_every_read_empty(tmp)),
             ]  # fmt: skip
             results = []
             for name, check in checks:

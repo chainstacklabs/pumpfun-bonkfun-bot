@@ -282,7 +282,7 @@ class PositionManager:
         held = await self._held_raw(token_info)
         if held is None:
             logger.error(
-                f"Could not read the wallet's balance of {label}; its position "
+                f"Could not confirm the wallet's balance of {label}; its position "
                 f"stays in {self.store.path} and is not monitored this run"
             )
             return False
@@ -331,8 +331,15 @@ class PositionManager:
         return True
 
     async def _held_raw(self, token_info: TokenInfo) -> int | None:
-        """Raw amount of the coin in the wallet's account; None when unreadable."""
-        for attempt in range(3):
+        """Raw amount of the coin in the wallet's account; None when unsure.
+
+        A balance above zero is taken at once. Zero clears the position for
+        good, so every read must agree: an RPC node lagging behind may not
+        show yet the account a buy just made. A read that fails leaves the
+        answer None, which keeps the position.
+        """
+        reads, nothing_held = 3, 0
+        for attempt in range(reads):
             if attempt:
                 await asyncio.sleep(1.0)
             try:
@@ -347,15 +354,19 @@ class PositionManager:
                 try:
                     data = (await self.solana_client.get_account_info(account)).data
                 except ValueError:
-                    return 0  # no account: nothing held
+                    nothing_held += 1  # no account seen
+                    continue
                 # SPL token account: mint (32), owner (32), amount (u64).
-                return struct.unpack_from("<Q", bytes(data), 64)[0]
+                held = struct.unpack_from("<Q", bytes(data), 64)[0]
+                if held:
+                    return held
+                nothing_held += 1
             except Exception as e:  # noqa: BLE001
                 logger.warning(
                     f"Balance read for {token_info.symbol} failed "
-                    f"(attempt {attempt + 1}/3): {e}"
+                    f"(attempt {attempt + 1}/{reads}): {e}"
                 )
-        return None
+        return 0 if nothing_held == reads else None
 
     async def manage(
         self,
