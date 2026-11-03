@@ -2,7 +2,9 @@
 
 The trader wires three parts together and owns the session around them:
 `TokenIntake` finds coins, the buyer and seller in `platform_aware` trade them,
-and `PositionManager` holds each one until its exit strategy closes it.
+and `PositionManager` holds each one until its exit strategy closes it. Coins
+are bought one after another; each position then runs as its own task, and the
+next coin is taken once fewer than `max_open_positions` are open.
 """
 
 import asyncio
@@ -257,6 +259,7 @@ class UniversalTrader:
         logger.info(f"Marry mode: {positions.marry_mode}")
         logger.info(f"YOLO mode: {self.yolo_mode}")
         logger.info(f"Exit strategy: {positions.exit_strategy}")
+        logger.info(f"Max open positions: {positions.max_open_positions}")
 
         if positions.exit_strategy == "tp_sl":
             logger.info(
@@ -297,6 +300,7 @@ class UniversalTrader:
                 )
                 if token_info:
                     await self._handle_token(token_info)
+                    await positions.wait_all()
                     logger.info("Finished processing single token. Exiting...")
                 else:
                     logger.info(
@@ -311,11 +315,17 @@ class UniversalTrader:
                     await intake.run_migrations(self._handle_token)
                 else:
                     await intake.run(self._handle_token)
+                # The listener stopped: positions still open run to their exit
+                # before cleanup.
+                await positions.wait_all()
 
         except Exception:
             logger.exception("Trading stopped due to error")
 
         finally:
+            # Shutdown or an error: stop what is still open and wait for each
+            # position task to end, so cleanup never races a sell.
+            await positions.stop()
             await self._cleanup_without_interruption()
             logger.info("Universal Trader has shut down")
 
@@ -427,6 +437,10 @@ class UniversalTrader:
             else:
                 await self._handle_failed_buy(token_info, buy_result)
 
+            # The next coin is taken once a position slot is free: with the
+            # default of one, once this position has exited.
+            await self.positions.wait_for_free_slot()
+
             # Only wait for next token in yolo mode
             if self.yolo_mode:
                 logger.info(
@@ -457,7 +471,7 @@ class UniversalTrader:
         if token_info.token_program_id:
             self.traded_token_programs[mint_str] = token_info.token_program_id
 
-        await self.positions.manage(token_info, buy_result)
+        self.positions.open(token_info, buy_result)
 
     async def _handle_failed_buy(
         self, token_info: TokenInfo, buy_result: TradeResult

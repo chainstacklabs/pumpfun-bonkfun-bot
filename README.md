@@ -91,7 +91,7 @@ Logs land in `logs/{bot_name}_{timestamp}.log`.
 
 The YAML files are commented inline. The sections that matter most:
 
-- **`trade`** — `buy_amount` (in SOL), slippage, `exit_strategy` (`time_based`, `tp_sl`, `manual`), [`entry`](#migration-entry) and [`extreme_fast_mode`](#extreme-fast-mode).
+- **`trade`** — `buy_amount` (in SOL), slippage, `exit_strategy` (`time_based`, `tp_sl`, `manual`), [`entry`](#migration-entry), [`max_open_positions`](#several-positions-at-once) and [`extreme_fast_mode`](#extreme-fast-mode).
 - **`priority_fees`** — fixed or dynamic. Dynamic costs an extra RPC call, which slows the buy.
 - **`filters`** — `listener_type`, `max_token_age`, name/creator matching, `marry_mode` (buy only, never sell), `yolo_mode` (trade continuously).
 - **`retries`** — attempts and the wait windows around creation, buy, and the next token.
@@ -143,6 +143,25 @@ the moment the migration was seen, and `wait_after_creation` is waited before th
 buy. The bot buys once the pool is readable, waiting up to 10 seconds for it;
 `shreds` sees a migration before it runs, so its pool does not exist yet.
 `extreme_fast_mode: true` with `entry: migration` is refused at startup.
+
+### Several positions at once
+
+By default the bot holds one coin at a time: it buys, waits for the exit, and only
+then takes the next coin. With `yolo_mode: true`, `trade.max_open_positions`
+(1 to 100, default 1) lets it hold more:
+
+```yaml
+trade:
+  max_open_positions: 3
+```
+
+Coins are still bought one after another. Each position then runs its exit
+strategy on its own, and the bot keeps taking coins until that many are open;
+the next one is taken when a position closes. A coin detected while every slot is
+taken waits in the queue, so `max_token_age` decides whether it is still bought.
+Positions under `exit_strategy: manual` or `marry_mode` are never sold, so they
+take no slot. On shutdown the bot stops monitoring the open positions before
+cleanup runs; their tokens stay in the wallet.
 
 ### Non-SOL quote assets
 

@@ -79,6 +79,7 @@ def build_trader_settings(cfg: dict, platform: Platform) -> TraderSettings:
         max_exit_sell_attempts=cfg["trade"].get(
             "max_exit_sell_attempts", DEFAULT_MAX_EXIT_SELL_ATTEMPTS
         ),
+        max_open_positions=cfg["trade"].get("max_open_positions", 1),
         # Listener configuration
         listener_type=cfg["filters"]["listener_type"],
         # Geyser configuration (if applicable)

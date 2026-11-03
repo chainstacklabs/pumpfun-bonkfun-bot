@@ -42,6 +42,13 @@ CONFIG_VALIDATION_RULES = [
         "trade.max_exit_sell_attempts must be between 1 and 100",
     ),
     (
+        "trade.max_open_positions",
+        int,
+        1,
+        100,
+        "trade.max_open_positions must be between 1 and 100",
+    ),
+    (
         "filters.max_transfer_fee_bps",
         int,
         0,
