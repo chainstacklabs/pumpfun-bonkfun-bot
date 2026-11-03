@@ -8,6 +8,7 @@ import yaml
 from dotenv import load_dotenv
 
 from interfaces.core import Platform
+from platforms.launchlab_presets import resolve_platform_configs
 
 # Existing validation rules (keeping all existing ones)
 REQUIRED_FIELDS = [
@@ -278,8 +279,6 @@ def validate_platform_config(config: dict, platform: Platform) -> None:
             raise
 
     # launchlab.platform_configs: LaunchLab platforms only, each a valid address
-    from platforms.launchlab_presets import resolve_platform_configs
-
     resolve_platform_configs(
         platform, (config.get("launchlab") or {}).get("platform_configs")
     )
