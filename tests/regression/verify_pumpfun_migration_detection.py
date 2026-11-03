@@ -267,7 +267,10 @@ class _FakeChannel:
 
 
 class _FakeStub:
-    """A geyser stub whose streams play frames, then end."""
+    """A geyser stub whose first stream plays frames, then ends.
+
+    A reconnect gets nothing: frames a real stream dropped are not sent again.
+    """
 
     def __init__(self, updates: list) -> None:
         self.updates = updates
@@ -275,9 +278,10 @@ class _FakeStub:
 
     def _stream(self, requests):  # noqa: ANN001, ANN202
         self.requests.extend(requests)
+        updates, self.updates = self.updates, []
 
         async def stream():  # noqa: ANN202
-            for update in self.updates:
+            for update in updates:
                 yield update
             raise _FeedEnd
 
@@ -333,7 +337,9 @@ def _run(
 
     listener._create_geyser_connection = connection
     original_connect = websockets.connect
-    websockets.connect = lambda *_a, **_k: _FakeSocket(frames)
+    # One connection's worth of frames; a reconnect gets none.
+    feeds = deque([frames])
+    websockets.connect = lambda *_a, **_k: _FakeSocket(feeds.popleft() if feeds else [])
 
     async def go() -> None:
         try:
