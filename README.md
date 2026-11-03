@@ -118,6 +118,10 @@ Two knobs:
 - **`trust_create_event`** (default `true`) — set `false` to make every listener
   do the read, giving up the zero-RPC path.
 
+A pump.fun coin whose curve has already graduated trades in its PumpSwap pool.
+Outside this mode the bot buys it there, spending exactly the configured amount;
+in this mode it skips the coin, since a pool buy is sized from the pool.
+
 ### Non-SOL quote assets
 
 pump.fun supports quote assets other than SOL, USDC first. Amounts are in that mint's own whole units, so `usdc: 1.0` is one USDC and is **not** comparable to `buy_amount`:

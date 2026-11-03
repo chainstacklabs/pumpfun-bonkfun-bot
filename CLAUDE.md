@@ -55,7 +55,7 @@ Dependency layers, low to high — don't introduce an upward import:
 Platform differences resolve through `interfaces/core.py` and the registry in
 `platforms/__init__.py`; anything platform-shaped goes in `platforms/<name>/`. Trades
 go through one `Market`: `curve_market` (`CurveMarket`, builder + curve manager), then
-`graduated_market` (`PumpSwapMarket`, `CpmmMarket`; sell only). `UniversalTrader`
+`graduated_market` (`PumpSwapMarket` buys and sells, `CpmmMarket` sells). `UniversalTrader`
 coordinates `trading/intake.py`, `platform_aware.py` and `position_manager.py`.
 
 ## Commands

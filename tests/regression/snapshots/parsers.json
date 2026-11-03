@@ -1343,5 +1343,121 @@
    "lets_bonk shreds": null,
    "stonk_fun shreds": null
   }
- ]
+ ],
+ "raw_pumpswap_buys_from_gettransaction.json": {
+  "sol": {
+   "pump.fun curve": {
+    "virtual_token_reserves": 0,
+    "virtual_quote_reserves": 0,
+    "real_token_reserves": 0,
+    "real_quote_reserves": 0,
+    "token_total_supply": 1000000000000000,
+    "complete": true,
+    "graduated": true,
+    "creator": "9nhWtGsxWoovdE8qKYMjPwok2b3a9oQVzrE5LRWf6BCA",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "is_sol_paired": true,
+    "virtual_sol_reserves": 0,
+    "real_sol_reserves": 0,
+    "price_per_token": null
+   },
+   "PumpSwap market": {
+    "price_per_token": 1.9198997208223232e-08,
+    "fee_fraction": 0.003,
+    "pool": "ATbyCe9Lkse8Kk7Du6ZykM3ZAZgNGniEL785xxcDeAgh"
+   },
+   "PumpSwap pool": {
+    "address": "ATbyCe9Lkse8Kk7Du6ZykM3ZAZgNGniEL785xxcDeAgh",
+    "base_mint": "HjkX6rLUAsiKYZ1hwkD4TV1bsEoXgkSjVTF4gHSmpump",
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "base_account": "FTEjMJUYn4k1JHugN5QXhC2VFBYj3S4j5bdF3QrKMg81",
+    "quote_account": "8eqvypbJepcpdPdrGtutdGk5cRBHEqi2b1e6nEJzaaqk",
+    "base_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "quote_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "coin_creator": "9nhWtGsxWoovdE8qKYMjPwok2b3a9oQVzrE5LRWf6BCA",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false
+   }
+  },
+  "usdc": {
+   "pump.fun curve": {
+    "virtual_token_reserves": 0,
+    "virtual_quote_reserves": 0,
+    "real_token_reserves": 0,
+    "real_quote_reserves": 0,
+    "token_total_supply": 1000000000000000,
+    "complete": true,
+    "graduated": true,
+    "creator": "4dgXGf2RAoQtbkt29pqALcUzqYiLb8CzYrfGbT8tTLwi",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "is_sol_paired": false,
+    "virtual_sol_reserves": 0,
+    "real_sol_reserves": 0,
+    "price_per_token": null
+   },
+   "PumpSwap market": {
+    "price_per_token": 0.026633063874186406,
+    "fee_fraction": 0.003,
+    "pool": "FqVhbysCvxKvTP3C9YXdy63K7AQcVXis7HibJDn8F88r"
+   },
+   "PumpSwap pool": {
+    "address": "FqVhbysCvxKvTP3C9YXdy63K7AQcVXis7HibJDn8F88r",
+    "base_mint": "6XsU2ow3yCDzSZiBEsH2rfy91ez5AyCP8QfCrNXpump",
+    "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "base_account": "E2Wh17mbFRaYXusvNefcJVsUj9X6TekU6VcA1rGDrSXx",
+    "quote_account": "Ck9bkS7e1oaDqSDjVKkmXpdLgibMps6FabZkzeGNao28",
+    "base_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "quote_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "coin_creator": "4dgXGf2RAoQtbkt29pqALcUzqYiLb8CzYrfGbT8tTLwi",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false
+   }
+  },
+  "sol mayhem": {
+   "pump.fun curve": {
+    "virtual_token_reserves": 0,
+    "virtual_quote_reserves": 0,
+    "real_token_reserves": 0,
+    "real_quote_reserves": 0,
+    "token_total_supply": 1000000000000000,
+    "complete": true,
+    "graduated": true,
+    "creator": "FmzKdUEbbCDQwUQvKuBWH2E1Xq1MiKH8FGU9qocDyqKX",
+    "is_mayhem_mode": true,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "is_sol_paired": true,
+    "virtual_sol_reserves": 0,
+    "real_sol_reserves": 0,
+    "price_per_token": null
+   },
+   "PumpSwap market": {
+    "price_per_token": 1.5052176528830076e-07,
+    "fee_fraction": 0.003,
+    "pool": "5gMKcHPkkddhzNHFVWrrbtBt2jxgjdpbZSnQqepWVotf"
+   },
+   "PumpSwap pool": {
+    "address": "5gMKcHPkkddhzNHFVWrrbtBt2jxgjdpbZSnQqepWVotf",
+    "base_mint": "44EtsbhagyCSwT13tX334TVoDFbGEtbC9hoL1rXSpump",
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "base_account": "wjxEQkyLYaYK1UNFVk2erD1RQZZivGivgqeN3NSgZdK",
+    "quote_account": "GRNHacw4c5eXquxewvkjJCC5Bn3YCk1ecHT6bD3ZtmtF",
+    "base_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "quote_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "coin_creator": "FmzKdUEbbCDQwUQvKuBWH2E1Xq1MiKH8FGU9qocDyqKX",
+    "is_mayhem_mode": true,
+    "is_cashback_coin": false
+   }
+  }
+ }
 }
