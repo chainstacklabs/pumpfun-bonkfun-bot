@@ -32,7 +32,9 @@ its buy until its sell, and the next start resumes it:
      coin comes.
   L. `bot_runner` keeps each bot's positions in `positions/<name>.json`, which
      git ignores, with the name made safe as a file name; enabled bots sharing
-     a name all start, each with `positions/<name>@<config file>.json`.
+     a file (names compared ignoring case) all start: the first config file
+     keeps it, each other gets `positions/<name>@<config file>.json`, made
+     unique with a suffix, and is warned when the shared file holds positions.
   M. A position bought on another platform than the bot's stays in the file and
      is not resumed: this bot cannot price it.
   N. Clearing needs every balance read, spaced apart, to find nothing: one
@@ -50,6 +52,7 @@ Usage:
 import asyncio
 import dataclasses
 import json
+import logging
 import os
 import struct
 import subprocess
@@ -1062,6 +1065,108 @@ def _start_bot_settings(config: dict, positions_file: str | None) -> TraderSetti
     return seen[0]
 
 
+class _Warnings(logging.Handler):
+    """Collects the root logger's warnings while installed."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.WARNING)
+        self.lines: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lines.append(record.getMessage())
+
+    def __enter__(self) -> list[str]:
+        logging.getLogger().addHandler(self)
+        return self.lines
+
+    def __exit__(self, *_exc: object) -> None:
+        logging.getLogger().removeHandler(self)
+
+
+def _check_l_shared_files(tmp: Path) -> list[str]:
+    """Which positions file `run_all_bots` gives bots that would share one."""
+    problems = []
+
+    def bot(name: str, enabled: bool = True, listener: str = "logs") -> dict:  # noqa: FBT001, FBT002
+        return {
+            "name": name,
+            "enabled": enabled,
+            "filters": {"listener_type": listener},
+        }
+
+    # The bot whose config file sorts first keeps the plain file.
+    with _Warnings() as lines:
+        started = _run_all_bots_started(
+            tmp / "l",
+            {
+                "a": bot("x", enabled=False),
+                "b": bot("x"),
+                "c": {**bot("x"), "separate_process": True},
+                "c_bad": bot("y", listener="no-such-listener"),  # sorts before d
+                "d": bot("y"),
+                "e": bot("y", listener="no-such-listener"),  # never starts
+                "f": bot("z/1"),
+                "g": bot("z_1"),  # the same file as z/1
+            },
+        )
+    want = [
+        ("b", None),
+        ("c", "positions/x@c.json"),
+        ("d", None),
+        ("f", None),
+        ("g", "positions/z_1@g.json"),
+    ]
+    if started != want:
+        problems.append(f"started {started}, expected {want}")
+    if [line for line in lines if "does not manage" in line]:
+        problems.append(f"warned of positions with no positions file: {lines}")
+
+    # One file on a case-insensitive disk; config names that map to one file.
+    started = _run_all_bots_started(
+        tmp / "l-case",
+        {
+            "0": bot("w"),
+            "h": bot("Sniper"),
+            "i": bot("sniper"),
+            "k n": bot("w"),
+            "k_N": bot("w"),  # w@k_n.json ignoring case
+        },
+    )
+    want = [
+        ("0", None),
+        ("h", None),
+        ("i", "positions/sniper@i.json"),
+        ("k n", "positions/w@k_n.json"),
+        ("k_N", "positions/w@k_N-2.json"),
+    ]
+    if started != want:
+        problems.append(f"case/suffix: started {started}, expected {want}")
+
+    # A duplicate added later: the existing bot keeps its file, and the new one
+    # is told the positions in it are not its own.
+    held = tmp / "l-held"
+    PositionStore(held / "positions" / "x.json").add(_token("HELD"), _buy(), _now())
+    (held / "positions" / "y.json").write_text('{"version": 1, "positions": []}')
+    with _Warnings() as lines:
+        started = _run_all_bots_started(
+            held, {"b": bot("x"), "c": bot("x"), "d": bot("y"), "e": bot("y")}
+        )
+    want = [
+        ("b", None),
+        ("c", "positions/x@c.json"),
+        ("d", None),
+        ("e", "positions/y@e.json"),
+    ]
+    if started != want:
+        problems.append(f"held: started {started}, expected {want}")
+    stranded = [line for line in lines if "does not manage" in line]
+    if len(stranded) != 1 or not all(
+        s in stranded[0] for s in ("positions/x.json", "c.yaml")
+    ):
+        problems.append(f"held: warnings {lines}")
+    return problems
+
+
 def check_l_runner_and_gitignore(tmp: Path) -> bool:
     problems = []
     config = {
@@ -1104,34 +1209,7 @@ def check_l_runner_and_gitignore(tmp: Path) -> bool:
         if got != want:
             problems.append(f"start_bot with {given!r}: {got!r}, expected {want!r}")
 
-    def bot(name: str, enabled: bool = True, listener: str = "logs") -> dict:  # noqa: FBT001, FBT002
-        return {
-            "name": name,
-            "enabled": enabled,
-            "filters": {"listener_type": listener},
-        }
-
-    started = _run_all_bots_started(
-        tmp / "l",
-        {
-            "a": bot("x", enabled=False),
-            "b": bot("x"),
-            "c": {**bot("x"), "separate_process": True},
-            "d": bot("y"),
-            "e": bot("y", listener="no-such-listener"),  # never starts
-            "f": bot("z/1"),
-            "g": bot("z_1"),  # the same file as z/1
-        },
-    )
-    want = [
-        ("b", "positions/x@b.json"),
-        ("c", "positions/x@c.json"),
-        ("d", None),
-        ("f", "positions/z_1@f.json"),
-        ("g", "positions/z_1@g.json"),
-    ]
-    if started != want:
-        problems.append(f"started {started}, expected {want}")
+    problems += _check_l_shared_files(tmp)
     return _report(problems)
 
 

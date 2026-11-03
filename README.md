@@ -188,9 +188,15 @@ file and is tried again on the next start, and so does one whose exit gave up.
 Delete an entry from the file to stop the bot managing that coin.
 
 The file is named after the bot's `name`, with any character other than letters,
-digits, `.`, `_` and `-` replaced by `_`. Enabled bots in `bots/` that would
-share a file all start, each with `positions/<name>@<config file>.json` and a
-warning; give each bot its own name to keep the plain file. Renaming a bot
+digits, `.`, `_` and `-` replaced by `_`. Names that differ only in case share a
+file, as they do on macOS and Windows. Enabled bots in `bots/` that would share
+a file all start: the one whose config file name sorts first keeps
+`positions/<name>.json`, each other gets `positions/<name>@<config file>.json`
+(with `-2`, `-3`, ... added if two config file names map to one file) and a
+warning. So a bot keeps its file when a second bot with its name is added in a
+config file that sorts after it. If the plain file holds positions when a bot
+does not get it, a second warning names the file: that bot does not manage
+those positions. Give each bot its own name to avoid this. Renaming a bot
 leaves its old file behind; rename the file too. A position bought on another
 `platform` than the bot's current one stays in the file and is not monitored.
 No coin in the file is bought again, monitored or not. A file the bot cannot

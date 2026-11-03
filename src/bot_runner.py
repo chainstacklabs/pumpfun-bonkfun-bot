@@ -33,6 +33,7 @@ from config_loader import (
 from core.keystore import KeystoreError, keystore_private_key, password_from_env
 from core.wallet import Wallet
 from interfaces.core import Platform
+from trading.position_store import holds_positions
 from trading.settings import DEFAULT_MAX_EXIT_SELL_ATTEMPTS, TraderSettings
 from trading.universal_trader import UniversalTrader
 from utils.logger import (
@@ -269,24 +270,36 @@ def _shared_positions_files(bots: list[tuple[Path, dict]]) -> dict[Path, str]:
     """A positions file of its own for each starting bot whose name another uses.
 
     The name keys a bot's positions file, and two bots writing one file would
-    overwrite each other's open positions. Each such bot still starts, with
-    its config file's name added: `positions/<name>@<config file>.json`.
+    overwrite each other's open positions. Files are compared ignoring case, as
+    on macOS and Windows. Of the bots sharing a file, the one whose config file
+    sorts first keeps it; each other still starts, with its config file's name
+    added: `positions/<name>@<config file>.json`, then `-2`, `-3`, ... if that
+    is taken too.
     """
-    by_path: dict[str | None, list[tuple[Path, str | None]]] = {}
-    for file, cfg in bots:
-        by_path.setdefault(positions_file_for(cfg.get("name")), []).append(
-            (file, cfg.get("name"))
-        )
+    taken: dict[str, Path] = {}  # casefolded positions file -> config file
     own = {}
-    for path, sharing in by_path.items():
-        if path is None or len(sharing) == 1:
+    for file, cfg in sorted(bots, key=lambda bot: str(bot[0])):
+        name = cfg.get("name")
+        plain = positions_file_for(name)
+        if plain is None:
             continue
-        for file, name in sharing:
-            own[file] = positions_file_for(name, file.stem)
+        if plain.casefold() not in taken:
+            taken[plain.casefold()] = file
+            continue
+        path, n = positions_file_for(name, file.stem), 1
+        while path.casefold() in taken:
+            n += 1
+            path = positions_file_for(name, f"{file.stem}-{n}")
+        taken[path.casefold()] = file
+        own[file] = path
+        logging.warning(
+            f"Bot '{name}' in {file} would share {plain} with "
+            f"{taken[plain.casefold()]}; its open positions are kept in {path} instead"
+        )
+        if holds_positions(plain):
             logging.warning(
-                f"Bot '{name}' in {file} would share {path} with "
-                f"{[str(f) for f, _ in sharing if f != file]}; its open positions "
-                f"are kept in {own[file]} instead"
+                f"{plain} holds open positions that bot '{name}' in {file} does "
+                f"not manage: it keeps its own in {path}"
             )
     return own
 
