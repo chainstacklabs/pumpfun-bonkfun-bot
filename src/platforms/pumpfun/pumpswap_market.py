@@ -38,7 +38,7 @@ def _amm_pda(*seeds: bytes) -> Pubkey:
     return Pubkey.find_program_address(list(seeds), PUMP_AMM_PROGRAM)[0]
 
 
-_PUMP_SWAP_IDL = Path(__file__).resolve().parents[3] / "idl" / "pump_swap_idl.json"
+PUMP_SWAP_IDL = Path(__file__).resolve().parents[3] / "idl" / "pump_swap_idl.json"
 
 GLOBAL_CONFIG: Final[Pubkey] = _amm_pda(b"global_config")
 EVENT_AUTHORITY: Final[Pubkey] = _amm_pda(b"__event_authority")
@@ -123,7 +123,7 @@ class PumpSwapMarket(Market):
 
     def __init__(self, client: SolanaClient) -> None:
         self.client = client
-        discriminators = IDLParser(str(_PUMP_SWAP_IDL)).get_instruction_discriminators()
+        discriminators = IDLParser(str(PUMP_SWAP_IDL)).get_instruction_discriminators()
         self._buy_discriminator = discriminators["buy_exact_quote_in"]
         self._sell_discriminator = discriminators["sell"]
         self._config: bytes | None = None

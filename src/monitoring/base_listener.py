@@ -2,9 +2,23 @@
 
 import asyncio
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 
-from interfaces.core import Platform, TokenInfo
+from interfaces.core import Platform, PoolReady, TokenInfo
+from utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from solders.pubkey import Pubkey
+
+logger = get_logger(__name__)
+
+PoolCallback = Callable[[PoolReady], Awaitable[None]]
+
+# Migrations already reported, kept so a racing duplicate migration or a
+# redelivered frame reports a pool once.
+_SEEN_POOLS_LIMIT = 10_000
 
 
 def reraise_if_cancelled() -> None:
@@ -37,6 +51,9 @@ class BaseTokenListener(ABC):
             platform: Platform to monitor (if None, monitor all platforms)
         """
         self.platform = platform
+        # Set by listen_for_tokens; None leaves migrations unparsed.
+        self.pool_callback: PoolCallback | None = None
+        self._seen_pools: OrderedDict[Pubkey | tuple[Pubkey, str], None] = OrderedDict()
 
     @abstractmethod
     async def listen_for_tokens(
@@ -44,6 +61,7 @@ class BaseTokenListener(ABC):
         token_callback: Callable[[TokenInfo], Awaitable[None]],
         match_string: str | None = None,
         creator_address: str | None = None,
+        pool_callback: PoolCallback | None = None,
     ) -> None:
         """Listen for new token creations.
 
@@ -51,8 +69,41 @@ class BaseTokenListener(ABC):
             token_callback: Callback function for new tokens
             match_string: Optional string to match in token name/symbol
             creator_address: Optional creator address to filter by
+            pool_callback: Called once per mint whose curve migrated to a
+                pool, or on shreds once per migrate transaction; None (the
+                default) looks for no migrations. The name and creator
+                filters do not apply to it.
         """
         pass
+
+    async def _emit_pools(self, pools: list[PoolReady]) -> None:
+        """Hand each newly migrated pool to `pool_callback`.
+
+        An executed migration is reported once per mint: a curve migrates
+        once. A pre-execution one is reported once per transaction and mint,
+        because nothing has run yet: an earlier attempt that will fail, or
+        names a pool the coin does not use, must not hide the one that lands.
+        A callback that raises is logged and does not stop the listener.
+        """
+        if self.pool_callback is None:
+            return
+        for pool in pools:
+            key = (pool.mint, pool.signature) if pool.pre_execution else pool.mint
+            if key in self._seen_pools:
+                continue
+            self._seen_pools[key] = None
+            if len(self._seen_pools) > _SEEN_POOLS_LIMIT:
+                self._seen_pools.popitem(last=False)
+            stage = "submitted (pre-execution)" if pool.pre_execution else "done"
+            logger.info(
+                f"Migration {stage}: {pool.mint} -> pool {pool.pool} "
+                f"(quote {pool.quote_mint}) on {pool.platform.value}"
+            )
+            try:
+                await self.pool_callback(pool)
+            except Exception:
+                reraise_if_cancelled()
+                logger.exception(f"Pool callback failed for {pool.mint}")
 
     def should_process_token(self, token_info: TokenInfo) -> bool:
         """Check if a token should be processed based on platform filter.

@@ -156,6 +156,37 @@ bps. The fee program can charge more on a pool (`GetFeesWithQuoteMint` picks a
 tier), so the buy's token floor and the sell's quote floor sit that much above
 what arrives; a slippage setting of a few percent covers it.
 
+### Detecting a migration
+
+Anyone can migrate a complete curve: `migrate_v2(base_mint, quote_mint, …)`, or
+legacy `migrate` for a SOL-paired coin, both still sent. The migrate has
+pump-amm's `create_pool` make the canonical pool. Most migrate calls arrive
+after another one already moved the curve: they succeed, log `Bonding curve
+already migrated` and create nothing, so a migrate instruction alone does not
+mean a new pool.
+
+The two events of a real migration travel differently:
+
+- pump.fun's `CompletePumpAmmMigrationEvent` (mint, pool, quote mint, the
+  default key for SOL) is an **event CPI only**, an inner instruction, never a
+  `Program data:` log line. logsSubscribe cannot see it.
+- pump-amm's `CreatePoolEvent` (base mint, quote mint as wrapped SOL for SOL,
+  pool, …) is **logged** under pump-amm's own invocation, as well as emitted
+  as an event CPI.
+
+So the listeners with logs (`logs`, `blocks`, `geyser`) read `CreatePoolEvent`,
+counting it only when pump-amm's invocation emitted it and its pool is the
+coin's canonical one: that pool's creator is pump.fun's pool-authority PDA, so
+nothing but a migration can create it. `shreds` has no logs and decodes the
+top-level migrate instruction: base mint at account 2, quote mint at 3 and pool
+at 10 for `migrate_v2`; mint at 2 and pool at 9 for `migrate`. It subscribes on
+`Global.withdraw_authority` (`39azUYFW…`), account 1 of both and of no trade.
+`migrate_v2` needs two remaining accounts after the IDL's 27, for pump-amm's
+`init_boost`: `boost_vault_authority = PDA(["boost_vault", pool])` under pump-amm,
+then its quote-mint ATA (writable). Without them it reverts 6027
+`NotEnoughRemainingAccounts` after `create_pool` ran, so a reverted migration
+can still log a `CreatePoolEvent`.
+
 ## Coin creation
 
 - `create_v2` takes **eight args**: `name (str), symbol (str), uri (str),

@@ -76,6 +76,20 @@ start on the rest. `geyser` stays the default; pick `shreds` deliberately.
 stream; `tests/regression/verify_shreds_listener.py` pins the listener on
 pump.fun and `verify_launchlab_shreds.py` on LaunchLab.
 
+## Migrations
+
+`listen_for_tokens` takes an optional `pool_callback`. With it set, every
+listener also reports a pump.fun curve's migration as a `PoolReady` (mint, pool,
+quote mint, signature); without it nothing is parsed and the shreds
+subscription is unchanged. The name and creator filters apply only to new
+coins. `logs`, `blocks` and `geyser` report a migration that executed, once per
+mint. `shreds` reports each migrate transaction before execution with
+`pre_execution` set, so the pool may not exist yet and the call may be a no-op,
+fail, or name a pool the coin does not use. The same mint can come more than
+once, one report per attempt; read the pool before trading it. *Detecting a migration* in
+`docs/pumpfun-protocol.md` has the sources. LaunchLab migrations are not
+reported yet.
+
 ## Listener and decoder pitfalls
 
 Each was a live bug in the cookbook scripts, invisible offline and only visible

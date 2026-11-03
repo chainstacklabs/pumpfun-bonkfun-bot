@@ -1,15 +1,21 @@
 """Universal blockSubscribe listener, platform-agnostic via the interfaces."""
 
 import asyncio
+import base64
 import json
 from collections.abc import Awaitable, Callable
 
 import websockets
 from solders.pubkey import Pubkey
+from solders.transaction import VersionedTransaction
 
 from core.client import SolanaClient
-from interfaces.core import Platform, TokenInfo
-from monitoring.base_listener import BaseTokenListener, reraise_if_cancelled
+from interfaces.core import Platform, PoolReady, TokenInfo
+from monitoring.base_listener import (
+    BaseTokenListener,
+    PoolCallback,
+    reraise_if_cancelled,
+)
 from platforms import platform_factory
 from utils.logger import get_logger
 
@@ -95,6 +101,7 @@ class UniversalBlockListener(BaseTokenListener):
         token_callback: Callable[[TokenInfo], Awaitable[None]],
         match_string: str | None = None,
         creator_address: str | None = None,
+        pool_callback: PoolCallback | None = None,
     ) -> None:
         """Listen for new token creations using blockSubscribe.
 
@@ -102,7 +109,9 @@ class UniversalBlockListener(BaseTokenListener):
             token_callback: Callback function for new tokens
             match_string: Optional string to match in token name/symbol
             creator_address: Optional creator address to filter by
+            pool_callback: Called once per migrated mint; see BaseTokenListener
         """
+        self.pool_callback = pool_callback
         if not self.platform_parsers:
             logger.error("No platform parsers available. Cannot listen for tokens.")
             return
@@ -274,6 +283,9 @@ class UniversalBlockListener(BaseTokenListener):
             if transactions is None:
                 return None
 
+            if self.pool_callback is not None:
+                await self._emit_pools(self._pools_from_block(transactions))
+
             # Process all transactions in the block for token creations
             return self._process_block_transactions(transactions)
 
@@ -364,3 +376,41 @@ class UniversalBlockListener(BaseTokenListener):
                 return token_info
 
         return None
+
+    def _pools_from_block(self, transactions: list) -> list[PoolReady]:
+        """Pools that the block's successful migrations created, from their logs.
+
+        Unlike token creations, every transaction in the block is read: a
+        block can hold more than one migration.
+        """
+        pools = []
+        for tx in transactions:
+            if not isinstance(tx, dict):
+                continue
+            meta = tx.get("meta")
+            if not isinstance(meta, dict) or meta.get("err") is not None:
+                continue
+            logs = meta.get("logMessages") or meta.get("log_messages")
+            if not logs:
+                continue
+            for program_id, _platform, parser in self.program_id_to_parser:
+                if any(program_id in line for line in logs):
+                    pools += parser.parse_pools_ready_from_logs(logs, _signature(tx))
+        return pools
+
+
+def _signature(tx: dict) -> str:
+    """The transaction's first signature, or "" if the envelope cannot be read.
+
+    Only for the log line; detection never depends on decoding the envelope.
+    """
+    envelope = tx.get("transaction")
+    try:
+        if isinstance(envelope, dict):
+            return envelope["signatures"][0]
+        if isinstance(envelope, list) and envelope:
+            raw = base64.b64decode(envelope[0])
+            return str(VersionedTransaction.from_bytes(raw).signatures[0])
+    except Exception:  # noqa: BLE001
+        logger.debug("Could not read a transaction signature")
+    return ""
