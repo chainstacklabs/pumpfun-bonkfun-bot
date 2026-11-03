@@ -15,6 +15,11 @@ anything else offline:
   F. Each boolean key, switched on alone, turns on its own settings field and
      only the attributes of the parts that act on it (A and C can't tell two
      booleans apart, since several share a value).
+  G. `trade.entry` lands in `entry` and reaches the coordinator and the intake,
+     which gets a pool resolver on the trader's client for "migration" only;
+     "migration" with `extreme_fast_mode` on, or an unknown entry, refuses to
+     build a trader. (A and C run the full config with `extreme_fast_mode` on,
+     so they see the default entry.)
 
 Offline: the RPC client and the listener are replaced by recorders.
 
@@ -38,6 +43,7 @@ from core.pubkeys import USDC_MINT, WSOL_MINT  # noqa: E402
 from interfaces.core import Platform  # noqa: E402
 from platforms.stonkfun.addresses import REWARD_PLATFORM_CONFIG  # noqa: E402
 from trading import universal_trader  # noqa: E402
+from trading.migration import MigrationResolver  # noqa: E402
 from trading.settings import TraderSettings  # noqa: E402
 
 KEYPAIR = Keypair()
@@ -115,6 +121,9 @@ EXPECTED_FULL = {
     "sell_slippage": 0.22,
     "platform": Platform.STONK_FUN,
     "platform_configs": [str(REWARD_PLATFORM_CONFIG)],
+    # FULL_CONFIG leaves trade.entry out: "migration" refuses its
+    # extreme_fast_mode. G covers the key.
+    "entry": "new_launch",
     "listener_type": "blocks",
     "geyser_endpoint": "geyser.example:443",
     "geyser_api_token": GEYSER_TOKEN,
@@ -165,6 +174,7 @@ MINIMAL_CONFIG = {
 # What a bot YAML that leaves a key out runs with.
 EXPECTED_DEFAULTS = {
     "platform": Platform.PUMP_FUN,
+    "entry": "new_launch",
     "platform_configs": None,
     "listener_type": "logs",
     "geyser_endpoint": None,
@@ -546,6 +556,51 @@ def check_f_each_boolean_reaches_only_its_parts() -> bool:
     return not problems
 
 
+def check_g_entry() -> bool:
+    problems = []
+    migration = {
+        **MINIMAL_CONFIG,
+        "trade": {**MINIMAL_CONFIG["trade"], "entry": "migration"},
+    }
+    settings = bot_runner.build_trader_settings(migration, Platform.PUMP_FUN)
+    if settings.entry != "migration":
+        problems.append(f"trade.entry migration became {settings.entry!r}")
+    trader, _ = _build_trader(settings)
+    resolver = trader.intake.pool_resolver
+    if (trader.entry, trader.intake.entry) != ("migration", "migration"):
+        problems.append(f"entries {trader.entry!r}, {trader.intake.entry!r}")
+    if not isinstance(resolver, MigrationResolver) or (
+        resolver.client is not trader.solana_client
+    ):
+        problems.append(f"migration intake got pool resolver {resolver!r}")
+    trader, _ = _build_trader(
+        bot_runner.build_trader_settings(MINIMAL_CONFIG, Platform.PUMP_FUN)
+    )
+    if (trader.entry, trader.intake.pool_resolver) != ("new_launch", None):
+        problems.append(
+            f"default entry {trader.entry!r} with {trader.intake.pool_resolver!r}"
+        )
+    for label, trade, needle in (
+        (
+            "migration + extreme_fast_mode",
+            {"entry": "migration", "extreme_fast_mode": True},
+            "extreme_fast_mode",
+        ),
+        ("unknown entry", {"entry": "graduation"}, "trade.entry"),
+    ):
+        config = {**MINIMAL_CONFIG, "trade": {**MINIMAL_CONFIG["trade"], **trade}}
+        try:
+            _build_trader(bot_runner.build_trader_settings(config, Platform.PUMP_FUN))
+        except ValueError as e:
+            if needle not in str(e):
+                problems.append(f"{label}: refused without naming {needle}: {e}")
+        else:
+            problems.append(f"{label}: built a trader")
+    for problem in problems:
+        print(f"    {problem}")
+    return not problems
+
+
 def main() -> int:
     """Run every check and report."""
     checks = [
@@ -564,6 +619,7 @@ def main() -> int:
             "F: each boolean reaches only its own parts",
             check_f_each_boolean_reaches_only_its_parts,
         ),
+        ("G: trade.entry reaches the intake", check_g_entry),
     ]
     passed = 0
     for label, check in checks:

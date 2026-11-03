@@ -2562,5 +2562,252 @@
     null
    ]
   }
+ ],
+ "raw_migrated_coins_from_getmultipleaccounts.json": [
+  {
+   "label": "pump.fun, migrate_v2, SOL quote, Token-2022 coin, v0",
+   "token": {
+    "name": "WINTER IS LOADING",
+    "symbol": "Frost",
+    "uri": "https://ipfs.io/ipfs/QmUTts1pDFbZeNDY31uHr6Ls7CaW6KXqzkMcxLZ1HDGgrj",
+    "mint": "GkrKQM9iFH5VgpDP7Erkxtsxy1amaDDQnY6nPzV4pump",
+    "platform": "pump_fun",
+    "bonding_curve": "JCkKJW2DFpYQD8XXfMCmmsPaL539WQ7UxvjhZL7UrvFg",
+    "associated_bonding_curve": "6bDNHdgMwi8WinfH1pFMAdmsaAv3PSLpzeQAB3m7EZhF",
+    "pool_state": null,
+    "base_vault": null,
+    "quote_vault": null,
+    "global_config": null,
+    "platform_config": null,
+    "user": null,
+    "creator": "DHvDE4oWxWFbEWyCSZ9BkYbjCmoL5dF71BuVyJqkBeL5",
+    "creator_vault": "8QtGUYBXekeGrarg2ZmjbWCCnsxyUA2mQ2waw5YXFKR4",
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": true,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": false,
+    "additional_data": {
+     "entry": "migration",
+     "pool": "CwQNxHKXQaT4PH64uTh3jEBbTfFx6Lzc5tY9u8GHwtiS",
+     "migration_signature": "3L3WQbbdq8W7gDCPzRFrnWx8uDsG1Qp8FmeqE1s5o54ccwfQ81SC1w9g2afSLLprWHG3hScw8NM4v9GFMYzX2dRU"
+    }
+   }
+  },
+  {
+   "label": "pump.fun, legacy migrate, SOL quote, SPL Token coin",
+   "token": {
+    "name": "ESOL",
+    "symbol": "$ESOL",
+    "uri": "https://ipfs.io/ipfs/QmSr9bgFgxrKx9aQWLAMTfPBuqhTNrVifiJVvNcrCfgPx4",
+    "mint": "97qDm7TErZKa1jnGafGYUsCEyBmjkkEiqJauDTfTpump",
+    "platform": "pump_fun",
+    "bonding_curve": "Afah1oYyc75Xs9wSD3hdMap3eebUq1vc79sFAw64EUN5",
+    "associated_bonding_curve": "4vJ4BqjZNUfXJRyggfZPwAStvn4mXJrj34pFLbvLYWRC",
+    "pool_state": null,
+    "base_vault": null,
+    "quote_vault": null,
+    "global_config": null,
+    "platform_config": null,
+    "user": null,
+    "creator": "HpmUFT8SpbHt44pcAfpH15Xqyp2Lr3m81A9NjdVTD2u6",
+    "creator_vault": "41bEcZmhk7onXtWzfic3nYPpdR9MdFa5G6v7epbFbShP",
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": true,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": false,
+    "additional_data": {
+     "entry": "migration",
+     "pool": "Ba5k1tHkB5tmfHyZJqWnpwg1cRKdLnYuvEeiexwCJBYn",
+     "migration_signature": "4CVUi1jRidtcYWQnW5Cqk1Db8NcYWzdySZK9Tf9ciZLe7tECoLw1cW3yX5cekgRN6iPMp3qtC6L5s7h84foD9Hgj"
+    }
+   }
+  },
+  {
+   "label": "pump.fun, migrate_v2, USDC quote",
+   "token": {
+    "name": "GooberCoin",
+    "symbol": "GOOB",
+    "uri": "https://ipfs.io/ipfs/bafkreib2zwljuc6zf2hixpae6d7w2fdj7mhrmr5j3ihvmyspkvm7ic4kue",
+    "mint": "EjTyU3sKmE5Py9PFeZHf6Ef3pTCp7AwVByAN81T2pump",
+    "platform": "pump_fun",
+    "bonding_curve": "7GSaSgYrtuouHref8uFTntGuDtuaYMipQVHbj1p1ZaBt",
+    "associated_bonding_curve": "DumuTA5ZuLvRqaMbMAayFHQ1jSCFFn5asb3QU8jNqcmC",
+    "pool_state": null,
+    "base_vault": null,
+    "quote_vault": null,
+    "global_config": null,
+    "platform_config": null,
+    "user": null,
+    "creator": "GWSyB6AKkMHRgm7E43M3ngoKgnsTAnChS4d6qjrbK8dN",
+    "creator_vault": "ESLJHGquYTW7b4jq6a3y2NoYuxMMH3RHJPztxZ9yj5S8",
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": true,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": false,
+    "additional_data": {
+     "entry": "migration",
+     "pool": "CA1pignAqtqUpajScjbUdwyaUg6yS24ysjS8fdTmNQ53",
+     "migration_signature": "46kDupQbYw9no4ZXcMfZygYtu6oAK1UxZA2QJeAbGdXNEyU3zGrCdnn5hS9PV2BznWx6EiiqyLbjZpd3hWBbTFV1"
+    }
+   }
+  },
+  {
+   "label": "LaunchLab, SOL quote, SPL Token coin, another launchpad",
+   "token": {
+    "name": "UNI",
+    "symbol": "UNI",
+    "uri": "https://xdjhygayncqyeqfvctaz.supabase.co/storage/v1/object/public/rl-coins/4e5526d7-de2f-4330-83fe-744737f73b9a/metadata.json",
+    "mint": "8Jz7NgcjEMsWNPAXF3AvUHuHfN1bJ9nYZFHKiKkZUBeV",
+    "platform": "launchlab",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "7dPyKwGHWYGzRxV18dqaTJ35PWxNssY8V1S8y4irfKQw",
+    "base_vault": "13iR4ejdesvjB94mog2QQeu3PZcZJapMufeE8s9AVFQ3",
+    "quote_vault": "4RKmZ4t12DLAT6G6wBndB8L4bf2YJtHnr9APDKHJ1bJc",
+    "global_config": "6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX",
+    "platform_config": "BDTgTEvMyGXjJSDHnCdVG4zRgBufvREVrfAksYgTNjHW",
+    "user": null,
+    "creator": "9aEeyk4FS7gUudcPceXvZtR3vLRctbdmUmSCVVP8JpKB",
+    "creator_vault": null,
+    "token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": false,
+    "additional_data": {
+     "entry": "migration",
+     "pool": "2HSDj1k6zkwwZvdGiZikLRBAqsj6SZZX4e9ha15knvSh",
+     "migration_signature": "29zAuzMscakqirMiMfdhoaNELcqMH4rRczPXJJ4npoqQ8bEr2Yfr8tequZje5hhbF9E5kjisFHTsLckRwkageNRA"
+    }
+   }
+  },
+  {
+   "label": "LaunchLab, SOL quote, Token-2022 coin, StonkFun standard",
+   "token": {
+    "name": "MIDTURDS",
+    "symbol": "MIDTURDS",
+    "uri": "https://gateway.irys.xyz/7NTgjeTrPJxZieCUJrY8LLuJUbvxLeny86knQ2juRzNq",
+    "mint": "JCdE6KcCEUcgmhiCQfXTL11524wSgqJCnGtYDA757q4a",
+    "platform": "launchlab",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "CwdAVEVv5uLq1SBH4kt2Gv4wy8xMg1VND5Yz3fMVEHtL",
+    "base_vault": "C5A7tFDoWyRMp2ZkWzzEz6EB97mwTuHLWtsgfZaJkGR4",
+    "quote_vault": "3kNqT1wuEAaA65VVUeMZT8n5nVyS5uUy3xTCC381actu",
+    "global_config": "6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX",
+    "platform_config": "4E876qZTE9FJMrBzgVtBrSrzz2TLivB5Y5QXPjB4gZL7",
+    "user": null,
+    "creator": "7Yz8dNr8sapJ1Ma3owEKcDEfnrB7H6cMeD9VGqrDG5kg",
+    "creator_vault": null,
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": false,
+    "additional_data": {
+     "entry": "migration",
+     "pool": "DHpFy3CM4cxQmoR14cMA3wA2V5SB9yHfVPiLZCYrfakt",
+     "migration_signature": "43LoHnqzoPYUArbFpxENiFJtnJCZHLX26q16eEGbT6MbZo6kAFchquPRwPChZgq1AnALQ4Uyb9ngiB9LKLEgvC4o"
+    }
+   }
+  },
+  {
+   "label": "LaunchLab, USDC quote, Token-2022 coin, StonkFun standard",
+   "token": {
+    "name": "zkSNARK",
+    "symbol": "ZKSNARK",
+    "uri": "https://ipfs.io/ipfs/bafkreiddthy5ok4m3kgxtqmgpa2q74legleqd6lijqs3wkgoxgv2erhpjy",
+    "mint": "FAnDMGU5pXLjLNbChn4VigDgGzfcGZZASqvshrEZsCCq",
+    "platform": "launchlab",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "8J6V1momSoHuQJ9z2y6gyMXXWxdqFz2CPe5dqWkPZ7we",
+    "base_vault": "7SbvnjUzq5xyCpVG6erwDZkgdGts4nQpD42KrCAFNoe7",
+    "quote_vault": "4YRkkBMhib8tGPpHRWLu2Nkjf3jyyim791UYmBb4B6Dj",
+    "global_config": "8gj14w8vkNZjJTPak6e96Uf1sY438WKheH4s5dHyxiRw",
+    "platform_config": "4E876qZTE9FJMrBzgVtBrSrzz2TLivB5Y5QXPjB4gZL7",
+    "user": null,
+    "creator": "6Lf3kUYnB2vJ3npvsuXMQPr5EfbavBrEjxkK1Lnaup3Z",
+    "creator_vault": null,
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": false,
+    "additional_data": {
+     "entry": "migration",
+     "pool": "FUqjQxftdS9ic7mTpBWy1JtzQ54sgqaVL7nZ9uvoFn55",
+     "migration_signature": "3k1ua8tt2kvjK4xzMGwsEsjo6U83pdtKDGFuciV1EDKQoSEMer2z7QLkM2ifUijGMUigAvPJbBsazEJiBRgQkvTi"
+    }
+   }
+  },
+  {
+   "label": "LaunchLab, xStock quote, Token-2022 coin, StonkFun reward",
+   "token": {
+    "name": "MEOWNERO",
+    "symbol": "MEOWNERO",
+    "uri": "https://gateway.irys.xyz/9MkCuwBRvFVYsnkuBfdeymNhqKAzp8u5nVMLkQYXP5s8",
+    "mint": "6gnB2H2hbTVvKUWCzNuqjWY8Rod6EVBmfHi7YxZpTWa7",
+    "platform": "launchlab",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "ApUs8SDDp57sjQ7KtSjnwJsqwY2KLJzKwFvEScr2vj7y",
+    "base_vault": "BbcVKDtdrzXJi3tTjAhV5NRFVoUTf7qPm8WqbmrtRRXp",
+    "quote_vault": "42Xevj7nUd5VM29hkVYJ3X4fM8EYELZYuLJXKduVuHuV",
+    "global_config": "GC1ZWMKnnPBGmTkoNNKnR17SbqZwMN9coSWgW3UH5JSr",
+    "platform_config": "6BwHHDg3u1854jC8PDLXvR4spTcLNaoBxLJNGC4nTESt",
+    "user": null,
+    "creator": "9JbKHqJtGUjsoPmrVV6zQCNVyXhLHai2BQB2b3Wy6Nud",
+    "creator_vault": null,
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "WXMRyRZhsa19ety5erZhHg4N3xj3EVN92u94422teJp",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 300,
+    "state_from_event": false,
+    "additional_data": {
+     "entry": "migration",
+     "pool": "9VjkGqSgKcPG3rYgMAt9GrC6EotvdMmUCD4oeArJVogd",
+     "migration_signature": "2Lv6dZKVTQCNGvRSgcekrADpuBbtFshtqcf9r2n8PQLhbLzi1uK1zFKbhp8LFgm1PdiYEhswM7HCcvtspKbE6qLi"
+    }
+   }
+  }
  ]
 }

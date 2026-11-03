@@ -9,6 +9,24 @@ from interfaces.core import Platform
 # re-read first. Bounded so a token that keeps reverting cannot pin the bot.
 DEFAULT_MAX_EXIT_SELL_ATTEMPTS = 3
 
+#: What the bot buys: coins as they launch, on their curve, or coins whose curve
+#: has just migrated, in their new AMM pool.
+ENTRIES = ("new_launch", "migration")
+
+
+def entry_error(entry: str, *, extreme_fast_mode: bool) -> str | None:
+    """Why `trade.entry` cannot run as configured, or None when it can."""
+    if entry not in ENTRIES:
+        return f"trade.entry must be one of {list(ENTRIES)}, not {entry!r}"
+    if entry == "migration" and extreme_fast_mode:
+        return (
+            "trade.extreme_fast_mode does not apply to trade.entry: migration. "
+            "A migrated coin is bought in its AMM pool, sized from the pool's "
+            "reserves, which extreme_fast_mode never reads. Set "
+            "extreme_fast_mode: false."
+        )
+    return None
+
 
 @dataclass(frozen=True)
 class TraderSettings:
@@ -27,6 +45,9 @@ class TraderSettings:
     sell_slippage: float
 
     platform: Platform | str = Platform.PUMP_FUN
+    # "new_launch" buys coins as they launch; "migration" buys them in the pool
+    # their curve migrates to.
+    entry: str = "new_launch"
     # LaunchLab platform config addresses to listen on; None is all the
     # platform covers.
     platform_configs: list[str] | None = None

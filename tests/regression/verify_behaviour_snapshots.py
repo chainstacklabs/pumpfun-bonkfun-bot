@@ -24,7 +24,8 @@ over fixed inputs and compares the result with JSON snapshots committed under
      the pools pump.fun migrations created, from the logs and from each
      top-level instruction; the CPMM pools LaunchLab migrations created, per
      LaunchLab parser, from the block and geyser transactions and from each
-     top-level instruction.
+     top-level instruction; the coin each real migration report resolves to
+     for migration entry.
      `creation_timestamp` is a monotonic clock reading and is left out.
   C. `exit_decisions.json`: `Position.should_exit` and `should_exit_on_time`
      at each point of a recorded pump.fun price series
@@ -105,6 +106,7 @@ from platforms.stonkfun import (  # noqa: E402
 )
 from platforms.stonkfun.addresses import REWARD_PLATFORM_CONFIG  # noqa: E402
 from trading import position as position_module  # noqa: E402
+from trading.migration import MigrationResolver  # noqa: E402
 from trading.position import Position  # noqa: E402
 from utils.idl_manager import get_idl_manager  # noqa: E402
 
@@ -898,6 +900,27 @@ def _parse_launchlab_migrations() -> list[dict]:
     return out
 
 
+async def _parse_migrated_coins() -> list[dict]:
+    """The coin each real migration report resolves to, for migration entry."""
+    out = []
+    for i, coin in enumerate(
+        _fixture("raw_migrated_coins_from_getmultipleaccounts.json")["coins"]
+    ):
+        client = _FixtureClient({k: v for k, v in coin["accounts"].items() if v})
+        client.rpc_endpoint = f"snapshot-migrated-{i}"
+        p = coin["pool_ready"]
+        report = PoolReady(
+            platform=Platform(p["platform"]),
+            mint=Pubkey.from_string(p["mint"]),
+            pool=Pubkey.from_string(p["pool"]),
+            quote_mint=Pubkey.from_string(p["quote_mint"]),
+            signature=p["signature"],
+        )
+        token = await MigrationResolver(client).resolve(report)
+        out.append({"label": coin["label"], "token": _token_info(token)})
+    return out
+
+
 async def parse_fixtures() -> dict:
     """B: parser output for every raw_*.json fixture."""
     out = {
@@ -912,6 +935,9 @@ async def parse_fixtures() -> dict:
         "raw_pumpfun_migrations_from_gettransaction.json": _parse_migrations(),
         "raw_launchlab_migrations_from_gettransaction.json": (
             _parse_launchlab_migrations()
+        ),
+        "raw_migrated_coins_from_getmultipleaccounts.json": (
+            await _parse_migrated_coins()
         ),
     }
     covered = set(out)
