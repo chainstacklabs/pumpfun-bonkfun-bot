@@ -209,7 +209,7 @@ class UniversalShredsListener(BaseTokenListener):
             token_callback: Called with each detected token
             match_string: Optional substring to require in the name or symbol
             creator_address: Optional creator address to filter by
-            pool_callback: Called once per mint with a migration submitted;
+            pool_callback: Called once per migrate transaction and mint;
                 its PoolReady has `pre_execution` set. See BaseTokenListener.
         """
         self.pool_callback = pool_callback
@@ -362,9 +362,9 @@ class UniversalShredsListener(BaseTokenListener):
         """Pools that top-level migration instructions in this update move into.
 
         Pre-execution, so a migration that will fail or find the curve already
-        migrated is reported too; the listener reports each mint once, on the
-        first attempt it sees. A migration reached by CPI is invisible here,
-        as a create is. Empty without a pool callback: nothing is parsed then.
+        migrated is reported too. Each attempt is reported, not only the first
+        one seen for a mint. A migration reached by CPI is invisible here, as a
+        create is. Empty without a pool callback: nothing is parsed then.
         """
         if self.pool_callback is None or not update.HasField("deshred_transaction"):
             return []

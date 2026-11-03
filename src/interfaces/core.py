@@ -128,8 +128,8 @@ class PoolReady:
     quote_mint: Pubkey
     signature: str
     # True when read off the shreds stream before execution: the migration may
-    # still fail or be a no-op, and the pool may not exist yet. Read the pool
-    # before trading it.
+    # still fail or be a no-op, the pool may not exist yet, and the same mint
+    # may come again from another attempt. Read the pool before trading it.
     pre_execution: bool = False
     detection_timestamp: float | None = None
 

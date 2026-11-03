@@ -34,11 +34,16 @@ real `listen_for_tokens` loop over scripted frames:
      coin's canonical pool, or a coin creation.
   C. `shreds` reports every top-level migrate instruction with the same mint,
      pool and quote mint and `pre_execution` set, including the no-op and the
-     failed one, which it cannot tell apart before execution. Asked for pools
-     it adds a subscription on Global's withdraw authority, which every
+     failed one, which it cannot tell apart before execution, and nothing for
+     one naming a pool that is not the canonical pool of its mints. Asked for
+     pools it adds a subscription on Global's withdraw authority, which every
      migration names as account 1 and no buy or sell names.
   D. A pool is reported once per mint across repeated frames, and a callback
      that raises does not stop the listener reporting the next one.
+  G. On `shreds` an earlier attempt for the same mint does not hide the one
+     that lands: a migrate that will fail (the same instruction in another
+     transaction) and one naming another quote mint and its pool are each
+     reported, and the real one after them still is.
   E. Without `pool_callback` nothing changes: no listener parses a migration,
      the shreds subscription is the creation filter alone, and a coin creation
      is still detected with a pool callback set.
@@ -74,6 +79,7 @@ from geyser.generated import geyser_pb2  # noqa: E402
 from interfaces.core import Platform, PoolReady, TokenInfo  # noqa: E402
 from monitoring.listener_factory import ListenerFactory  # noqa: E402
 from platforms.pumpfun.address_provider import PumpFunAddresses  # noqa: E402
+from platforms.pumpfun.pumpswap_market import canonical_pool_address  # noqa: E402
 from utils.idl_parser import IDLParser  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -513,6 +519,16 @@ def check_c_shreds_reports_migrate_instructions() -> bool:
         if not all(pool.pre_execution for pool in pools):
             problems.append(f"shreds / {entry['label']}: pre_execution unset")
 
+        # The same instruction naming a pool that is not its mints' canonical one.
+        name, _ = _migrate_instruction(entry)
+        stranger = {_LAYOUTS[name][2]: bytes(Pubkey.new_unique())}
+        _, pools, _ = _run("shreds", [_forged_deshred(entry, stranger)])
+        if pools:
+            problems.append(
+                f"shreds / {entry['label']} with a non-canonical pool: "
+                f"reported {_triple(pools[0])}"
+            )
+
     request = stub.requests[0]
     migration_filters = [
         list(f.account_include)
@@ -539,25 +555,81 @@ def check_c_shreds_reports_migrate_instructions() -> bool:
     return _report(problems)
 
 
-def _migrate_accounts(entry: dict) -> list[str] | None:
+# Positions of base mint, quote mint and pool in each migrate instruction, from
+# the IDL; legacy `migrate` names no quote mint and pairs with SOL.
+_LAYOUTS = {"migrate": (2, None, 9), "migrate_v2": (2, 3, 10)}
+
+
+def _migrate_instruction(entry: dict) -> tuple[str, list[str]] | None:
+    """The top-level migrate instruction's name and the accounts it names."""
     tx = entry["get_transaction"]
     keys = _keys(tx)
-    migrates = {
-        bytes(PUMP_IDL.get_instruction_discriminators()[name])
-        for name in ("migrate", "migrate_v2")
+    names = {
+        bytes(PUMP_IDL.get_instruction_discriminators()[name]): name
+        for name in _LAYOUTS
     }
     for ix in tx["transaction"]["message"]["instructions"]:
         data = base58.b58decode(ix["data"])
         if keys[ix["programIdIndex"]] == str(PumpFunAddresses.PROGRAM) and (
-            data[:8] in migrates
+            data[:8] in names
         ):
-            return [keys[i] for i in ix["accounts"]]
+            return names[data[:8]], [keys[i] for i in ix["accounts"]]
     return None
 
 
+def _migrate_accounts(entry: dict) -> list[str] | None:
+    found = _migrate_instruction(entry)
+    return None if found is None else found[1]
+
+
 def _instruction_triple(entry: dict) -> tuple[str, str, str]:
-    accounts = _migrate_accounts(entry)
-    return accounts[2], accounts[10], accounts[3]
+    """(mint, pool, quote mint) as the migrate instruction names them."""
+    name, accounts = _migrate_instruction(entry)
+    mint_at, quote_at, pool_at = _LAYOUTS[name]
+    quote = str(WSOL_MINT) if quote_at is None else accounts[quote_at]
+    return accounts[mint_at], accounts[pool_at], quote
+
+
+def _forged_deshred(
+    entry: dict, accounts: dict[int, bytes] | None = None
+) -> geyser_pb2.SubscribeUpdateDeshred:
+    """The entry's deshred frame as another transaction, with accounts swapped.
+
+    `accounts` maps a position in the migrate instruction to the key it should
+    name instead; the key table entry it points at is rewritten, wherever it
+    lives (static, or loaded through a lookup table).
+    """
+    update = _deshred_frame(entry)
+    info = update.deshred_transaction.transaction
+    signature = bytes(Pubkey.new_unique()) * 2
+    info.signature = signature
+    info.transaction.signatures[0] = signature
+    message = info.transaction.message
+    tables = (
+        message.account_keys,
+        info.loaded_writable_addresses,
+        info.loaded_readonly_addresses,
+    )
+    migrates = {
+        bytes(PUMP_IDL.get_instruction_discriminators()[name]) for name in _LAYOUTS
+    }
+    program = bytes(PumpFunAddresses.PROGRAM)
+    ix = next(
+        ix
+        for ix in message.instructions
+        if bytes(message.account_keys[ix.program_id_index]) == program
+        and bytes(ix.data[:8]) in migrates
+    )
+    for position, key in (accounts or {}).items():
+        index = ix.accounts[position]
+        for table in tables:
+            if index < len(table):
+                table[index] = key
+                break
+            index -= len(table)
+        else:
+            raise AssertionError(f"account {position} is past the key table")  # noqa: TRY003
+    return update
 
 
 def check_d_once_per_mint() -> bool:
@@ -583,6 +655,33 @@ def check_d_once_per_mint() -> bool:
     return _report(problems)
 
 
+def check_g_shreds_failed_attempt_does_not_hide_the_real_one() -> bool:
+    """G: on shreds, attempts before the real migration do not hide it."""
+    problems = []
+    for entry in (e for e in _migrations() if _real(e)):
+        name, _ = _migrate_instruction(entry)
+        _, quote_at, pool_at = _LAYOUTS[name]
+        real = _expected(entry)
+        if quote_at is None:
+            # Legacy migrate names no quote mint to get wrong.
+            attempts = [_forged_deshred(entry)]
+            expected = [real]
+        else:
+            mint = Pubkey.from_string(real[0])
+            other = Pubkey.new_unique()
+            pool = canonical_pool_address(mint, other)
+            wrong = {quote_at: bytes(other), pool_at: bytes(pool)}
+            attempts = [_forged_deshred(entry), _forged_deshred(entry, wrong)]
+            expected = [real, (real[0], str(pool), str(other))]
+        _, pools, _ = _run("shreds", [*attempts, _deshred_frame(entry)])
+        got = [_triple(pool) for pool in pools]
+        if got != [*expected, real]:
+            problems.append(f"shreds / {entry['label']}: {got}")
+        elif pools[-1].signature != entry["signature"]:
+            problems.append(f"shreds / {entry['label']}: last report not the real tx")
+    return _report(problems)
+
+
 def check_e_default_is_unchanged() -> bool:
     """E: no pool callback, no migration parsing; creations still detected."""
     problems = []
@@ -596,11 +695,17 @@ def check_e_default_is_unchanged() -> bool:
             calls.append(args)
             return []
 
+        # The parser instance is shared by every listener, so the spies come off
+        # before the next check runs.
         parser.parse_pools_ready_from_logs = spy
         parser.parse_pool_ready_from_instruction = spy
-        _, pools, stub = _run(
-            kind, _frames(kind, real), with_pools=False, listener=listener
-        )
+        try:
+            _, pools, stub = _run(
+                kind, _frames(kind, real), with_pools=False, listener=listener
+            )
+        finally:
+            del parser.parse_pools_ready_from_logs
+            del parser.parse_pool_ready_from_instruction
         if calls or pools:
             problems.append(f"{kind}: parsed migrations without a pool callback")
         if kind == "shreds":
@@ -652,6 +757,7 @@ CHECKS = [
     check_d_once_per_mint,
     check_e_default_is_unchanged,
     check_f_fixture_is_sound,
+    check_g_shreds_failed_attempt_does_not_hide_the_real_one,
 ]
 
 

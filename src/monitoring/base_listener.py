@@ -16,8 +16,8 @@ logger = get_logger(__name__)
 
 PoolCallback = Callable[[PoolReady], Awaitable[None]]
 
-# Mints whose pool was already reported, kept so a racing duplicate migration
-# or a redelivered frame reports a pool once. A curve migrates once.
+# Migrations already reported, kept so a racing duplicate migration or a
+# redelivered frame reports a pool once.
 _SEEN_POOLS_LIMIT = 10_000
 
 
@@ -53,7 +53,7 @@ class BaseTokenListener(ABC):
         self.platform = platform
         # Set by listen_for_tokens; None leaves migrations unparsed.
         self.pool_callback: PoolCallback | None = None
-        self._seen_pools: OrderedDict[Pubkey, None] = OrderedDict()
+        self._seen_pools: OrderedDict[Pubkey | tuple[Pubkey, str], None] = OrderedDict()
 
     @abstractmethod
     async def listen_for_tokens(
@@ -70,22 +70,28 @@ class BaseTokenListener(ABC):
             match_string: Optional string to match in token name/symbol
             creator_address: Optional creator address to filter by
             pool_callback: Called once per mint whose curve migrated to a
-                pool; None (the default) looks for no migrations. The name
-                and creator filters do not apply to it.
+                pool, or on shreds once per migrate transaction; None (the
+                default) looks for no migrations. The name and creator
+                filters do not apply to it.
         """
         pass
 
     async def _emit_pools(self, pools: list[PoolReady]) -> None:
-        """Hand each newly migrated pool to `pool_callback`, once per mint.
+        """Hand each newly migrated pool to `pool_callback`.
 
+        An executed migration is reported once per mint: a curve migrates
+        once. A pre-execution one is reported once per transaction and mint,
+        because nothing has run yet: an earlier attempt that will fail, or
+        names a pool the coin does not use, must not hide the one that lands.
         A callback that raises is logged and does not stop the listener.
         """
         if self.pool_callback is None:
             return
         for pool in pools:
-            if pool.mint in self._seen_pools:
+            key = (pool.mint, pool.signature) if pool.pre_execution else pool.mint
+            if key in self._seen_pools:
                 continue
-            self._seen_pools[pool.mint] = None
+            self._seen_pools[key] = None
             if len(self._seen_pools) > _SEEN_POOLS_LIMIT:
                 self._seen_pools.popitem(last=False)
             stage = "submitted (pre-execution)" if pool.pre_execution else "done"
