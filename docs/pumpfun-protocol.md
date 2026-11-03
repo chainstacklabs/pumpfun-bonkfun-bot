@@ -181,7 +181,11 @@ nothing but a migration can create it. `shreds` has no logs and decodes the
 top-level migrate instruction: base mint at account 2, quote mint at 3 and pool
 at 10 for `migrate_v2`; mint at 2 and pool at 9 for `migrate`. It subscribes on
 `Global.withdraw_authority` (`39azUYFW…`), account 1 of both and of no trade.
-`migrate_v2` sends two more accounts after the IDL's 27, which vary per coin.
+`migrate_v2` needs two remaining accounts after the IDL's 27, for pump-amm's
+`init_boost`: `boost_vault_authority = PDA(["boost_vault", pool])` under pump-amm,
+then its quote-mint ATA (writable). Without them it reverts 6027
+`NotEnoughRemainingAccounts` after `create_pool` ran, so a reverted migration
+can still log a `CreatePoolEvent`.
 
 ## Coin creation
 
