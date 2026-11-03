@@ -62,11 +62,12 @@ from core.pubkeys import USDC_MINT, WSOL_MINT, SystemAddresses  # noqa: E402
 from geyser.generated import geyser_pb2  # noqa: E402
 from interfaces.core import (  # noqa: E402
     AddressProvider,
-    GraduatedMarket,
     InstructionBuilder,
+    Market,
     Platform,
     TokenInfo,
 )
+from platforms.curve_market import CurveMarket  # noqa: E402
 from platforms.launchlab import LAUNCHLAB_PROGRAM  # noqa: E402
 from platforms.launchlab.cpmm_market import CpmmMarket  # noqa: E402
 from platforms.letsbonk import (  # noqa: E402
@@ -237,16 +238,18 @@ async def _curve_trades(  # noqa: PLR0913, PLR0917
     buy: tuple[int, int],
     sell: tuple[int, int],
 ) -> dict:
+    # Through the curve adapter the trader uses; building needs no curve state.
+    market = CurveMarket(provider, builder, None)
     out = {}
     for side, (amount_in, amount_out) in (("buy", buy), ("sell", sell)):
-        build = getattr(builder, f"build_{side}_instruction")
-        required = getattr(builder, f"get_required_accounts_for_{side}")
-        limit = getattr(builder, f"get_{side}_compute_unit_limit")
-        instructions = await build(token, TRADER, amount_in, amount_out, provider)
+        build = getattr(market, f"build_{side}_instruction")
+        required = getattr(market, f"get_required_accounts_for_{side}")
+        limit = getattr(market, f"get_{side}_compute_unit_limit")
+        instructions = await build(token, TRADER, amount_in, amount_out)
         out[f"{name} {side}"] = {
             "inputs": {"amount_in": amount_in, "minimum_amount_out": amount_out},
             "instructions": [_instruction(ix) for ix in instructions],
-            "priority_fee_accounts": _plain(required(token, TRADER, provider)),
+            "priority_fee_accounts": _plain(required(token, TRADER)),
             "compute_unit_limit": limit(None),
         }
     return out
@@ -254,20 +257,20 @@ async def _curve_trades(  # noqa: PLR0913, PLR0917
 
 async def _market_sell(
     name: str,
-    market: GraduatedMarket,
+    market: Market,
     token: TokenInfo,
     amount_in: int,
     amount_out: int,
 ) -> dict:
     instructions = await market.build_sell_instruction(
-        token, TRADER, amount_in, amount_out, None
+        token, TRADER, amount_in, amount_out
     )
     return {
         f"{name} sell": {
             "inputs": {"amount_in": amount_in, "minimum_amount_out": amount_out},
             "instructions": [_instruction(ix) for ix in instructions],
             "priority_fee_accounts": _plain(
-                market.get_required_accounts_for_sell(token, TRADER, None)
+                market.get_required_accounts_for_sell(token, TRADER)
             ),
             "compute_unit_limit": market.get_sell_compute_unit_limit(None),
         }

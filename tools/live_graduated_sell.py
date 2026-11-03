@@ -4,8 +4,8 @@ WARNING: this submits a real transaction and sells real funds.
 
 The bot only holds coins it bought at launch, and a curve rarely graduates while
 it holds one, so that hand-off cannot be staged with the bot itself. This runs
-the two pieces it would use on the coin you name: the trader's price read
-(curve -> CurveGraduatedError -> the platform's GraduatedMarket) and
+the two pieces it would use on the coin you name: the position manager's price read
+(curve -> CurveGraduatedError -> the platform's graduated market) and
 PlatformAwareSeller, which reads the curve, sees `graduated` and sells into the
 AMM pool. Buy the coin first with a cookbook AMM buy script.
 
@@ -36,7 +36,7 @@ from interfaces.core import Platform, TokenInfo  # noqa: E402
 from platforms import get_platform_implementations  # noqa: E402
 from platforms.launchlab import LAUNCHLAB_PROGRAM  # noqa: E402
 from trading.platform_aware import PlatformAwareSeller  # noqa: E402
-from trading.universal_trader import UniversalTrader  # noqa: E402
+from trading.position_manager import PositionManager  # noqa: E402
 from utils.logger import install_secret_redaction  # noqa: E402
 
 load_dotenv(PROJECT_ROOT / ".env")
@@ -105,13 +105,10 @@ async def run(platform: Platform, mint: Pubkey, slippage: float) -> int:
             token_info.quote_mint, client.get_account_info
         )
 
-        trader = SimpleNamespace(
-            platform=platform,
-            platform_implementations=impl,
-            _graduated_mints=set(),
-            _get_pool_address=lambda t: t.bonding_curve or t.pool_state,
+        positions = SimpleNamespace(
+            platform_implementations=impl, _graduated_mints=set()
         )
-        price = await UniversalTrader._read_price(trader, token_info)
+        price = await PositionManager._read_price(positions, token_info)
         print(f"Price via the trader: {price:.12f} quote per token")
 
         ata = wallet.get_associated_token_address(mint, token_info.token_program_id)

@@ -1,7 +1,7 @@
 """Verify the time-based exit retries a reverted sell instead of abandoning it.
 
 `exit_strategy: "time_based"` is what every config in `bots/` ships with, and
-`UniversalTrader._handle_time_based_exit` used to sell exactly once: a revert
+`PositionManager._handle_time_based_exit` used to sell exactly once: a revert
 was logged at ERROR and the position was left open, unmonitored and unsold.
 
 The bounded retry with a re-read price was added only to
@@ -33,7 +33,6 @@ import asyncio
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import SimpleNamespace
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -45,11 +44,10 @@ from interfaces.core import (  # noqa: E402
     TokenInfo,
     TradeFailureReason,
 )
+from platforms import PlatformImplementations  # noqa: E402
 from trading.base import TradeResult  # noqa: E402
-from trading.universal_trader import (  # noqa: E402
-    DEFAULT_MAX_EXIT_SELL_ATTEMPTS,
-    UniversalTrader,
-)
+from trading.position_manager import PositionManager  # noqa: E402
+from trading.settings import DEFAULT_MAX_EXIT_SELL_ATTEMPTS  # noqa: E402
 
 BUY_PRICE = 1.0e-6  # SOL per token, the price the buy came back with
 QUANTITY = 1_000_000.0
@@ -129,13 +127,16 @@ def _make_trader(
     curve_manager: StubCurveManager,
     seller: StubSeller,
     max_exit_sell_attempts: int = DEFAULT_MAX_EXIT_SELL_ATTEMPTS,
-) -> UniversalTrader:
+) -> PositionManager:
     """Build a trader carrying only what the time-based exit touches."""
-    trader = object.__new__(UniversalTrader)
+    trader = object.__new__(PositionManager)
     trader.wait_time_after_buy = 0  # no real waiting before the sell
     trader.max_exit_sell_attempts = max_exit_sell_attempts
-    trader.platform_implementations = SimpleNamespace(
-        curve_manager=curve_manager, address_provider=None
+    trader.platform_implementations = PlatformImplementations(
+        address_provider=None,
+        instruction_builder=None,
+        curve_manager=curve_manager,
+        event_parser=None,
     )
     trader.seller = seller
     trader.solana_client = None

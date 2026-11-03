@@ -1,4 +1,4 @@
-"""Platform-aware trader implementations built on the interface system."""
+"""Execution: the buyer and the seller, trading through the coin's `Market`."""
 
 import asyncio
 from decimal import Decimal
@@ -21,11 +21,13 @@ from core.wallet import Wallet
 from interfaces.core import (
     AddressProvider,
     ConfirmationStatus,
+    Market,
     Platform,
     TokenInfo,
     TradeFailureReason,
 )
 from platforms import get_platform_implementations
+from platforms.curve_market import CurveMarket
 from trading.base import Trader, TradeResult
 from utils.logger import get_logger
 
@@ -200,8 +202,7 @@ class PlatformAwareBuyer(Trader):
                 token_info.platform, self.client
             )
             address_provider = implementations.address_provider
-            instruction_builder = implementations.instruction_builder
-            curve_manager = implementations.curve_manager
+            curve = implementations.curve_market
 
             # Quote asset is resolved from the curve below; start from whatever
             # the listener gave us so extreme_fast_mode has a usable default.
@@ -219,9 +220,7 @@ class PlatformAwareBuyer(Trader):
                 # sits between detection and submission. Otherwise refresh or
                 # skip.
                 if not self._can_skip_refresh(token_info):
-                    skip_reason = await self._refresh_curve_state(
-                        token_info, address_provider, curve_manager
-                    )
+                    skip_reason = await self._refresh_curve_state(token_info, curve)
                     if skip_reason is not None:
                         return TradeResult(
                             success=False,
@@ -230,11 +229,8 @@ class PlatformAwareBuyer(Trader):
                         )
                     quote_mint = normalize_quote_mint(token_info.quote_mint)
             else:
-                # Platform-agnostic pool address
-                pool_address = self._get_pool_address(token_info, address_provider)
-
                 # Regular path: fetch pool state for price and flags
-                pool_state = await curve_manager.get_pool_state(pool_address)
+                pool_state = await curve.get_market_state(token_info)
                 # Validated below, after the quote gate: an unconfigured quote
                 # asset leaves this None, and "no configured buy amount" is the
                 # accurate reason to skip, not "invalid price".
@@ -274,7 +270,7 @@ class PlatformAwareBuyer(Trader):
                 if token_price_sol is None or token_price_sol <= 0:
                     raise ValueError(
                         f"Invalid price_per_token: {token_price_sol} for pool "
-                        f"{self._get_pool_address(token_info, address_provider)} "
+                        f"{curve.pool_address(token_info)} "
                         f"(mint: {token_info.mint}) - cannot execute buy with "
                         f"zero/invalid price"
                     )
@@ -290,7 +286,7 @@ class PlatformAwareBuyer(Trader):
             # exact-in program spends all of amount_in, so it gets the
             # configured amount and a token floor. Otherwise the token count
             # is exact (pump.fun buy_v2) and amount_in is the ceiling.
-            exact_in = getattr(instruction_builder, "spends_exact_amount_in", False)
+            exact_in = curve.spends_exact_amount_in
             if exact_in:
                 # The configured spend is a decimal like 0.003; scaling the float
                 # can land one raw unit short of it.
@@ -304,16 +300,15 @@ class PlatformAwareBuyer(Trader):
                 )
                 token_amount_raw = int(token_amount * 10**TOKEN_DECIMALS)
 
-            instructions = await instruction_builder.build_buy_instruction(
+            instructions = await curve.build_buy_instruction(
                 token_info,
                 self.wallet.pubkey,
                 max_quote_amount_raw,  # amount_in (raw quote units)
                 token_amount_raw,  # minimum_amount_out (tokens)
-                address_provider,
             )
 
-            priority_accounts = instruction_builder.get_required_accounts_for_buy(
-                token_info, self.wallet.pubkey, address_provider
+            priority_accounts = curve.get_required_accounts_for_buy(
+                token_info, self.wallet.pubkey
             )
 
             logger.info(
@@ -333,7 +328,7 @@ class PlatformAwareBuyer(Trader):
                 priority_fee=await self.priority_fee_manager.calculate_priority_fee(
                     priority_accounts
                 ),
-                compute_unit_limit=instruction_builder.get_buy_compute_unit_limit(
+                compute_unit_limit=curve.get_buy_compute_unit_limit(
                     self._get_cu_override("buy", token_info.platform)
                 ),
                 account_data_size_limit=self._get_cu_override(
@@ -439,18 +434,6 @@ class PlatformAwareBuyer(Trader):
                 success=False, platform=token_info.platform, error_message=str(e)
             )
 
-    def _get_pool_address(
-        self, token_info: TokenInfo, address_provider: AddressProvider
-    ) -> Pubkey:
-        """Get the pool/curve address, from token_info or derived."""
-        if token_info.platform == Platform.PUMP_FUN:
-            if hasattr(token_info, "bonding_curve") and token_info.bonding_curve:
-                return token_info.bonding_curve
-        elif token_info.pool_state:
-            return token_info.pool_state
-
-        return address_provider.derive_pool_address(token_info.mint)
-
     async def _read_token_balance(self, token_info: TokenInfo) -> int | None:
         """Read how many of a coin the wallet actually holds.
 
@@ -497,10 +480,7 @@ class PlatformAwareBuyer(Trader):
         )
 
     async def _refresh_curve_state(
-        self,
-        token_info: TokenInfo,
-        address_provider: AddressProvider,
-        curve_manager: object,
+        self, token_info: TokenInfo, curve: CurveMarket
     ) -> str | None:
         """Refresh mayhem/cashback/creator/quote_mint/token program from chain.
 
@@ -512,19 +492,18 @@ class PlatformAwareBuyer(Trader):
 
         Args:
             token_info: Token information, mutated in place on success
-            address_provider: Platform address provider
-            curve_manager: Platform curve manager
 
         Returns:
             None on success; on failure a reason to skip the buy, since a buy
             built from listener-guessed defaults reverts and still costs the fee
         """
+        address_provider = curve.address_provider
         try:
-            pool_address = self._get_pool_address(token_info, address_provider)
+            pool_address = curve.pool_address(token_info)
             # Geyser/logs fire on processed, so the curve is usually readable in
             # the same slot.
             pool_state, fresh_token_program = await _read_pool_state_with_retry(
-                curve_manager,
+                curve.curve_manager,
                 pool_address,
                 mint=token_info.mint,
                 budget_seconds=self.curve_refresh_budget,
@@ -716,8 +695,7 @@ class PlatformAwareSeller(Trader):
                 token_info.platform, self.client
             )
             address_provider = implementations.address_provider
-            instruction_builder = implementations.instruction_builder
-            curve_manager = implementations.curve_manager
+            curve = implementations.curve_market
 
             # Fall back to the listener's quote asset if the refresh fails.
             quote_mint = normalize_quote_mint(token_info.quote_mint)
@@ -732,13 +710,13 @@ class PlatformAwareSeller(Trader):
             # fee_recipient differs in mayhem mode; both can change between buy
             # and sell, so re-read from chain rather than trusting token_info.
             try:
-                pool_address = self._get_pool_address(token_info, address_provider)
+                pool_address = curve.pool_address(token_info)
                 # Retry rather than reading once at `confirmed`: a node serving a
                 # slightly stale slot reports the curve as missing, and silently
                 # falling back to create-time values risks a wrong creator_vault
                 # (ConstraintSeeds 0x7d6) or wrong mayhem fee_recipient.
                 pool_state, _ = await _read_pool_state_with_retry(
-                    curve_manager, pool_address
+                    curve.curve_manager, pool_address
                 )
                 token_info.is_mayhem_mode = pool_state.get(
                     "is_mayhem_mode", token_info.is_mayhem_mode
@@ -779,7 +757,7 @@ class PlatformAwareSeller(Trader):
 
             # A graduated curve takes no sells; the coin trades in the AMM pool
             # it migrated to, which builds the sell instead.
-            seller = instruction_builder
+            venue: Market = curve
             if graduated:
                 market = implementations.graduated_market
                 try:
@@ -799,7 +777,7 @@ class PlatformAwareSeller(Trader):
                     f"{token_info.symbol} has graduated; selling into "
                     f"{market_state['pool']}"
                 )
-                seller = market
+                venue = market
                 sell_deductions = (market_state["fee_fraction"], sell_deductions[1])
 
             quote_unit = quote_units_per_token(quote_mint)
@@ -852,18 +830,16 @@ class PlatformAwareSeller(Trader):
                 f"({min_quote_output} raw units)"
             )
 
-            # Build sell instructions using platform-specific builder
-            instructions = await seller.build_sell_instruction(
+            instructions = await venue.build_sell_instruction(
                 token_info,
                 self.wallet.pubkey,
                 token_balance,  # amount_in (tokens)
                 min_quote_output,  # minimum_amount_out (raw quote units)
-                address_provider,
             )
 
             # Get accounts for priority fee calculation
-            priority_accounts = seller.get_required_accounts_for_sell(
-                token_info, self.wallet.pubkey, address_provider
+            priority_accounts = venue.get_required_accounts_for_sell(
+                token_info, self.wallet.pubkey
             )
 
             tx_signature = await self.client.build_and_send_transaction(
@@ -874,7 +850,7 @@ class PlatformAwareSeller(Trader):
                 priority_fee=await self.priority_fee_manager.calculate_priority_fee(
                     priority_accounts
                 ),
-                compute_unit_limit=seller.get_sell_compute_unit_limit(
+                compute_unit_limit=venue.get_sell_compute_unit_limit(
                     self._get_cu_override("sell", token_info.platform)
                 ),
                 account_data_size_limit=self._get_cu_override(
@@ -930,20 +906,6 @@ class PlatformAwareSeller(Trader):
                 error_message=f"Sell outcome unknown for {tx_signature}: {e}",
                 failure_reason=TradeFailureReason.UNCONFIRMED,
             )
-
-    def _get_pool_address(
-        self, token_info: TokenInfo, address_provider: AddressProvider
-    ) -> Pubkey:
-        """Get the pool/curve address for price calculations using platform-agnostic method."""
-        # Try to get the address from token_info first, then derive if needed
-        if token_info.platform == Platform.PUMP_FUN:
-            if hasattr(token_info, "bonding_curve") and token_info.bonding_curve:
-                return token_info.bonding_curve
-        elif token_info.pool_state:
-            return token_info.pool_state
-
-        # Fallback to deriving the address using platform provider
-        return address_provider.derive_pool_address(token_info.mint)
 
     def _get_cu_override(self, operation: str, platform: Platform) -> int | None:
         """Get compute unit override from configuration.

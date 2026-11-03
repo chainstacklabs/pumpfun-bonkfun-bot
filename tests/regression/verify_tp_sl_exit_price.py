@@ -1,6 +1,6 @@
 """Verify the tp/sl exit sells against the fresh price and retries a failed sell.
 
-Two bugs in `UniversalTrader._monitor_position_until_exit`:
+Two bugs in `PositionManager._monitor_position_until_exit`:
 
   1. The sell was handed `position.entry_price` rather than the `current_price`
      that had just triggered the exit. The seller turns that price into the
@@ -36,7 +36,6 @@ import asyncio
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import SimpleNamespace
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -49,12 +48,11 @@ from interfaces.core import (  # noqa: E402
     TokenInfo,
     TradeFailureReason,
 )
+from platforms import PlatformImplementations  # noqa: E402
 from trading.base import TradeResult  # noqa: E402
 from trading.position import Position  # noqa: E402
-from trading.universal_trader import (  # noqa: E402
-    DEFAULT_MAX_EXIT_SELL_ATTEMPTS,
-    UniversalTrader,
-)
+from trading.position_manager import PositionManager  # noqa: E402
+from trading.settings import DEFAULT_MAX_EXIT_SELL_ATTEMPTS  # noqa: E402
 
 ENTRY_PRICE = 1.0e-6  # SOL per token
 QUANTITY = 1_000_000.0  # tokens, so entry notional is 1.0 SOL
@@ -120,13 +118,16 @@ def _make_trader(
     curve_manager: StubCurveManager,
     seller: StubSeller,
     max_exit_sell_attempts: int = DEFAULT_MAX_EXIT_SELL_ATTEMPTS,
-) -> UniversalTrader:
+) -> PositionManager:
     """Build a trader carrying only what the monitor loop touches."""
-    trader = object.__new__(UniversalTrader)
+    trader = object.__new__(PositionManager)
     trader.price_check_interval = 0  # no real waiting between iterations
     trader.max_exit_sell_attempts = max_exit_sell_attempts
-    trader.platform_implementations = SimpleNamespace(
-        curve_manager=curve_manager, address_provider=None
+    trader.platform_implementations = PlatformImplementations(
+        address_provider=None,
+        instruction_builder=None,
+        curve_manager=curve_manager,
+        event_parser=None,
     )
     trader.seller = seller
     trader.solana_client = None
@@ -387,7 +388,7 @@ async def check_config_knob_is_honoured() -> bool:
             'cfg["trade"].get(' in runner
             and "max_exit_sell_attempts" in runner
             and "DEFAULT_MAX_EXIT_SELL_ATTEMPTS" in runner,
-            "passed to UniversalTrader with the module default as fallback",
+            "passed to the trader settings with the module default as fallback",
         )
         and ok
     )

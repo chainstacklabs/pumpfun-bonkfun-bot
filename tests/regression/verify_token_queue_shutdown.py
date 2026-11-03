@@ -1,6 +1,6 @@
 """Verify cancelling the token queue processor ends in CancelledError, not ValueError.
 
-`UniversalTrader._process_token_queue` called `task_done()` from a `finally` that
+`TokenIntake._process_token_queue` called `task_done()` from a `finally` that
 also runs when `queue.get()` itself is cancelled — at which point no item was ever
 taken, so the call was unbalanced:
 
@@ -43,7 +43,7 @@ from types import SimpleNamespace
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from trading.universal_trader import UniversalTrader  # noqa: E402
+from trading.intake import TokenIntake  # noqa: E402
 
 MAX_TOKEN_AGE = 30.0
 
@@ -59,14 +59,14 @@ class ErrorCapture(logging.Handler):
         self.records.append(record)
 
 
-def _make_trader() -> UniversalTrader:
+def _make_trader() -> TokenIntake:
     """Build the queue processor's state without running __init__.
 
-    `UniversalTrader.__init__` builds an RPC client and a platform registry.
+    `TokenIntake.__init__` takes a listener and the trader settings.
     `_process_token_queue` touches none of that, so the attributes it does read
     are set directly.
     """
-    trader = object.__new__(UniversalTrader)
+    trader = object.__new__(TokenIntake)
     trader.token_queue = asyncio.Queue()
     trader.processed_tokens = set()
     trader.token_timestamps = {}
@@ -89,10 +89,10 @@ async def _cancel_parked() -> tuple[BaseException | None, list[logging.LogRecord
     """Cancel a processor parked on an empty queue, returning how it ended."""
     trader = _make_trader()
     capture = ErrorCapture()
-    logger = logging.getLogger("trading.universal_trader")
+    logger = logging.getLogger("trading.intake")
     logger.addHandler(capture)
     try:
-        task = asyncio.create_task(trader._process_token_queue())  # noqa: SLF001
+        task = asyncio.create_task(trader._process_token_queue(trader._handle_token))  # noqa: SLF001
         await asyncio.sleep(0.05)
         task.cancel()
         try:
@@ -132,7 +132,7 @@ async def check_shutdown_logs_no_error() -> bool:
 async def check_processed_token_marks_done() -> bool:
     print("\n3. A processed token still balances the queue")
     trader = _make_trader()
-    task = asyncio.create_task(trader._process_token_queue())  # noqa: SLF001
+    task = asyncio.create_task(trader._process_token_queue(trader._handle_token))  # noqa: SLF001
     await trader.token_queue.put(_token())
     try:
         await asyncio.wait_for(trader.token_queue.join(), timeout=1.0)
@@ -154,7 +154,7 @@ async def check_stale_token_marks_done() -> bool:
     token = _token("StaleMint")
     # Backdate the discovery so the freshness check takes the `continue` path.
     trader.token_timestamps[str(token.mint)] = -MAX_TOKEN_AGE * 2
-    task = asyncio.create_task(trader._process_token_queue())  # noqa: SLF001
+    task = asyncio.create_task(trader._process_token_queue(trader._handle_token))  # noqa: SLF001
     await trader.token_queue.put(token)
     try:
         await asyncio.wait_for(trader.token_queue.join(), timeout=1.0)
@@ -192,7 +192,7 @@ async def check_cancel_mid_handler_marks_done() -> bool:
 
     trader.token_queue.task_done = counting_task_done
 
-    task = asyncio.create_task(trader._process_token_queue())  # noqa: SLF001
+    task = asyncio.create_task(trader._process_token_queue(trader._handle_token))  # noqa: SLF001
     await trader.token_queue.put(_token("HeldMint"))
     await asyncio.wait_for(started.wait(), timeout=1.0)
     task.cancel()

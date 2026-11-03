@@ -29,10 +29,9 @@ from config_loader import (
     print_config_summary,
     validate_platform_listener_combination,
 )
-from trading.universal_trader import (
-    DEFAULT_MAX_EXIT_SELL_ATTEMPTS,
-    UniversalTrader,
-)
+from interfaces.core import Platform
+from trading.settings import DEFAULT_MAX_EXIT_SELL_ATTEMPTS, TraderSettings
+from trading.universal_trader import UniversalTrader
 from utils.logger import install_secret_redaction, setup_file_logging
 
 
@@ -45,6 +44,82 @@ def setup_logging(bot_name: str):
     log_filename = log_dir / f"{bot_name}_{timestamp}.log"
 
     setup_file_logging(str(log_filename))
+
+
+def build_trader_settings(cfg: dict, platform: Platform) -> TraderSettings:
+    """Turn a loaded bot config into the trader's settings, filling in defaults."""
+    return TraderSettings(
+        # Connection settings
+        rpc_endpoint=cfg["rpc_endpoint"],
+        wss_endpoint=cfg["wss_endpoint"],
+        private_key=cfg["private_key"],
+        # Platform configuration - pass platform enum directly
+        platform=platform,
+        # Trade parameters
+        buy_amount=cfg["trade"]["buy_amount"],
+        buy_slippage=cfg["trade"]["buy_slippage"],
+        sell_slippage=cfg["trade"]["sell_slippage"],
+        # Extreme fast mode settings
+        extreme_fast_mode=cfg["trade"].get("extreme_fast_mode", False),
+        extreme_fast_token_amount=cfg["trade"].get("extreme_fast_token_amount", 30),
+        curve_refresh_budget=cfg["trade"].get("curve_refresh_budget", 2.0),
+        trust_create_event=cfg["trade"].get("trust_create_event", True),
+        # Quote asset configuration (pump.fun non-SOL pairs)
+        quote_amounts=cfg["trade"].get("quote_amounts"),
+        allowed_quote_mints=cfg["filters"].get("allowed_quote_mints"),
+        max_transfer_fee_bps=cfg["filters"].get("max_transfer_fee_bps"),
+        # Exit strategy configuration
+        exit_strategy=cfg["trade"].get("exit_strategy", "time_based"),
+        take_profit_percentage=cfg["trade"].get("take_profit_percentage"),
+        stop_loss_percentage=cfg["trade"].get("stop_loss_percentage"),
+        max_hold_time=cfg["trade"].get("max_hold_time"),
+        price_check_interval=cfg["trade"].get("price_check_interval", 10),
+        max_exit_sell_attempts=cfg["trade"].get(
+            "max_exit_sell_attempts", DEFAULT_MAX_EXIT_SELL_ATTEMPTS
+        ),
+        # Listener configuration
+        listener_type=cfg["filters"]["listener_type"],
+        # Geyser configuration (if applicable)
+        geyser_endpoint=cfg.get("geyser", {}).get("endpoint"),
+        geyser_api_token=cfg.get("geyser", {}).get("api_token"),
+        geyser_auth_type=cfg.get("geyser", {}).get("auth_type", "x-token"),
+        # Priority fee configuration
+        enable_dynamic_priority_fee=cfg.get("priority_fees", {}).get(
+            "enable_dynamic", False
+        ),
+        enable_fixed_priority_fee=cfg.get("priority_fees", {}).get(
+            "enable_fixed", True
+        ),
+        fixed_priority_fee=cfg.get("priority_fees", {}).get("fixed_amount", 500000),
+        extra_priority_fee=cfg.get("priority_fees", {}).get("extra_percentage", 0.0),
+        hard_cap_prior_fee=cfg.get("priority_fees", {}).get("hard_cap", 500000),
+        # Retry and timeout settings
+        max_retries=cfg.get("retries", {}).get("max_attempts", 10),
+        wait_time_after_creation=cfg.get("retries", {}).get("wait_after_creation", 15),
+        wait_time_after_buy=cfg.get("retries", {}).get("wait_after_buy", 15),
+        wait_time_before_new_token=cfg.get("retries", {}).get(
+            "wait_before_new_token", 15
+        ),
+        max_token_age=cfg.get("filters", {}).get("max_token_age", 0.001),
+        token_wait_timeout=cfg.get("timing", {}).get("token_wait_timeout", 120),
+        # Cleanup settings
+        cleanup_mode=cfg.get("cleanup", {}).get("mode", "disabled"),
+        cleanup_force_close_with_burn=cfg.get("cleanup", {}).get(
+            "force_close_with_burn", False
+        ),
+        cleanup_with_priority_fee=cfg.get("cleanup", {}).get(
+            "with_priority_fee", False
+        ),
+        # Trading filters
+        match_string=cfg["filters"].get("match_string"),
+        bro_address=cfg["filters"].get("bro_address"),
+        marry_mode=cfg["filters"].get("marry_mode", False),
+        yolo_mode=cfg["filters"].get("yolo_mode", False),
+        # Compute unit configuration
+        compute_units=cfg.get("compute_units", {}),
+        # Node provider configuration
+        max_rps=cfg.get("node", {}).get("max_rps", 25),
+    )
 
 
 async def start_bot(config_path: str):
@@ -87,82 +162,7 @@ async def start_bot(config_path: str):
 
     # Initialize universal trader with platform-specific configuration
     try:
-        trader = UniversalTrader(
-            # Connection settings
-            rpc_endpoint=cfg["rpc_endpoint"],
-            wss_endpoint=cfg["wss_endpoint"],
-            private_key=cfg["private_key"],
-            # Platform configuration - pass platform enum directly
-            platform=platform,
-            # Trade parameters
-            buy_amount=cfg["trade"]["buy_amount"],
-            buy_slippage=cfg["trade"]["buy_slippage"],
-            sell_slippage=cfg["trade"]["sell_slippage"],
-            # Extreme fast mode settings
-            extreme_fast_mode=cfg["trade"].get("extreme_fast_mode", False),
-            extreme_fast_token_amount=cfg["trade"].get("extreme_fast_token_amount", 30),
-            curve_refresh_budget=cfg["trade"].get("curve_refresh_budget", 2.0),
-            trust_create_event=cfg["trade"].get("trust_create_event", True),
-            # Quote asset configuration (pump.fun non-SOL pairs)
-            quote_amounts=cfg["trade"].get("quote_amounts"),
-            allowed_quote_mints=cfg["filters"].get("allowed_quote_mints"),
-            max_transfer_fee_bps=cfg["filters"].get("max_transfer_fee_bps"),
-            # Exit strategy configuration
-            exit_strategy=cfg["trade"].get("exit_strategy", "time_based"),
-            take_profit_percentage=cfg["trade"].get("take_profit_percentage"),
-            stop_loss_percentage=cfg["trade"].get("stop_loss_percentage"),
-            max_hold_time=cfg["trade"].get("max_hold_time"),
-            price_check_interval=cfg["trade"].get("price_check_interval", 10),
-            max_exit_sell_attempts=cfg["trade"].get(
-                "max_exit_sell_attempts", DEFAULT_MAX_EXIT_SELL_ATTEMPTS
-            ),
-            # Listener configuration
-            listener_type=cfg["filters"]["listener_type"],
-            # Geyser configuration (if applicable)
-            geyser_endpoint=cfg.get("geyser", {}).get("endpoint"),
-            geyser_api_token=cfg.get("geyser", {}).get("api_token"),
-            geyser_auth_type=cfg.get("geyser", {}).get("auth_type", "x-token"),
-            # Priority fee configuration
-            enable_dynamic_priority_fee=cfg.get("priority_fees", {}).get(
-                "enable_dynamic", False
-            ),
-            enable_fixed_priority_fee=cfg.get("priority_fees", {}).get(
-                "enable_fixed", True
-            ),
-            fixed_priority_fee=cfg.get("priority_fees", {}).get("fixed_amount", 500000),
-            extra_priority_fee=cfg.get("priority_fees", {}).get(
-                "extra_percentage", 0.0
-            ),
-            hard_cap_prior_fee=cfg.get("priority_fees", {}).get("hard_cap", 500000),
-            # Retry and timeout settings
-            max_retries=cfg.get("retries", {}).get("max_attempts", 10),
-            wait_time_after_creation=cfg.get("retries", {}).get(
-                "wait_after_creation", 15
-            ),
-            wait_time_after_buy=cfg.get("retries", {}).get("wait_after_buy", 15),
-            wait_time_before_new_token=cfg.get("retries", {}).get(
-                "wait_before_new_token", 15
-            ),
-            max_token_age=cfg.get("filters", {}).get("max_token_age", 0.001),
-            token_wait_timeout=cfg.get("timing", {}).get("token_wait_timeout", 120),
-            # Cleanup settings
-            cleanup_mode=cfg.get("cleanup", {}).get("mode", "disabled"),
-            cleanup_force_close_with_burn=cfg.get("cleanup", {}).get(
-                "force_close_with_burn", False
-            ),
-            cleanup_with_priority_fee=cfg.get("cleanup", {}).get(
-                "with_priority_fee", False
-            ),
-            # Trading filters
-            match_string=cfg["filters"].get("match_string"),
-            bro_address=cfg["filters"].get("bro_address"),
-            marry_mode=cfg["filters"].get("marry_mode", False),
-            yolo_mode=cfg["filters"].get("yolo_mode", False),
-            # Compute unit configuration
-            compute_units=cfg.get("compute_units", {}),
-            # Node provider configuration
-            max_rps=cfg.get("node", {}).get("max_rps", 25),
-        )
+        trader = UniversalTrader(build_trader_settings(cfg, platform))
 
         await trader.start()
 

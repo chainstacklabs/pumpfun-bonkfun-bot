@@ -39,7 +39,6 @@ import inspect
 import sys
 from datetime import datetime
 from pathlib import Path
-from types import SimpleNamespace
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -53,15 +52,16 @@ from interfaces.core import (  # noqa: E402
     TokenInfo,
     TradeFailureReason,
 )
+from platforms import PlatformImplementations  # noqa: E402
 from trading.base import TradeResult  # noqa: E402
 from trading.platform_aware import PlatformAwareSeller  # noqa: E402
 from trading.position import Position  # noqa: E402
-from trading.universal_trader import (  # noqa: E402
-    DEFAULT_MAX_EXIT_SELL_ATTEMPTS,
+from trading.position_manager import (  # noqa: E402
     ExitSellVerdict,
-    UniversalTrader,
+    PositionManager,
     _exit_sell_verdict_for,
 )
+from trading.settings import DEFAULT_MAX_EXIT_SELL_ATTEMPTS  # noqa: E402
 
 BUY_PRICE = 1.0e-6
 QUANTITY = 1_000_000.0
@@ -189,7 +189,7 @@ def _make_token_info() -> TokenInfo:
     )
 
 
-def _make_trader(seller: StubSeller, client: StubClient) -> UniversalTrader:
+def _make_trader(seller: StubSeller, client: StubClient) -> PositionManager:
     """Build a trader carrying only what the exit paths touch.
 
     Args:
@@ -197,14 +197,17 @@ def _make_trader(seller: StubSeller, client: StubClient) -> UniversalTrader:
         client: Stub client for signature re-checks
 
     Returns:
-        A UniversalTrader wired to the stubs
+        A PositionManager wired to the stubs
     """
-    trader = object.__new__(UniversalTrader)
+    trader = object.__new__(PositionManager)
     trader.wait_time_after_buy = 0
     trader.max_exit_sell_attempts = DEFAULT_MAX_EXIT_SELL_ATTEMPTS
     trader.price_check_interval = 0
-    trader.platform_implementations = SimpleNamespace(
-        curve_manager=StubCurveManager(), address_provider=None
+    trader.platform_implementations = PlatformImplementations(
+        address_provider=None,
+        instruction_builder=None,
+        curve_manager=StubCurveManager(),
+        event_parser=None,
     )
     trader.seller = seller
     trader.solana_client = client

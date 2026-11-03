@@ -52,11 +52,11 @@ Dependency layers, low to high — don't introduce an upward import:
 `interfaces` is the leaf; `geyser` holds only generated stubs; `cleanup` sits on
 `core`/`utils` and is pulled in by `trading`.
 
-Platform differences resolve through `interfaces/core.py` abstractions
-(`AddressProvider`, curve manager, event parser, instruction builder) and the
-registry in `platforms/__init__.py`. Listeners and the trader are
-platform-agnostic (`Universal*`); anything platform-shaped belongs under
-`platforms/<name>/`.
+Platform differences resolve through `interfaces/core.py` and the registry in
+`platforms/__init__.py`; anything platform-shaped goes in `platforms/<name>/`. Trades
+go through one `Market`: `curve_market` (`CurveMarket`, builder + curve manager), then
+`graduated_market` (`PumpSwapMarket`, `CpmmMarket`; sell only). `UniversalTrader`
+coordinates `trading/intake.py`, `platform_aware.py` and `position_manager.py`.
 
 ## Commands
 
@@ -180,7 +180,7 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
   `if await client.confirm_transaction(sig):` would start passing unconditionally.
 - `calculate_price` returns `0.0` for a curve with no virtual token reserves, and
   raises `CurveGraduatedError` for a graduated one; price and sell then go through
-  the platform's `GraduatedMarket`. Never store a non-positive read as the last
+  the platform's `graduated_market`. Never store a non-positive read as the last
   known price or floor a sell against one; `0.0` satisfies the stop-loss check.
 
 ## Config notes

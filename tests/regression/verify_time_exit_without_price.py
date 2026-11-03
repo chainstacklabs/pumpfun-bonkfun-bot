@@ -1,6 +1,6 @@
 """Verify max_hold_time still fires when the price read keeps failing.
 
-`UniversalTrader._monitor_position_until_exit` read the price at the top of each
+`PositionManager._monitor_position_until_exit` read the price at the top of each
 iteration and evaluated every exit condition after it. `position.should_exit()`
 takes `current_price`, so a failed read skipped the whole check - including
 `max_hold_time`, which needs no price at all.
@@ -31,7 +31,6 @@ import asyncio
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -39,9 +38,10 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from solders.pubkey import Pubkey  # noqa: E402
 
 from interfaces.core import Platform, TokenInfo, TradeFailureReason  # noqa: E402
+from platforms import PlatformImplementations  # noqa: E402
 from trading.base import TradeResult  # noqa: E402
 from trading.position import ExitReason, Position  # noqa: E402
-from trading.universal_trader import UniversalTrader  # noqa: E402
+from trading.position_manager import PositionManager  # noqa: E402
 
 BUY_PRICE = 1.0e-6
 QUANTITY = 1_000_000.0
@@ -160,7 +160,7 @@ def _make_trader(
     curve_manager: FlakyCurveManager,
     seller: RecordingSeller,
     price_check_interval: float = 0,
-) -> UniversalTrader:
+) -> PositionManager:
     """Build a trader carrying only what the monitor loop touches.
 
     Args:
@@ -169,13 +169,16 @@ def _make_trader(
         price_check_interval: Delay between iterations
 
     Returns:
-        A UniversalTrader wired to the stubs
+        A PositionManager wired to the stubs
     """
-    trader = object.__new__(UniversalTrader)
+    trader = object.__new__(PositionManager)
     trader.price_check_interval = price_check_interval
     trader.max_exit_sell_attempts = MAX_EXIT_SELL_ATTEMPTS
-    trader.platform_implementations = SimpleNamespace(
-        curve_manager=curve_manager, address_provider=None
+    trader.platform_implementations = PlatformImplementations(
+        address_provider=None,
+        instruction_builder=None,
+        curve_manager=curve_manager,
+        event_parser=None,
     )
     trader.seller = seller
     trader.solana_client = None

@@ -52,6 +52,7 @@ from solders.pubkey import Pubkey  # noqa: E402
 from core.client import SolanaClient  # noqa: E402
 from core.pubkeys import TOKEN_DECIMALS, WSOL_MINT  # noqa: E402
 from interfaces.core import Platform, TokenInfo  # noqa: E402
+from platforms import PlatformImplementations  # noqa: E402
 from trading import platform_aware  # noqa: E402
 from trading.base import TradeResult  # noqa: E402
 from trading.platform_aware import PlatformAwareBuyer  # noqa: E402
@@ -150,7 +151,7 @@ class StubBuyClient:
         return self.balance_raw
 
 
-def _stub_implementations() -> SimpleNamespace:
+def _stub_implementations() -> PlatformImplementations:
     """Platform implementations that build an empty, unsendable instruction set."""
     address_provider = SimpleNamespace(
         derive_pool_address=lambda _mint: CURVE,
@@ -161,10 +162,11 @@ def _stub_implementations() -> SimpleNamespace:
         get_required_accounts_for_buy=lambda *_args, **_kwargs: [],
         get_buy_compute_unit_limit=lambda _override: 100_000,
     )
-    return SimpleNamespace(
+    return PlatformImplementations(
         address_provider=address_provider,
         instruction_builder=instruction_builder,
         curve_manager=SimpleNamespace(),
+        event_parser=None,
     )
 
 
