@@ -80,6 +80,9 @@ class PositionStore:
         self.path = Path(path)
         # Records by mint, as written; one that does not decode is kept as is.
         self._records: dict[str, dict] = {}
+        # False once an unreadable file could not be moved aside: writing
+        # would replace it, and the positions in it with it.
+        self._writable = True
 
     def _free_aside_path(self) -> Path:
         aside = self.path.with_name(self.path.name + ".unreadable")
@@ -92,26 +95,21 @@ class PositionStore:
     def load(self) -> list[StoredPosition]:
         """Read the file and return the positions in it.
 
-        A file that is not valid JSON is renamed to `<name>.unreadable` (then
+        A file that cannot be read (not valid JSON or UTF-8, or no read
+        permission) is renamed to `<name>.unreadable` (then
         `<name>.unreadable.1`, `.2`, ... so no earlier one is overwritten) and
-        logged, so the next write cannot overwrite what it held. A record that
-        does not decode is logged and kept in the file, but not returned.
+        logged, so the next write cannot overwrite what it held. If it cannot be
+        moved either, this store writes nothing this run. A record that does not
+        decode is logged and kept in the file, but not returned.
         """
         self._records = {}
         try:
-            text = self.path.read_text(encoding="utf-8")
+            records = json.loads(self.path.read_text(encoding="utf-8"))["positions"]
+            self._records = {record["mint"]: record for record in records}
         except FileNotFoundError:
             return []
-        try:
-            records = json.loads(text)["positions"]
-            self._records = {record["mint"]: record for record in records}
-        except (ValueError, KeyError, TypeError):
-            aside = self._free_aside_path()
-            logger.exception(
-                f"Positions file {self.path} is unreadable; moved to {aside}. "
-                f"Positions in it are not monitored."
-            )
-            self.path.replace(aside)
+        except (OSError, ValueError, KeyError, TypeError):
+            self._set_aside()
             return []
 
         positions = []
@@ -138,6 +136,23 @@ class PositionStore:
                     f"left in the file, not monitored"
                 )
         return positions
+
+    def _set_aside(self) -> None:
+        try:
+            aside = self._free_aside_path()
+            self.path.replace(aside)
+        except OSError:
+            self._writable = False
+            logger.exception(
+                f"Positions file {self.path} is unreadable and could not be moved "
+                f"aside; positions in it are not monitored, and new ones are not "
+                f"written to disk this run"
+            )
+            return
+        logger.exception(
+            f"Positions file {self.path} is unreadable; moved to {aside}. "
+            f"Positions in it are not monitored."
+        )
 
     def add(
         self, token_info: TokenInfo, buy_result: TradeResult, entry_time: datetime
@@ -167,6 +182,8 @@ class PositionStore:
 
     def _write(self) -> None:
         """Replace the file with the current records. A failed write is logged."""
+        if not self._writable:
+            return
         tmp = self.path.with_name(self.path.name + ".tmp")
         payload = {"version": _VERSION, "positions": list(self._records.values())}
         try:

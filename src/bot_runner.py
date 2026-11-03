@@ -212,6 +212,34 @@ def run_bot_process(config_path):
     asyncio.run(start_bot(config_path))
 
 
+def _drop_duplicate_names(bot_files: list[Path]) -> list[Path]:
+    """The files to start, without an enabled bot whose name an earlier one uses.
+
+    The name keys a bot's log and positions files: two bots under one name
+    would overwrite each other's open positions. A file that does not load is
+    kept, for `run_all_bots` to report.
+    """
+    names_in_use: dict[str, Path] = {}
+    kept = []
+    for file in bot_files:
+        try:
+            cfg = load_bot_config(str(file))
+        except Exception:  # noqa: BLE001
+            kept.append(file)
+            continue
+        name = cfg.get("name", file.stem)
+        if cfg.get("enabled", True):
+            if name in names_in_use:
+                logging.error(
+                    f"Skipping bot '{name}' in {file}: {names_in_use[name]} "
+                    f"already uses that name, and bot names must be unique"
+                )
+                continue
+            names_in_use[name] = file
+        kept.append(file)
+    return kept
+
+
 def run_all_bots():
     """Run all bots defined in YAML files in the 'bots' directory."""
     bot_dir = Path("bots")
@@ -219,13 +247,14 @@ def run_all_bots():
         logging.error(f"Bot directory '{bot_dir}' not found")
         return
 
-    bot_files = list(bot_dir.glob("*.yaml"))
+    bot_files = sorted(bot_dir.glob("*.yaml"))
     if not bot_files:
         logging.error(f"No bot configuration files found in '{bot_dir}'")
         return
 
     logging.info(f"Found {len(bot_files)} bot configuration files")
 
+    bot_files = _drop_duplicate_names(bot_files)
     processes = []
     skipped_bots = 0
 

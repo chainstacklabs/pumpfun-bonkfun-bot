@@ -185,6 +185,12 @@ bought sells what is held. A position whose balance cannot be read stays in the
 file and is tried again on the next start, and so does one whose exit gave up.
 Delete an entry from the file to stop the bot managing that coin.
 
+The file belongs to the bot's `name`, so names must be unique: a second enabled
+bot with a name already in use is not started. Renaming a bot leaves its old
+file behind; rename the file too. A position bought on another `platform` than
+the bot's current one stays in the file and is not monitored. A file the bot
+cannot read is moved aside to `<name>.json.unreadable`.
+
 ### Encrypted wallet
 
 Instead of a raw `private_key`, a bot can trade from the encrypted wallet file

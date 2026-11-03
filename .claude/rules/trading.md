@@ -15,5 +15,6 @@ Each monitored position is in `positions/<bot name>.json` (`PositionStore`) from
 its buy until its **sale**, and only a sale removes it: a position stopped at
 shutdown, or whose exit gave up or could not be resolved, still holds its coin.
 On start `PositionManager.resume` reads the wallet's balance before holding a
-position again; a coin no longer held is cleared, never sold.
-`verify_positions_survive_restart.py` guards both.
+position again; a coin no longer held is cleared, never sold. A resumed coin is
+marked processed in the intake, so it is never bought a second time.
+`verify_positions_survive_restart.py` guards all three.

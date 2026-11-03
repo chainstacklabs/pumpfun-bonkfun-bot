@@ -25,6 +25,7 @@ from core.wallet import Wallet
 from interfaces.core import (
     ConfirmationStatus,
     CurveGraduatedError,
+    Platform,
     TokenInfo,
     TradeFailureReason,
 )
@@ -111,6 +112,9 @@ class PositionManager:
         self.wallet = wallet
         self.priority_fee_manager = priority_fee_manager
         self.platform_implementations = platform_implementations
+        # The platform `platform_implementations` price; a stored position
+        # from another one cannot be priced here.
+        self.platform = Platform(settings.platform)
 
         self.exit_strategy = settings.exit_strategy.lower()
         self.take_profit_percentage = settings.take_profit_percentage
@@ -237,8 +241,9 @@ class PositionManager:
         The wallet is the truth: a position whose coin the wallet no longer
         holds was sold (or moved) while the bot was down and is cleared, never
         sold again; one holding less than was bought sells what is left. A
-        position whose balance or quote mint cannot be read stays in the file
-        and is not monitored this run. Every position held is resumed, even past
+        position whose balance or quote mint cannot be read, or that is on
+        another platform than the bot's, stays in the file and is not monitored
+        this run. Every position held is resumed, even past
         `max_open_positions`; the trader takes no new coin until below it.
 
         Returns:
@@ -263,6 +268,13 @@ class PositionManager:
     async def _resume_one(self, stored: StoredPosition) -> bool:
         token_info, buy = stored.token_info, stored.buy_result
         label = f"{token_info.symbol} ({token_info.mint})"
+        if token_info.platform != self.platform:
+            logger.warning(
+                f"Position in {label} is on {token_info.platform.value}, this bot "
+                f"trades {self.platform.value}; it stays in {self.store.path} and "
+                f"is not monitored this run"
+            )
+            return False
         held = await self._held_raw(token_info)
         if held is None:
             logger.error(
