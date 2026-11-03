@@ -4,12 +4,13 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
+import base58
 import grpc
 from solders.pubkey import Pubkey
 
 from geyser.generated import geyser_pb2, geyser_pb2_grpc
-from interfaces.core import Platform, TokenInfo
-from monitoring.base_listener import BaseTokenListener
+from interfaces.core import Platform, PoolReady, TokenInfo
+from monitoring.base_listener import BaseTokenListener, PoolCallback
 from platforms import platform_factory
 from utils.logger import get_logger
 
@@ -180,8 +181,14 @@ class UniversalGeyserListener(BaseTokenListener):
         token_callback: Callable[[TokenInfo], Awaitable[None]],
         match_string: str | None = None,
         creator_address: str | None = None,
+        pool_callback: PoolCallback | None = None,
     ) -> None:
-        """Listen for new token creations using Geyser subscription."""
+        """Listen for new token creations using Geyser subscription.
+
+        Args:
+            pool_callback: Called once per migrated mint; see BaseTokenListener
+        """
+        self.pool_callback = pool_callback
         if not self.platform_parsers:
             logger.error("No platform parsers available. Cannot listen for tokens.")
             return
@@ -201,6 +208,7 @@ class UniversalGeyserListener(BaseTokenListener):
 
                 try:
                     async for update in stub.Subscribe(iter([request])):
+                        await self._emit_pools(self._pools_from_update(update))
                         token_info = await self._process_update(update)
                         if not token_info:
                             continue
@@ -267,3 +275,24 @@ class UniversalGeyserListener(BaseTokenListener):
         except Exception:
             logger.exception("Error processing Geyser update")
             return None
+
+    def _pools_from_update(self, update: geyser_pb2.SubscribeUpdate) -> list[PoolReady]:
+        """Pools a successful migration in this update created, from its logs.
+
+        Empty without a pool callback: nothing is parsed then.
+        """
+        if self.pool_callback is None or not update.HasField("transaction"):
+            return []
+        info = update.transaction.transaction
+        if info.meta.HasField("err") or not info.meta.log_messages:
+            return []
+        pools = []
+        try:
+            logs = list(info.meta.log_messages)
+            signature = base58.b58encode(info.signature).decode()
+            for parser in self.platform_parsers.values():
+                pools += parser.parse_pools_ready_from_logs(logs, signature)
+        except Exception:
+            logger.exception("Error reading a migration from a Geyser update")
+            return []
+        return pools

@@ -9,12 +9,18 @@ from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
 
 from core.pubkeys import (
+    WSOL_MINT,
     SystemAddresses,
     cached_quote_token_program,
     normalize_quote_mint,
 )
-from interfaces.core import EventParser, Platform, TokenInfo
+from interfaces.core import EventParser, Platform, PoolReady, TokenInfo
 from platforms.pumpfun.address_provider import PumpFunAddresses
+from platforms.pumpfun.pumpswap_market import (
+    PUMP_AMM_PROGRAM,
+    PUMP_SWAP_IDL,
+    canonical_pool_address,
+)
 from utils.idl_parser import IDLParser
 from utils.logger import get_logger
 
@@ -38,6 +44,21 @@ _CREATE_V2_USER_ACCOUNT_INDEX = 5
 
 # Length of a Solana public key in bytes.
 PUBKEY_BYTE_LENGTH = 32
+
+# Account indexes of base mint, quote mint and pool on the two migration
+# instructions. Legacy `migrate` is SOL-paired only and names no quote mint
+# account before the pool.
+_MIGRATE_MINT_ACCOUNT_INDEX = 2
+_MIGRATE_POOL_ACCOUNT_INDEX = 9
+_MIGRATE_V2_QUOTE_MINT_ACCOUNT_INDEX = 3
+_MIGRATE_V2_POOL_ACCOUNT_INDEX = 10
+
+# The log lines pump.fun writes for its two migration instructions, at any
+# invocation depth. Matched whole, like CREATE_INSTRUCTION_LOGS below.
+MIGRATE_INSTRUCTION_LOGS = (
+    "Program log: Instruction: Migrate",
+    "Program log: Instruction: MigrateV2",
+)
 
 # The two log lines the pump.fun program writes when it creates a coin. They are
 # matched whole: Anchor writes `Instruction: <Name>` for every program, so a
@@ -134,6 +155,12 @@ class PumpFunEventParser(EventParser):
             if self._create_v2_instruction_discriminator_bytes
             else None
         )
+
+        self._migrate_discriminator_bytes = instruction_discriminators["migrate"]
+        self._migrate_v2_discriminator_bytes = instruction_discriminators["migrate_v2"]
+        # PumpSwap's IDL, for its CreatePoolEvent; loaded on the first
+        # migration, since most listeners never look for one.
+        self._pump_swap_idl_parser: IDLParser | None = None
 
         logger.info(
             "Pump.Fun event parser initialized with IDL-based event and instruction parsing"
@@ -750,6 +777,124 @@ class PumpFunEventParser(EventParser):
             List of event discriminator bytes to match
         """
         return [self._create_event_discriminator_bytes]
+
+    def parse_pools_ready_from_logs(
+        self, logs: list[str], signature: str
+    ) -> list[PoolReady]:
+        """Pools a migration in these logs created, from PumpSwap's CreatePoolEvent.
+
+        pump.fun's own `CompletePumpAmmMigrationEvent` goes out as an event
+        CPI, an inner instruction, so logsSubscribe never carries it. The
+        `create_pool` that `migrate`/`migrate_v2` calls logs PumpSwap's
+        CreatePoolEvent, which names the mint, quote mint and pool. A payload
+        counts only when PumpSwap's own invocation emitted it and the pool is
+        the coin's canonical one: that pool's creator is pump.fun's
+        pool-authority PDA, so only a migration can create it. A migration
+        that was already done logs `MigrateV2` and no event.
+
+        Returns:
+            One entry per pool created, usually none
+        """
+        if not any(log in MIGRATE_INSTRUCTION_LOGS for log in logs):
+            return []
+
+        emitters = self._emitting_program(logs)
+        pump_amm = str(PUMP_AMM_PROGRAM)
+        pools = []
+        for log, emitter in zip(logs, emitters, strict=True):
+            if emitter != pump_amm or not log.startswith("Program data: "):
+                continue
+            try:
+                data = base64.b64decode(log.split("Program data: ", 1)[1].strip())
+            except (ValueError, TypeError):
+                continue
+            pool = self._pool_from_create_pool_event(data, signature)
+            if pool is not None:
+                pools.append(pool)
+        return pools
+
+    def _pool_from_create_pool_event(
+        self, data: bytes, signature: str
+    ) -> PoolReady | None:
+        """A PoolReady from a CreatePoolEvent payload, if its pool is canonical."""
+        if self._pump_swap_idl_parser is None:
+            self._pump_swap_idl_parser = IDLParser(str(PUMP_SWAP_IDL))
+        event = self._pump_swap_idl_parser.decode_event_data(data, "CreatePoolEvent")
+        if not event:
+            return None
+        fields = event.get("fields", {})
+        mint = _coerce_pubkey(fields.get("base_mint"))
+        quote_mint = _coerce_pubkey(fields.get("quote_mint"))
+        pool = _coerce_pubkey(fields.get("pool"))
+        if mint is None or quote_mint is None or pool is None:
+            return None
+        if pool != canonical_pool_address(mint, quote_mint):
+            return None
+        return PoolReady(
+            platform=Platform.PUMP_FUN,
+            mint=mint,
+            pool=pool,
+            quote_mint=quote_mint,
+            signature=signature,
+            detection_timestamp=monotonic(),
+        )
+
+    def parse_pool_ready_from_instruction(
+        self,
+        instruction_data: bytes,
+        accounts: list[int],
+        account_keys: list[bytes],
+        signature: str,
+    ) -> PoolReady | None:
+        """The pool a top-level `migrate` or `migrate_v2` moves the curve into.
+
+        Read before execution: most migrate calls on mainnet arrive after
+        another one already moved the curve and do nothing, and any can fail.
+        The pool must be the canonical one for the named mints, which a
+        well-formed migration always names.
+        """
+        data = bytes(instruction_data)
+        if data.startswith(self._migrate_v2_discriminator_bytes):
+            pool_index = _MIGRATE_V2_POOL_ACCOUNT_INDEX
+            quote_index = _MIGRATE_V2_QUOTE_MINT_ACCOUNT_INDEX
+        elif data.startswith(self._migrate_discriminator_bytes):
+            pool_index = _MIGRATE_POOL_ACCOUNT_INDEX
+            quote_index = None
+        else:
+            return None
+
+        def key(index: int) -> Pubkey | None:
+            if index >= len(accounts) or accounts[index] >= len(account_keys):
+                return None
+            return Pubkey.from_bytes(bytes(account_keys[accounts[index]]))
+
+        mint = key(_MIGRATE_MINT_ACCOUNT_INDEX)
+        quote_mint = WSOL_MINT if quote_index is None else key(quote_index)
+        pool = key(pool_index)
+        if mint is None or quote_mint is None or pool is None:
+            return None
+        if pool != canonical_pool_address(mint, quote_mint):
+            return None
+        return PoolReady(
+            platform=Platform.PUMP_FUN,
+            mint=mint,
+            pool=pool,
+            quote_mint=quote_mint,
+            signature=signature,
+            pre_execution=True,
+            detection_timestamp=monotonic(),
+        )
+
+    def get_migration_instruction_discriminators(self) -> list[bytes]:
+        """`migrate_v2` and legacy `migrate`; both are still sent."""
+        return [
+            self._migrate_v2_discriminator_bytes,
+            self._migrate_discriminator_bytes,
+        ]
+
+    def get_migration_filter_accounts(self) -> list[Pubkey]:
+        """Global's withdraw authority: account 1 of both migrations, in no trade."""
+        return [PumpFunAddresses.LIQUIDITY_MIGRATOR]
 
     def parse_token_creation_from_block(self, block_data: dict) -> TokenInfo | None:
         """Parse token creation from block data (for block listener).

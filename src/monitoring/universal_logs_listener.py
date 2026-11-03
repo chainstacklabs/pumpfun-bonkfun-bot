@@ -6,8 +6,12 @@ from collections.abc import Awaitable, Callable
 
 import websockets
 
-from interfaces.core import Platform, TokenInfo
-from monitoring.base_listener import BaseTokenListener, reraise_if_cancelled
+from interfaces.core import Platform, PoolReady, TokenInfo
+from monitoring.base_listener import (
+    BaseTokenListener,
+    PoolCallback,
+    reraise_if_cancelled,
+)
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -86,6 +90,7 @@ class UniversalLogsListener(BaseTokenListener):
         token_callback: Callable[[TokenInfo], Awaitable[None]],
         match_string: str | None = None,
         creator_address: str | None = None,
+        pool_callback: PoolCallback | None = None,
     ) -> None:
         """Listen for new token creations using logsSubscribe.
 
@@ -93,7 +98,9 @@ class UniversalLogsListener(BaseTokenListener):
             token_callback: Callback function for new tokens
             match_string: Optional string to match in token name/symbol
             creator_address: Optional creator address to filter by
+            pool_callback: Called once per migrated mint; see BaseTokenListener
         """
+        self.pool_callback = pool_callback
         if not self.platform_parsers:
             logger.error("No platform parsers available. Cannot listen for tokens.")
             return
@@ -234,6 +241,9 @@ class UniversalLogsListener(BaseTokenListener):
             logs = log_data.get("logs", [])
             signature = log_data.get("signature", "unknown")
 
+            if self.pool_callback is not None:
+                await self._emit_pools(self._pools_from_logs(logs, signature))
+
             # Try each platform's event parser
             for platform, parser in self.platform_parsers.items():
                 token_info = parser.parse_token_creation_from_logs(logs, signature)
@@ -263,3 +273,10 @@ class UniversalLogsListener(BaseTokenListener):
             raise
 
         return None
+
+    def _pools_from_logs(self, logs: list[str], signature: str) -> list[PoolReady]:
+        """Pools a successful transaction's logs show a migration created."""
+        pools = []
+        for parser in self.platform_parsers.values():
+            pools += parser.parse_pools_ready_from_logs(logs, signature)
+        return pools

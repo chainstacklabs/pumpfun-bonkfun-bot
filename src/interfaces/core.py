@@ -117,6 +117,23 @@ class TokenInfo:
     additional_data: dict[str, Any] | None = None
 
 
+@dataclass(frozen=True)
+class PoolReady:
+    """A coin's bonding curve migrated, and the coin now trades in an AMM pool."""
+
+    platform: Platform
+    mint: Pubkey
+    pool: Pubkey
+    # The pool's quote mint; wrapped SOL for a SOL-paired coin.
+    quote_mint: Pubkey
+    signature: str
+    # True when read off the shreds stream before execution: the migration may
+    # still fail or be a no-op, and the pool may not exist yet. Read the pool
+    # before trading it.
+    pre_execution: bool = False
+    detection_timestamp: float | None = None
+
+
 class AddressProvider(ABC):
     """Abstract interface for platform-specific address management."""
 
@@ -596,3 +613,44 @@ class EventParser(ABC):
             List of discriminator bytes to match
         """
         pass
+
+    # Migration detection. A platform whose curves do not migrate, or whose
+    # migrations are not detected yet, keeps these defaults and never reports
+    # a pool.
+
+    def parse_pools_ready_from_logs(
+        self,
+        logs: list[str],  # noqa: ARG002
+        signature: str,  # noqa: ARG002
+    ) -> list[PoolReady]:
+        """Pools that a successful transaction's logs show a migration created.
+
+        The caller has already dropped failed transactions: a reverted
+        migration still leaves its logs.
+        """
+        return []
+
+    def parse_pool_ready_from_instruction(
+        self,
+        instruction_data: bytes,  # noqa: ARG002
+        accounts: list[int],  # noqa: ARG002
+        account_keys: list[bytes],  # noqa: ARG002
+        signature: str,  # noqa: ARG002
+    ) -> PoolReady | None:
+        """The pool a top-level migration instruction moves the curve into.
+
+        Read before execution, so the result has `pre_execution` set.
+        """
+        return None
+
+    def get_migration_instruction_discriminators(self) -> list[bytes]:
+        """Discriminators of the instructions that migrate a curve."""
+        return []
+
+    def get_migration_filter_accounts(self) -> list[Pubkey]:
+        """Accounts every migration names and no trade does.
+
+        The shreds listener subscribes on these, as it does on
+        `get_creation_filter_accounts` for creations.
+        """
+        return []

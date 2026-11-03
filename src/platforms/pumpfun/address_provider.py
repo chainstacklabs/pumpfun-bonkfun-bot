@@ -43,6 +43,8 @@ class PumpFunAddresses:
     MAYHEM_FEE: Final[Pubkey] = Pubkey.from_string(
         "GesfTA3X2arioaHp8bbKdjG9vJtskViWACZoYvxp4twS"
     )
+    # Global.withdraw_authority: account 1 of migrate and migrate_v2, and in no
+    # trade, so the shreds listener subscribes on it to see migrations.
     LIQUIDITY_MIGRATOR: Final[Pubkey] = Pubkey.from_string(
         "39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg"
     )

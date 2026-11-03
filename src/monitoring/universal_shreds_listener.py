@@ -25,12 +25,13 @@ instruction account indices resolve as they do on the executed stream.
 import asyncio
 from collections.abc import Awaitable, Callable
 
+import base58
 import grpc
 from solders.pubkey import Pubkey
 
 from geyser.generated import geyser_pb2, geyser_pb2_grpc, solana_storage_pb2
-from interfaces.core import EventParser, Platform, TokenInfo
-from monitoring.base_listener import BaseTokenListener
+from interfaces.core import EventParser, Platform, PoolReady, TokenInfo
+from monitoring.base_listener import BaseTokenListener, PoolCallback
 from platforms import platform_factory
 from utils.logger import get_logger
 
@@ -87,6 +88,8 @@ class UniversalShredsListener(BaseTokenListener):
         self.create_discriminators: dict[bytes, tuple[bytes, ...]] = {}
         # Flattened across platforms for the str.startswith prefix test.
         self.all_discriminators: tuple[bytes, ...] = ()
+        # The same prefix test for migrations, read only with a pool callback.
+        self.migration_discriminators: tuple[bytes, ...] = ()
 
         for platform in self.platforms:
             try:
@@ -122,6 +125,9 @@ class UniversalShredsListener(BaseTokenListener):
                 )
                 self.all_discriminators += tuple(
                     parser.get_instruction_discriminators()
+                )
+                self.migration_discriminators += tuple(
+                    parser.get_migration_instruction_discriminators()
                 )
 
                 logger.info(
@@ -177,6 +183,17 @@ class UniversalShredsListener(BaseTokenListener):
                 deshred_filter.account_include.append(str(account))
             deshred_filter.vote = False
 
+            # Migrations name none of the creation accounts, so they get their
+            # own filter, and only when something listens for them.
+            migration_accounts = parser.get_migration_filter_accounts()
+            if self.pool_callback is not None and migration_accounts:
+                migration_filter = request.deshred_transactions[
+                    f"platform_migrations_{platform.value}"
+                ]
+                for account in migration_accounts:
+                    migration_filter.account_include.append(str(account))
+                migration_filter.vote = False
+
         return request
 
     async def listen_for_tokens(
@@ -184,6 +201,7 @@ class UniversalShredsListener(BaseTokenListener):
         token_callback: Callable[[TokenInfo], Awaitable[None]],
         match_string: str | None = None,
         creator_address: str | None = None,
+        pool_callback: PoolCallback | None = None,
     ) -> None:
         """Listen for new token creations on the pre-execution deshred stream.
 
@@ -191,7 +209,10 @@ class UniversalShredsListener(BaseTokenListener):
             token_callback: Called with each detected token
             match_string: Optional substring to require in the name or symbol
             creator_address: Optional creator address to filter by
+            pool_callback: Called once per mint with a migration submitted;
+                its PoolReady has `pre_execution` set. See BaseTokenListener.
         """
+        self.pool_callback = pool_callback
         if not self.platform_parsers:
             logger.error("No platform parsers available. Cannot listen for tokens.")
             return
@@ -214,6 +235,7 @@ class UniversalShredsListener(BaseTokenListener):
 
                 try:
                     async for update in stub.SubscribeDeshred(iter([request])):
+                        await self._emit_pools(self._pools_from_update(update))
                         token_info = self._process_update(update)
                         if not token_info:
                             continue
@@ -333,6 +355,64 @@ class UniversalShredsListener(BaseTokenListener):
         except Exception:
             logger.exception("Error processing deshred update")
             return None
+
+    def _pools_from_update(
+        self, update: geyser_pb2.SubscribeUpdateDeshred
+    ) -> list[PoolReady]:
+        """Pools that top-level migration instructions in this update move into.
+
+        Pre-execution, so a migration that will fail or find the curve already
+        migrated is reported too; the listener reports each mint once, on the
+        first attempt it sees. A migration reached by CPI is invisible here,
+        as a create is. Empty without a pool callback: nothing is parsed then.
+        """
+        if self.pool_callback is None or not update.HasField("deshred_transaction"):
+            return []
+        transaction = update.deshred_transaction.transaction
+        message = getattr(transaction.transaction, "message", None)
+        if message is None:
+            return []
+        pools = []
+        try:
+            keys = None
+            for instruction in message.instructions:
+                parsers = self._migration_parsers(instruction, message.account_keys)
+                if not parsers:
+                    continue
+                if keys is None:
+                    keys = self._resolve_account_keys(transaction)
+                signature = base58.b58encode(transaction.signature).decode()
+                pool = next(
+                    (
+                        found
+                        for parser in parsers
+                        if (
+                            found := parser.parse_pool_ready_from_instruction(
+                                instruction.data, instruction.accounts, keys, signature
+                            )
+                        )
+                    ),
+                    None,
+                )
+                if pool is not None:
+                    pools.append(pool)
+        except Exception:
+            logger.exception("Error reading a migration from a deshred update")
+            return []
+        return pools
+
+    def _migration_parsers(
+        self,
+        instruction: solana_storage_pb2.CompiledInstruction,
+        static_keys: list[bytes],
+    ) -> list[EventParser]:
+        """Parsers of the program a migration-shaped instruction calls, if any."""
+        if not bytes(instruction.data).startswith(self.migration_discriminators):
+            return []
+        program_index = instruction.program_id_index
+        if program_index >= len(static_keys):
+            return []
+        return self.program_parsers.get(bytes(static_keys[program_index]), [])
 
     @staticmethod
     def _parse_with_any(

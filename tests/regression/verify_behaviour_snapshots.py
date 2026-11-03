@@ -20,7 +20,9 @@ over fixed inputs and compares the result with JSON snapshots committed under
      buys;
      StonkFun trade instructions and the fee
      and transfer-fee read for their pools; withheld fees in token accounts;
-     LaunchLab launches as the shreds listener decodes them pre-execution.
+     LaunchLab launches as the shreds listener decodes them pre-execution;
+     the pools pump.fun migrations created, from the logs and from each
+     top-level instruction.
      `creation_timestamp` is a monotonic clock reading and is left out.
   C. `exit_decisions.json`: `Position.should_exit` and `should_exit_on_time`
      at each point of a recorded pump.fun price series
@@ -70,6 +72,7 @@ from interfaces.core import (  # noqa: E402
     InstructionBuilder,
     Market,
     Platform,
+    PoolReady,
     TokenInfo,
 )
 from monitoring.universal_shreds_listener import UniversalShredsListener  # noqa: E402
@@ -87,6 +90,7 @@ from platforms.letsbonk import (  # noqa: E402
 )
 from platforms.pumpfun.address_provider import PumpFunAddressProvider  # noqa: E402
 from platforms.pumpfun.curve_manager import PumpFunCurveManager  # noqa: E402
+from platforms.pumpfun.event_parser import PumpFunEventParser  # noqa: E402
 from platforms.pumpfun.instruction_builder import (  # noqa: E402
     PumpFunInstructionBuilder,
 )
@@ -789,6 +793,52 @@ def _parse_token_accounts() -> dict:
     }
 
 
+def _parse_migrations() -> list[dict]:
+    """Pools pump.fun migrations created: from the logs, and from each
+    top-level instruction as the shreds listener reads it."""
+    parser = PumpFunEventParser(get_idl_manager().get_parser(Platform.PUMP_FUN))
+
+    def pool(found: PoolReady | None) -> dict | None:
+        if found is None:
+            return None
+        fields = _plain(found)
+        fields.pop("detection_timestamp")
+        return fields
+
+    out = []
+    for entry in _fixture("raw_pumpfun_migrations_from_gettransaction.json")[
+        "migrations"
+    ]:
+        tx = entry["get_transaction"]
+        keys = [base58.b58decode(key) for key in _keys(tx)]
+        from_logs = (
+            parser.parse_pools_ready_from_logs(
+                tx["meta"]["logMessages"], entry["signature"]
+            )
+            if tx["meta"]["err"] is None
+            else []
+        )
+        from_instructions = [
+            pool(
+                parser.parse_pool_ready_from_instruction(
+                    base58.b58decode(ix["data"]),
+                    ix["accounts"],
+                    keys,
+                    entry["signature"],
+                )
+            )
+            for ix in tx["transaction"]["message"]["instructions"]
+        ]
+        out.append(
+            {
+                "signature": entry["signature"],
+                "logs": [pool(found) for found in from_logs],
+                "instructions": from_instructions,
+            }
+        )
+    return out
+
+
 async def parse_fixtures() -> dict:
     """B: parser output for every raw_*.json fixture."""
     out = {
@@ -800,6 +850,7 @@ async def parse_fixtures() -> dict:
         "raw_launchlab_creates_from_deshred.json": _parse_deshred_launches(),
         "raw_pumpswap_buys_from_gettransaction.json": await _parse_pumpswap_buys(),
         "raw_cpmm_buys_from_gettransaction.json": await _parse_cpmm_buys(),
+        "raw_pumpfun_migrations_from_gettransaction.json": _parse_migrations(),
     }
     covered = set(out)
     present = {p.name for p in HERE.glob("raw_*.json")}
