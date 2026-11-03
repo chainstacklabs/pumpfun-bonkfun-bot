@@ -323,9 +323,12 @@ class Market(ABC):
         """Read the venue's current state.
 
         Returns:
-            At least `price_per_token`, in whole quote units per whole token.
-            An AMM pool also returns `fee_fraction`, the share of a sell's
-            proceeds taken as fees, and `pool`, its address.
+            `price_per_token`, in whole quote units per whole token. A curve
+            sets it to None when the quote mint's decimals are not cached or
+            the curve has graduated, so a venue whose state can hold None
+            overrides `get_price`. An AMM pool also returns `fee_fraction`,
+            the share of a sell's proceeds taken as fees, and `pool`, its
+            address.
 
         Raises:
             ValueError: If the venue does not exist yet — an AMM pool lands a

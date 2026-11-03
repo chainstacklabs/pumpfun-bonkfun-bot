@@ -45,6 +45,7 @@ from interfaces.core import (  # noqa: E402
     TradeFailureReason,
 )
 from platforms import PlatformImplementations  # noqa: E402
+from trading import trade_log  # noqa: E402
 from trading.base import TradeResult  # noqa: E402
 from trading.position_manager import PositionManager  # noqa: E402
 from trading.settings import DEFAULT_MAX_EXIT_SELL_ATTEMPTS  # noqa: E402
@@ -147,7 +148,7 @@ def _make_trader(
     trader.cleanup_force_close_with_burn = False
     trader.cleanups = []
     # Keep a verification run from writing to ./trades.
-    trader._log_trade = lambda *_args, **_kwargs: None  # noqa: SLF001
+    trade_log.log_trade = lambda *_args, **_kwargs: None
     return trader
 
 

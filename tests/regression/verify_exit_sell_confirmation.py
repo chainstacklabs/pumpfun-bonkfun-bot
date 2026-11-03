@@ -53,6 +53,7 @@ from interfaces.core import (  # noqa: E402
     TradeFailureReason,
 )
 from platforms import PlatformImplementations  # noqa: E402
+from trading import trade_log  # noqa: E402
 from trading.base import TradeResult  # noqa: E402
 from trading.platform_aware import PlatformAwareSeller  # noqa: E402
 from trading.position import Position  # noqa: E402
@@ -216,7 +217,7 @@ def _make_trader(seller: StubSeller, client: StubClient) -> PositionManager:
     trader.cleanup_mode = "disabled"  # keeps handle_cleanup_after_sell a no-op
     trader.cleanup_with_priority_fee = False
     trader.cleanup_force_close_with_burn = False
-    trader._log_trade = lambda *_a, **_kw: None  # noqa: SLF001
+    trade_log.log_trade = lambda *_a, **_kw: None
     return trader
 
 

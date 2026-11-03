@@ -10,6 +10,7 @@ from interfaces.core import (
     CurveManager,
     InstructionBuilder,
     Market,
+    Platform,
     TokenInfo,
 )
 
@@ -33,10 +34,16 @@ class CurveMarket(Market):
         return getattr(self.instruction_builder, "spends_exact_amount_in", False)
 
     def pool_address(self, token_info: TokenInfo) -> Pubkey:
-        """The coin's curve: from the listener when it gave one, else derived."""
-        if token_info.bonding_curve:
-            return token_info.bonding_curve
-        if token_info.pool_state:
+        """The coin's curve: from the listener when it gave one, else derived.
+
+        pump.fun's curve is `bonding_curve` and LaunchLab's is `pool_state`;
+        each platform reads only its own field, so a pump.fun coin that also
+        carries a `pool_state` (an AMM pool) is still traded on its curve.
+        """
+        if token_info.platform == Platform.PUMP_FUN:
+            if token_info.bonding_curve:
+                return token_info.bonding_curve
+        elif token_info.pool_state:
             return token_info.pool_state
         return self.address_provider.derive_pool_address(token_info.mint)
 

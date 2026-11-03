@@ -175,7 +175,7 @@ class PositionManager:
 
             if sell_result.success:
                 logger.info(f"Successfully sold {token_info.symbol}")
-                self._log_trade(
+                trade_log.log_trade(
                     "sell",
                     token_info,
                     sell_result.price,
@@ -515,7 +515,7 @@ class PositionManager:
             position.close_position(sell_result.price, exit_reason)
 
             logger.info(f"Successfully exited position: {exit_reason.value}")
-            self._log_trade(
+            trade_log.log_trade(
                 "sell",
                 token_info,
                 sell_result.price,
@@ -565,13 +565,3 @@ class PositionManager:
             self.cleanup_with_priority_fee,
             self.cleanup_force_close_with_burn,
         )
-
-    def _log_trade(
-        self,
-        action: str,
-        token_info: TokenInfo,
-        price: float,
-        amount: float,
-        tx_hash: str | None,
-    ) -> None:
-        trade_log.log_trade(action, token_info, price, amount, tx_hash)
