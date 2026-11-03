@@ -1,4 +1,6 @@
 trades/*
+# open positions, resumed on restart; written by the bot
+positions/
 # written by learning-examples/extract_blocksubscribe_transactions.py
 blocksubscribe-transactions/
 

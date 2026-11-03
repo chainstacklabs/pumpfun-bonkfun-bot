@@ -107,7 +107,9 @@ class _Run:
             success=True, price=1.0, amount=1.0, amount_raw=1, tx_signature="sig"
         )
 
-    async def _manage(self, token_info: TokenInfo, _buy: TradeResult) -> None:
+    async def _manage(
+        self, token_info: TokenInfo, _buy: TradeResult, **_kwargs: object
+    ) -> None:
         symbol = token_info.symbol
         self.active += 1
         self.peak = max(self.peak, self.active)

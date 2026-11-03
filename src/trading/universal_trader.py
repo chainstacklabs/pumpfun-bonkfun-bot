@@ -4,7 +4,8 @@ The trader wires three parts together and owns the session around them:
 `TokenIntake` finds coins, the buyer and seller in `platform_aware` trade them,
 and `PositionManager` holds each one until its exit strategy closes it. Coins
 are bought one after another; each position then runs as its own task, and the
-next coin is taken once fewer than `max_open_positions` are open.
+next coin is taken once fewer than `max_open_positions` are open. Positions a
+previous run left open are resumed first and count toward that limit.
 """
 
 import asyncio
@@ -37,6 +38,7 @@ from trading.intake import TokenIntake
 from trading.migration import MigrationResolver
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
 from trading.position_manager import PositionManager
+from trading.position_store import PositionStore
 from trading.settings import TraderSettings, entry_error
 from utils.logger import get_logger
 
@@ -207,6 +209,11 @@ class UniversalTrader:
             wallet=self.wallet,
             priority_fee_manager=self.priority_fee_manager,
             platform_implementations=self.platform_implementations,
+            store=(
+                PositionStore(settings.positions_file)
+                if settings.positions_file
+                else None
+            ),
         )
 
         self.extreme_fast_mode = settings.extreme_fast_mode
@@ -287,6 +294,15 @@ class UniversalTrader:
         await self._resolve_quote_token_programs()
 
         try:
+            for token_info in await positions.resume():
+                self._track_traded(token_info)
+            # Every coin left in the file may still be held, monitored or not:
+            # the intake must not buy it again, e.g. when it migrates under
+            # `entry: migration`, or the new buy would replace its record.
+            intake.processed_tokens.update(positions.stored_mints())
+            # Resumed positions hold slots like any other.
+            await positions.wait_for_free_slot()
+
             # Choose operating mode based on yolo_mode
             if not self.yolo_mode:
                 # Single token mode: process one token and exit
@@ -303,6 +319,8 @@ class UniversalTrader:
                     await positions.wait_all()
                     logger.info("Finished processing single token. Exiting...")
                 else:
+                    # Resumed positions still run to their exit.
+                    await positions.wait_all()
                     logger.info(
                         f"No suitable token found within timeout period ({intake.token_wait_timeout}s). Exiting..."
                     )
@@ -465,13 +483,16 @@ class UniversalTrader:
             buy_result.amount,
             buy_result.tx_signature,
         )
-        self.traded_mints.add(token_info.mint)
-        # Track token program for cleanup
-        mint_str = str(token_info.mint)
-        if token_info.token_program_id:
-            self.traded_token_programs[mint_str] = token_info.token_program_id
-
+        self._track_traded(token_info)
         self.positions.open(token_info, buy_result)
+
+    def _track_traded(self, token_info: TokenInfo) -> None:
+        """Remember a coin held this session, for post-session cleanup."""
+        self.traded_mints.add(token_info.mint)
+        if token_info.token_program_id:
+            self.traded_token_programs[str(token_info.mint)] = (
+                token_info.token_program_id
+            )
 
     async def _handle_failed_buy(
         self, token_info: TokenInfo, buy_result: TradeResult

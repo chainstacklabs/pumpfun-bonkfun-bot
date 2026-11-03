@@ -106,3 +106,7 @@ class TraderSettings:
     # "buy", "sell" and "account_data_size" overrides; empty uses the venue's.
     compute_units: dict | None = None
     max_rps: float = 25.0
+
+    # Where open positions are kept across restarts; None keeps them in memory
+    # only. bot_runner sets `positions/<bot name>.json`.
+    positions_file: str | None = None

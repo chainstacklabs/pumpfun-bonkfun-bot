@@ -163,7 +163,44 @@ the next one is taken when a position closes. A coin detected while every slot i
 taken waits in the queue, so `max_token_age` decides whether it is still bought.
 Positions under `exit_strategy: manual` or `marry_mode` are never sold, so they
 take no slot. On shutdown the bot stops monitoring the open positions before
-cleanup runs; their tokens stay in the wallet.
+cleanup runs; their tokens stay in the wallet, and the next start resumes them.
+
+### Positions survive a restart
+
+Each position the bot monitors (`tp_sl` or `time_based`) is written to
+`positions/<bot name>.json` when its buy lands and removed once it is sold. On
+start the bot reads that file and resumes each position before it takes a new
+coin, with the bot's current exit strategy: `max_hold_time` and `wait_after_buy`
+count from the original buy, take profit and stop loss from its entry price.
+Resumed positions take slots like any other. If the file holds more than
+`max_open_positions` (the limit was lowered), all of them are resumed, since
+their coins are already in the wallet, and no new coin is taken until the count
+is below the limit again. A resumed `time_based` position whose wait has run out
+sells at once, priced at the market rather than at its old buy price.
+
+The wallet decides what is left to sell. A position whose coin the wallet no
+longer holds (sold by hand, or burned by `post_session` cleanup with
+`force_close_with_burn`) is cleared, not sold again; one holding less than was
+bought sells what is held. The bot clears a position only when three balance
+reads, a second apart, all find nothing, since an RPC node lagging behind may
+not show a fresh buy yet. A position whose balance cannot be read stays in the
+file and is tried again on the next start, and so does one whose exit gave up.
+Delete an entry from the file to stop the bot managing that coin.
+
+The file is named after the bot's `name`, with any character other than letters,
+digits, `.`, `_` and `-` replaced by `_`. Names that differ only in case share a
+file, as they do on macOS and Windows. Enabled bots in `bots/` that would share
+a file all start: the one whose config file name sorts first keeps
+`positions/<name>.json`, each other gets `positions/<name>@<config file>.json`
+(with `-2`, `-3`, ... added if two config file names map to one file) and a
+warning. So a bot keeps its file when a second bot with its name is added in a
+config file that sorts after it. If the plain file holds positions when a bot
+does not get it, a second warning names the file: that bot does not manage
+those positions. Give each bot its own name to avoid this. Renaming a bot
+leaves its old file behind; rename the file too. A position bought on another
+`platform` than the bot's current one stays in the file and is not monitored.
+No coin in the file is bought again, monitored or not. A file the bot cannot
+read is moved aside to `<name>.json.unreadable`.
 
 ### Encrypted wallet
 

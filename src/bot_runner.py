@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import multiprocessing
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -32,6 +33,7 @@ from config_loader import (
 from core.keystore import KeystoreError, keystore_private_key, password_from_env
 from core.wallet import Wallet
 from interfaces.core import Platform
+from trading.position_store import holds_positions
 from trading.settings import DEFAULT_MAX_EXIT_SELL_ATTEMPTS, TraderSettings
 from trading.universal_trader import UniversalTrader
 from utils.logger import (
@@ -55,8 +57,27 @@ def setup_logging(bot_name: str):
     setup_file_logging(str(log_filename))
 
 
-def build_trader_settings(cfg: dict, platform: Platform) -> TraderSettings:
-    """Turn a loaded bot config into the trader's settings, filling in defaults."""
+def positions_file_for(name: str | None, config_file: str | None = None) -> str | None:
+    """`positions/<name>.json`, or `<name>@<config_file>.json`; None without a name.
+
+    Characters other than letters, digits, `.`, `_` and `-` become `_`, so a
+    name such as `../x` stays a single file inside `positions/`, and no bot's
+    own file can be another's `<name>@<config_file>.json`.
+    """
+    if not name:
+        return None
+    parts = [name] if config_file is None else [name, config_file]
+    stem = "@".join(re.sub(r"[^A-Za-z0-9._-]", "_", str(part)) for part in parts)
+    return f"positions/{stem}.json"
+
+
+def build_trader_settings(
+    cfg: dict, platform: Platform, positions_file: str | None = None
+) -> TraderSettings:
+    """Turn a loaded bot config into the trader's settings, filling in defaults.
+
+    `positions_file` overrides the one named after the bot.
+    """
     return TraderSettings(
         # Connection settings
         rpc_endpoint=cfg["rpc_endpoint"],
@@ -131,6 +152,8 @@ def build_trader_settings(cfg: dict, platform: Platform) -> TraderSettings:
         compute_units=cfg.get("compute_units", {}),
         # Node provider configuration
         max_rps=cfg.get("node", {}).get("max_rps", 25),
+        # Open positions, resumed on the next start
+        positions_file=positions_file or positions_file_for(cfg.get("name")),
     )
 
 
@@ -150,7 +173,7 @@ def unlock_keystore(cfg: dict) -> None:
     logger.info(f"Wallet {Wallet(private_key).pubkey} unlocked from keystore {path}")
 
 
-async def start_bot(config_path: str):
+async def start_bot(config_path: str, positions_file: str | None = None):
     """Start a trading bot with the configuration from the specified path."""
     cfg = load_bot_config(config_path)
     setup_logging(cfg["name"])
@@ -197,7 +220,7 @@ async def start_bot(config_path: str):
 
     # Initialize universal trader with platform-specific configuration
     try:
-        trader = UniversalTrader(build_trader_settings(cfg, platform))
+        trader = UniversalTrader(build_trader_settings(cfg, platform, positions_file))
 
         await trader.start()
 
@@ -206,8 +229,79 @@ async def start_bot(config_path: str):
         raise
 
 
-def run_bot_process(config_path):
-    asyncio.run(start_bot(config_path))
+def run_bot_process(config_path, positions_file: str | None = None):
+    asyncio.run(start_bot(config_path, positions_file))
+
+
+def _startable_platform(cfg: dict, bot_name: str) -> Platform | None:
+    """The bot's platform, or None (with the reason logged) when it cannot run."""
+    try:
+        platform = get_platform_from_config(cfg)
+
+        # Check platform support
+        from platforms import platform_factory
+
+        if not platform_factory.registry.is_platform_supported(platform):
+            logging.error(
+                f"Platform {platform.value} is not supported for bot '{bot_name}'. Available platforms: {[p.value for p in platform_factory.get_supported_platforms()]}"
+            )
+            return None
+
+        # Validate listener compatibility
+        listener_type = cfg["filters"]["listener_type"]
+        if not validate_platform_listener_combination(platform, listener_type):
+            from config_loader import get_supported_listeners_for_platform
+
+            supported = get_supported_listeners_for_platform(platform)
+            logging.error(
+                f"Listener '{listener_type}' is not compatible with platform '{platform.value}' for bot '{bot_name}'. Supported listeners: {supported}"
+            )
+            return None
+
+    except Exception as e:
+        logging.exception(
+            f"Invalid platform configuration for bot '{bot_name}': {e}. Skipping..."
+        )
+        return None
+    return platform
+
+
+def _shared_positions_files(bots: list[tuple[Path, dict]]) -> dict[Path, str]:
+    """A positions file of its own for each starting bot whose name another uses.
+
+    The name keys a bot's positions file, and two bots writing one file would
+    overwrite each other's open positions. Files are compared ignoring case, as
+    on macOS and Windows. Of the bots sharing a file, the one whose config file
+    sorts first keeps it; each other still starts, with its config file's name
+    added: `positions/<name>@<config file>.json`, then `-2`, `-3`, ... if that
+    is taken too.
+    """
+    taken: dict[str, Path] = {}  # casefolded positions file -> config file
+    own = {}
+    for file, cfg in sorted(bots, key=lambda bot: str(bot[0])):
+        name = cfg.get("name")
+        plain = positions_file_for(name)
+        if plain is None:
+            continue
+        if plain.casefold() not in taken:
+            taken[plain.casefold()] = file
+            continue
+        path, n = positions_file_for(name, file.stem), 1
+        while path.casefold() in taken:
+            n += 1
+            path = positions_file_for(name, f"{file.stem}-{n}")
+        taken[path.casefold()] = file
+        own[file] = path
+        logging.warning(
+            f"Bot '{name}' in {file} would share {plain} with "
+            f"{taken[plain.casefold()]}; its open positions are kept in {path} instead"
+        )
+        if holds_positions(plain):
+            logging.warning(
+                f"{plain} holds open positions that bot '{name}' in {file} does "
+                f"not manage: it keeps its own in {path}"
+            )
+    return own
 
 
 def run_all_bots():
@@ -217,7 +311,7 @@ def run_all_bots():
         logging.error(f"Bot directory '{bot_dir}' not found")
         return
 
-    bot_files = list(bot_dir.glob("*.yaml"))
+    bot_files = sorted(bot_dir.glob("*.yaml"))
     if not bot_files:
         logging.error(f"No bot configuration files found in '{bot_dir}'")
         return
@@ -227,6 +321,8 @@ def run_all_bots():
     processes = []
     skipped_bots = 0
 
+    # Check every file first, so bots sharing a name are known before any starts.
+    startable: list[tuple[Path, dict, Platform]] = []
     for file in bot_files:
         try:
             cfg = load_bot_config(str(file))
@@ -238,46 +334,31 @@ def run_all_bots():
                 skipped_bots += 1
                 continue
 
-            # Validate platform configuration
-            try:
-                platform = get_platform_from_config(cfg)
-
-                # Check platform support
-                from platforms import platform_factory
-
-                if not platform_factory.registry.is_platform_supported(platform):
-                    logging.error(
-                        f"Platform {platform.value} is not supported for bot '{bot_name}'. Available platforms: {[p.value for p in platform_factory.get_supported_platforms()]}"
-                    )
-                    skipped_bots += 1
-                    continue
-
-                # Validate listener compatibility
-                listener_type = cfg["filters"]["listener_type"]
-                if not validate_platform_listener_combination(platform, listener_type):
-                    from config_loader import get_supported_listeners_for_platform
-
-                    supported = get_supported_listeners_for_platform(platform)
-                    logging.error(
-                        f"Listener '{listener_type}' is not compatible with platform '{platform.value}' for bot '{bot_name}'. Supported listeners: {supported}"
-                    )
-                    skipped_bots += 1
-                    continue
-
-            except Exception as e:
-                logging.exception(
-                    f"Invalid platform configuration for bot '{bot_name}': {e}. Skipping..."
-                )
+            platform = _startable_platform(cfg, bot_name)
+            if platform is None:
                 skipped_bots += 1
                 continue
+            startable.append((file, cfg, platform))
 
+        except Exception:
+            logging.exception(f"Failed to load bot from {file}")
+            skipped_bots += 1
+
+    positions_files = _shared_positions_files([(f, cfg) for f, cfg, _ in startable])
+
+    for file, cfg, platform in startable:
+        bot_name = cfg.get("name", file.stem)
+        positions_file = positions_files.get(file)
+        try:
             # Start bot in separate process or main process
             if cfg.get("separate_process", False):
                 logging.info(
                     f"Starting bot '{bot_name}' ({platform.value}) in separate process"
                 )
                 p = multiprocessing.Process(
-                    target=run_bot_process, args=(str(file),), name=f"bot-{bot_name}"
+                    target=run_bot_process,
+                    args=(str(file), positions_file),
+                    name=f"bot-{bot_name}",
                 )
                 p.start()
                 processes.append(p)
@@ -285,7 +366,7 @@ def run_all_bots():
                 logging.info(
                     f"Starting bot '{bot_name}' ({platform.value}) in main process"
                 )
-                asyncio.run(start_bot(str(file)))
+                asyncio.run(start_bot(str(file), positions_file))
 
         except Exception as e:
             logging.exception(f"Failed to start bot from {file}: {e}")
