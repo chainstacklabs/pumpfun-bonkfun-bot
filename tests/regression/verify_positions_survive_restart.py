@@ -895,16 +895,35 @@ def _run_all_bots_started(
     async def start_bot(config_path: str, positions_file: str | None = None) -> None:
         started.append((Path(config_path).stem, positions_file))
 
-    originals = (bot_runner.load_bot_config, bot_runner.start_bot)
+    class _Process:  # `separate_process: true`, run in place
+        def __init__(self, target: Callable, args: tuple, name: str) -> None:
+            self.target, self.args, self.name = target, args, name
+
+        def start(self) -> None:
+            self.target(*self.args)
+
+        def join(self) -> None:
+            return None
+
+    originals = (
+        bot_runner.load_bot_config,
+        bot_runner.start_bot,
+        bot_runner.multiprocessing,
+    )
     bot_runner.load_bot_config = lambda config_path: configs[Path(config_path).stem]
     bot_runner.start_bot = start_bot
+    bot_runner.multiprocessing = SimpleNamespace(Process=_Process)
     cwd = Path.cwd()
     os.chdir(tmp)
     try:
         bot_runner.run_all_bots()
     finally:
         os.chdir(cwd)
-        bot_runner.load_bot_config, bot_runner.start_bot = originals
+        (
+            bot_runner.load_bot_config,
+            bot_runner.start_bot,
+            bot_runner.multiprocessing,
+        ) = originals
     return started
 
 
@@ -987,7 +1006,7 @@ def check_l_runner_and_gitignore(tmp: Path) -> bool:
         {
             "a": bot("x", enabled=False),
             "b": bot("x"),
-            "c": bot("x"),
+            "c": {**bot("x"), "separate_process": True},
             "d": bot("y"),
             "e": bot("y", listener="no-such-listener"),  # never starts
             "f": bot("z/1"),
