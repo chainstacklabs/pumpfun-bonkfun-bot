@@ -237,13 +237,13 @@ class PlatformFactory:
         # Raydium LaunchLab, every platform config; letsbonk.fun and StonkFun
         # below are the same classes narrowed to their own configs.
         try:
-            from platforms.launchlab import (
+            from platforms.launchlab import (  # noqa: PLC0415
                 LaunchLabAddressProvider,
                 LaunchLabCurveManager,
                 LaunchLabEventParser,
                 LaunchLabInstructionBuilder,
             )
-            from platforms.launchlab.cpmm_market import CpmmMarket
+            from platforms.launchlab.cpmm_market import CpmmMarket  # noqa: PLC0415
 
             self.registry.register_platform(
                 Platform.LAUNCHLAB,
