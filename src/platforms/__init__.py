@@ -271,60 +271,6 @@ class PlatformFactory:
         """
         return self.registry.create_platform_implementations(platform, client, **config)
 
-    def get_address_provider(
-        self, platform: Platform, client: SolanaClient
-    ) -> AddressProvider:
-        """Get address provider for platform.
-
-        Args:
-            platform: Platform to get provider for
-            client: Solana RPC client
-        """
-        implementations = self.registry.create_platform_implementations(
-            platform, client
-        )
-        return implementations.address_provider
-
-    def get_instruction_builder(
-        self, platform: Platform, client: SolanaClient
-    ) -> InstructionBuilder:
-        """Get instruction builder for platform.
-
-        Args:
-            platform: Platform to get builder for
-            client: Solana RPC client
-        """
-        implementations = self.registry.create_platform_implementations(
-            platform, client
-        )
-        return implementations.instruction_builder
-
-    def get_curve_manager(
-        self, platform: Platform, client: SolanaClient
-    ) -> CurveManager:
-        """Get curve manager for platform.
-
-        Args:
-            platform: Platform to get manager for
-            client: Solana RPC client
-        """
-        implementations = self.registry.create_platform_implementations(
-            platform, client
-        )
-        return implementations.curve_manager
-
-    def get_event_parser(self, platform: Platform, client: SolanaClient) -> EventParser:
-        """Get event parser for platform.
-
-        Args:
-            platform: Platform to get parser for
-            client: Solana RPC client
-        """
-        implementations = self.registry.create_platform_implementations(
-            platform, client
-        )
-        return implementations.event_parser
-
     def get_supported_platforms(self) -> list[Platform]:
         """Get list of supported platforms."""
         return self.registry.get_supported_platforms()

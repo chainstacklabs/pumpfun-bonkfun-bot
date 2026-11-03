@@ -72,9 +72,8 @@ class PumpFunAddresses:
         Pubkey.from_string("463MEnMeGyJekNZFQSTUABBEbLnvMTALbT6ZmsxAbAdq"),
         Pubkey.from_string("6AUH3WEHucYZyC61hqpqYUWVto5qA5hjHuNQ32GNnNxA"),
     ]
-    # 8 buyback fee recipients — one is required on every buy/sell, for every
-    # coin. Appended (mutable) after bonding-curve-v2 on the legacy buy/sell; on
-    # buy_v2/sell_v2 they are the buyback_fee_recipient account.
+    # 8 buyback fee recipients — one is the buyback_fee_recipient account of
+    # every buy_v2/sell_v2, for every coin.
     # See FEE_RECIPIENTS.md in the pump-fun public docs repository.
     BUYBACK_FEE_RECIPIENTS: ClassVar[list[Pubkey]] = [
         Pubkey.from_string("5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD"),
@@ -86,8 +85,6 @@ class PumpFunAddresses:
         Pubkey.from_string("5eHhjP8JaYkz83CWwvGU2uMUXefd3AazWGx4gpcuEEYD"),
         Pubkey.from_string("A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW"),
     ]
-    # Back-compat alias for the pre-v2 naming used by the legacy buy/sell path.
-    BREAKING_FEE_RECIPIENTS: ClassVar[list[Pubkey]] = BUYBACK_FEE_RECIPIENTS
 
     @staticmethod
     def pick_buyback_fee_recipient() -> Pubkey:
@@ -96,11 +93,6 @@ class PumpFunAddresses:
         Spreads load across recipients per pump.fun's recommendation.
         """
         return secrets.choice(PumpFunAddresses.BUYBACK_FEE_RECIPIENTS)
-
-    @staticmethod
-    def pick_breaking_fee_recipient() -> Pubkey:
-        """Deprecated alias for :meth:`pick_buyback_fee_recipient`."""
-        return PumpFunAddresses.pick_buyback_fee_recipient()
 
     @staticmethod
     def find_sharing_config(base_mint: Pubkey) -> Pubkey:
@@ -169,22 +161,6 @@ class PumpFunAddresses:
         """
         derived_address, _ = Pubkey.find_program_address(
             [b"user_volume_accumulator", bytes(user)],
-            PumpFunAddresses.PROGRAM,
-        )
-        return derived_address
-
-    @staticmethod
-    def find_bonding_curve_v2(mint: Pubkey) -> Pubkey:
-        """Derive the bonding curve v2 PDA for a token mint.
-
-        Args:
-            mint: Token mint address
-
-        Returns:
-            Pubkey of the derived bonding curve v2 account
-        """
-        derived_address, _ = Pubkey.find_program_address(
-            [b"bonding-curve-v2", bytes(mint)],
             PumpFunAddresses.PROGRAM,
         )
         return derived_address
@@ -357,17 +333,6 @@ class PumpFunAddressProvider(AddressProvider):
         """Derive the user volume accumulator PDA."""
         return PumpFunAddresses.find_user_volume_accumulator(user)
 
-    def derive_bonding_curve_v2(self, mint: Pubkey) -> Pubkey:
-        """Derive the bonding curve v2 PDA for a token mint.
-
-        Args:
-            mint: Token mint address
-
-        Returns:
-            Bonding curve v2 address
-        """
-        return PumpFunAddresses.find_bonding_curve_v2(mint)
-
     def derive_fee_config(self) -> Pubkey:
         """Derive the fee config PDA."""
         return PumpFunAddresses.find_fee_config()
@@ -529,106 +494,3 @@ class PumpFunAddressProvider(AddressProvider):
         if token_info.is_mayhem_mode:
             return PumpFunAddresses.MAYHEM_FEE
         return PumpFunAddresses.FEE
-
-    def get_buy_instruction_accounts(
-        self, token_info: TokenInfo, user: Pubkey
-    ) -> dict[str, Pubkey]:
-        """Get all accounts needed for a buy instruction.
-
-        Args:
-            user: User's wallet address
-
-        Returns:
-            Dictionary of account addresses for buy instruction
-        """
-        additional_accounts = self.get_additional_accounts(token_info)
-
-        # Determine token program to use
-        token_program_id = (
-            token_info.token_program_id
-            if token_info.token_program_id
-            else SystemAddresses.TOKEN_PROGRAM
-        )
-
-        # Determine fee recipient based on mayhem mode
-        fee_recipient = self.get_fee_recipient(token_info)
-
-        return {
-            "global": PumpFunAddresses.GLOBAL,
-            "fee": fee_recipient,
-            "mint": token_info.mint,
-            "bonding_curve": additional_accounts.get(
-                "bonding_curve", token_info.bonding_curve
-            ),
-            "associated_bonding_curve": additional_accounts.get(
-                "associated_bonding_curve", token_info.associated_bonding_curve
-            ),
-            "user_token_account": self.derive_user_token_account(
-                user, token_info.mint, token_program_id
-            ),
-            "user": user,
-            "system_program": SystemAddresses.SYSTEM_PROGRAM,
-            "token_program": token_program_id,
-            "creator_vault": additional_accounts.get(
-                "creator_vault", token_info.creator_vault
-            ),
-            "event_authority": PumpFunAddresses.EVENT_AUTHORITY,
-            "program": PumpFunAddresses.PROGRAM,
-            "global_volume_accumulator": self.derive_global_volume_accumulator(),
-            "user_volume_accumulator": self.derive_user_volume_accumulator(user),
-            "fee_config": self.derive_fee_config(),
-            "fee_program": PumpFunAddresses.FEE_PROGRAM,
-            "bonding_curve_v2": self.derive_bonding_curve_v2(token_info.mint),
-            "breaking_fee_recipient": PumpFunAddresses.pick_breaking_fee_recipient(),
-        }
-
-    def get_sell_instruction_accounts(
-        self, token_info: TokenInfo, user: Pubkey
-    ) -> dict[str, Pubkey]:
-        """Get all accounts needed for a sell instruction.
-
-        Args:
-            user: User's wallet address
-
-        Returns:
-            Dictionary of account addresses for sell instruction
-        """
-        additional_accounts = self.get_additional_accounts(token_info)
-
-        # Determine token program to use
-        token_program_id = (
-            token_info.token_program_id
-            if token_info.token_program_id
-            else SystemAddresses.TOKEN_PROGRAM
-        )
-
-        # Determine fee recipient based on mayhem mode
-        fee_recipient = self.get_fee_recipient(token_info)
-
-        return {
-            "global": PumpFunAddresses.GLOBAL,
-            "fee": fee_recipient,
-            "mint": token_info.mint,
-            "bonding_curve": additional_accounts.get(
-                "bonding_curve", token_info.bonding_curve
-            ),
-            "associated_bonding_curve": additional_accounts.get(
-                "associated_bonding_curve", token_info.associated_bonding_curve
-            ),
-            "user_token_account": self.derive_user_token_account(
-                user, token_info.mint, token_program_id
-            ),
-            "user": user,
-            "system_program": SystemAddresses.SYSTEM_PROGRAM,
-            "creator_vault": additional_accounts.get(
-                "creator_vault", token_info.creator_vault
-            ),
-            "token_program": token_program_id,
-            "event_authority": PumpFunAddresses.EVENT_AUTHORITY,
-            "program": PumpFunAddresses.PROGRAM,
-            "fee_config": self.derive_fee_config(),
-            "fee_program": PumpFunAddresses.FEE_PROGRAM,
-            "bonding_curve_v2": self.derive_bonding_curve_v2(token_info.mint),
-            "user_volume_accumulator": self.derive_user_volume_accumulator(user),
-            "breaking_fee_recipient": PumpFunAddresses.pick_breaking_fee_recipient(),
-        }

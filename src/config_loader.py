@@ -91,7 +91,8 @@ VALID_VALUES = {
     "platform": ["pump_fun", "lets_bonk", "stonk_fun"],
 }
 
-# Platform-specific listener compatibility
+# Which listeners each platform supports. The one copy: config validation,
+# bot_runner and tools/live_listener_matrix.py all read it.
 PLATFORM_LISTENER_COMPATIBILITY = {
     Platform.PUMP_FUN: ["logs", "blocks", "geyser", "shreds"],
     Platform.LETS_BONK: ["blocks", "geyser"],
@@ -319,23 +320,6 @@ def get_supported_listeners_for_platform(platform: Platform) -> list[str]:
         platform: Platform enum
     """
     return PLATFORM_LISTENER_COMPATIBILITY.get(platform, [])
-
-
-def get_platform_specific_required_config(platform: Platform) -> list[str]:
-    """Get platform-specific required configuration paths.
-
-    Args:
-        platform: Platform enum
-
-    Returns:
-        List of additional required config paths for the platform
-    """
-    if platform == Platform.PUMP_FUN:
-        return []  # No additional requirements
-    elif platform == Platform.LETS_BONK:
-        return []  # No additional requirements yet
-    else:
-        return []
 
 
 def print_config_summary(config: dict) -> None:
