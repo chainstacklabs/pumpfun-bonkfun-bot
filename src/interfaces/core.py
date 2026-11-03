@@ -331,8 +331,7 @@ class Market(ABC):
             sets it to None when the quote mint's decimals are not cached or
             the curve has graduated, so a venue whose state can hold None
             overrides `get_price`. An AMM pool also returns `fee_fraction`,
-            the share of a sell's proceeds taken as fees, and `pool`, its
-            address.
+            the share of a trade taken as fees, and `pool`, its address.
 
         Raises:
             ValueError: If the venue does not exist yet — an AMM pool lands a

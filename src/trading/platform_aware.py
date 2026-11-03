@@ -268,13 +268,19 @@ class PlatformAwareBuyer(Trader):
             if pool_state.get("graduated"):
                 venue = implementations.graduated_market
                 unavailable = None
+                # A transfer fee is the coin's, not the venue's: the pool's
+                # state does not carry it, the curve's does.
+                transfer_fee_bps = pool_state.get("transfer_fee_bps", 0)
                 if venue is None:
                     unavailable = (
                         f"no post-graduation market for {token_info.platform.value}"
                     )
                 else:
                     try:
-                        pool_state = await venue.get_market_state(token_info)
+                        pool_state = {
+                            "transfer_fee_bps": transfer_fee_bps,
+                            **await venue.get_market_state(token_info),
+                        }
                     except ValueError as e:
                         unavailable = str(e)
                 if unavailable is not None:
@@ -304,8 +310,8 @@ class PlatformAwareBuyer(Trader):
                     )
                 token_amount = quote_amount / token_price_sol
                 # LaunchLab and the AMM pools take their fee from the spend and,
-                # on a reward coin, LaunchLab withholds the transfer fee from
-                # the tokens delivered.
+                # on a transfer-fee coin, Token-2022 withholds the transfer fee
+                # from the tokens delivered, on the curve and in the pool alike.
                 # Both are known, so leave them out of the expected amount
                 # rather than spending slippage tolerance on them.
                 token_amount *= 1 - pool_state.get("fee_fraction", 0.0)
