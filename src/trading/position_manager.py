@@ -1,6 +1,7 @@
 """Position manager: holds a bought coin until its exit strategy closes it.
 
 Monitoring, the exit strategies, bounded exit retries and post-exit cleanup.
+Each position runs as its own task, up to `trade.max_open_positions` at once.
 """
 
 import asyncio
@@ -72,6 +73,9 @@ def _exit_sell_verdict_for(reason: TradeFailureReason | None) -> ExitSellVerdict
 class PositionManager:
     """Runs the configured exit strategy for each coin the buyer bought."""
 
+    #: Seconds `stop` waits for the cancelled position tasks to end.
+    _STOP_BUDGET = 30.0
+
     def __init__(  # noqa: PLR0913
         self,
         settings: TraderSettings,
@@ -106,6 +110,83 @@ class PositionManager:
 
         # Coins whose graduation has been logged, so it is said once.
         self._graduated_mints: set[Pubkey] = set()
+
+        # Clamped like the attempt cap: below 1 no coin would ever be taken.
+        self.max_open_positions = max(1, settings.max_open_positions)
+        # One task per position still running its exit strategy.
+        self._open: set[asyncio.Task] = set()
+
+    @property
+    def open_count(self) -> int:
+        """Positions whose exit strategy is still running."""
+        return sum(not task.done() for task in self._open)
+
+    def open(self, token_info: TokenInfo, buy_result: TradeResult) -> asyncio.Task:
+        """Start holding a bought coin in its own task and return at once.
+
+        The task never raises: an error in the exit strategy is logged and ends
+        that position only.
+        """
+        task = asyncio.create_task(
+            self._hold(token_info, buy_result), name=f"position-{token_info.mint}"
+        )
+        self._open.add(task)
+        task.add_done_callback(self._open.discard)
+        return task
+
+    async def _hold(self, token_info: TokenInfo, buy_result: TradeResult) -> None:
+        try:
+            await self.manage(token_info, buy_result)
+        except Exception:
+            logger.exception(f"Error managing position in {token_info.symbol}")
+
+    async def wait_for_free_slot(self) -> None:
+        """Return once fewer than `max_open_positions` positions are open."""
+        if self.open_count >= self.max_open_positions > 1:
+            logger.info(
+                f"{self.open_count} positions open (max_open_positions "
+                f"{self.max_open_positions}); waiting for one to close"
+            )
+        while self.open_count >= self.max_open_positions:
+            await asyncio.wait(set(self._open), return_when=asyncio.FIRST_COMPLETED)
+
+    async def wait_all(self) -> None:
+        """Wait until every open position has run its exit strategy to the end."""
+        while self.open_count:
+            await asyncio.wait(set(self._open))
+
+    async def stop(self) -> None:
+        """Stop every open position and wait until each task has ended.
+
+        Shutdown cleanup closes token accounts, burning what is left with
+        `force_close_with_burn`, so it must not start while a position may
+        still sell. Runs to the end through a cancellation of its caller, bounded
+        by `_STOP_BUDGET`; the coins stay in the wallet.
+        """
+        tasks = {task for task in self._open if not task.done()}
+        if not tasks:
+            return
+        logger.info(
+            f"Stopping {len(tasks)} open position(s); their tokens stay in the wallet"
+        )
+        for task in tasks:
+            task.cancel()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._STOP_BUDGET
+        while not all(task.done() for task in tasks):
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                logger.warning(
+                    f"{sum(not t.done() for t in tasks)} position task(s) did not "
+                    f"stop within {self._STOP_BUDGET}s"
+                )
+                return
+            try:
+                await asyncio.wait(tasks, timeout=remaining)
+            except asyncio.CancelledError:
+                # The shutdown arriving again; the tasks are already cancelled
+                # and cleanup still has to run after them.
+                continue
 
     async def manage(self, token_info: TokenInfo, buy_result: TradeResult) -> None:
         """Hold a bought coin until its exit strategy is done with it."""
@@ -349,7 +430,8 @@ class PositionManager:
     ) -> None:
         """Monitor a position until exit conditions are met."""
         logger.info(
-            f"Starting position monitoring (check interval: {self.price_check_interval}s)"
+            f"Starting position monitoring for {token_info.symbol} "
+            f"(check interval: {self.price_check_interval}s)"
         )
 
         exit_sell_attempts = 0
@@ -376,7 +458,10 @@ class PositionManager:
                 should_exit, exit_reason = position.should_exit(current_price)
 
                 if should_exit and exit_reason:
-                    logger.info(f"Exit condition met: {exit_reason.value}")
+                    logger.info(
+                        f"Exit condition met for {token_info.symbol}: "
+                        f"{exit_reason.value}"
+                    )
                     logger.info(f"Current price: {current_price:.8f} {quote_label}")
 
                     # 0.0 satisfies the stop-loss comparison, so the exit can
@@ -407,7 +492,8 @@ class PositionManager:
                     exit_sell_attempts = 0
                     pnl = position.get_pnl(current_price)
                     logger.debug(
-                        f"Position status: {current_price:.8f} {quote_label} "
+                        f"Position status for {token_info.symbol}: "
+                        f"{current_price:.8f} {quote_label} "
                         f"({pnl['price_change_pct']:+.2f}%)"
                     )
 
@@ -415,7 +501,7 @@ class PositionManager:
                 await asyncio.sleep(self.price_check_interval)
 
             except Exception:
-                logger.exception("Error monitoring position")
+                logger.exception(f"Error monitoring position in {token_info.symbol}")
 
                 # max_hold_time is the one exit condition that needs no price,
                 # and should_exit cannot be asked without one. Ask the time-only
@@ -514,7 +600,10 @@ class PositionManager:
             # Close position with actual exit price
             position.close_position(sell_result.price, exit_reason)
 
-            logger.info(f"Successfully exited position: {exit_reason.value}")
+            logger.info(
+                f"Successfully exited position: {exit_reason.value} "
+                f"({token_info.symbol})"
+            )
             trade_log.log_trade(
                 "sell",
                 token_info,

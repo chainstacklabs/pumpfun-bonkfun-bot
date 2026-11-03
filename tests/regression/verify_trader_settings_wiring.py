@@ -10,7 +10,8 @@ anything else offline:
      string key holds a distinct value), and every field is covered here.
   B. A config that sets only the required keys gets the runner's defaults.
   C. `UniversalTrader` passes each setting to the part that uses it.
-  D. `max_exit_sell_attempts` below 1 is clamped to 1 in the position manager.
+  D. `max_exit_sell_attempts` and `max_open_positions` below 1 are clamped to 1
+     in the position manager.
   E. The settings repr leaves out the endpoints, the key and the geyser token.
   F. Each boolean key, switched on alone, turns on its own settings field and
      only the attributes of the parts that act on it (A and C can't tell two
@@ -73,6 +74,7 @@ FULL_CONFIG = {
         "max_hold_time": 61,
         "price_check_interval": 7,
         "max_exit_sell_attempts": 4,
+        "max_open_positions": 6,
     },
     "filters": {
         "listener_type": "blocks",
@@ -141,6 +143,7 @@ EXPECTED_FULL = {
     "max_hold_time": 61,
     "price_check_interval": 7,
     "max_exit_sell_attempts": 4,
+    "max_open_positions": 6,
     "enable_dynamic_priority_fee": True,
     "enable_fixed_priority_fee": False,
     "fixed_priority_fee": 123_456,
@@ -193,6 +196,7 @@ EXPECTED_DEFAULTS = {
     "max_hold_time": None,
     "price_check_interval": 10,
     "max_exit_sell_attempts": 3,
+    "max_open_positions": 1,
     "enable_dynamic_priority_fee": False,
     "enable_fixed_priority_fee": True,
     "fixed_priority_fee": 500_000,
@@ -342,6 +346,7 @@ def check_c_parts_get_their_settings() -> bool:
             positions.max_hold_time,
             positions.price_check_interval,
             positions.max_exit_sell_attempts,
+            positions.max_open_positions,
             positions.wait_time_after_buy,
             positions.marry_mode,
             positions.cleanup_mode,
@@ -406,6 +411,7 @@ def check_c_parts_get_their_settings() -> bool:
             61,
             7,
             4,
+            6,
             8,
             True,
             "after_sell",
@@ -423,14 +429,21 @@ def check_c_parts_get_their_settings() -> bool:
 def check_d_attempts_clamped() -> bool:
     config = {
         **MINIMAL_CONFIG,
-        "trade": {**MINIMAL_CONFIG["trade"], "max_exit_sell_attempts": 0},
+        "trade": {
+            **MINIMAL_CONFIG["trade"],
+            "max_exit_sell_attempts": 0,
+            "max_open_positions": 0,
+        },
     }
     settings = bot_runner.build_trader_settings(config, Platform.PUMP_FUN)
     trader, _ = _build_trader(settings)
-    attempts = trader.positions.max_exit_sell_attempts
-    if attempts != 1:
-        print(f"    max_exit_sell_attempts 0 became {attempts}, expected 1")
-    return attempts == 1
+    ok = True
+    for name in ("max_exit_sell_attempts", "max_open_positions"):
+        value = getattr(trader.positions, name)
+        if value != 1:
+            print(f"    {name} 0 became {value}, expected 1")
+            ok = False
+    return ok
 
 
 def check_e_repr_hides_secrets() -> bool:
@@ -613,7 +626,10 @@ def main() -> int:
             "C: each part of the trader gets its settings",
             check_c_parts_get_their_settings,
         ),
-        ("D: exit sell attempts below 1 are clamped", check_d_attempts_clamped),
+        (
+            "D: exit sell attempts and open positions below 1 are clamped",
+            check_d_attempts_clamped,
+        ),
         ("E: settings repr hides endpoints and keys", check_e_repr_hides_secrets),
         (
             "F: each boolean reaches only its own parts",

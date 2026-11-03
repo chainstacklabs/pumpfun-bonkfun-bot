@@ -77,6 +77,9 @@ class TraderSettings:
     max_hold_time: int | None = None
     price_check_interval: int = 10
     max_exit_sell_attempts: int = DEFAULT_MAX_EXIT_SELL_ATTEMPTS
+    # Positions whose exit runs at once; the bot takes no new coin while this
+    # many are open. Positions under `manual` or `marry_mode` are not counted.
+    max_open_positions: int = 1
 
     enable_dynamic_priority_fee: bool = False
     enable_fixed_priority_fee: bool = True
