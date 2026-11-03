@@ -347,6 +347,14 @@ class Market(ABC):
         """
         return (await self.get_market_state(token_info))["price_per_token"]
 
+    def quote_destination(self, token_info: TokenInfo) -> Pubkey | None:  # noqa: ARG002
+        """The account a buy's quote lands in, to read the spend back from the transaction.
+
+        None when the venue cannot name it; the buyer then falls back to the
+        coin's curve, and an exact-in buy to the amount it submitted.
+        """
+        return None
+
     async def build_buy_instruction(
         self,
         token_info: TokenInfo,

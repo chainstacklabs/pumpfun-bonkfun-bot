@@ -9,13 +9,14 @@ over fixed inputs and compares the result with JSON snapshots committed under
      writable) and data byte of each buy and sell the bot can build, with the
      accounts the priority-fee estimate reads and the compute-unit limit:
      pump.fun curve buy and sell (SOL standard, SOL mayhem, USDC), PumpSwap
-     sell, LaunchLab buy and sell (letsbonk SOL, StonkFun reward SOL and
+     buy (SOL, USDC, SOL mayhem) and sell, LaunchLab buy and sell (letsbonk SOL, StonkFun reward SOL and
      xStock), CPMM sell. Fee recipients picked at random and the throwaway
      wrapped-SOL seed are pinned to their first choice so the bytes repeat.
   B. `parsers.json`: parser output for every `raw_*.json` fixture here —
      LaunchLab launches over the block and geyser routes, the preset parsers
      on StonkFun's and the every-config parser on other launchpads';
-     graduated curves and AMM pools; StonkFun trade instructions and the fee
+     graduated curves and AMM pools, and the pools of real PumpSwap buys;
+     StonkFun trade instructions and the fee
      and transfer-fee read for their pools; withheld fees in token accounts;
      LaunchLab launches as the shreds listener decodes them pre-execution.
      `creation_timestamp` is a monotonic clock reading and is left out.
@@ -280,6 +281,28 @@ async def _market_sell(
     }
 
 
+async def _market_buy(
+    name: str,
+    market: Market,
+    token: TokenInfo,
+    amount_in: int,
+    amount_out: int,
+) -> dict:
+    instructions = await market.build_buy_instruction(
+        token, TRADER, amount_in, amount_out
+    )
+    return {
+        f"{name} buy": {
+            "inputs": {"amount_in": amount_in, "minimum_amount_out": amount_out},
+            "instructions": [_instruction(ix) for ix in instructions],
+            "priority_fee_accounts": _plain(
+                market.get_required_accounts_for_buy(token, TRADER)
+            ),
+            "compute_unit_limit": market.get_buy_compute_unit_limit(None),
+        }
+    }
+
+
 class _FixtureClient:
     """Serves base64 accounts by address; anything else does not exist."""
 
@@ -398,6 +421,23 @@ async def build_instructions() -> dict:
         _graduated_pump_token(pump_fixture),
         *PUMP_SELL,
     )
+    # PumpSwap buys spend exactly amount_in, so the inputs are (quote in,
+    # token floor).
+    out |= await _market_buy(
+        "PumpSwap SOL",
+        PumpSwapMarket(_FixtureClient(pump_fixture["accounts"])),
+        _graduated_pump_token(pump_fixture),
+        *PUMP_BUY,
+    )
+    for case in _fixture("raw_pumpswap_buys_from_gettransaction.json"):
+        if case["label"] == "sol":
+            continue
+        out |= await _market_buy(
+            f"PumpSwap {case['label'].replace('sol', 'SOL').replace('usdc', 'USDC')}",
+            PumpSwapMarket(_FixtureClient(case["accounts"])),
+            _graduated_pump_token(case),
+            *(USDC_BUY if case["label"] == "usdc" else PUMP_BUY),
+        )
     out |= await _market_sell(
         "CPMM",
         CpmmMarket(_FixtureClient(launch_fixture["accounts"])),
@@ -415,7 +455,7 @@ def _graduated_pump_token(fixture: dict) -> TokenInfo:
         mint=Pubkey.from_string(fixture["mint"]),
         platform=Platform.PUMP_FUN,
         bonding_curve=Pubkey.from_string(fixture["curve"]),
-        quote_mint=WSOL_MINT,
+        quote_mint=Pubkey.from_string(fixture.get("quote_mint", str(WSOL_MINT))),
         token_program_id=SystemAddresses.TOKEN_2022_PROGRAM,
     )
 
@@ -617,6 +657,26 @@ async def _parse_graduated() -> dict:
     }
 
 
+async def _parse_pumpswap_buys() -> dict:
+    """Each real buy's curve and pool, as the curve manager and market read them."""
+    out = {}
+    for case in _fixture("raw_pumpswap_buys_from_gettransaction.json"):
+        client = _FixtureClient(case["accounts"])
+        curve = PumpFunCurveManager(
+            client, get_idl_manager().get_parser(Platform.PUMP_FUN)
+        )
+        market = PumpSwapMarket(client)
+        token = _graduated_pump_token(case)
+        out[case["label"]] = {
+            "pump.fun curve": _plain(
+                await curve.get_pool_state(Pubkey.from_string(case["curve"]))
+            ),
+            "PumpSwap market": _plain(await market.get_market_state(token)),
+            "PumpSwap pool": _plain(market._pools[token.mint]),  # noqa: SLF001
+        }
+    return out
+
+
 async def _parse_trades() -> list[dict]:
     """Each StonkFun trade: its instructions, and its pool's fee read."""
     parser = get_idl_manager().get_parser(Platform.STONK_FUN)
@@ -688,6 +748,7 @@ async def parse_fixtures() -> dict:
         "raw_stonkfun_trades_from_gettransaction.json": await _parse_trades(),
         "raw_stonkfun_token_accounts_from_getaccountinfo.json": _parse_token_accounts(),
         "raw_launchlab_creates_from_deshred.json": _parse_deshred_launches(),
+        "raw_pumpswap_buys_from_gettransaction.json": await _parse_pumpswap_buys(),
     }
     covered = set(out)
     present = {p.name for p in HERE.glob("raw_*.json")}

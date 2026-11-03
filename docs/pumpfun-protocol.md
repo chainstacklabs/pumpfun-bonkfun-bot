@@ -126,9 +126,35 @@ on the zero reserves, and `calculate_price` raises `CurveGraduatedError`.
 The pool a migration creates is canonical and derived, not searched for:
 `PDA(["pool", u16 0, pool_authority, base_mint, quote_mint])` under pump-amm, with
 `pool_authority = PDA(["pool-authority", base_mint])` under the pump.fun program.
-`platforms/pumpfun/pumpswap_market.py` sells into it with the account rules
-above, taking the fee, mayhem and buyback recipients from PumpSwap's
+`platforms/pumpfun/pumpswap_market.py` buys and sells in it with the account
+rules above, taking the fee, mayhem and buyback recipients from PumpSwap's
 `GlobalConfig` — the mayhem one is `reserved_fee_recipient`, at offset 385.
+
+The buy is `buy_exact_quote_in(spendable_quote_in, min_base_amount_out,
+track_volume)`: it spends exactly `spendable_quote_in`, fees included, so the
+buyer passes the configured amount unpadded and puts the slippage on the token
+floor. `track_volume` is an `OptionBool` sent as one `1` byte; real buys also
+leave it off. After the IDL's first 19 accounts a buy sends
+`global_volume_accumulator` and the user's `user_volume_accumulator` (writable;
+the program creates it on first use, no init instruction needed), then
+`fee_config` and the fee program. On a cashback pool a buy adds only the
+accumulator's quote ATA, where a sell adds that ATA and the accumulator.
+
+A SOL buy pays through the wallet's WSOL ATA (create idempotent, transfer the
+spend, `sync_native`, close after the swap), not the throwaway seeded account
+the sells use: that account's creation carries a seed and an owner key, and
+beside a buy's account list it pushes a v0 transaction without lookup tables
+to the 1232-byte limit, past it on a cashback pool. Closing the ATA also
+unwraps any WSOL the wallet held there.
+
+The buyer reaches the pool when the curve it reads reports `graduated`. In
+`extreme_fast_mode` it skips the coin instead: the pool buy is sized from the
+pool's reserves, which that mode does not read.
+
+The fee the market reports is GlobalConfig's `lp + protocol + coin_creator`
+bps. The fee program can charge more on a pool (`GetFeesWithQuoteMint` picks a
+tier), so the buy's token floor and the sell's quote floor sit that much above
+what arrives; a slippage setting of a few percent covers it.
 
 ## Coin creation
 

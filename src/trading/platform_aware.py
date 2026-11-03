@@ -203,6 +203,8 @@ class PlatformAwareBuyer(Trader):
             )
             address_provider = implementations.address_provider
             curve = implementations.curve_market
+            # The curve, or the AMM pool once the curve has graduated.
+            venue: Market = curve
 
             # Quote asset is resolved from the curve below; start from whatever
             # the listener gave us so extreme_fast_mode has a usable default.
@@ -260,6 +262,32 @@ class PlatformAwareBuyer(Trader):
             quote_unit = quote_units_per_token(quote_mint)
             quote_label = quote_symbol(quote_mint)
 
+            # A graduated curve takes no buys; the coin trades in the AMM pool
+            # it migrated to, priced and sized from that pool instead. Read
+            # after the quote gate: pricing a pool needs the quote's decimals.
+            if pool_state.get("graduated"):
+                venue = implementations.graduated_market
+                unavailable = None
+                if venue is None:
+                    unavailable = (
+                        f"no post-graduation market for {token_info.platform.value}"
+                    )
+                else:
+                    try:
+                        pool_state = await venue.get_market_state(token_info)
+                    except ValueError as e:
+                        unavailable = str(e)
+                if unavailable is not None:
+                    return TradeResult(
+                        success=False,
+                        platform=token_info.platform,
+                        error_message=f"{token_info.symbol} has graduated: {unavailable}",
+                    )
+                token_price_sol = pool_state["price_per_token"]
+                logger.info(
+                    f"{token_info.symbol} has graduated; buying in {pool_state['pool']}"
+                )
+
             # Both branches size the trade from the resolved quote amount:
             # extreme_fast_mode fixes the token count and back-derives an implied
             # price, the regular path fixes the spend and derives the count.
@@ -275,8 +303,9 @@ class PlatformAwareBuyer(Trader):
                         f"zero/invalid price"
                     )
                 token_amount = quote_amount / token_price_sol
-                # LaunchLab takes its curve fee from the spend and, on a reward
-                # coin, withholds the transfer fee from the tokens delivered.
+                # LaunchLab and the AMM pools take their fee from the spend and,
+                # on a reward coin, LaunchLab withholds the transfer fee from
+                # the tokens delivered.
                 # Both are known, so leave them out of the expected amount
                 # rather than spending slippage tolerance on them.
                 token_amount *= 1 - pool_state.get("fee_fraction", 0.0)
@@ -286,7 +315,7 @@ class PlatformAwareBuyer(Trader):
             # exact-in program spends all of amount_in, so it gets the
             # configured amount and a token floor. Otherwise the token count
             # is exact (pump.fun buy_v2) and amount_in is the ceiling.
-            exact_in = curve.spends_exact_amount_in
+            exact_in = venue.spends_exact_amount_in
             if exact_in:
                 # The configured spend is a decimal like 0.003; scaling the float
                 # can land one raw unit short of it.
@@ -300,14 +329,14 @@ class PlatformAwareBuyer(Trader):
                 )
                 token_amount_raw = int(token_amount * 10**TOKEN_DECIMALS)
 
-            instructions = await curve.build_buy_instruction(
+            instructions = await venue.build_buy_instruction(
                 token_info,
                 self.wallet.pubkey,
                 max_quote_amount_raw,  # amount_in (raw quote units)
                 token_amount_raw,  # minimum_amount_out (tokens)
             )
 
-            priority_accounts = curve.get_required_accounts_for_buy(
+            priority_accounts = venue.get_required_accounts_for_buy(
                 token_info, self.wallet.pubkey
             )
 
@@ -328,7 +357,7 @@ class PlatformAwareBuyer(Trader):
                 priority_fee=await self.priority_fee_manager.calculate_priority_fee(
                     priority_accounts
                 ),
-                compute_unit_limit=curve.get_buy_compute_unit_limit(
+                compute_unit_limit=venue.get_buy_compute_unit_limit(
                     self._get_cu_override("buy", token_info.platform)
                 ),
                 account_data_size_limit=self._get_cu_override(
@@ -341,9 +370,9 @@ class PlatformAwareBuyer(Trader):
             if success:
                 logger.info(f"Buy transaction confirmed: {tx_signature}")
 
-                sol_destination = self._get_sol_destination(
-                    token_info, address_provider
-                )
+                sol_destination = venue.quote_destination(
+                    token_info
+                ) or self._get_sol_destination(token_info, address_provider)
                 tokens_raw, quote_spent = await self.client.get_buy_transaction_details(
                     str(tx_signature),
                     token_info.mint,
@@ -512,6 +541,12 @@ class PlatformAwareBuyer(Trader):
             return (
                 f"Curve state unreadable within {self.curve_refresh_budget:.1f}s "
                 f"({e}); skipping buy rather than submitting with guessed accounts"
+            )
+        if pool_state.get("graduated"):
+            # The pool is sized from its reserves, which this mode never reads.
+            return (
+                f"{token_info.symbol} has graduated; extreme_fast_mode buys only "
+                f"on the curve"
             )
 
         token_info.is_mayhem_mode = pool_state.get(
