@@ -584,6 +584,9 @@ def _check_j_bad_amounts(tmp: Path) -> list[str]:
         record["mint"] = name
         record["buy"].update(edit)
         data["positions"].append(record)
+    listed = json.loads(json.dumps(template))
+    listed.update(mint="list", buy=[1.0])
+    data["positions"].append(listed)
     path.write_text(json.dumps(data))
     try:
         loaded = PositionStore(path).load()
@@ -591,7 +594,7 @@ def _check_j_bad_amounts(tmp: Path) -> list[str]:
         return [f"bad amounts: load raised {type(e).__name__}: {e}"]
     if [p.token_info.mint for p in loaded] != [good.mint]:
         problems.append(f"bad amounts: loaded {[p.buy_result for p in loaded]}")
-    if _stored(path) != {str(good.mint), *edits}:
+    if _stored(path) != {str(good.mint), *edits, "list"}:
         problems.append(f"bad amounts: the file holds {_stored(path)}")
     return problems
 
