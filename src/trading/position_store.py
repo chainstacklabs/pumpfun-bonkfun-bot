@@ -81,10 +81,19 @@ class PositionStore:
         # Records by mint, as written; one that does not decode is kept as is.
         self._records: dict[str, dict] = {}
 
+    def _free_aside_path(self) -> Path:
+        aside = self.path.with_name(self.path.name + ".unreadable")
+        n = 0
+        while aside.exists():
+            n += 1
+            aside = self.path.with_name(f"{self.path.name}.unreadable.{n}")
+        return aside
+
     def load(self) -> list[StoredPosition]:
         """Read the file and return the positions in it.
 
-        A file that is not valid JSON is renamed to `<name>.unreadable` and
+        A file that is not valid JSON is renamed to `<name>.unreadable` (then
+        `<name>.unreadable.1`, `.2`, ... so no earlier one is overwritten) and
         logged, so the next write cannot overwrite what it held. A record that
         does not decode is logged and kept in the file, but not returned.
         """
@@ -97,7 +106,7 @@ class PositionStore:
             records = json.loads(text)["positions"]
             self._records = {record["mint"]: record for record in records}
         except (ValueError, KeyError, TypeError):
-            aside = self.path.with_name(self.path.name + ".unreadable")
+            aside = self._free_aside_path()
             logger.exception(
                 f"Positions file {self.path} is unreadable; moved to {aside}. "
                 f"Positions in it are not monitored."
