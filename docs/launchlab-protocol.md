@@ -117,15 +117,31 @@ migrated; a migrated pool keeps its final reserves, so the curve manager reports
 `migrate_type` 1 means Raydium CPMM, which is where every StonkFun coin goes. The
 CPMM pool is `PDA(["pool", amm_config, token_0, token_1])` under the CPMM program,
 with `amm_config` the platform's `PlatformConfig.cpswap_config` and the two mints
-ordered by their bytes, so it is derived, never searched for. A sell is
-`swap_base_input`, 13 accounts; the creator fee accrues inside the pool and adds
-none. Price is the vault balances less the protocol, fund and creator fees still
-sitting in them. `migrate_type` 0, Raydium AMM v4, has no market in the bot; a
-coin there is reported, not sold.
+ordered by their bytes, so it is derived, never searched for. Price is the vault
+balances less the protocol, fund and creator fees still sitting in them.
+
+Both sides trade with `swap_base_input`, 13 accounts; the creator fee accrues
+inside the pool and adds none. The input token's account, vault, token program
+and mint come before the output token's, so a buy is a sell with the two sides
+swapped. A buy spends exactly its `amount_in`, quote fees included, and its
+`minimum_amount_out` is checked against what reaches the wallet, so on a
+transfer-fee coin the floor is net of that fee, as on the curve. The pool state
+carries no transfer fee; the buyer takes it from the curve. A SOL buy pays from
+a throwaway wrapped-SOL account funded with the spend, any other quote from the
+wallet's account, and the coin's account is created first, under the coin's
+token program.
+
+The buyer reaches the pool when the curve reports `graduated`. While the curve
+waits for its pool (status 1) the buy is skipped with nothing sent. In
+`extreme_fast_mode` a graduated coin is skipped: the pool buy is sized from the
+pool's reserves, which that mode does not read.
+
+`migrate_type` 0, Raydium AMM v4, has no market in the bot; a coin there is
+reported, not bought or sold.
 
 ## Verifiers
 
 `verify_launchlab_trades`, `verify_launchlab_launch_parsing`,
-`verify_generic_launchlab`, `verify_cleanup_harvests_withheld_fees` and
-`verify_sell_after_graduation` cover all of the above against captured mainnet
+`verify_generic_launchlab`, `verify_cleanup_harvests_withheld_fees`,
+`verify_sell_after_graduation` and `verify_cpmm_buy` cover all of the above against captured mainnet
 transactions.

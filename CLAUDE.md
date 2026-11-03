@@ -55,7 +55,7 @@ Dependency layers, low to high — don't introduce an upward import:
 Platform differences resolve through `interfaces/core.py` and the registry in
 `platforms/__init__.py`; anything platform-shaped goes in `platforms/<name>/`. Trades
 go through one `Market`: `curve_market` (`CurveMarket`, builder + curve manager), then
-`graduated_market` (`PumpSwapMarket` buys and sells, `CpmmMarket` sells). `UniversalTrader`
+`graduated_market` (`PumpSwapMarket`, `CpmmMarket`: both buy and sell). `UniversalTrader`
 coordinates `trading/intake.py`, `platform_aware.py` and `position_manager.py`.
 
 ## Commands
@@ -179,7 +179,7 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
   bools. Returning the enum would be silent: every member is truthy, so every
   `if await client.confirm_transaction(sig):` would start passing unconditionally.
 - `calculate_price` returns `0.0` for a curve with no virtual token reserves, and
-  raises `CurveGraduatedError` for a graduated one; price and sell then go through
+  raises `CurveGraduatedError` for a graduated one; price, buy and sell go through
   the platform's `graduated_market`. Never store a non-positive read as the last
   known price or floor a sell against one; `0.0` satisfies the stop-loss check.
 

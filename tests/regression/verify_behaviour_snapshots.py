@@ -10,12 +10,14 @@ over fixed inputs and compares the result with JSON snapshots committed under
      accounts the priority-fee estimate reads and the compute-unit limit:
      pump.fun curve buy and sell (SOL standard, SOL mayhem, USDC), PumpSwap
      buy (SOL, USDC, SOL mayhem) and sell, LaunchLab buy and sell (letsbonk SOL, StonkFun reward SOL and
-     xStock), CPMM sell. Fee recipients picked at random and the throwaway
+     xStock), CPMM sell and buy (SOL with SPL Token and Token-2022 coins,
+     USDC, an xStock-paired transfer-fee coin). Fee recipients picked at random and the throwaway
      wrapped-SOL seed are pinned to their first choice so the bytes repeat.
   B. `parsers.json`: parser output for every `raw_*.json` fixture here —
      LaunchLab launches over the block and geyser routes, the preset parsers
      on StonkFun's and the every-config parser on other launchpads';
-     graduated curves and AMM pools, and the pools of real PumpSwap buys;
+     graduated curves and AMM pools, and the pools of real PumpSwap and CPMM
+     buys;
      StonkFun trade instructions and the fee
      and transfer-fee read for their pools; withheld fees in token accounts;
      LaunchLab launches as the shreds listener decodes them pre-execution.
@@ -74,6 +76,7 @@ from monitoring.universal_shreds_listener import UniversalShredsListener  # noqa
 from platforms.curve_market import CurveMarket  # noqa: E402
 from platforms.launchlab import LAUNCHLAB_PROGRAM, LaunchLabEventParser  # noqa: E402
 from platforms.launchlab.cpmm_market import CpmmMarket  # noqa: E402
+from platforms.launchlab.curve_manager import LaunchLabCurveManager  # noqa: E402
 from platforms.letsbonk import (  # noqa: E402
     PLATFORM_CONFIGS as LETSBONK_CONFIGS,
 )
@@ -444,6 +447,20 @@ async def build_instructions() -> dict:
         _graduated_launch_token(launch_fixture),
         *LAUNCH_SELL,
     )
+    # CPMM buys spend exactly amount_in: (quote in, token floor).
+    out |= await _market_buy(
+        "CPMM StonkFun SOL",
+        CpmmMarket(_FixtureClient(launch_fixture["accounts"])),
+        _graduated_launch_token(launch_fixture),
+        *LAUNCH_BUY,
+    )
+    for case in _fixture("raw_cpmm_buys_from_gettransaction.json"):
+        out |= await _market_buy(
+            f"CPMM {case['label']}",
+            CpmmMarket(_FixtureClient(case["accounts"])),
+            _cpmm_case_token(case),
+            *LAUNCH_BUY,
+        )
     return out
 
 
@@ -471,6 +488,19 @@ def _graduated_launch_token(fixture: dict) -> TokenInfo:
         platform_config=Pubkey.from_string(fixture["platform_config"]),
         quote_mint=Pubkey.from_string(fixture["quote_mint"]),
         token_program_id=SystemAddresses.TOKEN_2022_PROGRAM,
+    )
+
+
+def _cpmm_case_token(case: dict) -> TokenInfo:
+    return TokenInfo(
+        name="",
+        symbol="GRAD",
+        uri="",
+        mint=Pubkey.from_string(case["mint"]),
+        platform=Platform(case["platform"]),
+        pool_state=Pubkey.from_string(case["launchlab_pool"]),
+        platform_config=Pubkey.from_string(case["platform_config"]),
+        quote_mint=Pubkey.from_string(case["quote_mint"]),
     )
 
 
@@ -677,6 +707,26 @@ async def _parse_pumpswap_buys() -> dict:
     return out
 
 
+async def _parse_cpmm_buys() -> dict:
+    """Each real buy's migrated curve and CPMM pool, as the bot reads them."""
+    out = {}
+    for case in _fixture("raw_cpmm_buys_from_gettransaction.json"):
+        client = _FixtureClient(case["accounts"])
+        curve = LaunchLabCurveManager(
+            client, get_idl_manager().get_parser(Platform.STONK_FUN)
+        )
+        market = CpmmMarket(client)
+        token = _cpmm_case_token(case)
+        out[case["label"]] = {
+            "LaunchLab curve": _plain(
+                await curve.get_pool_state(Pubkey.from_string(case["launchlab_pool"]))
+            ),
+            "CPMM market": _plain(await market.get_market_state(token)),
+            "CPMM pool": _plain(market._pools[token.mint]),  # noqa: SLF001
+        }
+    return out
+
+
 async def _parse_trades() -> list[dict]:
     """Each StonkFun trade: its instructions, and its pool's fee read."""
     parser = get_idl_manager().get_parser(Platform.STONK_FUN)
@@ -749,6 +799,7 @@ async def parse_fixtures() -> dict:
         "raw_stonkfun_token_accounts_from_getaccountinfo.json": _parse_token_accounts(),
         "raw_launchlab_creates_from_deshred.json": _parse_deshred_launches(),
         "raw_pumpswap_buys_from_gettransaction.json": await _parse_pumpswap_buys(),
+        "raw_cpmm_buys_from_gettransaction.json": await _parse_cpmm_buys(),
     }
     covered = set(out)
     present = {p.name for p in HERE.glob("raw_*.json")}
