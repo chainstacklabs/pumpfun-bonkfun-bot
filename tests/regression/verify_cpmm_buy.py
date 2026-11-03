@@ -13,8 +13,9 @@ Offline machine checks, no network and no funds moved:
 
   A. Each buy names the same 13 accounts as the real buy into that pool, apart
      from the buyer's own quote account, with the coin's account under the
-     coin's token program. The flags match a direct buy's, and every account
-     marked writable is writable in every real buy.
+     coin's token program. An account is writable exactly when it is writable
+     in every real buy: the transaction-level flags of a routed buy can only
+     add writes another instruction needed.
   B. The data is `swap_base_input`, the real buys' layout: the discriminator,
      the quote to spend and the token floor.
   C. A SOL buy wraps exactly the spend in a throwaway account opened before the
@@ -174,8 +175,8 @@ def _owner(case: dict, address: str) -> Pubkey:
     return Pubkey.from_string(case["accounts"][address]["owner"])
 
 
-def _chain_buy(case: dict) -> tuple[list[str], list[bool], bytes, bool]:
-    """Accounts, their transaction-level writable flags, data, and whether top level."""
+def _chain_buy(case: dict) -> tuple[list[str], list[bool], bytes]:
+    """Accounts of the real buy into the pool, their transaction-level writable flags, data."""
     tx = case["buy_transaction"]
     message = tx["transaction"]["message"]
     loaded = tx["meta"].get("loadedAddresses") or {}
@@ -191,19 +192,19 @@ def _chain_buy(case: dict) -> tuple[list[str], list[bool], bytes, bool]:
             return i < signers - header["numReadonlySignedAccounts"]
         return i < len(static) - header["numReadonlyUnsignedAccounts"]
 
-    located = [(ix, True) for ix in message["instructions"]] + [
-        (ix, False)
+    located = list(message["instructions"]) + [
+        ix
         for g in tx["meta"].get("innerInstructions") or []
         for ix in g["instructions"]
     ]
-    for ix, top in located:
+    for ix in located:
         accounts = [keys[i] for i in ix["accounts"]]
         if (
             keys[ix["programIdIndex"]] == str(CPMM_PROGRAM)
             and accounts[3] == case["cpmm_pool"]
         ):
             flags = [writable(i) for i in ix["accounts"]]
-            return accounts, flags, base58.b58decode(ix["data"]), top
+            return accounts, flags, base58.b58decode(ix["data"])
     message = f"{case['label']}: fixture has no buy into the pool"
     raise AssertionError(message)
 
@@ -221,8 +222,10 @@ def _build(case: dict, user: Pubkey, *, side: str = "buy") -> list:
 def check_a_accounts_match_chain() -> bool:
     """A: same accounts as the real buys, bar the buyer's quote account."""
     ok = True
+    every_buy = [_chain_buy(case)[1] for case in CASES.values()]
+    writable = [all(flags) for flags in zip(*every_buy, strict=True)]
     for label, case in CASES.items():
-        chain, chain_flags, _, top = _chain_buy(case)
+        chain, _, _ = _chain_buy(case)
         buyer = Pubkey.from_string(chain[0])
         swap = _swap(_build(case, buyer))
         ours = [str(m.pubkey) for m in swap.accounts]
@@ -246,10 +249,8 @@ def check_a_accounts_match_chain() -> bool:
             m.is_signer for m in swap.accounts[1:]
         ):
             problems.append("signer flags")
-        if top and flags != chain_flags:
-            problems.append(f"flags {flags} vs a direct buy's {chain_flags}")
-        if any(f and not c for f, c in zip(flags, chain_flags, strict=True)):
-            problems.append("writable where the real buy is not")
+        if flags != writable:
+            problems.append(f"writable {flags} vs the real buys' {writable}")
         if problems:
             print(f"    {label}: {'; '.join(problems)}")
             ok = False
@@ -265,7 +266,7 @@ def check_b_data_is_swap_base_input() -> bool:
         + MIN_OUT.to_bytes(8, "little")
     )
     for label, case in CASES.items():
-        _, _, chain_data, _ = _chain_buy(case)
+        _, _, chain_data = _chain_buy(case)
         data = bytes(_swap(_build(case, USER)).data)
         if (
             data != expected
@@ -518,7 +519,8 @@ def _routed(case: dict, spend_whole: float, transfer_fee_bps: int) -> bool:
         and int.from_bytes(data[8:16], "little") == spend
         and abs(int.from_bytes(data[16:24], "little") - expected_floor) <= 1
         and client.sent[0][1] == market.get_buy_compute_unit_limit()
-        and fee_accounts == market.get_required_accounts_for_buy(_token(case), USER)
+        and fee_accounts
+        == [pool.address, pool.base_vault, pool.quote_vault, CPMM_PROGRAM]
         and client.destination == pool.quote_vault
     )
     if not ok:
