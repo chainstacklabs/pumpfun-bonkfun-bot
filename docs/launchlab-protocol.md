@@ -1,10 +1,11 @@
-# Raydium LaunchLab: letsbonk.fun and StonkFun
+# Raydium LaunchLab: every launchpad, letsbonk.fun and StonkFun
 
-Both platforms are pools on one program, Raydium LaunchLab
-(`LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj`). The shared code is
-`src/platforms/launchlab/`; `platforms/letsbonk/` and `platforms/stonkfun/` only
-name their platform configs. The IDL is `idl/raydium_launchlab_idl.json`, pulled
-from the program's on-chain IDL account.
+Every launchpad here runs its pools on one program, Raydium LaunchLab
+(`LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj`). `src/platforms/launchlab/` is
+the `launchlab` platform and covers all of them; `platforms/letsbonk/` and
+`platforms/stonkfun/` are presets that only name their platform configs, and
+`platforms/launchlab_presets.py` maps each platform to what it covers. The IDL is
+`idl/raydium_launchlab_idl.json`, pulled from the program's on-chain IDL account.
 
 ## Platforms are platform configs
 
@@ -17,10 +18,16 @@ created under. Every launch and every trade names one, at account 3.
 | StonkFun, standard | `4E876qZTE9FJMrBzgVtBrSrzz2TLivB5Y5QXPjB4gZL7` |
 | StonkFun, reward | `6BwHHDg3u1854jC8PDLXvR4spTcLNaoBxLJNGC4nTESt` |
 
-The geyser and blocks listeners subscribe on these accounts, not on the program
-(`EventParser.get_stream_filter_accounts`), so other launchpads on LaunchLab stay
-out of the stream. Two platforms on one program also mean nothing may key a
-lookup by program id alone.
+Any other launchpad is reached through `platform: launchlab`, which takes a
+launch under any platform config; `launchlab.platform_configs` narrows it, and
+narrows a preset within its own configs. `TokenInfo.platform_config` and the
+trade log record which config a coin came from.
+
+The geyser and blocks listeners subscribe on the platform configs when there is
+a list (`EventParser.get_stream_filter_accounts`), so other launchpads stay out
+of the stream; `launchlab` without one subscribes on the program, and sees every
+trade on it. Several platforms on one program also mean nothing may key a lookup
+by program id alone.
 
 ## Launches
 
@@ -30,6 +37,22 @@ accounts by IDL name: `payer` is 0 and `creator` is 1, and the pool's `creator`
 — which keys the creator fee vault — is the `creator` account, not the payer.
 The quote mint is account 7 and its token program account 11. The transfer fee
 is the `transfer_fee_extension_param` argument.
+
+Other launchpads launch with `initialize_v2` (SPL Token coin, Metaplex
+metadata) or `initialize_with_token_2022`, quoted in SOL or another token, with
+the same accounts. A platform config can restrict which global configs and
+curve parameters its launches use (`restrict_global_config`,
+`restrict_curve_param`); its launches then pass two PDAs after the IDL's
+accounts, `["platform_allow_config", platform_config, global_config]` and
+`["platform_curve_rule", platform_config, global_config]`. StonkFun's configs
+do. `tools/launchlab_create_coin.py` always passes both, which an unrestricted
+config ignores.
+
+A global config names a curve: `curve_type` 0 is constant product, 1 fixed
+price, 2 linear, and a launch states its own in the `curve_param` variant. The
+price and trade math here are for the constant-product curve, so the parser
+ignores a launch whose `curve_param` is anything else. The global config is `PDA(["global_config", quote_mint,
+curve_type u8, index u16])`.
 
 Everything a buy needs is in the instruction, so the parsers set
 `state_from_event`. The program's `PoolCreateEvent` carries no base mint, quote
@@ -99,6 +122,6 @@ coin there is reported, not sold.
 ## Verifiers
 
 `verify_launchlab_trades`, `verify_launchlab_launch_parsing`,
-`verify_cleanup_harvests_withheld_fees` and `verify_sell_after_graduation` cover
-all of the above against captured
-mainnet transactions.
+`verify_generic_launchlab`, `verify_cleanup_harvests_withheld_fees` and
+`verify_sell_after_graduation` cover all of the above against captured mainnet
+transactions.

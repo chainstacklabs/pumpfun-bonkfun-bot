@@ -27,6 +27,9 @@ class TraderSettings:
     sell_slippage: float
 
     platform: Platform | str = Platform.PUMP_FUN
+    # LaunchLab platform config addresses to listen on; None is all the
+    # platform covers.
+    platform_configs: list[str] | None = None
 
     listener_type: str = "logs"
     geyser_endpoint: str | None = field(default=None, repr=False)

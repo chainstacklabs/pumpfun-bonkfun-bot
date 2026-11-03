@@ -36,6 +36,7 @@ from solders.keypair import Keypair  # noqa: E402
 import bot_runner  # noqa: E402
 from core.pubkeys import USDC_MINT, WSOL_MINT  # noqa: E402
 from interfaces.core import Platform  # noqa: E402
+from platforms.stonkfun.addresses import REWARD_PLATFORM_CONFIG  # noqa: E402
 from trading import universal_trader  # noqa: E402
 from trading.settings import TraderSettings  # noqa: E402
 
@@ -50,6 +51,7 @@ FULL_CONFIG = {
     "rpc_endpoint": RPC,
     "wss_endpoint": WSS,
     "private_key": PRIVATE_KEY,
+    "launchlab": {"platform_configs": [str(REWARD_PLATFORM_CONFIG)]},
     "trade": {
         "buy_amount": 0.0123,
         "buy_slippage": 0.11,
@@ -112,6 +114,7 @@ EXPECTED_FULL = {
     "buy_slippage": 0.11,
     "sell_slippage": 0.22,
     "platform": Platform.STONK_FUN,
+    "platform_configs": [str(REWARD_PLATFORM_CONFIG)],
     "listener_type": "blocks",
     "geyser_endpoint": "geyser.example:443",
     "geyser_api_token": GEYSER_TOKEN,
@@ -162,6 +165,7 @@ MINIMAL_CONFIG = {
 # What a bot YAML that leaves a key out runs with.
 EXPECTED_DEFAULTS = {
     "platform": Platform.PUMP_FUN,
+    "platform_configs": None,
     "listener_type": "logs",
     "geyser_endpoint": None,
     "geyser_api_token": None,
@@ -284,6 +288,7 @@ def check_c_parts_get_their_settings() -> bool:
                 "geyser_api_token",
                 "geyser_auth_type",
                 "platforms",
+                "platform_configs",
             )
         },
         "fees": (
@@ -354,6 +359,7 @@ def check_c_parts_get_their_settings() -> bool:
             "geyser_api_token": GEYSER_TOKEN,
             "geyser_auth_type": "basic",
             "platforms": [Platform.STONK_FUN],
+            "platform_configs": frozenset({REWARD_PLATFORM_CONFIG}),
         },
         "fees": (True, False, 123_456, 0.05, 654_321),
         "buyer": (

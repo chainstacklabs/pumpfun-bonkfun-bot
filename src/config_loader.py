@@ -88,13 +88,14 @@ VALID_VALUES = {
     "filters.listener_type": ["logs", "blocks", "geyser", "shreds"],
     "cleanup.mode": ["disabled", "on_fail", "after_sell", "post_session"],
     "trade.exit_strategy": ["time_based", "tp_sl", "manual"],
-    "platform": ["pump_fun", "lets_bonk", "stonk_fun"],
+    "platform": ["pump_fun", "launchlab", "lets_bonk", "stonk_fun"],
 }
 
 # Which listeners each platform supports. The one copy: config validation,
 # bot_runner and tools/live_listener_matrix.py all read it.
 PLATFORM_LISTENER_COMPATIBILITY = {
     Platform.PUMP_FUN: ["logs", "blocks", "geyser", "shreds"],
+    Platform.LAUNCHLAB: ["blocks", "geyser"],
     Platform.LETS_BONK: ["blocks", "geyser"],
     Platform.STONK_FUN: ["blocks", "geyser"],
 }
@@ -276,15 +277,12 @@ def validate_platform_config(config: dict, platform: Platform) -> None:
         if "Missing required config key" not in str(e):
             raise
 
-    # Platform-specific configuration validation
-    if platform == Platform.PUMP_FUN:
-        # pump.fun doesn't require additional config beyond base requirements
-        pass
+    # launchlab.platform_configs: LaunchLab platforms only, each a valid address
+    from platforms.launchlab_presets import resolve_platform_configs
 
-    elif platform == Platform.LETS_BONK:
-        # LetsBonk may require additional configuration in the future
-        # For now, it uses the same base configuration as pump.fun
-        pass
+    resolve_platform_configs(
+        platform, (config.get("launchlab") or {}).get("platform_configs")
+    )
 
 
 def get_platform_from_config(config: dict) -> Platform:

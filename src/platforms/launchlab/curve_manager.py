@@ -7,7 +7,7 @@ from typing import Any
 from solders.pubkey import Pubkey
 
 from core.client import SolanaClient
-from interfaces.core import CurveGraduatedError, CurveManager
+from interfaces.core import CurveGraduatedError, CurveManager, Platform
 from platforms.launchlab.curve_math import (
     FEE_RATE_DENOMINATOR,
     buy_amount_out,
@@ -43,7 +43,7 @@ _PUBKEY_FIELDS = (
 
 
 class LaunchLabCurveManager(CurveManager):
-    """Reads LaunchLab pools. Subclasses only name their platform.
+    """Reads LaunchLab pools, the same for every platform config.
 
     `get_pool_state` returns, besides the decoded pool:
 
@@ -60,6 +60,11 @@ class LaunchLabCurveManager(CurveManager):
         self._idl_parser = idl_parser
         self._fee_rates: dict[tuple[Pubkey, Pubkey], tuple[int, float]] = {}
         self._transfer_fees: dict[Pubkey, tuple[int, int]] = {}
+
+    @property
+    def platform(self) -> Platform:
+        """Every launchpad on LaunchLab."""
+        return Platform.LAUNCHLAB
 
     async def get_pool_state(
         self, pool_address: Pubkey, commitment: str | None = None

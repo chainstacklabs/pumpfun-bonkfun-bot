@@ -37,6 +37,7 @@ def save_token_info(token_info: TokenInfo) -> None:
             "pool_state": token_info.pool_state,
             "base_vault": token_info.base_vault,
             "quote_vault": token_info.quote_vault,
+            "platform_config": token_info.platform_config,
         }
 
         for field_name, field_value in platform_fields.items():
@@ -72,6 +73,9 @@ def log_trade(
             "amount": amount,
             "tx_hash": str(tx_hash) if tx_hash else None,
         }
+        # LaunchLab: which launchpad the coin trades on.
+        if token_info.platform_config is not None:
+            log_entry["platform_config"] = str(token_info.platform_config)
 
         log_file_path = trades_dir / "trades.log"
         with log_file_path.open("a", encoding="utf-8") as log_file:
