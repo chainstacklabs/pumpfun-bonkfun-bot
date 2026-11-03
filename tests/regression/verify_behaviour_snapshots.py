@@ -13,7 +13,8 @@ over fixed inputs and compares the result with JSON snapshots committed under
      xStock), CPMM sell. Fee recipients picked at random and the throwaway
      wrapped-SOL seed are pinned to their first choice so the bytes repeat.
   B. `parsers.json`: parser output for every `raw_*.json` fixture here —
-     LaunchLab launches over the block and geyser routes, both parsers;
+     LaunchLab launches over the block and geyser routes, the preset parsers
+     on StonkFun's and the every-config parser on other launchpads';
      graduated curves and AMM pools; StonkFun trade instructions and the fee
      and transfer-fee read for their pools; withheld fees in token accounts.
      `creation_timestamp` is a monotonic clock reading and is left out.
@@ -68,7 +69,7 @@ from interfaces.core import (  # noqa: E402
     TokenInfo,
 )
 from platforms.curve_market import CurveMarket  # noqa: E402
-from platforms.launchlab import LAUNCHLAB_PROGRAM  # noqa: E402
+from platforms.launchlab import LAUNCHLAB_PROGRAM, LaunchLabEventParser  # noqa: E402
 from platforms.launchlab.cpmm_market import CpmmMarket  # noqa: E402
 from platforms.letsbonk import (  # noqa: E402
     PLATFORM_CONFIGS as LETSBONK_CONFIGS,
@@ -527,6 +528,36 @@ def _parse_launches() -> list[dict]:
     return out
 
 
+def _parse_other_launchpads() -> list[dict]:
+    """Launches on launchpads other than letsbonk and StonkFun."""
+    parser = get_idl_manager().get_parser(Platform.LAUNCHLAB)
+    parsers = {
+        "launchlab": LaunchLabEventParser(parser),
+        "stonkfun": StonkFunEventParser(parser),
+        "letsbonk": LetsBonkEventParser(parser),
+    }
+    out = []
+    for tx in _fixture("raw_launchlab_launches_from_gettransaction.json"):
+        block = {
+            "transactions": [{"transaction": tx["transaction"], "meta": tx["meta"]}]
+        }
+        update = _geyser_update(tx)
+        entry = {
+            "signature": tx["transaction"]["signatures"][0],
+            "version": tx.get("version"),
+        }
+        for name, event_parser in parsers.items():
+            entry[f"{name} block"] = _token_info(
+                event_parser.parse_token_creation_from_block(copy.deepcopy(block))
+            )
+            entry[f"{name} geyser"] = _token_info(
+                event_parser.parse_token_creation_from_geyser(update)
+            )
+        entry["launchlab instructions"] = dict(_launchlab_instructions(tx))
+        out.append(entry)
+    return out
+
+
 async def _parse_graduated() -> dict:
     graduated = _fixture("raw_graduated_markets_from_getaccountinfo.json")
     pump_fixture, launch_fixture = graduated["pumpfun"], graduated["launchlab"]
@@ -626,6 +657,7 @@ async def parse_fixtures() -> dict:
     """B: parser output for every raw_*.json fixture."""
     out = {
         "raw_stonkfun_launches_from_gettransaction.json": _parse_launches(),
+        "raw_launchlab_launches_from_gettransaction.json": _parse_other_launchpads(),
         "raw_graduated_markets_from_getaccountinfo.json": await _parse_graduated(),
         "raw_stonkfun_trades_from_gettransaction.json": await _parse_trades(),
         "raw_stonkfun_token_accounts_from_getaccountinfo.json": _parse_token_accounts(),

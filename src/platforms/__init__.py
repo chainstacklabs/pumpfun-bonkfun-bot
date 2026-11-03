@@ -43,7 +43,9 @@ class PlatformRegistry:
 
     def __init__(self):
         self._implementations: dict[Platform, dict[str, type]] = {}
-        self._instances: dict[tuple[Platform, str], PlatformImplementations] = {}
+        self._instances: dict[
+            tuple[Platform, str, frozenset | None], PlatformImplementations
+        ] = {}
 
     def register_platform(
         self,
@@ -75,7 +77,8 @@ class PlatformRegistry:
         Args:
             platform: Platform to create implementations for
             client: Solana RPC client
-            **kwargs: Additional arguments for implementation constructors
+            **kwargs: `verbose_idl`; `platform_configs` narrows a LaunchLab
+                event parser to those platform configs
 
         Returns:
             PlatformImplementations containing all interface implementations
@@ -86,8 +89,11 @@ class PlatformRegistry:
         if platform not in self._implementations:
             raise ValueError(f"Platform {platform} is not registered")
 
-        # Use client address as cache key to allow multiple clients
-        cache_key = (platform, str(client.rpc_endpoint))
+        platform_configs = kwargs.get("platform_configs")
+        if platform_configs is not None:
+            platform_configs = frozenset(platform_configs)
+        # One set per client and narrowing: only the event parser differs.
+        cache_key = (platform, str(client.rpc_endpoint), platform_configs)
 
         # Check if we already have instances for this platform + client combo
         if cache_key in self._instances:
@@ -118,7 +124,14 @@ class PlatformRegistry:
                 idl_parser=idl_parser
             )
             curve_manager = impl_classes["curve_manager"](client, idl_parser=idl_parser)
-            event_parser = impl_classes["event_parser"](idl_parser=idl_parser)
+            narrowing = (
+                {}
+                if platform_configs is None
+                else {"platform_configs": platform_configs}
+            )
+            event_parser = impl_classes["event_parser"](
+                idl_parser=idl_parser, **narrowing
+            )
         else:
             # Fallback for platforms without IDL support
             instruction_builder = impl_classes["instruction_builder"]()
@@ -150,7 +163,7 @@ class PlatformRegistry:
         Returns:
             PlatformImplementations if available, None otherwise
         """
-        cache_key = (platform, client_endpoint)
+        cache_key = (platform, client_endpoint, None)
         return self._instances.get(cache_key)
 
     def get_supported_platforms(self) -> list[Platform]:
@@ -221,6 +234,29 @@ class PlatformFactory:
         except ImportError as e:
             print(f"Warning: Could not register pump.fun platform: {e}")
 
+        # Raydium LaunchLab, every platform config; letsbonk.fun and StonkFun
+        # below are the same classes narrowed to their own configs.
+        try:
+            from platforms.launchlab import (  # noqa: PLC0415
+                LaunchLabAddressProvider,
+                LaunchLabCurveManager,
+                LaunchLabEventParser,
+                LaunchLabInstructionBuilder,
+            )
+            from platforms.launchlab.cpmm_market import CpmmMarket  # noqa: PLC0415
+
+            self.registry.register_platform(
+                Platform.LAUNCHLAB,
+                LaunchLabAddressProvider,
+                LaunchLabInstructionBuilder,
+                LaunchLabCurveManager,
+                LaunchLabEventParser,
+                CpmmMarket,
+            )
+
+        except ImportError as e:
+            print(f"Warning: Could not register LaunchLab platform: {e}")
+
         # Import and register LetsBonk platform
         try:
             from platforms.letsbonk import (
@@ -272,7 +308,8 @@ class PlatformFactory:
         Args:
             platform: Platform to create implementations for
             client: Solana RPC client
-            **config: Platform-specific configuration (including verbose_idl)
+            **config: `verbose_idl`, and `platform_configs` to narrow a
+                LaunchLab event parser
 
         Returns:
             PlatformImplementations containing all interface implementations

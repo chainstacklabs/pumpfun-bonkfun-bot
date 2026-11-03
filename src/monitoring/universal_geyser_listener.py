@@ -5,6 +5,7 @@ import logging
 from collections.abc import Awaitable, Callable
 
 import grpc
+from solders.pubkey import Pubkey
 
 from geyser.generated import geyser_pb2, geyser_pb2_grpc
 from interfaces.core import Platform, TokenInfo
@@ -79,8 +80,13 @@ class UniversalGeyserListener(BaseTokenListener):
         geyser_api_token: str,
         geyser_auth_type: str,
         platforms: list[Platform] | None = None,
+        platform_configs: frozenset[Pubkey] | None = None,
     ):
-        """Initialize universal Geyser listener."""
+        """Initialize universal Geyser listener.
+
+        Args:
+            platform_configs: Narrows a LaunchLab platform to these configs
+        """
         super().__init__()
         self.geyser_endpoint = geyser_endpoint
         self.geyser_api_token = geyser_api_token
@@ -120,7 +126,7 @@ class UniversalGeyserListener(BaseTokenListener):
                 dummy_client = DummyClient()
 
                 implementations = platform_factory.create_for_platform(
-                    platform, dummy_client
+                    platform, dummy_client, platform_configs=platform_configs
                 )
                 parser = implementations.event_parser
                 self.platform_parsers[platform] = parser

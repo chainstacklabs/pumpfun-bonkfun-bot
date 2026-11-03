@@ -55,6 +55,7 @@ def build_trader_settings(cfg: dict, platform: Platform) -> TraderSettings:
         private_key=cfg["private_key"],
         # Platform configuration - pass platform enum directly
         platform=platform,
+        platform_configs=(cfg.get("launchlab") or {}).get("platform_configs"),
         # Trade parameters
         buy_amount=cfg["trade"]["buy_amount"],
         buy_slippage=cfg["trade"]["buy_slippage"],

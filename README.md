@@ -12,7 +12,7 @@
   • <a target="_blank" href="https://console.chainstack.com/user/account/create">Start for free</a> •
 </p>
 
-A Solana trading bot for **pump.fun**, **letsbonk.fun** and **StonkFun**. It watches for token creation, buys, and exits on a strategy you configure. [`cookbook/`](cookbook/) holds one standalone script per action, useful on their own even if you never run the bot.
+A Solana trading bot for **pump.fun** and for **letsbonk.fun**, **StonkFun** and every other launchpad on Raydium LaunchLab. It watches for token creation, buys, and exits on a strategy you configure. [`cookbook/`](cookbook/) holds one standalone script per action, useful on their own even if you never run the bot.
 
 For the full walkthrough, see [Solana: Creating a trading and sniping pump.fun bot](https://docs.chainstack.com/docs/solana-creating-a-pumpfun-bot). It lags behind the code, so treat this README as the source of truth for setup and configuration.
 
@@ -74,7 +74,7 @@ Each YAML file in `bots/` is one bot instance. They ship with commented defaults
 | `bot-sniper-5-shreds.yaml` | `shreds` — pre-execution, ahead of `geyser`, cannot see router-created coins | `pump_fun` |
 | `bot-sniper-6-stonkfun.yaml` | `geyser` | `stonk_fun`, `enabled: false` |
 
-Set `platform` to `"pump_fun"`, `"lets_bonk"` or `"stonk_fun"`. pump.fun supports all four listeners; letsbonk.fun and StonkFun support `blocks` and `geyser` but **not** `logs` or `shreds`. The bot validates the pairing at startup and refuses to run an invalid one.
+Set `platform` to `"pump_fun"`, `"launchlab"`, `"lets_bonk"` or `"stonk_fun"`. pump.fun supports all four listeners; the LaunchLab platforms support `blocks` and `geyser` but **not** `logs` or `shreds`. The bot validates the pairing at startup and refuses to run an invalid one.
 
 Set `enabled: false` to keep a config around without running it. Every bot with `enabled: true` starts when you run the bot.
 
@@ -133,6 +133,20 @@ filters:
 ```
 
 Keys accept the aliases `sol` / `wsol` / `usdc` or a raw base58 mint. A coin whose quote mint has no configured amount is skipped rather than bought with a wrongly-scaled amount, so a config that lists nothing here trades SOL-paired coins only. Buying a USDC-paired coin needs USDC in the wallet plus a little SOL for fees and ATA rent.
+
+### LaunchLab launchpads
+
+letsbonk.fun, StonkFun and many smaller launchpads are pools on one program, Raydium LaunchLab; each launchpad is a set of *platform configs*. `platform: "launchlab"` snipes launches under any of them, and `lets_bonk` / `stonk_fun` keep to their own. To pick launchpads, list their platform configs:
+
+```yaml
+platform: "launchlab"
+launchlab:
+  platform_configs:                 # omit to take every launchpad
+    - "5thqcDwKp5QQ8US4XRMoseGeGbmLKMmoKZmS6zHrQAsA"   # letsbonk.fun
+    - "6BwHHDg3u1854jC8PDLXvR4spTcLNaoBxLJNGC4nTESt"   # StonkFun reward coins
+```
+
+On `stonk_fun` or `lets_bonk` the list can only narrow the preset. Without a list, the listener subscribes on the whole program and sees every LaunchLab trade, not just launches. `trades/trades.log` names each coin's platform config. Only constant-product curves are bought; a fixed-price or linear launch is ignored.
 
 ### StonkFun
 
@@ -197,6 +211,7 @@ uv run tools/simulate_bot_buy_path.py        # the bot's buy path against a fres
 uv run tools/compare_listeners.py            # race all five listeners against each other
 uv run tools/compare_migration_listeners.py  # race the two migration detection methods
 uv run tools/cleanup_accounts.py [MINT]      # close leftover token accounts — submits transactions
+uv run tools/launchlab_create_coin.py --platform-config <ADDRESS>  # LaunchLab launch on a local validator (surfpool)
 uv run tools/live_v2_round_trip.py --yes     # real buy_v2 + sell_v2 — SPENDS REAL FUNDS
 uv run tools/live_listener_matrix.py --yes   # real round trip per listener — SPENDS REAL FUNDS
 ```

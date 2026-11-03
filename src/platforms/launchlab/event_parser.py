@@ -1,6 +1,7 @@
-"""Raydium LaunchLab launch parsing, filtered to one launchpad's platform configs."""
+"""Raydium LaunchLab launch parsing, optionally narrowed to some platform configs."""
 
 import base64
+from collections.abc import Iterable
 from time import monotonic
 from typing import Any, ClassVar
 
@@ -8,7 +9,7 @@ import base58
 from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
 
-from interfaces.core import EventParser, TokenInfo
+from interfaces.core import EventParser, Platform, TokenInfo
 from platforms.launchlab.address_provider import LAUNCHLAB_PROGRAM
 from utils.idl_parser import IDLParser
 from utils.logger import get_logger
@@ -21,9 +22,10 @@ _INITIALIZE_VARIANTS = ("initialize", "initialize_v2", "initialize_with_token_20
 class LaunchLabEventParser(EventParser):
     """Turns a LaunchLab pool initialization into a TokenInfo.
 
-    LaunchLab serves many launchpads from one program; a launch belongs to the
-    platform whose config it names. Subclasses set `PLATFORM_CONFIGS`, and any
-    launch under another config is ignored.
+    LaunchLab serves many launchpads from one program, and a launch names its
+    launchpad's platform config. This class takes a launch under any config.
+    A preset subclass sets `PLATFORM_CONFIGS` to its launchpad's, and
+    `platform_configs` narrows either; a launch under another config is ignored.
 
     Everything comes from the instruction's accounts and arguments: the pool's
     creator is the `creator` account (not the payer, which may differ), the
@@ -34,26 +36,59 @@ class LaunchLabEventParser(EventParser):
 
     Logs alone cannot identify a launch: the program's PoolCreateEvent carries
     neither the base mint, the quote mint nor the platform config.
+
+    Only constant-product curves are taken: the price and trade math assume
+    one, and a fixed-price or linear launch is ignored.
     """
 
-    PLATFORM_CONFIGS: ClassVar[frozenset[Pubkey]] = frozenset()
+    # None takes every platform config.
+    PLATFORM_CONFIGS: ClassVar[frozenset[Pubkey] | None] = None
 
-    def __init__(self, idl_parser: IDLParser) -> None:
+    def __init__(
+        self,
+        idl_parser: IDLParser,
+        platform_configs: Iterable[Pubkey] | None = None,
+    ) -> None:
+        """Build a parser, narrowed to `platform_configs` when given.
+
+        Raises:
+            ValueError: If `platform_configs` is empty, or names a config a
+                preset does not cover
+        """
         self._idl_parser = idl_parser
         discriminators = idl_parser.get_instruction_discriminators()
         self._discriminators = [discriminators[name] for name in _INITIALIZE_VARIANTS]
+        self.platform_configs = self.PLATFORM_CONFIGS
+        if platform_configs is not None:
+            narrowed = frozenset(platform_configs)
+            if not narrowed:
+                raise ValueError("platform_configs must name at least one config")  # noqa: TRY003
+            outside = narrowed - (self.PLATFORM_CONFIGS or narrowed)
+            if outside:
+                raise ValueError(  # noqa: TRY003
+                    f"{self.platform.value} does not cover platform configs "
+                    f"{sorted(map(str, outside))}"
+                )
+            self.platform_configs = narrowed
+
+    @property
+    def platform(self) -> Platform:
+        """Every launchpad on LaunchLab."""
+        return Platform.LAUNCHLAB
 
     def get_program_id(self) -> Pubkey:
         """Get the LaunchLab program ID."""
         return LAUNCHLAB_PROGRAM
 
     def get_stream_filter_accounts(self) -> list[Pubkey]:
-        """Subscribe on this launchpad's platform configs, not the whole program.
+        """Subscribe on the platform configs, or the program when taking all.
 
-        Every pool and every trade on it names its platform config, so this
-        keeps other launchpads on LaunchLab out of the stream.
+        Every pool and every trade on it names its platform config, so a
+        narrowed parser keeps other launchpads on LaunchLab out of the stream.
         """
-        return sorted(self.PLATFORM_CONFIGS, key=str)
+        if self.platform_configs is None:
+            return [LAUNCHLAB_PROGRAM]
+        return sorted(self.platform_configs, key=str)
 
     def get_creation_filter_accounts(self) -> list[Pubkey]:
         """Same as the stream filter: a launch always names its platform config."""
@@ -77,8 +112,8 @@ class LaunchLabEventParser(EventParser):
         """Decode one initialize instruction into a TokenInfo.
 
         Returns:
-            None for anything but a pool initialization under one of this
-            platform's configs
+            None for anything but a constant-product pool initialization under
+            one of this parser's platform configs
         """
         if not any(instruction_data.startswith(d) for d in self._discriminators):
             return None
@@ -104,10 +139,21 @@ class LaunchLabEventParser(EventParser):
         if any(named.get(name) is None for name in required):
             return None
         keys = {name: Pubkey.from_string(named[name]) for name in required}
-        if keys["platform_config"] not in self.PLATFORM_CONFIGS:
+        if (
+            self.platform_configs is not None
+            and keys["platform_config"] not in self.platform_configs
+        ):
             return None
 
         args = decoded["args"]
+        # `initialize` names its arguments with a leading underscore.
+        curve = args.get("curve_param") or args.get("_curve_param") or {}
+        if curve.get("variant") != "Constant":
+            logger.debug(
+                f"Skipping LaunchLab launch {keys['base_mint']}: "
+                f"{curve.get('variant')} curve is not supported"
+            )
+            return None
         mint_params = args.get("base_mint_param") or {}
         transfer_fee = args.get("transfer_fee_extension_param") or {}
         payer = named.get("payer")

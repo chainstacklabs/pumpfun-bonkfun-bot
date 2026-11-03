@@ -13,6 +13,9 @@ class Platform(Enum):
     """Supported trading platforms."""
 
     PUMP_FUN = "pump_fun"
+    # Every launchpad on Raydium LaunchLab; letsbonk.fun and StonkFun are the
+    # same program narrowed to their own platform configs.
+    LAUNCHLAB = "launchlab"
     LETS_BONK = "lets_bonk"
     STONK_FUN = "stonk_fun"
 
@@ -62,11 +65,12 @@ class TokenInfo:
     platform: Platform
     bonding_curve: Pubkey | None = None  # pump.fun specific
     associated_bonding_curve: Pubkey | None = None  # pump.fun specific
-    pool_state: Pubkey | None = None  # LetsBonk specific
-    base_vault: Pubkey | None = None  # LetsBonk specific
-    quote_vault: Pubkey | None = None  # LetsBonk specific
-    global_config: Pubkey | None = None  # LetsBonk specific
-    platform_config: Pubkey | None = None  # LetsBonk specific
+    pool_state: Pubkey | None = None  # LaunchLab specific
+    base_vault: Pubkey | None = None  # LaunchLab specific
+    quote_vault: Pubkey | None = None  # LaunchLab specific
+    global_config: Pubkey | None = None  # LaunchLab specific
+    # LaunchLab: the launchpad the coin was launched on.
+    platform_config: Pubkey | None = None
 
     # Common fields
     user: Pubkey | None = None

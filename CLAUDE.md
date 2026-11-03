@@ -1,6 +1,6 @@
 # Agent guide
 
-Solana trading bot for pump.fun, letsbonk.fun and StonkFun. Snipes newly created tokens and exits on a configured strategy. See [README.md](README.md) for setup and configuration.
+Solana trading bot for pump.fun and Raydium LaunchLab (any launchpad; letsbonk.fun and StonkFun presets). Snipes newly created tokens and exits on a configured strategy. See [README.md](README.md) for setup and configuration.
 
 `AGENTS.md` is a symlink to this file, so Claude Code, Codex, Cursor and Windsurf read the same guide.
 
@@ -11,7 +11,7 @@ Deeper notes, kept out of this file so they load only when needed:
 | Doc | Read it before |
 |---|---|
 | [docs/pumpfun-protocol.md](docs/pumpfun-protocol.md) | touching account layouts, instruction args, fee recipients or quote assets |
-| [docs/launchlab-protocol.md](docs/launchlab-protocol.md) | touching letsbonk.fun or StonkFun: platform configs, swap accounts, quote assets, transfer fees |
+| [docs/launchlab-protocol.md](docs/launchlab-protocol.md) | touching LaunchLab (any launchpad, letsbonk.fun, StonkFun): platform configs, swap accounts, quote assets, transfer fees |
 | [docs/listeners-and-geyser.md](docs/listeners-and-geyser.md) | changing a listener, the geyser stubs or a decoder |
 | [docs/cookbook-conventions.md](docs/cookbook-conventions.md) | adding or changing anything under `cookbook/` |
 | [docs/regression-tests.md](docs/regression-tests.md) | picking which verifiers your change needs |
@@ -190,7 +190,7 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
   `GEYSER_*`.
 - `src/config_loader.py` (package root, not under `core/`) validates the
   platform/listener pairing before startup: pump.fun supports `logs`, `blocks`,
-  `geyser`, `shreds`; letsbonk.fun and StonkFun support `blocks` and `geyser` —
+  `geyser`, `shreds`; the LaunchLab platforms support `blocks` and `geyser` —
   not `logs` (LaunchLab's logs never name the coin) or `shreds` (issue #201).
   Adding a listener means updating `PLATFORM_LISTENER_COMPATIBILITY` there too.
 - Bots with `separate_process: true` run in their own process, one log file each.

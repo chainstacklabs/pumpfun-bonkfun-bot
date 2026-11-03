@@ -5,11 +5,12 @@ import json
 from collections.abc import Awaitable, Callable
 
 import websockets
+from solders.pubkey import Pubkey
 
 from core.client import SolanaClient
 from interfaces.core import Platform, TokenInfo
 from monitoring.base_listener import BaseTokenListener, reraise_if_cancelled
-from platforms import get_platform_implementations, platform_factory
+from platforms import platform_factory
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -28,12 +29,14 @@ class UniversalBlockListener(BaseTokenListener):
         self,
         wss_endpoint: str,
         platforms: list[Platform] | None = None,
+        platform_configs: frozenset[Pubkey] | None = None,
     ) -> None:
         """Initialize universal block listener.
 
         Args:
             wss_endpoint: WebSocket endpoint URL
             platforms: List of platforms to monitor (if None, monitor all supported platforms)
+            platform_configs: Narrows a LaunchLab platform to these configs
         """
         super().__init__()
         self.wss_endpoint = wss_endpoint
@@ -69,7 +72,9 @@ class UniversalBlockListener(BaseTokenListener):
 
                 dummy_client = DummyClient()
 
-                implementations = get_platform_implementations(platform, dummy_client)
+                implementations = platform_factory.create_for_platform(
+                    platform, dummy_client, platform_configs=platform_configs
+                )
                 parser = implementations.event_parser
                 self.platform_parsers[platform] = parser
                 program_id_str = str(parser.get_program_id())

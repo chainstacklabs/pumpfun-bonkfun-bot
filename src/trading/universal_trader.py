@@ -28,6 +28,7 @@ from core.wallet import Wallet
 from interfaces.core import Platform, TokenInfo
 from monitoring.listener_factory import ListenerFactory
 from platforms import get_platform_implementations
+from platforms.launchlab_presets import resolve_platform_configs
 from trading import trade_log
 from trading.base import TradeResult
 from trading.intake import TokenIntake
@@ -172,6 +173,9 @@ class UniversalTrader:
                 geyser_api_token=settings.geyser_api_token,
                 geyser_auth_type=settings.geyser_auth_type,
                 platforms=[self.platform],  # Only listen for our platform
+                platform_configs=resolve_platform_configs(
+                    self.platform, settings.platform_configs
+                ),
             ),
             self.quote_amounts,
             allowed_quote_mints,
