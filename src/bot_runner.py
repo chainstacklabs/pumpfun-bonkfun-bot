@@ -131,6 +131,8 @@ def build_trader_settings(cfg: dict, platform: Platform) -> TraderSettings:
         compute_units=cfg.get("compute_units", {}),
         # Node provider configuration
         max_rps=cfg.get("node", {}).get("max_rps", 25),
+        # Open positions, resumed on the next start
+        positions_file=f"positions/{cfg['name']}.json" if cfg.get("name") else None,
     )
 
 

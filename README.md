@@ -163,7 +163,23 @@ the next one is taken when a position closes. A coin detected while every slot i
 taken waits in the queue, so `max_token_age` decides whether it is still bought.
 Positions under `exit_strategy: manual` or `marry_mode` are never sold, so they
 take no slot. On shutdown the bot stops monitoring the open positions before
-cleanup runs; their tokens stay in the wallet.
+cleanup runs; their tokens stay in the wallet, and the next start resumes them.
+
+### Positions survive a restart
+
+Each position the bot monitors (`tp_sl` or `time_based`) is written to
+`positions/<bot name>.json` when its buy lands and removed once it is sold. On
+start the bot reads that file and resumes each position before it takes a new
+coin, with the bot's current exit strategy: `max_hold_time` and `wait_after_buy`
+count from the original buy, take profit and stop loss from its entry price.
+Resumed positions take slots like any other.
+
+The wallet decides what is left to sell. A position whose coin the wallet no
+longer holds (sold by hand, or burned by `post_session` cleanup with
+`force_close_with_burn`) is cleared, not sold again; one holding less than was
+bought sells what is held. A position whose balance cannot be read stays in the
+file and is tried again on the next start, and so does one whose exit gave up.
+Delete an entry from the file to stop the bot managing that coin.
 
 ### Encrypted wallet
 

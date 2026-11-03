@@ -9,7 +9,8 @@ anything else offline:
   A. Each config key lands in its own `TraderSettings` field (every number and
      string key holds a distinct value), and every field is covered here.
   B. A config that sets only the required keys gets the runner's defaults.
-  C. `UniversalTrader` passes each setting to the part that uses it.
+  C. `UniversalTrader` passes each setting to the part that uses it; the
+     position manager keeps its positions in `positions/<bot name>.json`.
   D. `max_exit_sell_attempts` and `max_open_positions` below 1 are clamped to 1
      in the position manager.
   E. The settings repr leaves out the endpoints, the key and the geyser token.
@@ -55,6 +56,7 @@ GEYSER_TOKEN = "SECRET-GEYSER-TOKEN"  # noqa: S105
 
 # Every key bot_runner reads, each with a value no default shares.
 FULL_CONFIG = {
+    "name": "wired-bot",
     "rpc_endpoint": RPC,
     "wss_endpoint": WSS,
     "private_key": PRIVATE_KEY,
@@ -164,6 +166,7 @@ EXPECTED_FULL = {
     "yolo_mode": True,
     "compute_units": {"buy": 111, "sell": 222},
     "max_rps": 12.5,
+    "positions_file": "positions/wired-bot.json",
 }
 
 MINIMAL_CONFIG = {
@@ -217,6 +220,8 @@ EXPECTED_DEFAULTS = {
     "yolo_mode": False,
     "compute_units": {},
     "max_rps": 25,
+    # MINIMAL_CONFIG has no name; bot_runner's own configs always do.
+    "positions_file": None,
 }
 
 
@@ -352,6 +357,7 @@ def check_c_parts_get_their_settings() -> bool:
             positions.cleanup_mode,
             positions.cleanup_force_close_with_burn,
             positions.cleanup_with_priority_fee,
+            str(positions.store.path) if positions.store else None,
         ),
         "coordinator": (
             trader.extreme_fast_mode,
@@ -417,6 +423,7 @@ def check_c_parts_get_their_settings() -> bool:
             "after_sell",
             True,
             True,
+            "positions/wired-bot.json",
         ),
         "coordinator": (True, 3, 5, True, quote_amounts, True),
     }

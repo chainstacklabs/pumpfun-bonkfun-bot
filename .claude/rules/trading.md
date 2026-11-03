@@ -10,3 +10,10 @@ a slot is free. Shutdown stops every position task and waits for each to end
 **before** cleanup: post-session cleanup burns and closes token accounts, so it
 must never race a sell still in flight. `verify_concurrent_positions.py` guards
 the order.
+
+Each monitored position is in `positions/<bot name>.json` (`PositionStore`) from
+its buy until its **sale**, and only a sale removes it: a position stopped at
+shutdown, or whose exit gave up or could not be resolved, still holds its coin.
+On start `PositionManager.resume` reads the wallet's balance before holding a
+position again; a coin no longer held is cleared, never sold.
+`verify_positions_survive_restart.py` guards both.

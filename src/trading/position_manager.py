@@ -2,16 +2,25 @@
 
 Monitoring, the exit strategies, bounded exit retries and post-exit cleanup.
 Each position runs as its own task, up to `trade.max_open_positions` at once.
+With a `PositionStore`, each monitored position is on disk from its buy until
+its sell, and `resume` picks those up again after a restart.
 """
 
 import asyncio
+import struct
+from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
 from cleanup.modes import handle_cleanup_after_sell
 from core.client import SolanaClient
 from core.priority_fee.manager import PriorityFeeManager
-from core.pubkeys import normalize_quote_mint, quote_symbol
+from core.pubkeys import (
+    TOKEN_DECIMALS,
+    normalize_quote_mint,
+    quote_symbol,
+    resolve_quote_token_program,
+)
 from core.wallet import Wallet
 from interfaces.core import (
     ConfirmationStatus,
@@ -24,6 +33,7 @@ from trading import trade_log
 from trading.base import TradeResult
 from trading.platform_aware import PlatformAwareSeller
 from trading.position import ExitReason, Position
+from trading.position_store import PositionStore, StoredPosition
 from trading.settings import TraderSettings
 from utils.logger import get_logger
 
@@ -31,6 +41,11 @@ if TYPE_CHECKING:
     from solders.pubkey import Pubkey
 
 logger = get_logger(__name__)
+
+
+def _utc_now() -> datetime:
+    """Naive UTC, the form `Position.entry_time` uses."""
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class ExitSellVerdict(Enum):
@@ -75,6 +90,8 @@ class PositionManager:
 
     #: Seconds `stop` waits for the cancelled position tasks to end.
     _STOP_BUDGET = 30.0
+    #: Where positions are kept across restarts; None keeps them in memory only.
+    store: PositionStore | None = None
 
     def __init__(  # noqa: PLR0913
         self,
@@ -85,7 +102,9 @@ class PositionManager:
         wallet: Wallet,
         priority_fee_manager: PriorityFeeManager,
         platform_implementations: PlatformImplementations,
+        store: PositionStore | None = None,
     ) -> None:
+        """Set up the manager; without a `store` nothing is written to disk."""
         self.seller = seller
         self.solana_client = solana_client
         self.wallet = wallet
@@ -115,28 +134,51 @@ class PositionManager:
         self.max_open_positions = max(1, settings.max_open_positions)
         # One task per position still running its exit strategy.
         self._open: set[asyncio.Task] = set()
+        self.store = store
+
+    @property
+    def monitors(self) -> bool:
+        """Whether positions are held to an exit; not under manual or marry mode."""
+        return not self.marry_mode and self.exit_strategy in ("tp_sl", "time_based")
 
     @property
     def open_count(self) -> int:
         """Positions whose exit strategy is still running."""
         return sum(not task.done() for task in self._open)
 
-    def open(self, token_info: TokenInfo, buy_result: TradeResult) -> asyncio.Task:
+    def open(
+        self,
+        token_info: TokenInfo,
+        buy_result: TradeResult,
+        entry_time: datetime | None = None,
+    ) -> asyncio.Task:
         """Start holding a bought coin in its own task and return at once.
 
-        The task never raises: an error in the exit strategy is logged and ends
-        that position only.
+        A coin bought just now (`entry_time` None) is written to the store
+        first, when its position is monitored. The task never raises: an error
+        in the exit strategy is logged and ends that position only.
+
+        Args:
+            entry_time: When a resumed position was bought, naive UTC
         """
+        if entry_time is None and self.store is not None and self.monitors:
+            self.store.add(token_info, buy_result, _utc_now())
         task = asyncio.create_task(
-            self._hold(token_info, buy_result), name=f"position-{token_info.mint}"
+            self._hold(token_info, buy_result, entry_time),
+            name=f"position-{token_info.mint}",
         )
         self._open.add(task)
         task.add_done_callback(self._open.discard)
         return task
 
-    async def _hold(self, token_info: TokenInfo, buy_result: TradeResult) -> None:
+    async def _hold(
+        self,
+        token_info: TokenInfo,
+        buy_result: TradeResult,
+        entry_time: datetime | None,
+    ) -> None:
         try:
-            await self.manage(token_info, buy_result)
+            await self.manage(token_info, buy_result, entry_time=entry_time)
         except Exception:
             logger.exception(f"Error managing position in {token_info.symbol}")
 
@@ -188,21 +230,143 @@ class PositionManager:
                 # and cleanup still has to run after them.
                 continue
 
-    async def manage(self, token_info: TokenInfo, buy_result: TradeResult) -> None:
-        """Hold a bought coin until its exit strategy is done with it."""
+    async def resume(self) -> list[TokenInfo]:
+        """Hold again each position a previous run left in the store.
+
+        The wallet is the truth: a position whose coin the wallet no longer
+        holds was sold (or moved) while the bot was down and is cleared, never
+        sold again; one holding less than was bought sells what is left. A
+        position whose balance or quote mint cannot be read stays in the file
+        and is not monitored this run.
+
+        Returns:
+            The coins now held again, each in its own task
+        """
+        if self.store is None:
+            return []
+        stored = self.store.load()
+        if stored and not self.monitors:
+            logger.warning(
+                f"{len(stored)} position(s) in {self.store.path} are not resumed: "
+                f"exit strategy {self.exit_strategy}"
+                f"{' with marry mode' if self.marry_mode else ''} sells nothing"
+            )
+            return []
+        resumed = []
+        for position in stored:
+            if await self._resume_one(position):
+                resumed.append(position.token_info)
+        return resumed
+
+    async def _resume_one(self, stored: StoredPosition) -> bool:
+        token_info, buy = stored.token_info, stored.buy_result
+        label = f"{token_info.symbol} ({token_info.mint})"
+        held = await self._held_raw(token_info)
+        if held is None:
+            logger.error(
+                f"Could not read the wallet's balance of {label}; its position "
+                f"stays in {self.store.path} and is not monitored this run"
+            )
+            return False
+        if held == 0:
+            logger.info(
+                f"Clearing position in {label}: the wallet no longer holds it, "
+                f"so it was sold or moved while the bot was down"
+            )
+            self.store.remove(token_info.mint)
+            return False
+        try:
+            await resolve_quote_token_program(
+                normalize_quote_mint(token_info.quote_mint),
+                self.solana_client.get_account_info,
+            )
+        except Exception:
+            logger.exception(
+                f"Could not resolve the quote mint of {label}; its position "
+                f"stays in {self.store.path} and is not monitored this run"
+            )
+            return False
+
+        bought_raw = (
+            buy.amount_raw
+            if buy.amount_raw is not None
+            else round(buy.amount * 10**TOKEN_DECIMALS)
+        )
+        if held < bought_raw:
+            logger.warning(
+                f"The wallet holds {held} raw of {label}, less than the "
+                f"{bought_raw} bought; the position sells what is held"
+            )
+            buy = TradeResult(
+                success=True,
+                platform=buy.platform,
+                tx_signature=buy.tx_signature,
+                amount=held / 10**TOKEN_DECIMALS,
+                amount_raw=held,
+                price=buy.price,
+            )
+        logger.info(
+            f"Resuming position in {label}: {buy.amount} tokens bought at "
+            f"{buy.price} on {stored.entry_time.isoformat()} UTC"
+        )
+        self.open(token_info, buy, entry_time=stored.entry_time)
+        return True
+
+    async def _held_raw(self, token_info: TokenInfo) -> int | None:
+        """Raw amount of the coin in the wallet's account; None when unreadable."""
+        for attempt in range(3):
+            if attempt:
+                await asyncio.sleep(1.0)
+            try:
+                program = token_info.token_program_id
+                if program is None:
+                    program = (
+                        await self.solana_client.get_account_info(token_info.mint)
+                    ).owner
+                account = self.wallet.get_associated_token_address(
+                    token_info.mint, program
+                )
+                try:
+                    data = (await self.solana_client.get_account_info(account)).data
+                except ValueError:
+                    return 0  # no account: nothing held
+                # SPL token account: mint (32), owner (32), amount (u64).
+                return struct.unpack_from("<Q", bytes(data), 64)[0]
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    f"Balance read for {token_info.symbol} failed "
+                    f"(attempt {attempt + 1}/3): {e}"
+                )
+        return None
+
+    async def manage(
+        self,
+        token_info: TokenInfo,
+        buy_result: TradeResult,
+        entry_time: datetime | None = None,
+    ) -> None:
+        """Hold a bought coin until its exit strategy is done with it.
+
+        Args:
+            entry_time: When a resumed position was bought, naive UTC; the hold
+                time and `wait_time_after_buy` count from it. None: bought now.
+        """
         # Choose exit strategy
         if not self.marry_mode:
             if self.exit_strategy == "tp_sl":
-                await self._handle_tp_sl_exit(token_info, buy_result)
+                await self._handle_tp_sl_exit(token_info, buy_result, entry_time)
             elif self.exit_strategy == "time_based":
-                await self._handle_time_based_exit(token_info, buy_result)
+                await self._handle_time_based_exit(token_info, buy_result, entry_time)
             elif self.exit_strategy == "manual":
                 logger.info("Manual exit strategy - position will remain open")
         else:
             logger.info("Marry mode enabled. Skipping sell operation.")
 
     async def _handle_tp_sl_exit(
-        self, token_info: TokenInfo, buy_result: TradeResult
+        self,
+        token_info: TokenInfo,
+        buy_result: TradeResult,
+        entry_time: datetime | None = None,
     ) -> None:
         """Handle take profit/stop loss exit strategy."""
         position = Position.create_from_buy_result(
@@ -215,6 +379,8 @@ class PositionManager:
             stop_loss_percentage=self.stop_loss_percentage,
             max_hold_time=self.max_hold_time,
         )
+        if entry_time is not None:
+            position.entry_time = entry_time
 
         logger.info(f"Created position: {position}")
         quote_label = quote_symbol(normalize_quote_mint(token_info.quote_mint))
@@ -231,15 +397,24 @@ class PositionManager:
         await self._monitor_position_until_exit(token_info, position)
 
     async def _handle_time_based_exit(
-        self, token_info: TokenInfo, buy_result: TradeResult
+        self,
+        token_info: TokenInfo,
+        buy_result: TradeResult,
+        entry_time: datetime | None = None,
     ) -> None:
         """Handle legacy time-based exit strategy.
 
         Args:
             buy_result: Result from the buy operation (contains token amount)
+            entry_time: When a resumed position was bought; the wait counts
+                from it
         """
-        logger.info(f"Waiting for {self.wait_time_after_buy} seconds before selling...")
-        await asyncio.sleep(self.wait_time_after_buy)
+        wait = self.wait_time_after_buy
+        if entry_time is not None:
+            held_for = (_utc_now() - entry_time).total_seconds()
+            wait = max(0.0, wait - held_for)
+        logger.info(f"Waiting for {wait} seconds before selling...")
+        await asyncio.sleep(wait)
 
         logger.info(f"Selling {token_info.symbol}...")
         # The first attempt prices off the buy: no price has been read since,
@@ -256,6 +431,7 @@ class PositionManager:
 
             if sell_result.success:
                 logger.info(f"Successfully sold {token_info.symbol}")
+                self._forget(token_info)
                 trade_log.log_trade(
                     "sell",
                     token_info,
@@ -279,6 +455,7 @@ class PositionManager:
                 # cleanup a first-try success would, minus the trade log: the
                 # amounts were never read back.
                 logger.info(f"Sell of {token_info.symbol} confirmed late")
+                self._forget(token_info)
                 await self._cleanup_after_exit(token_info)
                 return
             if verdict is ExitSellVerdict.STOP:
@@ -599,6 +776,7 @@ class PositionManager:
         if sell_result.success:
             # Close position with actual exit price
             position.close_position(sell_result.price, exit_reason)
+            self._forget(token_info)
 
             logger.info(
                 f"Successfully exited position: {exit_reason.value} "
@@ -628,6 +806,7 @@ class PositionManager:
             # The sell landed, only its confirmation was late. Close against the
             # price it was floored at; the real fill was never read back.
             position.close_position(price, exit_reason)
+            self._forget(token_info)
             logger.info(f"Position for {token_info.symbol} closed by a late fill")
             await self._cleanup_after_exit(token_info)
         elif verdict is ExitSellVerdict.STOP:
@@ -637,6 +816,16 @@ class PositionManager:
                 f"longer monitored."
             )
         return verdict
+
+    def _forget(self, token_info: TokenInfo) -> None:
+        """Take a sold position out of the store.
+
+        Only a sale does: a position stopped at shutdown, or one whose exit
+        gave up or could not be resolved, still holds its coin and stays for
+        the next run, which checks the wallet before selling.
+        """
+        if self.store is not None:
+            self.store.remove(token_info.mint)
 
     async def _cleanup_after_exit(self, token_info: TokenInfo) -> None:
         """Run the configured post-sell cleanup for a closed position.
