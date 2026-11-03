@@ -53,6 +53,7 @@ from solders.pubkey import Pubkey  # noqa: E402
 
 from core.pubkeys import WSOL_MINT, SystemAddresses  # noqa: E402
 from interfaces.core import Platform, TokenInfo  # noqa: E402
+from platforms import PlatformImplementations  # noqa: E402
 from platforms.launchlab import LAUNCHLAB_PROGRAM  # noqa: E402
 from platforms.launchlab.curve_math import (  # noqa: E402
     buy_amount_out,
@@ -67,7 +68,7 @@ from platforms.stonkfun import (  # noqa: E402
 )
 from trading import platform_aware  # noqa: E402
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller  # noqa: E402
-from trading.universal_trader import UniversalTrader  # noqa: E402
+from trading.intake import TokenIntake  # noqa: E402
 from utils.idl_manager import get_idl_manager  # noqa: E402
 
 FIXTURE = Path(__file__).with_name("raw_stonkfun_trades_from_gettransaction.json")
@@ -334,8 +335,9 @@ def _stub_implementations(pool_state: dict, captured: dict, *, exact_in: bool):
         async def get_pool_state(self, _pool, commitment=None):  # noqa: ARG002
             return pool_state
 
-    return SimpleNamespace(
+    return PlatformImplementations(
         address_provider=PROVIDER,
+        event_parser=None,
         instruction_builder=SimpleNamespace(
             spends_exact_amount_in=exact_in,
             build_buy_instruction=build,
@@ -468,7 +470,7 @@ def check_f_single_token_mode_waits_past_refused_coins() -> bool:
                 await asyncio.sleep(0.05)
             await asyncio.sleep(3600)
 
-    trader = SimpleNamespace(
+    intake = SimpleNamespace(
         token_listener=Listener(),
         match_string=None,
         bro_address=None,
@@ -479,8 +481,8 @@ def check_f_single_token_mode_waits_past_refused_coins() -> bool:
         quote_amounts={WSOL_MINT: 0.001},
         max_transfer_fee_bps=100,
     )
-    trader._skip_reason = lambda token: UniversalTrader._skip_reason(trader, token)
-    found = asyncio.run(UniversalTrader._wait_for_token(trader))
+    intake.skip_reason = lambda token: TokenIntake.skip_reason(intake, token)
+    found = asyncio.run(TokenIntake.wait_for_token(intake))
     ok = found is not None and found.symbol == "BUYABLE"
     if not ok:
         print(f"    picked {found and found.symbol}")

@@ -12,7 +12,7 @@ from spl.token.instructions import get_associated_token_address
 from core.client import SolanaClient
 from core.pubkeys import normalize_quote_mint
 from core.quote_account import quote_settlement_account
-from interfaces.core import AddressProvider, GraduatedMarket, TokenInfo
+from interfaces.core import Market, TokenInfo
 
 CPMM_PROGRAM: Final[Pubkey] = Pubkey.from_string(
     "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C"
@@ -130,7 +130,7 @@ def accrued_fees(data: bytes, base_is_token_0: bool) -> tuple[int, int]:
     return (token_0, token_1) if base_is_token_0 else (token_1, token_0)
 
 
-class CpmmMarket(GraduatedMarket):
+class CpmmMarket(Market):
     """Sells a graduated LaunchLab coin into its Raydium CPMM pool.
 
     The pool is derived, not searched for: CPMM keys it by the platform's
@@ -232,7 +232,6 @@ class CpmmMarket(GraduatedMarket):
         user: Pubkey,
         amount_in: int,
         minimum_amount_out: int,
-        address_provider: AddressProvider,  # noqa: ARG002
     ) -> list[Instruction]:
         """Build swap_base_input selling `amount_in` raw tokens for the quote."""
         pool = await self._resolve(token_info)
@@ -264,7 +263,6 @@ class CpmmMarket(GraduatedMarket):
         self,
         token_info: TokenInfo,
         user: Pubkey,  # noqa: ARG002
-        address_provider: AddressProvider,  # noqa: ARG002
     ) -> list[Pubkey]:
         """The pool and its vaults, once the pool has been resolved."""
         pool = self._pools.get(token_info.mint)

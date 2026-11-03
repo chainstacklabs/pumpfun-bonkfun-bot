@@ -18,7 +18,7 @@ from core.pubkeys import (
     quote_units_per_token,
 )
 from core.quote_account import quote_settlement_account
-from interfaces.core import AddressProvider, GraduatedMarket, TokenInfo
+from interfaces.core import Market, TokenInfo
 from platforms.pumpfun.address_provider import PumpFunAddresses
 from utils.idl_parser import IDLParser
 
@@ -103,7 +103,7 @@ def _pubkeys(data: bytes, offset: int, count: int) -> list[Pubkey]:
     ]
 
 
-class PumpSwapMarket(GraduatedMarket):
+class PumpSwapMarket(Market):
     """Sells a graduated pump.fun coin into its canonical PumpSwap pool.
 
     The pool is derived from the mint, so finding it costs no search. The
@@ -208,7 +208,6 @@ class PumpSwapMarket(GraduatedMarket):
         user: Pubkey,
         amount_in: int,
         minimum_amount_out: int,
-        address_provider: AddressProvider,  # noqa: ARG002
     ) -> list[Instruction]:
         """Build PumpSwap `sell` for `amount_in` raw tokens."""
         pool, _ = await self._resolve(token_info)
@@ -292,7 +291,6 @@ class PumpSwapMarket(GraduatedMarket):
         self,
         token_info: TokenInfo,
         user: Pubkey,  # noqa: ARG002
-        address_provider: AddressProvider,  # noqa: ARG002
     ) -> list[Pubkey]:
         """The pool and its token accounts, once the pool has been resolved."""
         pool = self._pools.get(token_info.mint)

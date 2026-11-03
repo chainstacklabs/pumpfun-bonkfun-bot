@@ -31,6 +31,7 @@ from solders.pubkey import Pubkey  # noqa: E402
 
 from core.pubkeys import WSOL_MINT, SystemAddresses  # noqa: E402
 from interfaces.core import Platform, TokenInfo  # noqa: E402
+from platforms import PlatformImplementations  # noqa: E402
 from platforms.pumpfun.address_provider import (  # noqa: E402
     PumpFunAddresses,
     PumpFunAddressProvider,
@@ -101,8 +102,13 @@ async def _no_fee(_accounts: list) -> None:
 
 def _buy_v2_args(*, extreme_fast: bool) -> tuple[int, int]:
     """Run one buy and return buy_v2's (amount, max_sol_cost)."""
-    platform_aware.get_platform_implementations = lambda _p, _c: SimpleNamespace(
-        address_provider=PROVIDER, instruction_builder=BUILDER, curve_manager=_Curve()
+    platform_aware.get_platform_implementations = lambda _p, _c: (
+        PlatformImplementations(
+            address_provider=PROVIDER,
+            instruction_builder=BUILDER,
+            curve_manager=_Curve(),
+            event_parser=None,
+        )
     )
     client = _Client()
     buyer = PlatformAwareBuyer(

@@ -1,6 +1,6 @@
 """Factory and registry for platform-specific implementations of the interfaces."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from core.client import SolanaClient
@@ -8,10 +8,11 @@ from interfaces.core import (
     AddressProvider,
     CurveManager,
     EventParser,
-    GraduatedMarket,
     InstructionBuilder,
+    Market,
     Platform,
 )
+from platforms.curve_market import CurveMarket
 from utils.idl_manager import get_idl_manager, has_idl_support
 from utils.logger import get_logger
 
@@ -27,7 +28,14 @@ class PlatformImplementations:
     curve_manager: CurveManager
     event_parser: EventParser
     # Where the coin trades once its curve graduates; None where unsupported.
-    graduated_market: GraduatedMarket | None = None
+    graduated_market: Market | None = None
+    # The curve itself, as a Market: built from the three parts above.
+    curve_market: CurveMarket = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.curve_market = CurveMarket(
+            self.address_provider, self.instruction_builder, self.curve_manager
+        )
 
 
 class PlatformRegistry:
@@ -44,7 +52,7 @@ class PlatformRegistry:
         instruction_builder_class: type[InstructionBuilder],
         curve_manager_class: type[CurveManager],
         event_parser_class: type[EventParser],
-        graduated_market_class: type[GraduatedMarket] | None = None,
+        graduated_market_class: type[Market] | None = None,
     ) -> None:
         """Register platform implementations.
 

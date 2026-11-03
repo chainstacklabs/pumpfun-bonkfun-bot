@@ -39,12 +39,13 @@ from solders.pubkey import Pubkey  # noqa: E402
 
 from core.pubkeys import WSOL_MINT, SystemAddresses  # noqa: E402
 from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E402
+from platforms import PlatformImplementations  # noqa: E402
 from platforms.pumpfun.address_provider import (  # noqa: E402
     PumpFunAddresses,
     PumpFunAddressProvider,
 )
 from platforms.pumpfun.instruction_builder import PumpFunInstructionBuilder  # noqa: E402
-from trading import platform_aware, universal_trader  # noqa: E402
+from trading import platform_aware, position_manager  # noqa: E402
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller  # noqa: E402
 from utils.idl_manager import get_idl_manager  # noqa: E402
 
@@ -125,11 +126,14 @@ async def _no_fee(_accounts: list) -> None:
 
 
 def _wire(builder=BUILDER) -> None:
-    platform_aware.get_platform_implementations = lambda _p, _c: SimpleNamespace(
-        address_provider=PROVIDER,
-        instruction_builder=builder,
-        curve_manager=_Curve(),
-        graduated_market=None,
+    platform_aware.get_platform_implementations = lambda _p, _c: (
+        PlatformImplementations(
+            address_provider=PROVIDER,
+            instruction_builder=builder,
+            curve_manager=_Curve(),
+            event_parser=None,
+            graduated_market=None,
+        )
     )
 
 
@@ -223,7 +227,7 @@ def check_d_sell_uses_exact_raw() -> bool:
 
 def check_e_trader_passes_raw() -> bool:
     """E: both exit paths hand the raw amount on; the position keeps it."""
-    source = inspect.getsource(universal_trader)
+    source = inspect.getsource(position_manager)
     calls = source.count("self.seller.execute(")
     with_raw = source.count("token_amount_raw=buy_result.amount_raw") + source.count(
         "token_amount_raw=position.quantity_raw"

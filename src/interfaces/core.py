@@ -295,30 +295,70 @@ class InstructionBuilder(ABC):
 class CurveGraduatedError(Exception):
     """The bonding curve has graduated and takes no more trades.
 
-    Raised by `CurveManager.calculate_price`; the coin's price is now its
-    `GraduatedMarket`'s.
+    Raised by `CurveManager.calculate_price`; the coin's price is now that of
+    the AMM pool it migrated to.
     """
 
 
-class GraduatedMarket(ABC):
-    """The AMM pool a coin trades in once its bonding curve has graduated.
+class Market(ABC):
+    """A venue a coin trades in: its bonding curve, or the AMM pool it migrated to.
 
-    A curve that has graduated can no longer be sold into. Its sell methods
-    match `InstructionBuilder`'s, so the seller swaps one for the other.
+    The trader prices, buys and sells through this one interface whatever the
+    venue. A venue that does not take buys leaves the three buy methods at
+    their default, which raises `NotImplementedError`.
     """
+
+    @property
+    def spends_exact_amount_in(self) -> bool:
+        """Whether a buy spends all of `amount_in` rather than capping at it.
+
+        False means `amount_in` is a ceiling and the trader pads it for
+        slippage. True means the venue spends exactly what it is given, so a
+        padded value would overspend by the padding.
+        """
+        return False
 
     @abstractmethod
     async def get_market_state(self, token_info: TokenInfo) -> dict[str, Any]:
-        """Read the pool the coin migrated to.
+        """Read the venue's current state.
 
         Returns:
-            At least `price_per_token`, in whole quote units per whole token,
-            and `fee_fraction`, the share of a sell's proceeds taken as fees
+            `price_per_token`, in whole quote units per whole token. A curve
+            sets it to None when the quote mint's decimals are not cached or
+            the curve has graduated, so a venue whose state can hold None
+            overrides `get_price`. An AMM pool also returns `fee_fraction`,
+            the share of a sell's proceeds taken as fees, and `pool`, its
+            address.
 
         Raises:
-            ValueError: If the pool does not exist yet — migration lands a
+            ValueError: If the venue does not exist yet — an AMM pool lands a
                 moment after graduation — or cannot be read
         """
+
+    async def get_price(self, token_info: TokenInfo) -> float:
+        """Current price in whole quote units per whole token.
+
+        Raises:
+            ValueError: As `get_market_state`
+        """
+        return (await self.get_market_state(token_info))["price_per_token"]
+
+    async def build_buy_instruction(
+        self,
+        token_info: TokenInfo,
+        user: Pubkey,
+        amount_in: int,
+        minimum_amount_out: int,
+    ) -> list[Instruction]:
+        """Build a buy.
+
+        Args:
+            amount_in: Raw quote units: all of it is spent when
+                `spends_exact_amount_in`, otherwise it is the most to spend
+            minimum_amount_out: Raw base tokens: the floor that must arrive
+                when `spends_exact_amount_in`, otherwise the exact count to buy
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not take buys")
 
     @abstractmethod
     async def build_sell_instruction(
@@ -327,23 +367,32 @@ class GraduatedMarket(ABC):
         user: Pubkey,
         amount_in: int,
         minimum_amount_out: int,
-        address_provider: AddressProvider,
     ) -> list[Instruction]:
-        """Build a sell of exactly `amount_in` raw base tokens into the pool.
+        """Build a sell of exactly `amount_in` raw base tokens.
 
         Args:
             minimum_amount_out: Raw quote units that must be paid out
         """
 
+    def get_required_accounts_for_buy(
+        self, token_info: TokenInfo, user: Pubkey
+    ) -> list[Pubkey]:
+        """Accounts a buy locks, for priority-fee estimation."""
+        raise NotImplementedError(f"{type(self).__name__} does not take buys")
+
     @abstractmethod
     def get_required_accounts_for_sell(
-        self, token_info: TokenInfo, user: Pubkey, address_provider: AddressProvider
+        self, token_info: TokenInfo, user: Pubkey
     ) -> list[Pubkey]:
-        """Writable accounts a sell locks, for priority-fee estimation."""
+        """Accounts a sell locks, for priority-fee estimation."""
+
+    def get_buy_compute_unit_limit(self, config_override: int | None = None) -> int:
+        """Compute units for a buy; `config_override` wins when set."""
+        raise NotImplementedError(f"{type(self).__name__} does not take buys")
 
     @abstractmethod
     def get_sell_compute_unit_limit(self, config_override: int | None = None) -> int:
-        """Compute units for a sell into the pool."""
+        """Compute units for a sell; `config_override` wins when set."""
 
 
 class CurveManager(ABC):
