@@ -6,12 +6,15 @@ manager, RPC client or listener. A value that lands in the wrong field, or
 falls back to a different default, changes what the bot trades without failing
 anything else offline:
 
-  A. Each config key lands in its own `TraderSettings` field (every key holds a
-     distinct value), and every field is covered here.
+  A. Each config key lands in its own `TraderSettings` field (every number and
+     string key holds a distinct value), and every field is covered here.
   B. A config that sets only the required keys gets the runner's defaults.
   C. `UniversalTrader` passes each setting to the part that uses it.
   D. `max_exit_sell_attempts` below 1 is clamped to 1 in the position manager.
   E. The settings repr leaves out the endpoints, the key and the geyser token.
+  F. Each boolean key, switched on alone, turns on its own settings field and
+     only the attributes of the parts that act on it (A and C can't tell two
+     booleans apart, since several share a value).
 
 Offline: the RPC client and the listener are replaced by recorders.
 
@@ -88,7 +91,7 @@ FULL_CONFIG = {
     "retries": {
         "max_attempts": 9,
         "wait_after_creation": 3,
-        "wait_after_buy": 4,
+        "wait_after_buy": 8,
         "wait_before_new_token": 5,
     },
     "timing": {"token_wait_timeout": 99},
@@ -133,7 +136,7 @@ EXPECTED_FULL = {
     "hard_cap_prior_fee": 654_321,
     "max_retries": 9,
     "wait_time_after_creation": 3,
-    "wait_time_after_buy": 4,
+    "wait_time_after_buy": 8,
     "wait_time_before_new_token": 5,
     "max_token_age": 6.5,
     "token_wait_timeout": 99,
@@ -387,7 +390,7 @@ def check_c_parts_get_their_settings() -> bool:
             61,
             7,
             4,
-            4,
+            8,
             True,
             "after_sell",
             True,
@@ -431,6 +434,112 @@ def check_e_repr_hides_secrets() -> bool:
     return not leaked
 
 
+# Each boolean key: where it sits in the config, its settings field, and the
+# (part, attribute) pairs it switches.
+BOOLEANS = (
+    (
+        ("trade", "extreme_fast_mode"),
+        "extreme_fast_mode",
+        {("coordinator", "extreme_fast_mode"), ("buyer", "extreme_fast_mode")},
+    ),
+    (
+        ("trade", "trust_create_event"),
+        "trust_create_event",
+        {("buyer", "trust_create_event")},
+    ),
+    (
+        ("priority_fees", "enable_dynamic"),
+        "enable_dynamic_priority_fee",
+        {("fees", "enable_dynamic_fee")},
+    ),
+    (
+        ("priority_fees", "enable_fixed"),
+        "enable_fixed_priority_fee",
+        {("fees", "enable_fixed_fee")},
+    ),
+    (
+        ("cleanup", "force_close_with_burn"),
+        "cleanup_force_close_with_burn",
+        {("positions", "cleanup_force_close_with_burn")},
+    ),
+    (
+        ("cleanup", "with_priority_fee"),
+        "cleanup_with_priority_fee",
+        {("positions", "cleanup_with_priority_fee")},
+    ),
+    (("filters", "marry_mode"), "marry_mode", {("positions", "marry_mode")}),
+    (("filters", "yolo_mode"), "yolo_mode", {("coordinator", "yolo_mode")}),
+)
+
+
+def _config_with_booleans(on: tuple[str, str] | None) -> dict:
+    """The minimal config with every boolean key set, all False but `on`."""
+    config = {
+        section: dict(values) if isinstance(values, dict) else values
+        for section, values in MINIMAL_CONFIG.items()
+    }
+    for (section, key), _, _ in BOOLEANS:
+        config.setdefault(section, {})[key] = (section, key) == on
+    return config
+
+
+def _boolean_attributes(trader: object) -> dict[tuple[str, str], bool]:
+    parts = {
+        "coordinator": trader,
+        "buyer": trader.buyer,
+        "seller": trader.seller,
+        "intake": trader.intake,
+        "positions": trader.positions,
+        "fees": trader.priority_fee_manager,
+    }
+    return {
+        (part, name): value
+        for part, obj in parts.items()
+        for name, value in vars(obj).items()
+        if type(value) is bool
+    }
+
+
+def check_f_each_boolean_reaches_only_its_parts() -> bool:
+    bool_fields = {field for _, field, _ in BOOLEANS}
+    covered = {
+        f.name
+        for f in dataclasses.fields(TraderSettings)
+        if isinstance(
+            getattr(
+                bot_runner.build_trader_settings(MINIMAL_CONFIG, Platform.PUMP_FUN),
+                f.name,
+            ),
+            bool,
+        )
+    }
+    problems = []
+    if covered != bool_fields:
+        problems.append(f"boolean fields not covered: {sorted(covered ^ bool_fields)}")
+    baseline_trader, _ = _build_trader(
+        bot_runner.build_trader_settings(_config_with_booleans(None), Platform.PUMP_FUN)
+    )
+    baseline = _boolean_attributes(baseline_trader)
+    for path, field, parts in BOOLEANS:
+        settings = bot_runner.build_trader_settings(
+            _config_with_booleans(path), Platform.PUMP_FUN
+        )
+        on = {name for name in bool_fields if getattr(settings, name)}
+        if on != {field}:
+            problems.append(f"{'.'.join(path)}: settings fields on {sorted(on)}")
+        trader, _ = _build_trader(settings)
+        changed = {
+            attr
+            for attr, value in _boolean_attributes(trader).items()
+            if baseline.get(attr) != value
+        }
+        if changed != parts:
+            problems.append(f"{'.'.join(path)}: switched {sorted(changed)}")
+    for problem in problems:
+        print(f"    {problem}")
+    return not problems
+
+
 def main() -> int:
     """Run every check and report."""
     checks = [
@@ -445,6 +554,10 @@ def main() -> int:
         ),
         ("D: exit sell attempts below 1 are clamped", check_d_attempts_clamped),
         ("E: settings repr hides endpoints and keys", check_e_repr_hides_secrets),
+        (
+            "F: each boolean reaches only its own parts",
+            check_f_each_boolean_reaches_only_its_parts,
+        ),
     ]
     passed = 0
     for label, check in checks:
