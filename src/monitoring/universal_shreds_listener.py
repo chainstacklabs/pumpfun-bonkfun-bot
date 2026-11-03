@@ -183,8 +183,10 @@ class UniversalShredsListener(BaseTokenListener):
                 deshred_filter.account_include.append(str(account))
             deshred_filter.vote = False
 
-            # Migrations name none of the creation accounts, so they get their
-            # own filter, and only when something listens for them.
+            # pump.fun's migrations name none of its creation accounts, so they
+            # get their own filter, and only when something listens for them.
+            # LaunchLab's name the platform config and program, which the
+            # creation filter already covers, and add none.
             migration_accounts = parser.get_migration_filter_accounts()
             if self.pool_callback is not None and migration_accounts:
                 migration_filter = request.deshred_transactions[

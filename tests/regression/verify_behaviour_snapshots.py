@@ -22,6 +22,8 @@ over fixed inputs and compares the result with JSON snapshots committed under
      and transfer-fee read for their pools; withheld fees in token accounts;
      LaunchLab launches as the shreds listener decodes them pre-execution;
      the pools pump.fun migrations created, from the logs and from each
+     top-level instruction; the CPMM pools LaunchLab migrations created, per
+     LaunchLab parser, from the block and geyser transactions and from each
      top-level instruction.
      `creation_timestamp` is a monotonic clock reading and is left out.
   C. `exit_decisions.json`: `Position.should_exit` and `should_exit_on_time`
@@ -839,6 +841,63 @@ def _parse_migrations() -> list[dict]:
     return out
 
 
+def _parse_launchlab_migrations() -> list[dict]:
+    """CPMM pools LaunchLab migrations created, per parser: from the block and
+    geyser transactions, and from each top-level instruction as the shreds
+    listener reads it."""
+    parser = get_idl_manager().get_parser(Platform.LAUNCHLAB)
+    parsers = {
+        "launchlab": LaunchLabEventParser(parser),
+        "stonkfun": StonkFunEventParser(parser),
+        "letsbonk": LetsBonkEventParser(parser),
+    }
+
+    def pool(found: PoolReady | None) -> dict | None:
+        if found is None:
+            return None
+        fields = _plain(found)
+        fields.pop("detection_timestamp")
+        return fields
+
+    out = []
+    for entry in _fixture("raw_launchlab_migrations_from_gettransaction.json")[
+        "migrations"
+    ]:
+        tx = entry["get_transaction"]
+        keys = [base58.b58decode(key) for key in _keys(tx)]
+        update = _geyser_update(tx)
+        meta = update.transaction.transaction.meta
+        meta.log_messages.extend(tx["meta"]["logMessages"])
+        if tx["meta"]["err"] is not None:
+            meta.err.err = json.dumps(tx["meta"]["err"]).encode()
+        block = {"transaction": tx["transaction"], "meta": tx["meta"]}
+        result = {"signature": entry["signature"]}
+        for name, event_parser in parsers.items():
+            result[f"{name} block"] = [
+                pool(found)
+                for found in event_parser.parse_pools_ready_from_block_transaction(
+                    copy.deepcopy(block)
+                )
+            ]
+            result[f"{name} geyser"] = [
+                pool(found)
+                for found in event_parser.parse_pools_ready_from_geyser(update)
+            ]
+            result[f"{name} instructions"] = [
+                pool(
+                    event_parser.parse_pool_ready_from_instruction(
+                        base58.b58decode(ix["data"]),
+                        ix["accounts"],
+                        keys,
+                        entry["signature"],
+                    )
+                )
+                for ix in tx["transaction"]["message"]["instructions"]
+            ]
+        out.append(result)
+    return out
+
+
 async def parse_fixtures() -> dict:
     """B: parser output for every raw_*.json fixture."""
     out = {
@@ -851,6 +910,9 @@ async def parse_fixtures() -> dict:
         "raw_pumpswap_buys_from_gettransaction.json": await _parse_pumpswap_buys(),
         "raw_cpmm_buys_from_gettransaction.json": await _parse_cpmm_buys(),
         "raw_pumpfun_migrations_from_gettransaction.json": _parse_migrations(),
+        "raw_launchlab_migrations_from_gettransaction.json": (
+            _parse_launchlab_migrations()
+        ),
     }
     covered = set(out)
     present = {p.name for p in HERE.glob("raw_*.json")}

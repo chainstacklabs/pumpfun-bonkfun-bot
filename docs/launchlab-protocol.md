@@ -139,9 +139,33 @@ pool's reserves, which that mode does not read.
 `migrate_type` 0, Raydium AMM v4, has no market in the bot; a coin there is
 reported, not bought or sold.
 
+### Detecting a migration
+
+Raydium's migrate wallet (`GlobalConfig.migrate_to_cpswap_wallet`, the only
+payer the instruction takes) sends `migrate_to_cpswap` as a top-level
+instruction: account 1 is the coin, 2 the quote mint, 3 the platform config, 5
+the CPMM pool and 10 its `cpswap_config`. The program's logs name none of them,
+so the listeners decode the instruction, after a whole-line check for
+`Instruction: MigrateToCpswap` in the logs. A report needs the platform config
+to be one the parser covers and the pool to be CPMM's
+`PDA(["pool", cpswap_config, token_0, token_1])`. The wallet often retries a
+migration that already landed; the retry fails with `PoolMigrated` (6006), so
+the executed listeners drop it with the other failed transactions, and `shreds`
+reports it as another pre-execution attempt.
+
+Past the IDL's 28 accounts a migration passes ten more, which the program reads
+positionally: the platform's `platform_nft_wallet`, a new fee-NFT mint (a second
+signer), its ATA for that wallet, the lock program's
+`PDA(["locked_liquidity", nft_mint])`, the NFT's Metaplex metadata, the pool's
+creator, CPMM's `PDA(["permission", launchlab_authority])`, the platform's
+`platform_cp_creator`, and CPMM's `PDA(["support_mint", mint])` for token 0
+and token 1. Every real migration loads the rest through lookup table
+`AcL1Vo8oy1ULiavEcjSUcwfBSForXMudcZvDZy5nzJkU`.
+
 ## Verifiers
 
 `verify_launchlab_trades`, `verify_launchlab_launch_parsing`,
 `verify_generic_launchlab`, `verify_cleanup_harvests_withheld_fees`,
-`verify_sell_after_graduation` and `verify_cpmm_buy` cover all of the above against captured mainnet
-transactions.
+`verify_sell_after_graduation`, `verify_cpmm_buy` and
+`verify_launchlab_migration_detection` cover all of the above against captured
+mainnet transactions.

@@ -278,7 +278,7 @@ class UniversalGeyserListener(BaseTokenListener):
             return None
 
     def _pools_from_update(self, update: geyser_pb2.SubscribeUpdate) -> list[PoolReady]:
-        """Pools a successful migration in this update created, from its logs.
+        """Pools a successful migration in this update created.
 
         Empty without a pool callback: nothing is parsed then.
         """
@@ -289,11 +289,11 @@ class UniversalGeyserListener(BaseTokenListener):
             return []
         pools = []
         try:
-            # Every pump.fun trade arrives here and almost none is a migration:
-            # the parsers read the logs in place and reject them on their first
-            # pass, so the signature is encoded only for a pool they found.
+            # Every trade arrives here and almost none is a migration: the
+            # parsers reject them on a first pass over the logs, so the
+            # signature is encoded only for a pool they found.
             for parser in self.platform_parsers.values():
-                pools += parser.parse_pools_ready_from_logs(info.meta.log_messages, "")
+                pools += parser.parse_pools_ready_from_geyser(update)
             if pools:
                 signature = base58.b58encode(info.signature).decode()
                 pools = [replace(pool, signature=signature) for pool in pools]
