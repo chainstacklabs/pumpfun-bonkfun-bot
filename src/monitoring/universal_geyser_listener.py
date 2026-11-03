@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 
 import base58
 import grpc
@@ -288,10 +289,14 @@ class UniversalGeyserListener(BaseTokenListener):
             return []
         pools = []
         try:
-            logs = list(info.meta.log_messages)
-            signature = base58.b58encode(info.signature).decode()
+            # Every pump.fun trade arrives here and almost none is a migration:
+            # the parsers read the logs in place and reject them on their first
+            # pass, so the signature is encoded only for a pool they found.
             for parser in self.platform_parsers.values():
-                pools += parser.parse_pools_ready_from_logs(logs, signature)
+                pools += parser.parse_pools_ready_from_logs(info.meta.log_messages, "")
+            if pools:
+                signature = base58.b58encode(info.signature).decode()
+                pools = [replace(pool, signature=signature) for pool in pools]
         except Exception:
             logger.exception("Error reading a migration from a Geyser update")
             return []

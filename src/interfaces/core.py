@@ -1,6 +1,7 @@
 """Abstract base classes each trading platform implements."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -620,7 +621,7 @@ class EventParser(ABC):
 
     def parse_pools_ready_from_logs(
         self,
-        logs: list[str],  # noqa: ARG002
+        logs: Sequence[str],  # noqa: ARG002
         signature: str,  # noqa: ARG002
     ) -> list[PoolReady]:
         """Pools that a successful transaction's logs show a migration created.

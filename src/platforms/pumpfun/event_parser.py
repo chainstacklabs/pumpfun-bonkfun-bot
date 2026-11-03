@@ -2,6 +2,7 @@
 
 import base64
 import struct
+from collections.abc import Sequence
 from time import monotonic
 from typing import Any
 
@@ -435,7 +436,7 @@ class PumpFunEventParser(EventParser):
         return [emitter == program_id for emitter in emitters]
 
     @staticmethod
-    def _emitting_program(logs: list[str]) -> list[str | None]:
+    def _emitting_program(logs: Sequence[str]) -> list[str | None]:
         """Map each log line to the program id whose invocation emitted it.
 
         The runtime brackets every invocation with `Program <id> invoke [depth]`
@@ -779,7 +780,7 @@ class PumpFunEventParser(EventParser):
         return [self._create_event_discriminator_bytes]
 
     def parse_pools_ready_from_logs(
-        self, logs: list[str], signature: str
+        self, logs: Sequence[str], signature: str
     ) -> list[PoolReady]:
         """Pools a migration in these logs created, from PumpSwap's CreatePoolEvent.
 
