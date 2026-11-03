@@ -190,8 +190,8 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
   `GEYSER_*`.
 - `src/config_loader.py` (package root, not under `core/`) validates the
   platform/listener pairing before startup: pump.fun supports `logs`, `blocks`,
-  `geyser`, `shreds`; the LaunchLab platforms support `blocks` and `geyser` —
-  not `logs` (LaunchLab's logs never name the coin) or `shreds` (issue #201).
+  `geyser`, `shreds`; the LaunchLab platforms support `blocks`, `geyser` and
+  `shreds` — not `logs` (LaunchLab's logs never name the coin).
   Adding a listener means updating `PLATFORM_LISTENER_COMPATIBILITY` there too.
 - Bots with `separate_process: true` run in their own process, one log file each.
 - `pump_bot` runs **every** `bots/*.yaml`, and four of the five committed configs

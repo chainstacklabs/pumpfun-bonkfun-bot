@@ -16,7 +16,8 @@ over fixed inputs and compares the result with JSON snapshots committed under
      LaunchLab launches over the block and geyser routes, the preset parsers
      on StonkFun's and the every-config parser on other launchpads';
      graduated curves and AMM pools; StonkFun trade instructions and the fee
-     and transfer-fee read for their pools; withheld fees in token accounts.
+     and transfer-fee read for their pools; withheld fees in token accounts;
+     LaunchLab launches as the shreds listener decodes them pre-execution.
      `creation_timestamp` is a monotonic clock reading and is left out.
   C. `exit_decisions.json`: `Position.should_exit` and `should_exit_on_time`
      at each point of a recorded pump.fun price series
@@ -68,6 +69,7 @@ from interfaces.core import (  # noqa: E402
     Platform,
     TokenInfo,
 )
+from monitoring.universal_shreds_listener import UniversalShredsListener  # noqa: E402
 from platforms.curve_market import CurveMarket  # noqa: E402
 from platforms.launchlab import LAUNCHLAB_PROGRAM, LaunchLabEventParser  # noqa: E402
 from platforms.launchlab.cpmm_market import CpmmMarket  # noqa: E402
@@ -528,6 +530,30 @@ def _parse_launches() -> list[dict]:
     return out
 
 
+def _parse_deshred_launches() -> list[dict]:
+    """LaunchLab launches as the shreds listener reads them, per platform."""
+    listeners = {
+        platform: UniversalShredsListener(
+            geyser_endpoint="geyser.offline.invalid:443",
+            geyser_api_token="unused",  # noqa: S106
+            geyser_auth_type="x-token",
+            platforms=[platform],
+        )
+        for platform in (Platform.LAUNCHLAB, Platform.LETS_BONK, Platform.STONK_FUN)
+    }
+    out = []
+    for launch in _fixture("raw_launchlab_creates_from_deshred.json")["launches"]:
+        update = geyser_pb2.SubscribeUpdateDeshred()
+        update.ParseFromString(base64.b64decode(launch["deshred_update_base64"]))
+        entry = {"signature": launch["signature"]}
+        for platform, listener in listeners.items():
+            entry[f"{platform.value} shreds"] = _token_info(
+                listener._process_update(update)  # noqa: SLF001
+            )
+        out.append(entry)
+    return out
+
+
 def _parse_other_launchpads() -> list[dict]:
     """Launches on launchpads other than letsbonk and StonkFun."""
     parser = get_idl_manager().get_parser(Platform.LAUNCHLAB)
@@ -661,6 +687,7 @@ async def parse_fixtures() -> dict:
         "raw_graduated_markets_from_getaccountinfo.json": await _parse_graduated(),
         "raw_stonkfun_trades_from_gettransaction.json": await _parse_trades(),
         "raw_stonkfun_token_accounts_from_getaccountinfo.json": _parse_token_accounts(),
+        "raw_launchlab_creates_from_deshred.json": _parse_deshred_launches(),
     }
     covered = set(out)
     present = {p.name for p in HERE.glob("raw_*.json")}

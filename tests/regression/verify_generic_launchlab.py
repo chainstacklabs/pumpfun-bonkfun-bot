@@ -23,7 +23,7 @@ Offline machine checks, no network and no funds moved:
      builds subscribe on what the bot's `platform_configs` names.
   D. A launch on a fixed-price curve is ignored: the trade math is for the
      constant-product curve only.
-  E. Config: `launchlab` pairs with `blocks` and `geyser` only;
+  E. Config: `launchlab` pairs with `blocks`, `geyser` and `shreds`, not `logs`;
      `launchlab.platform_configs` is refused on pump.fun, on a preset naming a
      config outside it, empty or malformed.
   F. The registry keeps one set of implementations per narrowing, so two bots
@@ -374,7 +374,7 @@ def check_e_config_validation() -> bool:
         ("launchlab on blocks", _config("launchlab", "blocks"), True),
         ("launchlab on geyser", _config("launchlab", "geyser"), True),
         ("launchlab on logs", _config("launchlab", "logs"), False),
-        ("launchlab on shreds", _config("launchlab", "shreds"), False),
+        ("launchlab on shreds", _config("launchlab", "shreds"), True),
         ("launchlab narrowed", _config("launchlab", configs=[letsbonk, reward]), True),
         ("stonk_fun narrowed to reward", _config("stonk_fun", configs=[reward]), True),
         ("stonk_fun naming letsbonk", _config("stonk_fun", configs=[letsbonk]), False),

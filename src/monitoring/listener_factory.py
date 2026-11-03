@@ -31,9 +31,9 @@ class ListenerFactory:
             geyser_endpoint: Geyser gRPC endpoint URL (geyser/shreds listeners)
             geyser_api_token: Geyser API token (geyser/shreds listeners)
             platforms: List of platforms to monitor (if None, monitor all)
-            platform_configs: LaunchLab platform configs to narrow to (blocks
-                and geyser, the listeners LaunchLab runs on); None is all
-                the platform covers
+            platform_configs: LaunchLab platform configs to narrow to (blocks,
+                geyser and shreds, the listeners LaunchLab runs on); None is
+                all the platform covers
 
         Returns:
             Configured token listener
@@ -74,6 +74,7 @@ class ListenerFactory:
                 geyser_api_token=geyser_api_token,
                 geyser_auth_type=geyser_auth_type,
                 platforms=platforms,
+                platform_configs=platform_configs,
             )
             logger.info("Created Universal Shreds listener for token monitoring")
             return listener

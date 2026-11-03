@@ -96,9 +96,9 @@ VALID_VALUES = {
 # bot_runner and tools/live_listener_matrix.py all read it.
 PLATFORM_LISTENER_COMPATIBILITY = {
     Platform.PUMP_FUN: ["logs", "blocks", "geyser", "shreds"],
-    Platform.LAUNCHLAB: ["blocks", "geyser"],
-    Platform.LETS_BONK: ["blocks", "geyser"],
-    Platform.STONK_FUN: ["blocks", "geyser"],
+    Platform.LAUNCHLAB: ["blocks", "geyser", "shreds"],
+    Platform.LETS_BONK: ["blocks", "geyser", "shreds"],
+    Platform.STONK_FUN: ["blocks", "geyser", "shreds"],
 }
 
 

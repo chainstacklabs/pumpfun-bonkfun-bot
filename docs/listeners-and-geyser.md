@@ -50,7 +50,7 @@ compiler does not emit, so the output needs rewriting.
 
 A separate RPC delivering transactions **before execution**, as entries form from
 shreds. It backs the **`shreds` listener**
-(`monitoring/universal_shreds_listener.py`, pump.fun only,
+(`monitoring/universal_shreds_listener.py`, pump.fun and LaunchLab,
 `bots/bot-sniper-5-shreds.yaml`), off by default. Deshred arrives ahead of
 `Subscribe` on most creates; `tools/compare_deshred_latency.py` measures the lead
 per signature, and `tools/compare_listeners.py` runs it as a lane against the
@@ -73,7 +73,8 @@ other four to show which coins it never reports.
 That miss rate is the trade: a few percent of coins never seen, against a head
 start on the rest. `geyser` stays the default; pick `shreds` deliberately.
 `cookbook/pumpfun/listen/pumpfun_listen_tokens_deshred.py` demonstrates the raw
-stream; `tests/regression/verify_shreds_listener.py` pins the listener.
+stream; `tests/regression/verify_shreds_listener.py` pins the listener on
+pump.fun and `verify_launchlab_shreds.py` on LaunchLab.
 
 ## Listener and decoder pitfalls
 
