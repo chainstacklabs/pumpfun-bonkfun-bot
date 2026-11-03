@@ -185,9 +185,9 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
 
 ## Config notes
 
-- Bot YAML supports `${VAR}` interpolation from the file named by `env_file`:
-  `SOLANA_NODE_RPC_ENDPOINT`, `SOLANA_NODE_WSS_ENDPOINT`, `SOLANA_PRIVATE_KEY`,
-  `GEYSER_*`.
+- Bot YAML supports `${VAR}` interpolation from the file named by `env_file`. The
+  wallet is `private_key` or `keystore` (pumpfun-cli's file, unlocked with
+  `PUMPFUN_PASSWORD` by `bot_runner.unlock_keystore`), never both.
 - `src/config_loader.py` (package root, not under `core/`) validates the
   platform/listener pairing before startup: pump.fun supports `logs`, `blocks`,
   `geyser`, `shreds`; the LaunchLab platforms support `blocks`, `geyser` and

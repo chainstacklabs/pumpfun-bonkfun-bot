@@ -29,10 +29,19 @@ from config_loader import (
     print_config_summary,
     validate_platform_listener_combination,
 )
+from core.keystore import KeystoreError, keystore_private_key, password_from_env
+from core.wallet import Wallet
 from interfaces.core import Platform
 from trading.settings import DEFAULT_MAX_EXIT_SELL_ATTEMPTS, TraderSettings
 from trading.universal_trader import UniversalTrader
-from utils.logger import install_secret_redaction, setup_file_logging
+from utils.logger import (
+    get_logger,
+    install_secret_redaction,
+    register_secret,
+    setup_file_logging,
+)
+
+logger = get_logger(__name__)
 
 
 def setup_logging(bot_name: str):
@@ -125,6 +134,22 @@ def build_trader_settings(cfg: dict, platform: Platform) -> TraderSettings:
     )
 
 
+def unlock_keystore(cfg: dict) -> None:
+    """Decrypt the config's `keystore` into `cfg["private_key"]`.
+
+    The password is `PUMPFUN_PASSWORD`, read after `load_bot_config` loaded the
+    bot's `env_file`. The decrypted key is masked in every later log line.
+
+    Raises:
+        KeystoreError: The keystore cannot be unlocked; the message says why
+    """
+    path = Path(cfg["keystore"])
+    private_key = keystore_private_key(path, password_from_env())
+    register_secret(private_key)
+    cfg["private_key"] = private_key
+    logger.info(f"Wallet {Wallet(private_key).pubkey} unlocked from keystore {path}")
+
+
 async def start_bot(config_path: str):
     """Start a trading bot with the configuration from the specified path."""
     cfg = load_bot_config(config_path)
@@ -162,6 +187,13 @@ async def start_bot(config_path: str):
             f"Listener '{listener_type}' is not compatible with platform '{platform.value}'. Supported listeners: {supported}"
         )
         return
+
+    if "keystore" in cfg:
+        try:
+            unlock_keystore(cfg)
+        except KeystoreError as e:
+            logger.error(f"Bot '{cfg['name']}' not started: {e}")  # noqa: TRY400
+            return
 
     # Initialize universal trader with platform-specific configuration
     try:
