@@ -32,9 +32,10 @@ from platforms.launchlab_presets import resolve_platform_configs
 from trading import trade_log
 from trading.base import TradeResult
 from trading.intake import TokenIntake
+from trading.migration import MigrationResolver
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
 from trading.position_manager import PositionManager
-from trading.settings import TraderSettings
+from trading.settings import TraderSettings, entry_error
 from utils.logger import get_logger
 
 # Try to use uvloop on Unix or winloop on Windows for better performance
@@ -92,8 +93,19 @@ class UniversalTrader:
     _CLEANUP_SHUTDOWN_BUDGET = 120.0
 
     def __init__(self, settings: TraderSettings) -> None:
-        """Initialize the universal trader."""
+        """Initialize the universal trader.
+
+        Raises:
+            ValueError: If `entry` is unknown, or is "migration" with
+                `extreme_fast_mode` on
+        """
+        error = entry_error(
+            settings.entry, extreme_fast_mode=settings.extreme_fast_mode
+        )
+        if error:
+            raise ValueError(error)
         self.settings = settings
+        self.entry = settings.entry
         # Core components
         self.solana_client = SolanaClient(
             settings.rpc_endpoint, max_rps=settings.max_rps
@@ -179,6 +191,11 @@ class UniversalTrader:
             ),
             self.quote_amounts,
             allowed_quote_mints,
+            pool_resolver=(
+                MigrationResolver(self.solana_client)
+                if self.entry == "migration"
+                else None
+            ),
         )
 
         self.positions = PositionManager(
@@ -230,6 +247,7 @@ class UniversalTrader:
         """Start the trading bot and listen for new tokens."""
         intake, positions = self.intake, self.positions
         logger.info(f"Starting Universal Trader for {self.platform.value}")
+        logger.info(f"Entry: {self.entry}")
         logger.info(
             f"Match filter: {intake.match_string if intake.match_string else 'None'}"
         )
@@ -272,7 +290,11 @@ class UniversalTrader:
                 logger.info(
                     "Running in single token mode - will process one token and exit"
                 )
-                token_info = await intake.wait_for_token()
+                token_info = await (
+                    intake.wait_for_migrated_token()
+                    if self.entry == "migration"
+                    else intake.wait_for_token()
+                )
                 if token_info:
                     await self._handle_token(token_info)
                     logger.info("Finished processing single token. Exiting...")
@@ -285,7 +307,10 @@ class UniversalTrader:
                 logger.info(
                     "Running in continuous mode - will process tokens until interrupted"
                 )
-                await intake.run(self._handle_token)
+                if self.entry == "migration":
+                    await intake.run_migrations(self._handle_token)
+                else:
+                    await intake.run(self._handle_token)
 
         except Exception:
             logger.exception("Trading stopped due to error")

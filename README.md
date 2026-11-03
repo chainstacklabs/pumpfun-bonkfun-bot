@@ -91,7 +91,7 @@ Logs land in `logs/{bot_name}_{timestamp}.log`.
 
 The YAML files are commented inline. The sections that matter most:
 
-- **`trade`** — `buy_amount` (in SOL), slippage, `exit_strategy` (`time_based`, `tp_sl`, `manual`), and [`extreme_fast_mode`](#extreme-fast-mode).
+- **`trade`** — `buy_amount` (in SOL), slippage, `exit_strategy` (`time_based`, `tp_sl`, `manual`), [`entry`](#migration-entry) and [`extreme_fast_mode`](#extreme-fast-mode).
 - **`priority_fees`** — fixed or dynamic. Dynamic costs an extra RPC call, which slows the buy.
 - **`filters`** — `listener_type`, `max_token_age`, name/creator matching, `marry_mode` (buy only, never sell), `yolo_mode` (trade continuously).
 - **`retries`** — attempts and the wait windows around creation, buy, and the next token.
@@ -122,6 +122,27 @@ A coin whose curve has already graduated trades in the pool it migrated to: a
 pump.fun coin in PumpSwap, a LaunchLab coin in Raydium CPMM. Outside this mode
 the bot buys it there, spending exactly the configured amount; in this mode it
 skips the coin, since a pool buy is sized from the pool.
+
+### Migration entry
+
+`trade.entry` picks what the bot buys. `new_launch` (the default) buys coins as
+they launch, on their curve. `migration` buys a coin when its curve migrates: a
+pump.fun coin in its new PumpSwap pool, a LaunchLab coin in its Raydium CPMM pool.
+
+```yaml
+trade:
+  entry: "migration"
+  extreme_fast_mode: false   # required: a pool buy is sized from the pool
+```
+
+Every listener the platform supports reports migrations. The filters,
+`quote_amounts` and the exit strategies apply as for launches, with two
+differences: `match_string` is checked against the coin's on-chain metadata, and
+`bro_address` against the creator its curve records. `max_token_age` counts from
+the moment the migration was seen, and `wait_after_creation` is waited before the
+buy. The bot buys once the pool is readable, waiting up to 10 seconds for it;
+`shreds` sees a migration before it runs, so its pool does not exist yet.
+`extreme_fast_mode: true` with `entry: migration` is refused at startup.
 
 ### Non-SOL quote assets
 

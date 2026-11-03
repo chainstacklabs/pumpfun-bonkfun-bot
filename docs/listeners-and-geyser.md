@@ -90,6 +90,13 @@ fail, or name a pool the coin does not use. The same mint can come more than
 once, one report per attempt; read the pool before trading it. *Detecting a migration* in
 `docs/pumpfun-protocol.md` and `docs/launchlab-protocol.md` has the sources.
 
+`trade.entry: migration` is the consumer (`trading/intake.py`,
+`trading/migration.py`). It reads the coin's curve, mint and metadata to apply
+the filters, then waits up to `POOL_WAIT_SECONDS` for the pool to be readable.
+A pre-execution report that leaves nothing to buy (curve not complete, a quote
+the curve does not use, no pool in time) does not use the mint up, so a later
+attempt is still bought; an executed one does.
+
 ## Listener and decoder pitfalls
 
 Each was a live bug in the cookbook scripts, invisible offline and only visible

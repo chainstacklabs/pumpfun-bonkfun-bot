@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 from interfaces.core import Platform
 from platforms.launchlab_presets import resolve_platform_configs
+from trading.settings import ENTRIES, entry_error
 
 # Existing validation rules (keeping all existing ones)
 REQUIRED_FIELDS = [
@@ -89,6 +90,7 @@ VALID_VALUES = {
     "filters.listener_type": ["logs", "blocks", "geyser", "shreds"],
     "cleanup.mode": ["disabled", "on_fail", "after_sell", "post_session"],
     "trade.exit_strategy": ["time_based", "tp_sl", "manual"],
+    "trade.entry": list(ENTRIES),
     "platform": ["pump_fun", "launchlab", "lets_bonk", "stonk_fun"],
 }
 
@@ -203,6 +205,14 @@ def validate_config(config: dict) -> None:
     except ValueError as e:
         if "Missing required config key" not in str(e):
             raise
+
+    trade = config.get("trade") or {}
+    error = entry_error(
+        trade.get("entry", "new_launch"),
+        extreme_fast_mode=bool(trade.get("extreme_fast_mode", False)),
+    )
+    if error:
+        raise ValueError(error)
 
     # Quote-asset configuration must resolve before the bot starts trading,
     # otherwise a bad mint alias only surfaces on the first non-SOL coin.
