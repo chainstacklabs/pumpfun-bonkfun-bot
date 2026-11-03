@@ -22,7 +22,7 @@ its buy until its sell, and the next start resumes it:
   H. A wallet holding less than was bought sells what it holds.
   I. A position whose balance cannot be read is neither sold nor cleared.
   J. A record that does not decode (also a hand-edited amount that is not a
-     number) stays in the file; a file that cannot be read (not JSON, not
+     number, or no usable mint) stays in the file and the rest resume; a file that cannot be read (not JSON, not
      UTF-8, no permission) is moved aside, never over an earlier one, and one
      that cannot be moved is never written over.
   K. The trader resumes before it takes a coin: resumed positions hold slots
@@ -568,6 +568,7 @@ def check_j_bad_records_are_kept(tmp: Path) -> bool:
     if _stored(path) != {"bad"}:
         problems.append(f"after a write the file holds {_stored(path)}")
     problems += _check_j_bad_amounts(tmp)
+    problems += _check_j_no_mint(tmp)
 
     path.write_text("{not json")
     if PositionStore(path).load():
@@ -619,10 +620,47 @@ def _check_j_bad_amounts(tmp: Path) -> list[str]:
     return problems
 
 
-def _check_j_unreadable_bytes(tmp: Path) -> list[str]:
-    """Files that fail before JSON parsing: bad UTF-8, no read permission."""
+def _check_j_no_mint(tmp: Path) -> list[str]:
+    """Records with no usable mint: kept as they are, the rest still resume."""
     problems = []
-    cases = [("utf8", b"\xff\xfe{", None)]
+    path = tmp / "j-mint.json"
+    good = _token("GOOD")
+    PositionStore(path).add(good, _buy(), _now())
+    data = json.loads(path.read_text())
+    template = data["positions"][0]
+    bad = [
+        {k: v for k, v in template.items() if k != "mint"},
+        {**template, "mint": ["list"]},
+        {**template, "mint": {"a": 1}},
+        "not a record",
+        None,
+    ]
+    data["positions"] += bad
+    path.write_text(json.dumps(data))
+    store = PositionStore(path)
+    try:
+        loaded = store.load()
+    except Exception as e:  # noqa: BLE001
+        return [f"no mint: load raised {type(e).__name__}: {e}"]
+    if [p.token_info.mint for p in loaded] != [good.mint]:
+        problems.append(f"no mint: loaded {[p.token_info.mint for p in loaded]}")
+    if store.mints() != {str(good.mint)}:
+        problems.append(f"no mint: mints {store.mints()}")
+    store.remove(good.mint)  # rewrites the file
+    kept = json.loads(path.read_text())["positions"] if path.exists() else None
+    if kept != bad:
+        problems.append(f"no mint: after a write the file holds {kept}")
+    return problems
+
+
+def _check_j_unreadable_bytes(tmp: Path) -> list[str]:
+    """Files that fail before JSON parsing (bad UTF-8, no read permission) or
+    hold no list of positions."""
+    problems = []
+    cases = [
+        ("utf8", b"\xff\xfe{", None),
+        ("not-list", b'{"version": 1, "positions": {"m": {"mint": "m"}}}', None),
+    ]
     if os.geteuid() != 0:  # root reads a mode-000 file anyway
         cases.append(("perm", b'{"version": 1, "positions": []}', 0))
     for name, content, mode in cases:

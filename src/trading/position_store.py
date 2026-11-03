@@ -86,6 +86,27 @@ def _check_buy(buy: dict) -> None:
         raise TypeError
 
 
+def _records_in(data: object) -> list:
+    """The `positions` list of a parsed file; KeyError or TypeError without one."""
+    records = data["positions"]
+    if not isinstance(records, list):
+        raise TypeError
+    return records
+
+
+def holds_positions(path: Path | str) -> bool:
+    """Whether a positions file exists and is not empty, read only.
+
+    A file that cannot be read counts as holding positions.
+    """
+    try:
+        return bool(json.loads(Path(path).read_text(encoding="utf-8"))["positions"])
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError, KeyError, TypeError):
+        return True
+
+
 @dataclass(frozen=True)
 class StoredPosition:
     """One position read back from the file."""
@@ -104,6 +125,8 @@ class PositionStore:
         self.path = Path(path)
         # Records by mint, as written; one that does not decode is kept as is.
         self._records: dict[str, dict] = {}
+        # Records with no usable mint to key them by, kept as written.
+        self._unkeyed: list = []
         # False once an unreadable file could not be moved aside: writing
         # would replace it, and the positions in it with it.
         self._writable = True
@@ -124,17 +147,27 @@ class PositionStore:
         `<name>.unreadable.1`, `.2`, ... so no earlier one is overwritten) and
         logged, so the next write cannot overwrite what it held. If it cannot be
         moved either, this store writes nothing this run. A record that does not
-        decode is logged and kept in the file, but not returned.
+        decode, or has no usable `mint`, is logged and kept in the file, but not
+        returned.
         """
         self._records = {}
+        self._unkeyed = []
         try:
-            records = json.loads(self.path.read_text(encoding="utf-8"))["positions"]
-            self._records = {record["mint"]: record for record in records}
+            records = _records_in(json.loads(self.path.read_text(encoding="utf-8")))
         except FileNotFoundError:
             return []
         except (OSError, ValueError, KeyError, TypeError):
             self._set_aside()
             return []
+        for record in records:
+            try:
+                self._records[record["mint"]] = record
+            except (KeyError, TypeError):
+                self._unkeyed.append(record)
+                logger.exception(
+                    f"A position in {self.path} has no usable mint; "
+                    f"left in the file, not monitored: {record!r}"
+                )
 
         positions = []
         for mint, record in self._records.items():
@@ -214,7 +247,10 @@ class PositionStore:
         if not self._writable:
             return
         tmp = self.path.with_name(self.path.name + ".tmp")
-        payload = {"version": _VERSION, "positions": list(self._records.values())}
+        payload = {
+            "version": _VERSION,
+            "positions": [*self._records.values(), *self._unkeyed],
+        }
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with tmp.open("w", encoding="utf-8") as f:
