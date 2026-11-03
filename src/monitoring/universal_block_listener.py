@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 
 import websockets
 from solders.pubkey import Pubkey
@@ -378,7 +379,7 @@ class UniversalBlockListener(BaseTokenListener):
         return None
 
     def _pools_from_block(self, transactions: list) -> list[PoolReady]:
-        """Pools that the block's successful migrations created, from their logs.
+        """Pools that the block's successful migrations created.
 
         Unlike token creations, every transaction in the block is read: a
         block can hold more than one migration.
@@ -393,9 +394,13 @@ class UniversalBlockListener(BaseTokenListener):
             logs = meta.get("logMessages") or meta.get("log_messages")
             if not logs:
                 continue
+            found = []
             for program_id, _platform, parser in self.program_id_to_parser:
                 if any(program_id in line for line in logs):
-                    pools += parser.parse_pools_ready_from_logs(logs, _signature(tx))
+                    found += parser.parse_pools_ready_from_block_transaction(tx)
+            if found:
+                signature = _signature(tx)
+                pools += [replace(pool, signature=signature) for pool in found]
         return pools
 
 

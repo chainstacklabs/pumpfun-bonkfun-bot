@@ -631,6 +631,34 @@ class EventParser(ABC):
         """
         return []
 
+    def parse_pools_ready_from_block_transaction(
+        self, transaction: dict[str, Any]
+    ) -> list[PoolReady]:
+        """Pools a successful blockSubscribe transaction's migrations created.
+
+        `transaction` is one entry of a block's `transactions`, envelope and
+        meta. The caller has dropped failed transactions and sets each
+        result's signature. By default reads the logs.
+        """
+        meta = transaction.get("meta")
+        if not isinstance(meta, dict):
+            return []
+        logs = meta.get("logMessages") or meta.get("log_messages")
+        return self.parse_pools_ready_from_logs(logs, "") if logs else []
+
+    def parse_pools_ready_from_geyser(
+        self, transaction_info: object
+    ) -> list[PoolReady]:
+        """Pools a successful geyser transaction update's migrations created.
+
+        `transaction_info` is the SubscribeUpdate, as for
+        `parse_token_creation_from_geyser`. The caller has dropped failed
+        transactions and sets each result's signature. By default reads the
+        logs, in place.
+        """
+        logs = transaction_info.transaction.transaction.meta.log_messages
+        return self.parse_pools_ready_from_logs(logs, "") if logs else []
+
     def parse_pool_ready_from_instruction(
         self,
         instruction_data: bytes,  # noqa: ARG002
