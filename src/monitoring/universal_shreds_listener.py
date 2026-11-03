@@ -28,7 +28,7 @@ from collections.abc import Awaitable, Callable
 import grpc
 from solders.pubkey import Pubkey
 
-from geyser.generated import geyser_pb2, geyser_pb2_grpc
+from geyser.generated import geyser_pb2, geyser_pb2_grpc, solana_storage_pb2
 from interfaces.core import EventParser, Platform, TokenInfo
 from monitoring.base_listener import BaseTokenListener
 from platforms import platform_factory
@@ -50,6 +50,7 @@ class UniversalShredsListener(BaseTokenListener):
         geyser_api_token: str,
         geyser_auth_type: str,
         platforms: list[Platform] | None = None,
+        platform_configs: frozenset[Pubkey] | None = None,
     ):
         """Initialize the shreds listener.
 
@@ -57,6 +58,7 @@ class UniversalShredsListener(BaseTokenListener):
             geyser_endpoint: Geyser gRPC endpoint URL
             geyser_auth_type: Either "x-token" or "basic"
             platforms: Platforms to monitor; all supported platforms if None
+            platform_configs: Narrows a LaunchLab platform to these configs
 
         Raises:
             ValueError: If geyser_auth_type is not a supported value
@@ -79,7 +81,9 @@ class UniversalShredsListener(BaseTokenListener):
             self.platforms = platforms
 
         self.platform_parsers: dict[Platform, EventParser] = {}
-        self.platform_program_ids: dict[bytes, EventParser] = {}
+        # LaunchLab serves several platforms from one program, so a program can
+        # have more than one parser; they are tried in registration order.
+        self.program_parsers: dict[bytes, list[EventParser]] = {}
         self.create_discriminators: dict[bytes, tuple[bytes, ...]] = {}
         # Flattened across platforms for the str.startswith prefix test.
         self.all_discriminators: tuple[bytes, ...] = ()
@@ -103,11 +107,13 @@ class UniversalShredsListener(BaseTokenListener):
                         self._blockhash_updater_task = None
 
                 implementations = platform_factory.create_for_platform(
-                    platform, DummyClient()
+                    platform, DummyClient(), platform_configs=platform_configs
                 )
                 parser = implementations.event_parser
                 self.platform_parsers[platform] = parser
-                self.platform_program_ids[bytes(parser.get_program_id())] = parser
+                self.program_parsers.setdefault(
+                    bytes(parser.get_program_id()), []
+                ).append(parser)
                 # Cheap prefix gate, see _process_update: the deshred stream
                 # carries every pump transaction pre-execution, so most
                 # instructions reaching us are trades, not creates.
@@ -161,11 +167,12 @@ class UniversalShredsListener(BaseTokenListener):
         """
         request = geyser_pb2.SubscribeDeshredRequest()
 
-        for program_id, parser in self.platform_program_ids.items():
-            filter_name = f"platform_filter_{Pubkey.from_bytes(program_id)}"
+        for platform, parser in self.platform_parsers.items():
+            filter_name = f"platform_filter_{platform.value}"
             deshred_filter = request.deshred_transactions[filter_name]
-            # Not the program id: that matches every trade too, and the volume
-            # makes a Python consumer lag until the server ends the stream.
+            # Not the program id where a parser can avoid it: that matches every
+            # trade too, and on pump.fun the volume makes a Python consumer lag
+            # until the server ends the stream.
             for account in parser.get_creation_filter_accounts():
                 deshred_filter.account_include.append(str(account))
             deshred_filter.vote = False
@@ -308,10 +315,8 @@ class UniversalShredsListener(BaseTokenListener):
                 if program_index >= len(static_keys):
                     continue
 
-                parser = self.platform_program_ids.get(
-                    bytes(static_keys[program_index])
-                )
-                if parser is None:
+                parsers = self.program_parsers.get(bytes(static_keys[program_index]))
+                if parsers is None:
                     continue
 
                 # Resolve lookup-table accounts only once a real candidate is
@@ -319,9 +324,7 @@ class UniversalShredsListener(BaseTokenListener):
                 if keys is None:
                     keys = self._resolve_account_keys(transaction)
 
-                token_info = parser.parse_token_creation_from_instruction(
-                    instruction.data, instruction.accounts, keys
-                )
+                token_info = self._parse_with_any(parsers, instruction, keys)
                 if token_info:
                     return self._mark_trusted(token_info)
 
@@ -332,17 +335,34 @@ class UniversalShredsListener(BaseTokenListener):
             return None
 
     @staticmethod
+    def _parse_with_any(
+        parsers: list[EventParser],
+        instruction: solana_storage_pb2.CompiledInstruction,
+        keys: list[bytes],
+    ) -> TokenInfo | None:
+        """First TokenInfo any of the program's parsers decodes from the instruction."""
+        for parser in parsers:
+            token_info = parser.parse_token_creation_from_instruction(
+                instruction.data, instruction.accounts, keys
+            )
+            if token_info:
+                return token_info
+        return None
+
+    @staticmethod
     def _mark_trusted(token_info: TokenInfo) -> TokenInfo:
         """Mark an instruction-parsed TokenInfo as safe to trade without a refresh.
 
         Other listeners leave `state_from_event` False on instruction-parsed
-        tokens, because `args.creator` is user-supplied and the program may write
-        something else into `BondingCurve.creator`. That has exactly one cause,
-        which the parser resolves: a holder-reward coin takes its creator from a
-        PDA of the mint, derivable without reading anything.
+        pump.fun tokens, because `args.creator` is user-supplied and the program
+        may write something else into `BondingCurve.creator`. That has exactly
+        one cause, which the parser resolves: a holder-reward coin takes its
+        creator from a PDA of the mint, derivable without reading anything.
+        A LaunchLab launch names everything the buy needs as accounts or
+        arguments, and its parser already marks the token.
 
-        Waiting for the curve is not a safer fallback here — the account does not
-        exist yet, so the choice is trading on this data or not trading.
+        Waiting for the curve or pool is not a safer fallback here — the account
+        does not exist yet, so the choice is trading on this data or not trading.
 
         Args:
             token_info: Token parsed from a create instruction

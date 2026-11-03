@@ -23,10 +23,11 @@ launch under any platform config; `launchlab.platform_configs` narrows it, and
 narrows a preset within its own configs. `TokenInfo.platform_config` and the
 trade log record which config a coin came from.
 
-The geyser and blocks listeners subscribe on the platform configs when there is
-a list (`EventParser.get_stream_filter_accounts`), so other launchpads stay out
-of the stream; `launchlab` without one subscribes on the program, and sees every
-trade on it. Several platforms on one program also mean nothing may key a lookup
+The geyser, blocks and shreds listeners subscribe on the platform configs when
+there is a list (`EventParser.get_stream_filter_accounts`), so other launchpads
+stay out of the stream; `launchlab` without one subscribes on the program, and
+sees every trade on it. No account appears in every launch and in no trade, so
+the shreds listener cannot narrow to launches the way it does on pump.fun. Several platforms on one program also mean nothing may key a lookup
 by program id alone.
 
 ## Launches
@@ -57,6 +58,9 @@ curve_type u8, index u16])`.
 Everything a buy needs is in the instruction, so the parsers set
 `state_from_event`. The program's `PoolCreateEvent` carries no base mint, quote
 mint or platform config, which is why there is no logs listener for LaunchLab.
+The same instruction is all the pre-execution `shreds` listener has, and gives
+it the TokenInfo geyser builds; a launch made through another program is an
+inner instruction there, and invisible to it.
 
 ## Trades
 

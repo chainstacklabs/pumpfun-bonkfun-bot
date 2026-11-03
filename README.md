@@ -74,7 +74,7 @@ Each YAML file in `bots/` is one bot instance. They ship with commented defaults
 | `bot-sniper-5-shreds.yaml` | `shreds` — pre-execution, ahead of `geyser`, cannot see router-created coins | `pump_fun` |
 | `bot-sniper-6-stonkfun.yaml` | `geyser` | `stonk_fun`, `enabled: false` |
 
-Set `platform` to `"pump_fun"`, `"launchlab"`, `"lets_bonk"` or `"stonk_fun"`. pump.fun supports all four listeners; the LaunchLab platforms support `blocks` and `geyser` but **not** `logs` or `shreds`. The bot validates the pairing at startup and refuses to run an invalid one.
+Set `platform` to `"pump_fun"`, `"launchlab"`, `"lets_bonk"` or `"stonk_fun"`. pump.fun supports all four listeners; the LaunchLab platforms support `blocks`, `geyser` and `shreds` but **not** `logs`. The bot validates the pairing at startup and refuses to run an invalid one.
 
 Set `enabled: false` to keep a config around without running it. Every bot with `enabled: true` starts when you run the bot.
 
