@@ -27,7 +27,7 @@ real `listen_for_tokens` loop over scripted frames:
   A. `logs`, `blocks` and `geyser` report every real migration once, with the
      mint, pool and quote mint of pump.fun's CompletePumpAmmMigrationEvent in
      the same transaction (its SOL quote, the default key, as wrapped SOL), and
-     `pre_execution` unset.
+     `pre_execution` unset; a block holding them all reports each.
   B. They report nothing for a migrate on a migrated curve, a failed
      transaction, a real migration marked reverted, a CreatePoolEvent emitted
      by another program's invocation, one naming a pool that is not the
@@ -382,6 +382,11 @@ def check_a_executed_listeners_report_real_migrations() -> bool:
                 problems.append(f"{kind} / {entry['label']}: wrong signature")
             if any(pool.platform != Platform.PUMP_FUN for pool in pools):
                 problems.append(f"{kind} / {entry['label']}: wrong platform")
+
+    # A block holding several migrations reports each of them.
+    _, pools, _ = _run("blocks", [_block_frame(real)])
+    if sorted(_triple(pool) for pool in pools) != sorted(map(_expected, real)):
+        problems.append(f"blocks: one block of {len(real)} gave {len(pools)} pools")
     return _report(problems)
 
 
