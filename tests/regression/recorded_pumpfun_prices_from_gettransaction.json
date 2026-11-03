@@ -1,0 +1,138 @@
+{
+ "mint": "27W8MkduB7Nq5kMVPCWM4ieRQW4DPEtW4Q8gXNfGpump",
+ "bonding_curve": "79AEtVrtQ3EEw9ht2mCAhbC7H7q4MJ3E8a8dz6jq94MV",
+ "points": [
+  {
+   "timestamp": 1793705840,
+   "virtual_sol_reserves": 35186153596,
+   "virtual_token_reserves": 914848504917927,
+   "signature": "wAKn1tobGKjjWtosT5uQ6zD3wCvJ6acDRcwGF5DcMRw26PWgKE9DMvvRUqQqxpVN7J92CqonV6sSUzx56FC5LET"
+  },
+  {
+   "timestamp": 1793705840,
+   "virtual_sol_reserves": 35778746188,
+   "virtual_token_reserves": 899696144824919,
+   "signature": "5HUzbF4hMg4sNDoBZnf6cNLUy11YaLjHyFXfySGaZTnn5tUy786B7MVe7WoL7tju8TgB88EXExEZYa1QJmkS2gR1"
+  },
+  {
+   "timestamp": 1793705865,
+   "virtual_sol_reserves": 34667212995,
+   "virtual_token_reserves": 928543059331500,
+   "signature": "4DmoiZhc5BBDQ16RxHKbo6VVHr4FJskzrFJcXgoDYJHV9kzi89reSpMRMRdFSDvgGrKMgnQYZxEKtyoYqzaBYGxR"
+  },
+  {
+   "timestamp": 1793705865,
+   "virtual_sol_reserves": 34192541187,
+   "virtual_token_reserves": 941433391497649,
+   "signature": "3vYhHpGDjhXPdXdhDfd7UL6o7ncjd2NwVqp4mKBep1CeRi1x5RtkCrJsR1QicM93oNAvC8xFEUHYLSsEiPTQumzd"
+  },
+  {
+   "timestamp": 1793705865,
+   "virtual_sol_reserves": 33200387041,
+   "virtual_token_reserves": 969567010608345,
+   "signature": "3eQXHoaj3JJZ2frFeWEzYBg9gjPYnooDSqdBCcp7aaMYWbY8PJoeLwazec86ZLqgjYD3XYM5usEsFhGZtDfjCD4P"
+  },
+  {
+   "timestamp": 1793705865,
+   "virtual_sol_reserves": 32723400393,
+   "virtual_token_reserves": 983699726447300,
+   "signature": "5Z512cvChtwWhKsXg5KTRUnigpqnvj5MqG3bis3AmjAuHHAvvw4snahSBtZw5fDvo7BcbctStJgjRhL6EpXyPbBH"
+  },
+  {
+   "timestamp": 1793705865,
+   "virtual_sol_reserves": 32144278789,
+   "virtual_token_reserves": 1001422375240659,
+   "signature": "39q4E7LLyoz9iCeu6quhuQR4PDGb35eQAUsuPvFpt9tEwVE87weKKoXcLuq6msoHRcqDpCHfSjhXU4waKUWWkEX6"
+  },
+  {
+   "timestamp": 1793705865,
+   "virtual_sol_reserves": 31313826764,
+   "virtual_token_reserves": 1027980395303624,
+   "signature": "5VYQ7jaEx7iaH2GvogE7wpdw7VzTErDkVgRcza3ezmYFnkU9Ed3mwxvK1gSSpbnkvEdVC7NCsRiADk8dGkLs3zoA"
+  },
+  {
+   "timestamp": 1793705865,
+   "virtual_sol_reserves": 30858967710,
+   "virtual_token_reserves": 1043132755396632,
+   "signature": "2j8bB41GsWi6k7CUvaaeUr8dt6h3v24biVxm6jzxduMoFKTvvQwhpokwFe3QufDLQifzqtYX1YFZkYbV1Qxv7Rro"
+  },
+  {
+   "timestamp": 1793705865,
+   "virtual_sol_reserves": 30665924826,
+   "virtual_token_reserves": 1049699306278282,
+   "signature": "5FKjm2SKR6EDwPzvjbntw9w27UMFXcHRLJv2SeC5x2cEK7XKTWd8BQW6eLVrcJCwSAKptbr27v7s5Qq9NKBzjKzy"
+  },
+  {
+   "timestamp": 1793705865,
+   "virtual_sol_reserves": 30534144814,
+   "virtual_token_reserves": 1054229624338508,
+   "signature": "2xNno9HrZ61nMZaShhfqjxVi2SMRSLDk577oKjbDHit7vsTWYwun7LBuDzQrpJYS4S7Qjq7jvhDafhyJkQVaa57e"
+  },
+  {
+   "timestamp": 1793705865,
+   "virtual_sol_reserves": 31027971973,
+   "virtual_token_reserves": 1037450982803822,
+   "signature": "ZjfPKctXCSFDsnKxLKWWAh7H2ioMLVtrNhyQNgM14FwYxJc6z54kZzn2a7RVqCCA5ib7F66yTFLBDgxPy2SCXDp"
+  },
+  {
+   "timestamp": 1793705865,
+   "virtual_sol_reserves": 31521799132,
+   "virtual_token_reserves": 1021198056748644,
+   "signature": "43ocRqqLpuZLUaN8xPt1CXGDsEfv6zdNtvURngkWX2u6LjKxA4gCF2FJVPSoKWToa2gogiu2vr3rDmBz1TwfM9AS"
+  },
+  {
+   "timestamp": 1793705865,
+   "virtual_sol_reserves": 31200466859,
+   "virtual_token_reserves": 1031715331859916,
+   "signature": "2mfRbLu29tTDomCEusagXdcSJD3VtNd2fCcVSRdxtXFEzQhFStxMADKsC4o6AK2bRcQ2vPDtdC6bb2R2Rcgpho6T"
+  },
+  {
+   "timestamp": 1793705865,
+   "virtual_sol_reserves": 30952862623,
+   "virtual_token_reserves": 1039968432410136,
+   "signature": "4opuFMzkLYv2LTGnpN4XpQqpJsU6dhXw9kkseZdDTD1nTDbuMqNNr4ZHdQZqNsqc2K3QKW7K6NZ9zzYQb9zVumiE"
+  },
+  {
+   "timestamp": 1793705870,
+   "virtual_sol_reserves": 30461404450,
+   "virtual_token_reserves": 1056747073944822,
+   "signature": "4sf2ArbQkqLdVwoK2Xvj2qsy1CXroN7sPFFt66wLyTasuYySR9ihYHScJMbyHhX5uFiMsV8EEzfucnw2Mg8R58DU"
+  },
+  {
+   "timestamp": 1793705870,
+   "virtual_sol_reserves": 30807647328,
+   "virtual_token_reserves": 1044870440092833,
+   "signature": "61qHTKt6TikSqfHx6Mqn4oUv1RZ5fft6wvAr8qFBGH1rR8petvSxxtTzjfqsufyisF3gTdqHS4gZGffYJMckZid5"
+  },
+  {
+   "timestamp": 1793705870,
+   "virtual_sol_reserves": 32536042388,
+   "virtual_token_reserves": 989364337522928,
+   "signature": "5VciJRxNWvnopMTsn2ZfLHZhZB9kKXPvu3mmFsXpSGem1duiGgt6JEp9gpaob74CHRKviDRZH5dMukxNshkeWSbN"
+  },
+  {
+   "timestamp": 1793705871,
+   "virtual_sol_reserves": 32193225456,
+   "virtual_token_reserves": 999899810194729,
+   "signature": "3bsnEFMJxEeWWr9jBv8hpgemrZVjpTLTf17tcytM1SYZemYkLUpZNFwgtXEhkyuFYdZtczoxUmHMFeHxm3M7rj5k"
+  },
+  {
+   "timestamp": 1793705871,
+   "virtual_sol_reserves": 32150102666,
+   "virtual_token_reserves": 1001240971374917,
+   "signature": "2wj1Gwjbo2ctznK3WPo38FoRSDN5qfkEyS7ttsoRFd6K6Ap49YhKfwfhwYBKPyyffn8zsj2KYyZ9h96Hr55r4LNM"
+  },
+  {
+   "timestamp": 1793705871,
+   "virtual_sol_reserves": 31636553403,
+   "virtual_token_reserves": 1017493897430095,
+   "signature": "3vBQHYX14vnz2QCSMKWQ5My37qAonWkPYBKSvKijn8DuULWdm85ikK46ZQhHr19f5sJ2HHMY9d8aHxtZrXPgZUJw"
+  },
+  {
+   "timestamp": 1793705871,
+   "virtual_sol_reserves": 31784701550,
+   "virtual_token_reserves": 1012751369511808,
+   "signature": "5NfCvbGFT5wKo6sQ1GSN4ChQ84joW9Upuz6svVChwY8CFaabRTJv6QDQixpbE2tKUy7GBHdAbQHA3a9auLHfGMN3"
+  }
+ ]
+}

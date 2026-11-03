@@ -111,17 +111,3 @@ class ListenerFactory:
             List of supported listener type strings
         """
         return ["logs", "blocks", "geyser", "shreds"]
-
-    @staticmethod
-    def get_platform_compatible_listeners(platform: Platform) -> list[str]:
-        """Get list of listener types compatible with a specific platform.
-
-        Args:
-            platform: Platform to check compatibility for
-        """
-        if platform == Platform.PUMP_FUN:
-            return ["logs", "blocks", "geyser", "shreds"]
-        elif platform in (Platform.LETS_BONK, Platform.STONK_FUN):
-            return ["blocks", "geyser"]
-        else:
-            return ["blocks", "geyser"]  # Default universal listeners

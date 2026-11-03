@@ -101,7 +101,9 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   - `pool-v2` is sent **only for a canonical pool**. The buyback fee recipient and
     its quote ATA are always the last two accounts and are read positionally, so
     adding `pool-v2` on a non-canonical pool shifts them and the program rejects
-    the `pool-v2` PDA with `BuybackFeeRecipientNotAuthorized` (6053). Upstream's
+    the `pool-v2` PDA with `BuybackFeeRecipientNotAuthorized` (6053), while
+    leaving it out of a canonical pool's trade throws `AnchorError 6023
+    (Overflow)` after the transfers complete. Upstream's
     BREAKING_FEE_RECIPIENT.md says the pair goes after `pool-v2` "for coins that
     graduate from bonding curve", and separately that the pair is needed either
     way — the qualifier is the whole rule. Account counts: buy 26/27 canonical,
@@ -139,7 +141,7 @@ above, taking the fee, mayhem and buyback recipients from PumpSwap's
 - **`is_cashback_enabled = [true]` is rejected** with `6082 CashbackDeprecated`:
   `create_v2` can no longer mint a new cashback coin. Existing cashback coins keep
   trading, accruing and claiming, so every cashback code path in this repo (the
-  legacy sell path's cashback branch, `is_cashback_coin` on `TokenInfo`) stays
+  PumpSwap sell's cashback accounts, `is_cashback_coin` on `TokenInfo`) stays
   live and must not be treated as dead.
 - **The trailing args are positional, not independently optional.** Reaching
   `is_holder_reward` (arg 8) means sending `is_cashback_enabled` (6) and
@@ -207,16 +209,3 @@ PumpSwap instructions take identical accounts and arguments either way.
 bot — see the field comments on `TokenInfo` in `src/interfaces/core.py`. SOL- and
 USDC-paired coins keep `creator_fee_bps` at 0; custom-pair coins carry a nonzero
 value.
-
-## Legacy instructions (fallback only)
-
-Retained behind `PumpFunInstructionBuilder(..., use_legacy_instructions=True)`.
-The IDL under-reports these: `buy` is **18 accounts** on-chain (IDL lists 16) and
-`sell` is **16 non-cashback / 17 cashback** (IDL lists 14). The extras are
-`bonding-curve-v2` (PDA `["bonding-curve-v2", mint]`) followed by a mutable
-buyback fee recipient; the cashback sell path also inserts
-`user_volume_accumulator` before `bonding-curve-v2`. On the PumpSwap side the
-legacy path needs `pool-v2` (PDA `["pool-v2", base_mint]` under pump-amm) —
-without it pump-amm throws `AnchorError 6023 (Overflow)` after the transfers
-complete, a misleading code for a missing account. Prefer v2 — it is the interface
-pump.fun maintains.
