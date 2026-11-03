@@ -46,6 +46,9 @@ REDACTED = "***"
 # Exact values pulled from the environment at install time. Pattern matching
 # cannot know that a bare token is a secret; this does.
 _literal_secrets: list[str] = []
+# Secrets that never sat in the environment, such as a key decrypted from a
+# keystore. Kept apart so re-reading the environment does not drop them.
+_registered_secrets: list[str] = []
 _redaction_installed = False
 
 # Environment variables whose value must never appear in a log line. The
@@ -56,6 +59,7 @@ _SECRET_ENV_VARS = (
     "SOLANA_NODE_RPC_ENDPOINT",
     "SOLANA_NODE_WSS_ENDPOINT",
     "GEYSER_ENDPOINT",
+    "PUMPFUN_PASSWORD",
 )
 
 # Shortest value worth substring-matching. A one- or two-character variable
@@ -128,6 +132,7 @@ def install_secret_redaction() -> None:
         value = os.environ.get(name)
         if value and len(value) >= _MIN_LITERAL_SECRET_LEN:
             _literal_secrets.append(value)
+    _literal_secrets.extend(_registered_secrets)
     # Longest first, so an endpoint is masked before a token that is a prefix
     # of it can replace half of it.
     _literal_secrets.sort(key=len, reverse=True)
@@ -145,6 +150,17 @@ def install_secret_redaction() -> None:
 
     logging.setLogRecordFactory(factory)
     _redaction_installed = True
+
+
+def register_secret(value: str) -> None:
+    """Mask an exact value in every later log record.
+
+    For a secret the environment does not hold, such as a private key
+    decrypted at startup. Values shorter than 8 characters are ignored.
+    """
+    if len(value) >= _MIN_LITERAL_SECRET_LEN and value not in _registered_secrets:
+        _registered_secrets.append(value)
+        install_secret_redaction()
 
 
 def _redact_record(record: logging.LogRecord) -> logging.LogRecord:

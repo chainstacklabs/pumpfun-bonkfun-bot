@@ -18,6 +18,7 @@ dependencies = [
     "pyyaml>=6.0.3",
     "uvloop>=0.22.1; sys_platform != 'win32'",
     "winloop>=0.1.0; sys_platform == 'win32'",
+    "cryptography>=50.0.2",
 ]
 
 [dependency-groups]

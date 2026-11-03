@@ -7,6 +7,7 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
+from core.keystore import resolve_keystore_path
 from interfaces.core import Platform
 from platforms.launchlab_presets import resolve_platform_configs
 from trading.settings import ENTRIES, entry_error
@@ -128,6 +129,10 @@ def load_bot_config(path: str) -> dict:
 
     resolve_env_vars(config)
 
+    keystore = config.get("keystore")
+    if isinstance(keystore, str) and keystore.strip():
+        config["keystore"] = str(resolve_keystore_path(keystore, config_path.parent))
+
     # Set default platform if not specified (backward compatibility)
     if "platform" not in config:
         config["platform"] = "pump_fun"
@@ -173,7 +178,10 @@ def validate_config(config: dict) -> None:
     """Validate the configuration against defined rules with platform support."""
     # Validate required fields
     for field in REQUIRED_FIELDS:
+        if field == "private_key" and "keystore" in config:
+            continue  # the keystore stands in for it, checked below
         get_nested_value(config, field)
+    validate_wallet_config(config)
 
     # Validate config rules
     for path, expected_type, min_val, max_val, error_msg in CONFIG_VALIDATION_RULES:
@@ -236,6 +244,28 @@ def validate_config(config: dict) -> None:
                 f"Invalid platform '{platform_str}'. Must be one of: {[p.value for p in Platform]}"
             )
         raise
+
+
+BOTH_WALLET_KEYS = (
+    "Set either private_key or keystore, not both: remove the private_key line "
+    "to trade from the keystore"
+)
+KEYSTORE_NOT_A_PATH = "keystore must be the path of a pumpfun-cli wallet file"
+
+
+def validate_wallet_config(config: dict) -> None:
+    """Check the wallet comes from exactly one of `private_key` and `keystore`.
+
+    Raises:
+        ValueError: Both are set, or `keystore` is not a non-empty path string
+    """
+    if "keystore" not in config:
+        return
+    if "private_key" in config:
+        raise ValueError(BOTH_WALLET_KEYS)
+    keystore = config["keystore"]
+    if not isinstance(keystore, str) or not keystore.strip():
+        raise ValueError(KEYSTORE_NOT_A_PATH)
 
 
 def validate_quote_config(config: dict) -> None:
