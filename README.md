@@ -172,7 +172,11 @@ Each position the bot monitors (`tp_sl` or `time_based`) is written to
 start the bot reads that file and resumes each position before it takes a new
 coin, with the bot's current exit strategy: `max_hold_time` and `wait_after_buy`
 count from the original buy, take profit and stop loss from its entry price.
-Resumed positions take slots like any other.
+Resumed positions take slots like any other. If the file holds more than
+`max_open_positions` (the limit was lowered), all of them are resumed, since
+their coins are already in the wallet, and no new coin is taken until the count
+is below the limit again. A resumed `time_based` position whose wait has run out
+sells at once, priced at the market rather than at its old buy price.
 
 The wallet decides what is left to sell. A position whose coin the wallet no
 longer holds (sold by hand, or burned by `post_session` cleanup with

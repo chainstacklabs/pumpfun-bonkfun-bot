@@ -15,16 +15,17 @@ its buy until its sell, and the next start resumes it:
   D. `manual` and `marry_mode` positions are not written, and not resumed.
   E. A resumed `tp_sl` position keeps its entry price and counts
      `max_hold_time` from its original buy, and sells the raw amount bought.
-  F. A resumed `time_based` position counts `wait_after_buy` from its buy.
+  F. A resumed `time_based` position counts `wait_after_buy` from its buy, and
+     its first sell is floored at the price now, not the stale buy price.
   G. A position whose coin the wallet no longer holds (sold while the bot was
      down, or its account closed) is cleared and never sold.
   H. A wallet holding less than was bought sells what it holds.
   I. A position whose balance cannot be read is neither sold nor cleared.
   J. A record that does not decode stays in the file; a file that is not JSON
-     is moved aside, not overwritten.
-  K. The trader resumes before it takes a coin: resumed positions hold slots,
-     are cleaned up after the session, and single-token mode waits for them
-     also when no new coin comes.
+     is moved aside, and never over an earlier one.
+  K. The trader resumes before it takes a coin: resumed positions hold slots
+     (all of them, also beyond `max_open_positions`), are cleaned up after the
+     session, and single-token mode waits for them also when no new coin comes.
   L. `bot_runner` keeps each bot's positions in `positions/<name>.json`, which
      git ignores.
 
@@ -139,6 +140,8 @@ class _Seller:
 
     def __init__(self) -> None:
         self.sells: list[tuple[str, int | None, float]] = []
+        # The token_price each sell was handed: its slippage floor.
+        self.floors: list[tuple[str, float]] = []
         self.outcome = "sold"
 
     async def execute(
@@ -149,6 +152,7 @@ class _Seller:
         token_amount_raw: int | None = None,
     ) -> TradeResult:
         self.sells.append((token_info.symbol, token_amount_raw, token_amount))
+        self.floors.append((token_info.symbol, token_price))
         if self.outcome == "sold":
             return TradeResult(
                 success=True, price=token_price, amount=token_amount, tx_signature="s"
@@ -435,12 +439,18 @@ async def _check_f(tmp: Path) -> list[str]:
     rig = _Rig(path, exit_strategy="time_based")
     rig.client.hold(due, BOUGHT_RAW)
     rig.client.hold(fresh, BOUGHT_RAW)
+    rig.prices["DUE"] = 0.25  # fell since the buy at 1.0
     await rig.pm.resume()
     if not await _until(lambda: rig.pm.open_count == 1, 2):
         problems.append("a position past its wait_after_buy was not sold at once")
     await asyncio.sleep(0.1)
     if [s[0] for s in rig.seller.sells] != ["DUE"]:
         problems.append(f"sells {rig.seller.sells}; FRESH has 30s still to wait")
+    if rig.seller.floors != [("DUE", 0.25)]:
+        problems.append(
+            f"floors {rig.seller.floors}: the first sell of a resumed position "
+            f"must price off the market now, not the buy before the restart"
+        )
     await rig.pm.stop()
     if rig.stored() != {str(fresh.mint)}:
         problems.append(f"file holds {rig.stored()}")
@@ -509,6 +519,10 @@ def check_i_unreadable_balance_is_kept(tmp: Path) -> bool:
     return _report(asyncio.run(_check_i(tmp)))
 
 
+def _text(path: Path) -> str | None:
+    return path.read_text() if path.exists() else None
+
+
 def check_j_bad_records_are_kept(tmp: Path) -> bool:
     problems = []
     path = tmp / "j.json"
@@ -530,8 +544,13 @@ def check_j_bad_records_are_kept(tmp: Path) -> bool:
     if PositionStore(path).load():
         problems.append("an unreadable file produced positions")
     aside = path.with_name(path.name + ".unreadable")
-    if path.exists() or aside.read_text() != "{not json":
+    if path.exists() or _text(aside) != "{not json":
         problems.append("an unreadable file was not moved aside intact")
+    path.write_text("{still not json")
+    PositionStore(path).load()
+    second = path.with_name(path.name + ".unreadable.1")
+    if _text(aside) != "{not json" or _text(second) != "{still not json":
+        problems.append("a second unreadable file overwrote the first one aside")
     return _report(problems)
 
 
@@ -604,6 +623,45 @@ async def _trader_run(
     return trader, events, release
 
 
+async def _check_k_over_limit(tmp: Path) -> list[str]:
+    problems = []
+    # More stored than the limit allows: every one resumes, and the new coin
+    # waits until the count is below the limit again.
+    path = tmp / "k3.json"
+    old, old2, new = _token("OLD"), _token("OLD2"), _token("NEW")
+    store = PositionStore(path)
+    for token in (old, old2):
+        store.add(token, _buy(), _now())
+    trader, events, release = await _trader_run(path, [new])
+    trader._stored_tokens.extend([old, old2])  # noqa: SLF001
+    for token in (old, old2):
+        trader.solana_client.hold(token, BOUGHT_RAW)
+        release[token.symbol] = asyncio.Event()
+    start = asyncio.create_task(trader.start())
+    await _until(lambda: "hold OLD2 resumed" in events)
+    release["OLD"].set()
+    await asyncio.sleep(0.1)
+    if "buy NEW" in events:
+        problems.append(f"bought while still over the limit: {events}")
+    release["OLD2"].set()
+    await _until(lambda: "hold NEW fresh" in events)
+    release["NEW"].set()
+    await asyncio.wait_for(start, 5)
+    want = [
+        "hold OLD resumed",
+        "hold OLD2 resumed",
+        "exit OLD",
+        "exit OLD2",
+        "buy NEW",
+        "hold NEW fresh",
+        "exit NEW",
+        "cleanup ['NEW', 'OLD', 'OLD2']",
+    ]
+    if events != want:
+        problems.append(f"over the limit: {events}, expected {want}")
+    return problems
+
+
 async def _check_k(tmp: Path) -> list[str]:
     problems = []
     # Limit 1: the resumed position holds the only slot, so the new coin waits.
@@ -633,6 +691,7 @@ async def _check_k(tmp: Path) -> list[str]:
     ]
     if events != want:
         problems.append(f"limit 1: {events}, expected {want}")
+    problems += await _check_k_over_limit(tmp)
 
     # Single-token mode with no new coin still waits for the resumed position.
     path = tmp / "k2.json"

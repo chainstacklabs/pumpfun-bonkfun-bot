@@ -91,6 +91,7 @@ class PositionManager:
     #: Seconds `stop` waits for the cancelled position tasks to end.
     _STOP_BUDGET = 30.0
     #: Where positions are kept across restarts; None keeps them in memory only.
+    #: Also a class default: verifiers build a manager without `__init__`.
     store: PositionStore | None = None
 
     def __init__(  # noqa: PLR0913
@@ -237,7 +238,8 @@ class PositionManager:
         holds was sold (or moved) while the bot was down and is cleared, never
         sold again; one holding less than was bought sells what is left. A
         position whose balance or quote mint cannot be read stays in the file
-        and is not monitored this run.
+        and is not monitored this run. Every position held is resumed, even past
+        `max_open_positions`; the trader takes no new coin until below it.
 
         Returns:
             The coins now held again, each in its own task
@@ -417,9 +419,12 @@ class PositionManager:
         await asyncio.sleep(wait)
 
         logger.info(f"Selling {token_info.symbol}...")
-        # The first attempt prices off the buy: no price has been read since,
-        # and reading one would cost an RPC call on the happy path.
+        # A fresh position's first attempt prices off the buy: no price has been
+        # read since, and reading one would cost an RPC call on the happy path.
+        # A resumed one was bought before the restart, so its buy price is stale.
         token_price = buy_result.price
+        if entry_time is not None:
+            token_price = await self._current_price_or(token_info, token_price)
 
         for attempt in range(1, self.max_exit_sell_attempts + 1):
             sell_result: TradeResult = await self.seller.execute(
