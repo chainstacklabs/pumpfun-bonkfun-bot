@@ -18,9 +18,9 @@ Offline machine checks, no network and no funds moved:
   B. The data is `buy_exact_quote_in`: the IDL discriminator, the quote to spend,
      the token floor and `track_volume` set — the real one's layout, which may
      leave the trailing `track_volume` out.
-  C. A cashback pool adds only the accumulator's quote account to a buy, and that
-     plus the accumulator to a sell, after the fee program; `pool-v2` follows on a
-     canonical pool only, and the buyback pair stays last.
+  C. A cashback pool adds only the accumulator's quote account to a buy,
+     writable, and that plus the accumulator to a sell, after the fee program;
+     `pool-v2` follows on a canonical pool only, and the buyback pair stays last.
   D. A SOL buy wraps exactly the amount it spends in the wallet's WSOL account
      and closes it after the swap; a USDC buy pays from the wallet's USDC
      account. Both create the base-token account first.
@@ -34,6 +34,10 @@ Offline machine checks, no network and no funds moved:
      three compute-budget instructions and no lookup table. The throwaway
      wrapped-SOL account the sells use left a SOL buy a few bytes under the
      limit and a cashback SOL buy over it.
+  G. The pool's coin creator and cashback flag are read again for every trade:
+     after fee sharing moves the coin creator, the next buy and sell on the
+     same market name the new creator's vault, and a pool turned cashback adds
+     its accounts.
 
 Usage:
     uv run tests/regression/verify_pumpswap_buy.py
@@ -319,6 +323,10 @@ def check_c_cashback_and_pool_v2() -> bool:
         for side in ("buy", "sell")
     }
     results["counts"] = lengths == {"buy": 26, "sell": 24}
+    cashback_buy = _swap(_build(case, USER, accounts=cashback)).accounts
+    results["buy cashback writable"] = any(
+        m.pubkey == accumulator_ata and m.is_writable for m in cashback_buy
+    )
     if not all(results.values()):
         print(f"    {results} {lengths}")
     return all(results.values())
@@ -567,6 +575,56 @@ def check_e_buyer_routes_to_pool() -> bool:
     return routed and on_curve and held and fast
 
 
+def check_g_pool_reread_every_trade() -> bool:
+    """G: a moved coin creator and a new cashback flag reach the next trade."""
+    case = CASES["sol"]
+    client = _FixtureClient(case["accounts"])
+    market = PumpSwapMarket(client)
+    token = _token(case)
+    pool = Pubkey.from_string(case["pool"])
+
+    def vault(creator: Pubkey) -> Pubkey:
+        return Pubkey.find_program_address(
+            [b"creator_vault", bytes(creator)], PUMP_AMM_PROGRAM
+        )[0]
+
+    def trade(side: str) -> list[Pubkey]:
+        build = getattr(market, f"build_{side}_instruction")
+        swap = _swap(asyncio.run(build(token, USER, AMOUNT_IN, MIN_OUT)))
+        return [m.pubkey for m in swap.accounts]
+
+    data = client.accounts[pool].data
+    old_creator = Pubkey.from_bytes(
+        data[_POOL_COIN_CREATOR_OFFSET : _POOL_COIN_CREATOR_OFFSET + 32]
+    )
+    first = trade("buy")
+    new_creator = Pubkey.new_unique()
+    moved = bytearray(data)
+    moved[_POOL_COIN_CREATOR_OFFSET : _POOL_COIN_CREATOR_OFFSET + 32] = bytes(
+        new_creator
+    )
+    moved[_POOL_CASHBACK_OFFSET] = 1
+    client.accounts[pool] = SimpleNamespace(
+        data=bytes(moved), owner=client.accounts[pool].owner
+    )
+    accumulator = Pubkey.find_program_address(
+        [b"user_volume_accumulator", bytes(USER)], PUMP_AMM_PROGRAM
+    )[0]
+    accumulator_ata = get_associated_token_address(
+        accumulator, WSOL_MINT, SystemAddresses.TOKEN_PROGRAM
+    )
+    results = {"first buy, old vault": vault(old_creator) in first}
+    for side in ("buy", "sell"):
+        accounts = trade(side)
+        results[f"{side}, new vault"] = (
+            vault(new_creator) in accounts and vault(old_creator) not in accounts
+        )
+        results[f"{side}, cashback"] = accumulator_ata in accounts
+    if not all(results.values()):
+        print(f"    {results}")
+    return all(results.values())
+
+
 def main() -> int:
     """Run every check and report."""
     _resolve_quotes()
@@ -577,6 +635,7 @@ def main() -> int:
         ("D: quote settles exactly", check_d_settlement),
         ("E: buyer buys a graduated coin in its pool", check_e_buyer_routes_to_pool),
         ("F: every trade fits one transaction", check_f_fits_one_transaction),
+        ("G: the pool is read again for every trade", check_g_pool_reread_every_trade),
     ]
     passed = 0
     for label, check in checks:
