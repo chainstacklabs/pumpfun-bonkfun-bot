@@ -56,10 +56,20 @@ class MigrationResolver:
     """Turns a `PoolReady` into the `TokenInfo` the buyer and seller trade."""
 
     def __init__(
-        self, client: SolanaClient, pool_wait_seconds: float = POOL_WAIT_SECONDS
+        self,
+        client: SolanaClient,
+        pool_wait_seconds: float = POOL_WAIT_SECONDS,
+        platform_configs: frozenset[Pubkey] | None = None,
     ) -> None:
+        """Set up the resolver.
+
+        Args:
+            platform_configs: The LaunchLab platform configs the bot trades; a
+                coin whose curve is under another is refused. None takes any.
+        """
         self.client = client
         self.pool_wait_seconds = pool_wait_seconds
+        self.platform_configs = platform_configs
 
     async def resolve(self, pool: PoolReady) -> TokenInfo:
         """Read the coin behind a migration.
@@ -71,9 +81,11 @@ class MigrationResolver:
         Raises:
             PoolNotTradable: If the mint is missing, the curve stays unreadable
                 or not completed through the wait (an attempt that cannot land,
-                or a node that has not caught up), or the curve's quote mint is
+                or a node that has not caught up), the curve's quote mint is
                 not the reported pool's (an attempt naming a pool the coin will
-                not use). On shreds another attempt may follow.
+                not use), or a LaunchLab curve is under a platform config the
+                bot does not trade (an attempt naming another config). On
+                shreds another attempt may follow.
         """
         implementations = get_platform_implementations(pool.platform, self.client)
         provider = implementations.address_provider
@@ -117,6 +129,7 @@ class MigrationResolver:
             raise PoolNotTradable(  # noqa: TRY003
                 f"the pool is quoted in {quote_mint}, the curve in {curve_quote}"
             )
+        self._check_platform_config(pool.platform, state)
 
         metadata = decode_token_metadata(
             mint_account.data, metaplex_account.data if metaplex_account else None
@@ -162,6 +175,21 @@ class MigrationResolver:
             token_info.platform_config = state.get("platform_config")
             token_info.transfer_fee_bps = state.get("transfer_fee_bps", 0)
         return token_info
+
+    def _check_platform_config(self, platform: Platform, state: dict) -> None:
+        """Refuse a LaunchLab curve under a platform config the bot does not trade.
+
+        The report was matched on the platform config the migration names; the
+        curve's own is the coin's launchpad. pump.fun has no platform configs.
+        """
+        if platform == Platform.PUMP_FUN or self.platform_configs is None:
+            return
+        curve_config = _pubkey(state.get("platform_config"))
+        if curve_config not in self.platform_configs:
+            raise PoolNotTradable(  # noqa: TRY003
+                f"its curve is under platform config {curve_config}, "
+                f"not one this bot trades"
+            )
 
     async def wait_for_pool(self, token_info: TokenInfo) -> bool:
         """Poll the coin's pool until it is readable, for up to `pool_wait_seconds`.

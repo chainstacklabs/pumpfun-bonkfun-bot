@@ -24,6 +24,9 @@ Offline machine checks, no network and no funds moved:
   4. A token skipped as too old also calls `task_done()`.
   5. Cancelling mid-handler, with an item taken, calls `task_done()` exactly once
      and still ends without raising.
+  6. A coin reported again while its first report waits in the queue is
+     handled once, and its age counts from the first report: a repeat neither
+     buys it twice nor makes a stale coin look fresh.
 
 The processor catches `CancelledError` and breaks, so a cancelled task finishes
 by returning rather than by propagating — either ending is fine to `start()`,
@@ -77,7 +80,9 @@ def _make_trader() -> TokenIntake:
 
 def _token(mint: str = "StubMint") -> SimpleNamespace:
     """A stand-in for TokenInfo carrying only what the processor reads."""
-    return SimpleNamespace(mint=mint, symbol="STUB")
+    return SimpleNamespace(
+        mint=mint, symbol="STUB", platform=SimpleNamespace(value="pump_fun")
+    )
 
 
 def _check(label: str, passed: bool, detail: str) -> bool:  # noqa: FBT001
@@ -206,6 +211,35 @@ async def check_cancel_mid_handler_marks_done() -> bool:
     )
 
 
+async def check_repeated_report_handled_once() -> bool:
+    print("\n6. A repeated report is handled once, aged from the first")
+    trader = _make_trader()
+    handled: list[str] = []
+
+    async def handler(token_info: SimpleNamespace) -> None:
+        handled.append(token_info.mint)
+
+    fresh, stale = _token("FreshMint"), _token("StaleMint")
+    await trader._queue_token(fresh)  # noqa: SLF001
+    await trader._queue_token(stale)  # noqa: SLF001
+    # The stale coin was first seen long ago; its repeat arrives now.
+    trader.token_timestamps[str(stale.mint)] = -MAX_TOKEN_AGE * 2
+    await trader._queue_token(fresh)  # noqa: SLF001
+    await trader._queue_token(stale)  # noqa: SLF001
+    task = asyncio.create_task(trader._process_token_queue(handler))  # noqa: SLF001
+    try:
+        await asyncio.wait_for(trader.token_queue.join(), timeout=1.0)
+    except TimeoutError:
+        pass
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    return _check(
+        "coins handled",
+        handled == [fresh.mint],
+        f"{handled} (want only {fresh.mint}, once)",
+    )
+
+
 async def main() -> None:
     print("=" * 72)
     print("Verifying the token queue processor shuts down cleanly")
@@ -217,6 +251,7 @@ async def main() -> None:
         await check_processed_token_marks_done(),
         await check_stale_token_marks_done(),
         await check_cancel_mid_handler_marks_done(),
+        await check_repeated_report_handled_once(),
     ]
 
     print("\n" + "=" * 72)

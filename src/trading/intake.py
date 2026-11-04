@@ -173,8 +173,9 @@ class TokenIntake:
             logger.debug(f"Token {token_info.symbol} already processed. Skipping...")
             return
 
-        # Record timestamp when token was discovered
-        self.token_timestamps[token_key] = monotonic()
+        # The first discovery counts: a repeated report of a coin still queued
+        # must not make the copy ahead of it look fresh.
+        self.token_timestamps.setdefault(token_key, monotonic())
 
         await self.token_queue.put(token_info)
         logger.info(
@@ -196,6 +197,10 @@ class TokenIntake:
                 token_info = await self.token_queue.get()
                 took_item = True
                 token_key = str(token_info.mint)
+                if token_key in self.processed_tokens:
+                    # A repeated report queued before the first was processed.
+                    logger.debug(f"Token {token_info.symbol} already processed")
+                    continue
 
                 # Check if token is still "fresh"
                 current_time = monotonic()
@@ -299,7 +304,15 @@ class TokenIntake:
 
         async def first_accepted() -> TokenInfo:
             while True:
-                pool, _ = await self.pool_queue.get()
+                pool, queued_at = await self.pool_queue.get()
+                # A report that waited behind another's pool wait ages too.
+                age = monotonic() - queued_at
+                if age > self.max_token_age:
+                    logger.info(
+                        f"Skipping migrated coin {pool.mint} - too old "
+                        f"({age:.1f}s > {self.max_token_age}s)"
+                    )
+                    continue
                 token_info = await self._prepare_pool(pool)
                 if token_info is not None:
                     return token_info

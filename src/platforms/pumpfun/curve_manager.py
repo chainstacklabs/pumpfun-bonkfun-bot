@@ -38,13 +38,15 @@ def max_sell_within_real_reserves(curve_state: dict[str, Any], amount: int) -> i
 
     Returns:
         `amount` when the curve can pay for all of it, else the most raw tokens
-        whose payout still fits; 0 when that payout would be nothing
+        whose payout still fits; 0 when the payout, either way, would be nothing
     """
     virtual_tokens = curve_state["virtual_token_reserves"]
     virtual_quote = curve_state["virtual_quote_reserves"]
     real_quote = curve_state["real_quote_reserves"]
-    if sell_quote_out(curve_state, amount) <= real_quote:
-        return amount
+    payout = sell_quote_out(curve_state, amount)
+    if payout <= real_quote:
+        # A sell paid nothing would revert on its floor of at least one unit.
+        return amount if payout > 0 else 0
     # The payout rounds down, so it fits while
     # amount * virtual_quote < (real_quote + 1) * (virtual_tokens + amount).
     # virtual_quote > real_quote + 1 here, or the full sell would have fit.

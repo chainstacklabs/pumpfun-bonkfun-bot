@@ -142,7 +142,12 @@ def load_bot_config(path: str) -> dict:
 
 
 def resolve_env_vars(config: dict) -> None:
-    """Recursively resolve environment variables in the configuration."""
+    """Recursively resolve environment variables in the configuration.
+
+    A value that is `true` or `false` in any case becomes a bool, so a switch
+    set from the environment means what it says; every other value stays a
+    string.
+    """
 
     def resolve_env(value):
         if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
@@ -150,6 +155,9 @@ def resolve_env_vars(config: dict) -> None:
             env_value = os.getenv(env_var)
             if env_value is None:
                 raise ValueError(f"Environment variable '{env_var}' not found")
+            switch = env_value.strip().lower()
+            if switch in ("true", "false"):
+                return switch == "true"
             return env_value
         return value
 

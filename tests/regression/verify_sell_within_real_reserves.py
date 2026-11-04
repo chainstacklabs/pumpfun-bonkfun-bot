@@ -24,7 +24,8 @@ seller, curve manager and instruction builder on that curve:
   B. Its slippage floor is priced on that amount's payout from the same read
      when the caller's price is higher, and a lower caller price is kept.
   C. A sell the curve can pay for in full goes out whole, floor unchanged.
-  D. A curve with no real reserves gets no transaction.
+  D. A curve with no real reserves gets no transaction, and neither does a
+     sell the curve would pay nothing for (its floor of one unit would revert).
   E. The capped sell reports the amount it sold.
 
 The exit strategies then run the real position manager over that seller and
@@ -316,13 +317,21 @@ def check_c_full_sell_unchanged() -> bool:
 
 
 def check_d_empty_curve() -> bool:
-    """D: a curve with no real reserves gets no transaction."""
+    """D: a curve with no real reserves, or a sell it pays nothing for, sends nothing."""
     data = bytearray(CURVE_DATA)
     struct.pack_into("<Q", data, REAL_QUOTE, 0)
     sent, result = _sell(POSITION, _spot_price(CURVE_DATA), bytes(data))
     ok = sent is None and not result.success
     if not ok:
         print(f"    sent {sent}, success={result.success}")
+    # One raw token: the payout rounds down to nothing, though it fits.
+    if _payout(CURVE_DATA, 1) != 0:
+        print(f"    one raw token pays {_payout(CURVE_DATA, 1)}, not nothing")
+        return False
+    sent_dust, result_dust = _sell(1, _spot_price(CURVE_DATA))
+    if sent_dust is not None or result_dust.success:
+        print(f"    a sell paid nothing was sent: {sent_dust}")
+        ok = False
     return ok
 
 

@@ -11,7 +11,8 @@ a bot:
   B. Every way unlocking can fail raises `KeystoreError` with a message naming
      the cause: no password, a wrong one, a missing or unreadable file, a file
      that is not a version-1 scrypt keystore, a key that does not match the
-     file's public key, and scrypt settings asking for more than 1 GiB.
+     file's public key, scrypt settings asking for more than 1 GiB of memory
+     or of work, and settings scrypt itself rejects.
   C. Config: `keystore` stands in for `private_key`; neither is refused as a
      missing `private_key`, both together are refused, a non-path `keystore`
      is refused. `~` expands, a relative path is found beside the config, and
@@ -230,10 +231,28 @@ def check_b_refusals_name_the_cause() -> bool:
                 "secret-pass",
                 ["more scrypt memory"],
             ),
+            (
+                "scrypt work over 1 GiB",
+                write("slow.enc", _keystore(keypair, "secret-pass")),
+                "secret-pass",
+                ["more scrypt work"],
+            ),
+            (
+                "scrypt n not a power of 2",
+                write("n3.enc", _keystore(keypair, "secret-pass")),
+                "secret-pass",
+                ["invalid scrypt settings"],
+            ),
         ]
-        big = json.loads((folder / "big.enc").read_text())
-        big["kdf"]["n"] = 2**21  # 128 * 2^21 * 8 = 2 GiB
-        (folder / "big.enc").write_text(json.dumps(big))
+        # _keystore derives with the settings it writes, so each is set after.
+        for name, setting, value in (
+            ("big.enc", "n", 2**21),  # 128 * 2^21 * 8 = 2 GiB
+            ("slow.enc", "p", 2**11),  # 1 MiB of memory, 2048 times over
+            ("n3.enc", "n", 3),
+        ):
+            data = json.loads((folder / name).read_text())
+            data["kdf"][setting] = value
+            (folder / name).write_text(json.dumps(data))
         for label, path, password, needles in cases:
             try:
                 message = _refusal(path, password)

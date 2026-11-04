@@ -18,13 +18,17 @@ Offline machine checks, no network and no funds moved:
   A. Config: every committed bot config still validates and runs `new_launch`;
      `entry: migration` validates, with `extreme_fast_mode` on it is refused
      naming `extreme_fast_mode`, and an unknown entry is refused.
+     `extreme_fast_mode` set from the environment is the bool it spells, in
+     any case: `false` lets a migration bot start with it off, `TRUE` is
+     refused.
   B. Metadata: the name, symbol and uri decode from a Token-2022 mint's own
      metadata extension and from a Metaplex account, equal to the creation's.
   C. A report resolves to the coin the buyer needs: its curve (pump.fun's
      bonding curve, LaunchLab's pool state), creator and creator vault, token
      program, quote mint, platform config and transfer fee. A report whose
-     curve has not completed, whose quote mint is not the curve's, or whose mint
-     is missing resolves to nothing.
+     curve has not completed, whose quote mint is not the curve's, whose mint
+     is missing, or whose LaunchLab curve is under a platform config the bot
+     does not trade resolves to nothing.
   D. The pool wait returns once the venue prices the pool, and gives up when
      the budget runs out.
   E. Single-token mode: launches are ignored, the listener is asked for
@@ -32,11 +36,13 @@ Offline machine checks, no network and no funds moved:
      transfer fee) refuses a coin, and the first coin they accept is returned.
      A shreds report that leaves nothing to buy, or whose pool never appears,
      does not use the mint up: a later attempt is still bought. An executed
-     one does. A mint is handed on once.
+     one does. A mint is handed on once. A report older than `max_token_age`
+     when it is taken off the queue is skipped.
   F. Continuous mode hands each fresh migrated coin to the handler once and
      skips stale reports. The trader in migration mode, single-token and
      continuous, buys what the intake hands it, and in `new_launch` mode asks
-     the listener for no migrations.
+     the listener for no migrations. A LaunchLab migration trader resolves
+     only curves under the platform configs it trades.
   G. A stream reports a migration before every node serves its slot, and on
      LaunchLab the buy completing the curve can share that slot. The curve is
      read at `processed` and re-read until it shows as completed, bounded by
@@ -53,8 +59,10 @@ import asyncio
 import base64
 import copy
 import json
+import os
 import struct
 import sys
+import tempfile
 from collections.abc import Awaitable, Callable
 from itertools import count
 from pathlib import Path
@@ -73,6 +81,9 @@ import config_loader  # noqa: E402
 from core.pubkeys import USDC_MINT, WSOL_MINT, SystemAddresses  # noqa: E402
 from core.token_metadata import decode_token_metadata, metadata_address  # noqa: E402
 from interfaces.core import Platform, PoolReady, TokenInfo  # noqa: E402
+from platforms.stonkfun.addresses import (  # noqa: E402
+    PLATFORM_CONFIGS as STONKFUN_CONFIGS,
+)
 from trading import migration, universal_trader  # noqa: E402
 from trading.base import TradeResult  # noqa: E402
 from trading.intake import TokenIntake  # noqa: E402
@@ -131,9 +142,16 @@ def _pool_ready(coin: dict, **changes: object) -> PoolReady:
     return PoolReady(**(fields | changes))
 
 
-def _resolve(coin: dict, accounts: dict | None = None, **changes: object) -> object:
+def _resolve(
+    coin: dict,
+    accounts: dict | None = None,
+    platform_configs: frozenset[Pubkey] | None = None,
+    **changes: object,
+) -> object:
     # A short wait: a curve that is not completed is re-read until it runs out.
-    resolver = MigrationResolver(_FixtureClient(accounts or coin["accounts"]), 0.2)
+    resolver = MigrationResolver(
+        _FixtureClient(accounts or coin["accounts"]), 0.2, platform_configs
+    )
     try:
         return asyncio.run(resolver.resolve(_pool_ready(coin, **changes)))
     except PoolNotTradable as e:
@@ -186,9 +204,45 @@ def check_a_config() -> bool:
         else:
             if needle is not None:
                 problems.append(f"{label}: validated")
+    problems += _interpolated_fast_mode(base)
     for problem in problems:
         print(f"    {problem}")
     return not problems
+
+
+def _interpolated_fast_mode(base: dict) -> list[str]:
+    """`extreme_fast_mode: ${VAR}` on a migration bot, loaded from a file."""
+    problems = []
+    config = copy.deepcopy(base)
+    config.pop("env_file", None)
+    config.pop("geyser", None)
+    config.update(
+        rpc_endpoint="http://127.0.0.1:8899",
+        wss_endpoint="ws://127.0.0.1:8900",
+        private_key=str(Keypair()),
+    )
+    config["trade"].update(entry="migration", extreme_fast_mode="${VERIFY_XFM}")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "bot.yaml"
+        path.write_text(yaml.safe_dump(config))
+        for value, expected in (("false", False), ("False", False), ("TRUE", True)):
+            os.environ["VERIFY_XFM"] = value
+            try:
+                loaded = config_loader.load_bot_config(str(path))
+            except ValueError as e:
+                if expected is not True or "extreme_fast_mode" not in str(e):
+                    problems.append(f"VERIFY_XFM={value}: refused: {e}")
+                continue
+            finally:
+                os.environ.pop("VERIFY_XFM", None)
+            if expected is True:
+                problems.append(f"VERIFY_XFM={value}: validated")
+            elif loaded["trade"]["extreme_fast_mode"] is not False:
+                problems.append(
+                    f"VERIFY_XFM={value}: loaded as "
+                    f"{loaded['trade']['extreme_fast_mode']!r}"
+                )
+    return problems
 
 
 # ---------------------------------------------------------------- B: metadata
@@ -228,7 +282,7 @@ def _with_data(coin: dict, address: str, edit: object) -> dict:
     return accounts
 
 
-def check_c_resolve() -> bool:  # noqa: C901
+def check_c_resolve() -> bool:  # noqa: C901, PLR0912
     problems = []
     for coin in FIXTURE:
         label, p = coin["label"], coin["pool_ready"]
@@ -301,6 +355,19 @@ def check_c_resolve() -> bool:  # noqa: C901
         for key, value in want.items():
             if got[key] != value:
                 problems.append(f"{label}: {key} {got[key]} != {value}")
+        if token.platform != Platform.PUMP_FUN:
+            own = frozenset({want["platform_config"]})
+            if not isinstance(_resolve(coin, platform_configs=own), TokenInfo):
+                problems.append(f"{label}: refused under its own platform config")
+            refused = _resolve(coin, platform_configs=frozenset({Pubkey.default()}))
+            if not (
+                isinstance(refused, PoolNotTradable)
+                and str(want["platform_config"]) in str(refused)
+            ):
+                problems.append(
+                    f"{label}: resolved under a platform config the bot does "
+                    f"not trade: {refused}"
+                )
 
     fee_coins = [c for c in FIXTURE if "reward" in c["label"]]
     if (
@@ -473,7 +540,7 @@ def _wait(intake: TokenIntake) -> TokenInfo | None:
     return asyncio.run(intake.wait_for_migrated_token())
 
 
-def check_e_single_token() -> bool:  # noqa: C901, PLR0912
+def check_e_single_token() -> bool:  # noqa: C901, PLR0912, PLR0915
     problems = []
     creator = Pubkey.new_unique()
     good = _token("GOODCOIN", creator=creator)
@@ -571,6 +638,28 @@ def check_e_single_token() -> bool:  # noqa: C901, PLR0912
     )
     if _wait(intake) is not None:
         problems.append("a refused coin was returned")
+
+    # max_token_age: a report that waited in the queue behind another's pool
+    # wait is too old by the time it is taken.
+    class _SlowPool(_Resolver):
+        async def wait_for_pool(self, token_info: TokenInfo) -> bool:
+            await asyncio.sleep(0.3)
+            return await super().wait_for_pool(token_info)
+
+    first, queued = _token("FIRST", creator=creator), _token("QUEUED", creator=creator)
+    resolver = _SlowPool({first.mint: first, queued.mint: queued}, {first.mint: False})
+    intake = _intake(
+        [_report(first.mint), _report(queued.mint)],
+        resolver,
+        max_token_age=0.1,
+        token_wait_timeout=1.0,
+    )
+    found = _wait(intake)
+    if found is not None or queued.mint in resolver.waited:
+        problems.append(
+            f"a report older than max_token_age was taken: found "
+            f"{found and found.symbol}, waits {resolver.waited}"
+        )
     for problem in problems:
         print(f"    {problem}")
     return not problems
@@ -614,9 +703,10 @@ def check_f_continuous_and_trader() -> bool:  # noqa: C901, PLR0915
     keypair = Keypair()
 
     def trader_for(
-        entry: str, listener: _Listener, *, yolo_mode: bool = False
+        entry: str, listener: _Listener, *, yolo_mode: bool = False, **extra: object
     ) -> universal_trader.UniversalTrader:
         settings = TraderSettings(
+            **extra,
             yolo_mode=yolo_mode,
             wait_time_before_new_token=0,
             max_token_age=30,
@@ -708,6 +798,25 @@ def check_f_continuous_and_trader() -> bool:  # noqa: C901, PLR0915
         problems.append(f"new_launch trader bought {[t.symbol for t in bought]}")
     if [pool for _, pool in listener.calls] != [False]:
         problems.append(f"new_launch trader asked for migrations: {listener.calls}")
+
+    # The resolver refuses a curve under a launchpad the bot does not trade:
+    # the preset's configs by default, `platform_configs` when narrowed.
+    own_config = next(iter(STONKFUN_CONFIGS))
+    for label, extra, want in (
+        ("pump.fun", {}, None),
+        ("stonk_fun", {"platform": Platform.STONK_FUN}, STONKFUN_CONFIGS),
+        ("launchlab", {"platform": Platform.LAUNCHLAB}, None),
+        (
+            "launchlab narrowed",
+            {"platform": Platform.LAUNCHLAB, "platform_configs": [str(own_config)]},
+            frozenset({own_config}),
+        ),
+    ):
+        resolver = trader_for("migration", _Listener([]), **extra).intake.pool_resolver
+        if resolver.platform_configs != want:
+            problems.append(
+                f"{label} migration trader resolves under {resolver.platform_configs}"
+            )
     for problem in problems:
         print(f"    {problem}")
     return not problems

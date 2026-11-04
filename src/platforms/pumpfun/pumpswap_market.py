@@ -2,7 +2,7 @@
 
 import random
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Final
 
@@ -140,12 +140,26 @@ class PumpSwapMarket(Market):
         return self._config
 
     async def _resolve(self, token_info: TokenInfo) -> tuple[PumpSwapPool, bytes]:
-        """The pool, and its current account data. Raises ValueError if it does not exist."""
+        """The pool, and its current account data. Raises ValueError if it does not exist.
+
+        The coin creator and the mayhem and cashback flags are taken from that
+        data every time: fee sharing can move the coin creator while a
+        position is held, and a swap naming the old one's vault reverts.
+        """
         quote_mint = normalize_quote_mint(token_info.quote_mint)
         address = canonical_pool_address(token_info.mint, quote_mint)
         pool_data = (await self.client.get_account_info(address)).data
+        flags = {
+            "coin_creator": Pubkey.from_bytes(
+                pool_data[_POOL_COIN_CREATOR_OFFSET : _POOL_COIN_CREATOR_OFFSET + 32]
+            ),
+            "is_mayhem_mode": bool(pool_data[_POOL_MAYHEM_OFFSET]),
+            "is_cashback_coin": bool(pool_data[_POOL_CASHBACK_OFFSET]),
+        }
         pool = self._pools.get(token_info.mint)
-        if pool is None:
+        if pool is not None:
+            pool = replace(pool, **flags)
+        else:
             base_account, quote_account = (
                 Pubkey.from_bytes(pool_data[o : o + 32])
                 for o in (_POOL_BASE_ACCOUNT_OFFSET, _POOL_QUOTE_ACCOUNT_OFFSET)
@@ -161,15 +175,9 @@ class PumpSwapMarket(Market):
                 quote_account=quote_account,
                 base_program=vaults[0].owner,
                 quote_program=vaults[1].owner,
-                coin_creator=Pubkey.from_bytes(
-                    pool_data[
-                        _POOL_COIN_CREATOR_OFFSET : _POOL_COIN_CREATOR_OFFSET + 32
-                    ]
-                ),
-                is_mayhem_mode=bool(pool_data[_POOL_MAYHEM_OFFSET]),
-                is_cashback_coin=bool(pool_data[_POOL_CASHBACK_OFFSET]),
+                **flags,
             )
-            self._pools[token_info.mint] = pool
+        self._pools[token_info.mint] = pool
         return pool, pool_data
 
     async def get_market_state(self, token_info: TokenInfo) -> dict[str, Any]:
