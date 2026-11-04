@@ -189,7 +189,8 @@ not show a fresh buy yet. A position whose balance cannot be read stays in the
 file and is tried again on the next start, and so does one whose exit gave up.
 Each position names the wallet that bought it: a bot started with another
 wallet leaves it in the file, neither sold nor cleared, until that wallet trades
-again. Delete an entry from the file to stop the bot managing that coin.
+again. Entries written before positions named their wallet resume for any
+wallet. Delete an entry from the file to stop the bot managing that coin.
 
 The file is named after the bot's `name`, with any character other than letters,
 digits, `.`, `_` and `-` replaced by `_`. Names that differ only in case share a

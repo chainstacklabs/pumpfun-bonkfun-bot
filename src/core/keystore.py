@@ -90,9 +90,13 @@ def load_keystore(path: Path, password: str | None) -> Keypair:
 
     salt, n, r, p, nonce, ciphertext = _parse(data, path)
     try:
-        key = Scrypt(salt=salt, length=_KEY_LENGTH, n=n, r=r, p=p).derive(
-            password.encode("utf-8")
-        )
+        secret_bytes = password.encode("utf-8")
+    except UnicodeEncodeError:
+        raise KeystoreError(
+            path, f"could not be decrypted: {PASSWORD_ENV_VAR} is not valid UTF-8"
+        ) from None
+    try:
+        key = Scrypt(salt=salt, length=_KEY_LENGTH, n=n, r=r, p=p).derive(secret_bytes)
     except ValueError:
         # Settings scrypt itself rejects, such as an n that is not a power of 2.
         raise KeystoreError(path, "has invalid scrypt settings") from None
