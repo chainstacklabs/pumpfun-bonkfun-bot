@@ -41,6 +41,11 @@ its buy until its sell, and the next start resumes it:
      "not found" or empty answer followed by the balance (an RPC node lagging
      behind a fresh buy) resumes the position, and a failed read among the
      empty answers keeps it in the file unsold.
+  O. Each position names the wallet that bought it. Another wallet's position
+     stays in the file, neither sold nor cleared, though this wallet holds
+     none of its coin; one written before positions named a wallet resumes as
+     before. A record whose `mint` is not its coin's stays in the file and is
+     not resumed.
 
 Offline: the RPC client, seller and prices are stubs; the position manager, its
 store and the trader are the real ones. Runs in a temporary directory.
@@ -994,6 +999,54 @@ def check_n_clearing_needs_every_read_empty(tmp: Path) -> bool:
     return _report(asyncio.run(_check_n(tmp)))
 
 
+async def _check_o(tmp: Path) -> list[str]:
+    problems = []
+    path = tmp / "o.json"
+    mine, theirs, legacy, misfiled = (
+        _token(s) for s in ("MINE", "THEIRS", "LEGACY", "MISFILED")
+    )
+    # A buy writes the wallet that made it.
+    rig = _Rig(path)
+    rig.pm.open(mine, _buy())
+    await rig.pm.stop()
+    written = {
+        r["mint"]: r.get("wallet") for r in json.loads(path.read_text())["positions"]
+    }
+    if written != {str(mine.mint): str(WALLET.pubkey)}:
+        problems.append(f"buy wrote wallets {written}")
+    store = PositionStore(path)
+    store.load()
+    store.add(theirs, _buy(), _now(), Keypair().pubkey())
+    store.add(legacy, _buy(), _now())
+    store.add(misfiled, _buy(), _now(), WALLET.pubkey)
+    data = json.loads(path.read_text())
+    for record in data["positions"]:
+        if record["symbol"] == "LEGACY":
+            del record["wallet"]
+        if record["symbol"] == "MISFILED":
+            record["mint"] = str(Pubkey.new_unique())
+    path.write_text(json.dumps(data))
+    rig = _Rig(path)
+    for token in (mine, legacy, misfiled):
+        rig.client.hold(token, BOUGHT_RAW)  # THEIRS: this wallet holds none
+    resumed = await rig.pm.resume()
+    await rig.pm.stop()
+    if sorted(t.symbol for t in resumed) != ["LEGACY", "MINE"]:
+        problems.append(
+            f"resumed {sorted(t.symbol for t in resumed)}, expected LEGACY and MINE"
+        )
+    if any(sell[0] in ("THEIRS", "MISFILED") for sell in rig.seller.sells):
+        problems.append(f"sold another wallet's or a misfiled coin: {rig.seller.sells}")
+    kept = {r["symbol"] for r in json.loads(path.read_text())["positions"]}
+    if not {"THEIRS", "MISFILED"} <= kept:
+        problems.append(f"file keeps {sorted(kept)}, lost another wallet's position")
+    return problems
+
+
+def check_o_positions_name_their_wallet(tmp: Path) -> bool:
+    return _report(asyncio.run(_check_o(tmp)))
+
+
 def _run_all_bots_started(
     tmp: Path, configs: dict[str, dict]
 ) -> list[tuple[str, str | None]]:
@@ -1237,6 +1290,7 @@ def main() -> None:
                 ("L: positions/<name>.json, git-ignored, one file per bot", lambda: check_l_runner_and_gitignore(tmp)),
                 ("M: a position from another platform is kept", lambda: check_m_other_platform_is_kept(tmp)),
                 ("N: clearing needs every spaced read empty", lambda: check_n_clearing_needs_every_read_empty(tmp)),
+                ("O: positions name their wallet", lambda: check_o_positions_name_their_wallet(tmp)),
             ]  # fmt: skip
             results = []
             for name, check in checks:

@@ -169,7 +169,7 @@ class PositionManager:
             entry_time: When a resumed position was bought, naive UTC
         """
         if entry_time is None and self.store is not None and self.monitors:
-            self.store.add(token_info, buy_result, _utc_now())
+            self.store.add(token_info, buy_result, _utc_now(), self.wallet.pubkey)
         task = asyncio.create_task(
             self._hold(token_info, buy_result, entry_time),
             name=f"position-{token_info.mint}",
@@ -247,10 +247,11 @@ class PositionManager:
         The wallet is the truth: a position whose coin the wallet no longer
         holds was sold (or moved) while the bot was down and is cleared, never
         sold again; one holding less than was bought sells what is left. A
-        position whose balance or quote mint cannot be read, or that is on
-        another platform than the bot's, stays in the file and is not monitored
-        this run. Every position held is resumed, even past
-        `max_open_positions`; the trader takes no new coin until below it.
+        position whose balance or quote mint cannot be read, that is on
+        another platform than the bot's, or that another wallet bought, stays
+        in the file and is not monitored this run. Every position held is
+        resumed, even past `max_open_positions`; the trader takes no new coin
+        until below it.
 
         Returns:
             The coins now held again, each in its own task
@@ -279,6 +280,13 @@ class PositionManager:
                 f"Position in {label} is on {token_info.platform.value}, this bot "
                 f"trades {self.platform.value}; it stays in {self.store.path} and "
                 f"is not monitored this run"
+            )
+            return False
+        if stored.wallet is not None and stored.wallet != str(self.wallet.pubkey):
+            logger.warning(
+                f"Position in {label} was bought by wallet {stored.wallet}, this "
+                f"bot trades from {self.wallet.pubkey}; it stays in "
+                f"{self.store.path} and is not monitored this run"
             )
             return False
         held = await self._held_raw(token_info)

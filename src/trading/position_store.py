@@ -86,6 +86,25 @@ def _check_buy(buy: dict) -> None:
         raise TypeError
 
 
+def _coin_of(record: dict, mint: str) -> TokenInfo:
+    """The record's coin; ValueError unless it is the one `mint` names.
+
+    `remove` and `reduce` find a record by its coin's mint.
+    """
+    token_info = decode_token_info(record["token_info"])
+    if str(token_info.mint) != mint:
+        raise ValueError(f"record names {mint}, its coin is {token_info.mint}")  # noqa: TRY003
+    return token_info
+
+
+def _wallet_of(record: dict) -> str | None:
+    """The record's wallet, None if it names none; TypeError if not a string."""
+    wallet = record.get("wallet")
+    if wallet is not None and not isinstance(wallet, str):
+        raise TypeError
+    return wallet
+
+
 def _records_in(data: object) -> list:
     """The `positions` list of a parsed file; KeyError or TypeError without one."""
     records = data["positions"]
@@ -117,6 +136,9 @@ class StoredPosition:
     buy_result: TradeResult
     #: When the buy landed, naive UTC like `Position.entry_time`.
     entry_time: datetime
+    #: The wallet that bought it, base58; None in a record written before
+    #: positions named their wallet.
+    wallet: str | None = None
 
 
 class PositionStore:
@@ -148,8 +170,8 @@ class PositionStore:
         `<name>.unreadable.1`, `.2`, ... so no earlier one is overwritten) and
         logged, so the next write cannot overwrite what it held. If it cannot be
         moved either, this store writes nothing this run. A record that does not
-        decode, or has no usable `mint`, is logged and kept in the file, but not
-        returned.
+        decode, has no usable `mint`, or whose `mint` is not its coin's, is
+        logged and kept in the file, but not returned.
         """
         self._records = {}
         self._unkeyed = []
@@ -175,9 +197,11 @@ class PositionStore:
             try:
                 buy = record["buy"]
                 _check_buy(buy)
+                token_info = _coin_of(record, mint)
+                wallet = _wallet_of(record)
                 positions.append(
                     StoredPosition(
-                        token_info=decode_token_info(record["token_info"]),
+                        token_info=token_info,
                         buy_result=TradeResult(
                             success=True,
                             platform=Platform(record["token_info"]["platform"]),
@@ -187,6 +211,7 @@ class PositionStore:
                             price=buy["price"],
                         ),
                         entry_time=datetime.fromisoformat(record["entry_time"]),
+                        wallet=wallet,
                     )
                 )
             except (ValueError, KeyError, TypeError, AttributeError):
@@ -218,13 +243,22 @@ class PositionStore:
         return set(self._records)
 
     def add(
-        self, token_info: TokenInfo, buy_result: TradeResult, entry_time: datetime
+        self,
+        token_info: TokenInfo,
+        buy_result: TradeResult,
+        entry_time: datetime,
+        wallet: Pubkey | None = None,
     ) -> None:
-        """Record a position whose buy just landed."""
+        """Record a position whose buy just landed.
+
+        Args:
+            wallet: The wallet holding the coin; only that wallet resumes it
+        """
         mint = str(token_info.mint)
         self._records[mint] = {
             "mint": mint,
             "symbol": token_info.symbol,
+            "wallet": str(wallet) if wallet is not None else None,
             "entry_time": entry_time.isoformat(),
             "buy": {
                 "price": buy_result.price,
