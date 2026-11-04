@@ -404,6 +404,8 @@ class UniversalTrader:
         A coin whose position is still in the positions file is left alone:
         it is kept for the next start to resume, and `force_close_with_burn`
         would burn it. Its account is cleaned up after the session that sells it.
+        Under `manual` or `marry_mode` every coin bought is kept, so nothing is
+        burned: only accounts already empty are closed.
         """
         settings = self.settings
         kept = self.positions.stored_mints()
@@ -423,6 +425,14 @@ class UniversalTrader:
                 token_program_ids = [
                     self.traded_token_programs.get(str(mint)) for mint in mints_list
                 ]
+                force_burn = settings.cleanup_force_close_with_burn
+                if force_burn and not self.positions.monitors:
+                    force_burn = False
+                    if settings.cleanup_mode == "post_session":
+                        logger.info(
+                            "Not burning held coins: the exit strategy keeps "
+                            "what it buys; only empty accounts are closed"
+                        )
                 await handle_cleanup_post_session(
                     self.solana_client,
                     self.wallet,
@@ -431,7 +441,7 @@ class UniversalTrader:
                     self.priority_fee_manager,
                     settings.cleanup_mode,
                     settings.cleanup_with_priority_fee,
-                    settings.cleanup_force_close_with_burn,
+                    force_burn,
                 )
             except Exception:
                 logger.exception("Error during cleanup")
