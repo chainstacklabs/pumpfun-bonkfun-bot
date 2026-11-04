@@ -121,13 +121,19 @@ def _redact_endpoint(secret: str) -> str:
 
 
 def _endpoint_host(endpoint: str) -> str | None:
-    """The host of a URL or of a bare `host:port` gRPC target.
+    """The host of a URL or of a gRPC target (`host:port`, `dns:host:port`,
+    `dns:///host:port`, `dns://resolver/host:port`).
 
     None for a single-label host such as `localhost`: masking a plain word
     would hide it everywhere it appears, and such a host names no account.
     """
+    target = endpoint
+    if target.startswith("dns:"):
+        target = target.removeprefix("dns:")
+        if target.startswith("//"):
+            target = target[2:].partition("/")[2]
     try:
-        host = urlsplit(endpoint if "//" in endpoint else f"//{endpoint}").hostname
+        host = urlsplit(target if "//" in target else f"//{target}").hostname
     except ValueError:
         return None
     if host and ("." in host or ":" in host):
@@ -142,7 +148,11 @@ def _host_pattern(endpoints: list[str]) -> re.Pattern[str] | None:
     )
     if not hosts:
         return None
-    names = "|".join(re.escape(host) for host in hosts)
+    # An IPv6 address appears bracketed before its port: `[::1]:8899`.
+    names = "|".join(
+        rf"\[?{re.escape(host)}\]?" if ":" in host else re.escape(host)
+        for host in hosts
+    )
     # Not part of a longer name on either side: `rpc.example.com` leaves
     # `myrpc.example.com` and `rpc.example.com.au` alone.
     return re.compile(rf"(?i)(?<![\w.-])(?:{names})(?::\d+)?(?![\w-]|\.[\w-])")

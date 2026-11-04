@@ -1101,6 +1101,8 @@ def _start_bot_settings(config: dict, positions_file: str | None) -> TraderSetti
     seen: list[TraderSettings] = []
 
     class _Trader:
+        stopped_on_error = False
+
         def __init__(self, settings: TraderSettings) -> None:
             seen.append(settings)
 
@@ -1114,13 +1116,13 @@ def _start_bot_settings(config: dict, positions_file: str | None) -> TraderSetti
         "load_bot_config",
         "setup_logging",
         "print_config_summary",
-        "rpc_unreachable_reason",
+        "rpc_endpoint_problem",
     )
     originals = [getattr(bot_runner, n) for n in (*names, "UniversalTrader")]
     bot_runner.load_bot_config = lambda _path: config
     bot_runner.setup_logging = lambda _name: None
     bot_runner.print_config_summary = lambda _cfg: None
-    bot_runner.rpc_unreachable_reason = node_answers
+    bot_runner.rpc_endpoint_problem = node_answers
     bot_runner.UniversalTrader = _Trader
     try:
         asyncio.run(bot_runner.start_bot("bots/any.yaml", positions_file))

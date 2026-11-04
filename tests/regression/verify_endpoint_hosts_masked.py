@@ -17,6 +17,9 @@ whole Geyser target, token and all, from the exception's `details`.
   D. Nothing that is not a configured endpoint is masked: another host, a
      longer name that contains the host, a single-label host such as
      `localhost`, and ordinary text stay as they are.
+  E. gRPC's other target forms (`dns:host:port`, `dns:///host:port`,
+     `dns://resolver/host:port`) mask their host, and an IPv6 host is masked
+     with its brackets and port (`[2001:db8::7]:8899`).
 
 Usage:
     uv run tests/regression/verify_endpoint_hosts_masked.py
@@ -163,6 +166,33 @@ def check_d_other_text_untouched() -> bool:
     return _report(problems)
 
 
+def check_e_target_forms_masked() -> bool:
+    problems = []
+    for target in (
+        f"dns:{GEYSER}",
+        f"dns:///{GEYSER}",
+        f"dns://8.8.8.8/{GEYSER}",
+    ):
+        _with_env(GEYSER_ENDPOINT=target)
+        try:
+            line = f"errors resolving {GEYSER}: Misformatted domain name"
+            cleaned = redact(line)
+        finally:
+            _with_env()
+        if GEYSER_HOST in cleaned or "10000" in cleaned:
+            problems.append(f"{target}: {line!r} -> {cleaned!r}")
+    _with_env(GEYSER_ENDPOINT="[2001:db8::7]:8899")
+    try:
+        # Another port than the configured one: only the host pattern masks it.
+        line = "Cannot connect to host [2001:db8::7]:443 ssl:default"
+        cleaned = redact(line)
+    finally:
+        _with_env()
+    if cleaned != "Cannot connect to host *** ssl:default":
+        problems.append(f"IPv6: {line!r} -> {cleaned!r}")
+    return _report(problems)
+
+
 def main() -> int:
     """Run every check and report."""
     checks = [
@@ -175,6 +205,10 @@ def main() -> int:
         (
             "D: nothing but a configured endpoint is masked",
             check_d_other_text_untouched,
+        ),
+        (
+            "E: gRPC target forms and IPv6 hosts are masked",
+            check_e_target_forms_masked,
         ),
     ]
     passed = 0

@@ -26,13 +26,14 @@ except ImportError:
     )
 
 from config_loader import (
+    disabled_in_yaml,
     get_platform_from_config,
     get_supported_listeners_for_platform,
     load_bot_config,
     print_config_summary,
     validate_platform_listener_combination,
 )
-from core.client import rpc_unreachable_reason
+from core.client import rpc_endpoint_problem
 from core.keystore import KeystoreError, keystore_private_key, password_from_env
 from core.wallet import Wallet
 from interfaces.core import Platform
@@ -60,9 +61,9 @@ A bot whose YAML says `enabled: false` is skipped.
 Each bot writes its log to logs/, its trades to trades/ and its open
 positions to positions/, all under the current folder.
 
-Exit status: 0 when every enabled bot started and finished, 1 when a config
-could not be loaded, a bot could not start or no bot is enabled, 130 when
-stopped with Ctrl+C."""
+Exit status: 0 when every enabled bot started and finished without an error,
+1 when a config could not be loaded, a bot could not start or stopped on an
+error, or no bot is enabled, 130 when stopped with Ctrl+C."""
 
 
 def _log_file(stem: str) -> str:
@@ -213,13 +214,19 @@ def unlock_keystore(cfg: dict) -> None:
 async def start_bot(config_path: str, positions_file: str | None = None) -> bool:
     """Start the bot configured in `config_path` and run it until it ends.
 
-    A bot that cannot run (platform, keystore, unreachable `rpc_endpoint`) logs
-    one line saying why and is not started.
+    A bot that cannot run (config, platform, keystore, `rpc_endpoint`) logs one
+    line saying why and is not started. Nothing raises out of here but a
+    cancellation: an error is logged, masked, and reported as False.
 
     Returns:
-        True when the bot started and ended normally, False when not started
+        True when the bot started and ended normally; False when it was not
+        started or its trader stopped on an error
     """
-    cfg = load_bot_config(config_path)
+    try:
+        cfg = load_bot_config(config_path)
+    except Exception as e:  # noqa: BLE001 - any cause gets the same one line
+        logger.error(f"Could not load {config_path}: {_one_line(e)}")  # noqa: TRY400
+        return False
     mask_endpoints(cfg)
     setup_logging(cfg["name"])
     print_config_summary(cfg)
@@ -239,11 +246,9 @@ async def start_bot(config_path: str, positions_file: str | None = None) -> bool
 
     # Checked here, before the trader starts listening: a bot that cannot reach
     # its node would detect coins and fail every buy.
-    reason = await rpc_unreachable_reason(cfg["rpc_endpoint"])
-    if reason:
-        logger.error(
-            f"Bot '{cfg['name']}' not started: rpc_endpoint is unreachable ({reason})"
-        )
+    problem = await rpc_endpoint_problem(cfg["rpc_endpoint"])
+    if problem:
+        logger.error(f"Bot '{cfg['name']}' not started: rpc_endpoint {problem}")
         return False
 
     # Initialize universal trader with platform-specific configuration
@@ -253,18 +258,27 @@ async def start_bot(config_path: str, positions_file: str | None = None) -> bool
         await trader.start()
 
     except Exception as e:
-        logging.exception(f"Failed to initialize or start trader: {e}")
-        raise
-    return True
+        # Logged here, masked, and not re-raised: in its own process the error
+        # would reach multiprocessing, which prints it raw.
+        logger.exception(f"Failed to initialize or start trader: {e}")
+        return False
+    return not trader.stopped_on_error
 
 
 def run_bot_process(config_path, positions_file: str | None = None):
-    """A bot's own process: exit 1 when it did not start, 130 on Ctrl+C."""
+    """A bot's own process: exit 1 unless it ran normally, 130 on Ctrl+C.
+
+    Nothing may escape: multiprocessing prints an uncaught error unmasked.
+    """
     try:
-        started = asyncio.run(start_bot(config_path, positions_file))
+        ran = asyncio.run(start_bot(config_path, positions_file))
     except KeyboardInterrupt:
         sys.exit(EXIT_INTERRUPTED)
-    if not started:
+    except Exception:
+        # Logged masked: multiprocessing would print it raw.
+        logger.exception(f"Bot process for {config_path} stopped on an error")
+        sys.exit(1)
+    if not ran:
         sys.exit(1)
 
 
@@ -379,6 +393,10 @@ def run_all_bots() -> bool:
     # Check every file first, so bots sharing a name are known before any starts.
     startable: list[tuple[Path, dict, Platform]] = []
     for file in bot_files:
+        if disabled_in_yaml(str(file)):
+            skipped_bots += 1
+            disabled += 1
+            continue
         try:
             cfg = load_bot_config(str(file))
             mask_endpoints(cfg)
@@ -496,6 +514,10 @@ def main(argv: list[str] | None = None) -> None:
     except KeyboardInterrupt:
         # The trader already shut down cleanly; a traceback would add nothing.
         sys.exit(EXIT_INTERRUPTED)
+    except Exception:
+        # Logged masked: Python would print it raw.
+        logger.exception("The bot runner stopped on an error")
+        all_ok = False
     sys.exit(0 if all_ok else 1)
 
 

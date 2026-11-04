@@ -4,7 +4,9 @@
 validation printed a traceback to stderr only and exited 0; with every bot
 disabled the bot printed nothing and exited 0; a bot whose `rpc_endpoint` could
 not be reached logged a traceback and kept listening, so every buy would fail;
-Ctrl+C ended in a `KeyboardInterrupt` traceback.
+Ctrl+C ended in a `KeyboardInterrupt` traceback; a trader failing in its own
+process printed its traceback raw, endpoint host and all, and a trader that
+stopped on an error still exited 0.
 
   A. `-h` and `--help`, run from a folder holding an enabled bot, print a usage
      text naming `bots/*.yaml`, `logs/`, `trades/` and `positions/` and exit 0;
@@ -13,22 +15,37 @@ Ctrl+C ended in a `KeyboardInterrupt` traceback.
      cause, no traceback, to the console and to a file in `logs/`; the run
      exits 1.
   C. With every bot disabled the run logs one line saying how many configs it
-     found and that all are disabled, and exits 1.
+     found and that all are disabled, and exits 1. A config whose YAML says
+     `enabled: false` is skipped unread, so one that could not load writes no
+     log.
   D. An enabled bot whose `rpc_endpoint` refuses connections logs
      `Bot '<name>' not started: rpc_endpoint is unreachable (connection
      refused)`, no traceback, never starts its trader, names no endpoint and
      exits 1. The same check in process: a node that answers starts the
      trader and `start_bot` reports it ran.
-  E. `rpc_unreachable_reason` calls a JSON reply, an error object or HTTP 429
-     an answer, and names the cause of anything else in a few words: an HTTP
-     4xx (asked once), a 5xx, a non-JSON body, a timeout, a refused connection,
-     a URL that is not http(s).
+  E. `rpc_endpoint_problem` calls any JSON-RPC envelope an answer whatever
+     the HTTP status (a 503 from a node that is behind, a 400), and HTTP 429
+     too; HTTP 401 and 403 are `rejected the request`, asked once; anything
+     else is `is unreachable (<cause>)` in a few words: a 5xx or non-JSON body,
+     a timeout, a refused connection, too many redirects, a reply that is not
+     HTTP, an invalid host name, a URL that is not http(s). No reason holds
+     the URL.
   F. Exit status: `main` exits 0 only when `run_all_bots` reports every bot
      ran, 1 otherwise and 130 on Ctrl+C; `run_all_bots` reports failure for a
      bot not started, a separate process that exited non-zero, or a bad config
-     beside a good one (which still starts).
-  G. Ctrl+C on a running bot ends with the trader's shutdown line, exit 130
-     and no `KeyboardInterrupt` traceback.
+     beside a good one (which still starts), and success beside a disabled
+     config that could not load; `enabled: ${VAR}` is still read through the
+     environment.
+  G. Ctrl+C on a running bot, in the main process and in its own, sent to the
+     whole process group as a terminal does, ends with the trader's shutdown
+     line, exit 130 and no `KeyboardInterrupt` traceback.
+  H. A trader that raises an error naming its host, the host written only in
+     the YAML, logs it once, masked, in the main process and in its own; the
+     host reaches neither the console nor `logs/`, and the run exits 1.
+  I. A real trader that stops on an error (`Trading stopped due to error`, or
+     `Token listening stopped due to error` in yolo mode) makes `start_bot`
+     report the bot did not run normally; one whose listener just ends does
+     not.
 
 Offline: the bot runs against a stand-in JSON-RPC node on 127.0.0.1 and a
 closed local port; no funds move.
@@ -49,7 +66,7 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
@@ -63,6 +80,7 @@ from solders.keypair import Keypair  # noqa: E402
 
 import bot_runner  # noqa: E402
 import core.client  # noqa: E402
+from trading import universal_trader  # noqa: E402
 
 RUNNER = PROJECT_ROOT / "src" / "bot_runner.py"
 LOGS_CONFIG = PROJECT_ROOT / "bots" / "bot-sniper-2-logs.yaml"
@@ -98,23 +116,31 @@ class _Node(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         type(self).hits += 1
         self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        behind = json.dumps({"jsonrpc": "2.0", "id": 1, "error": {"code": -32005}})
         status, body = {
             "ok": (200, json.dumps({"jsonrpc": "2.0", "id": 1, "result": "ok"})),
-            "unhealthy": (
-                200,
-                json.dumps({"jsonrpc": "2.0", "id": 1, "error": {"code": -32005}}),
-            ),
+            "unhealthy": (200, behind),
+            "503rpc": (503, behind),
+            "400rpc": (400, behind),
             "429": (429, "{}"),
             "401": (401, "unauthorized"),
+            "403": (403, json.dumps({"jsonrpc": "2.0", "error": {"code": -1}})),
             "500": (500, "oops"),
             "html": (200, "<html>not a node</html>"),
+            "redirect": (307, ""),
         }.get(self.behaviour, (200, "{}"))
         if self.behaviour == "slow":
             time.sleep(2)
+        if self.behaviour == "garbage":
+            self.close_connection = True
+            self.wfile.write(b"NOT HTTP AT ALL\r\n\r\n")
+            return
         # A client that gave up on a slow reply has closed the socket.
         with contextlib.suppress(BrokenPipeError, ConnectionResetError):
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
+            if self.behaviour == "redirect":
+                self.send_header("Location", self.path)
             self.end_headers()
             self.wfile.write(body.encode())
 
@@ -249,11 +275,20 @@ def check_c_no_enabled_bot_says_so(tmp: str) -> bool:
         {
             "one": _config("one", rpc, enabled=False),
             "two": _config("two", rpc, enabled=False),
+            "broken": _config(
+                "broken",
+                rpc,
+                enabled=False,
+                platform="launchlab",
+                private_key="${T1_NEVER_SET}",
+            ),
         },
     )
     run = _run(folder)
     out = (run.stdout + run.stderr).strip()
-    if "No bot to run in bots/: 2 found, 2 disabled" not in out:
+    if (folder / "logs").exists():
+        problems.append("a disabled config was loaded: logs/ was written")
+    if "No bot to run in bots/: 3 found, 3 disabled" not in out:
         problems.append(f"no line saying every bot is disabled: {out[-200:]!r}")
     elif len(out.splitlines()) != 1:
         problems.append(f"{len(out.splitlines())} lines, expected one: {out!r}")
@@ -264,6 +299,7 @@ def check_c_no_enabled_bot_says_so(tmp: str) -> bool:
 
 class _Trader:
     built: list = []  # noqa: RUF012
+    stopped_on_error = False
 
     def __init__(self, settings: object) -> None:
         _Trader.built.append(settings)
@@ -281,10 +317,12 @@ class _Capture(logging.Handler):
         self.records.append(record)
 
 
-def _start_in_process(folder: Path, stem: str) -> tuple[bool, list, list]:
+def _start_in_process(
+    folder: Path, stem: str, trader: Callable = _Trader
+) -> tuple[bool, list, list]:
     """The real start_bot with the trader stubbed: result, traders, error lines."""
     original = bot_runner.UniversalTrader
-    bot_runner.UniversalTrader = _Trader
+    bot_runner.UniversalTrader = trader
     _Trader.built = []
     capture = _Capture()
     logging.getLogger().addHandler(capture)
@@ -339,16 +377,21 @@ def check_e_probe_names_the_cause(_tmp: str) -> bool:
     problems = []
 
     def probe(endpoint: str, **kw: object) -> str | None:
-        return asyncio.run(core.client.rpc_unreachable_reason(endpoint, **kw))
+        return asyncio.run(core.client.rpc_endpoint_problem(endpoint, **kw))
 
     for behaviour, want, hits in (
         ("ok", None, 1),
         ("unhealthy", None, 1),
+        ("503rpc", None, 1),
+        ("400rpc", None, 1),
         ("429", None, 1),
-        ("401", "HTTP 401", 1),
-        ("500", "HTTP 500", 2),
-        ("html", "the answer is not JSON", 2),
-        ("slow", "no answer within 0.5 s", None),
+        ("401", "rejected the request (HTTP 401)", 1),
+        ("403", "rejected the request (HTTP 403)", 1),
+        ("500", "is unreachable (HTTP 500)", 2),
+        ("html", "is unreachable (the answer is not JSON-RPC)", 2),
+        ("redirect", "is unreachable (too many redirects)", None),
+        ("garbage", "is unreachable (the answer is not HTTP)", 2),
+        ("slow", "is unreachable (no answer within 0.5 s)", None),
     ):
         with _node(behaviour) as (rpc, node):
             got = probe(rpc, attempts=2, timeout=0.5)
@@ -356,14 +399,19 @@ def check_e_probe_names_the_cause(_tmp: str) -> bool:
             problems.append(f"{behaviour}: {got!r}, expected {want!r}")
         if hits is not None and node.hits != hits:
             problems.append(f"{behaviour}: {node.hits} requests, expected {hits}")
+        if got and "127.0.0.1" in got:
+            problems.append(f"{behaviour}: the reason names the URL: {got!r}")
+    long_label = "a" * 64
     for endpoint, want in (
-        (f"http://127.0.0.1:{_closed_port()}", "connection refused"),
-        ("127.0.0.1:8899", "not an http(s) URL"),
-        ("ftp://127.0.0.1:8899", "not an http(s) URL"),
+        (f"http://127.0.0.1:{_closed_port()}", "is unreachable (connection refused)"),
+        ("127.0.0.1:8899", "is unreachable (not an http(s) URL)"),
+        ("ftp://127.0.0.1:8899", "is unreachable (not an http(s) URL)"),
+        (f"http://{long_label}.example.com/", "is unreachable (invalid host name)"),
+        ("http://a..example.com/", "is unreachable (invalid host name)"),
     ):
         got = probe(endpoint, attempts=1)
         if got != want:
-            problems.append(f"{endpoint}: {got!r}, expected {want!r}")
+            problems.append(f"{endpoint[:40]}: {got!r}, expected {want!r}")
     return _report(problems)
 
 
@@ -388,7 +436,7 @@ def _main_exit(outcome: object) -> object:
 
 def _run_all_bots(
     tmp: str, configs: dict[str, dict], exits: dict[str, int], refused: set[str]
-) -> tuple[bool, list[str]]:
+) -> tuple[bool, list[str], Path]:
     """`run_all_bots` with bots stubbed: its result and the bots it started.
 
     `exits` is a separate process's exit status by bot; a bot in `refused` is
@@ -418,8 +466,9 @@ def _run_all_bots(
     try:
         bot_runner.start_bot = start_bot
         bot_runner.multiprocessing = SimpleNamespace(Process=_Process)
-        os.chdir(_folder(tmp, configs))
-        return bot_runner.run_all_bots(), started
+        folder = _folder(tmp, configs)
+        os.chdir(folder)
+        return bot_runner.run_all_bots(), started, folder
     finally:
         os.chdir(cwd)
         bot_runner.start_bot, bot_runner.multiprocessing = originals
@@ -451,20 +500,52 @@ def check_f_exit_status(tmp: str) -> bool:
             set(),
             False,
         ),
+        (
+            "a disabled config that cannot load beside a good one",
+            {"a": good, "b": _config("b", rpc, enabled=False, platform="launchlab")},
+            {},
+            set(),
+            True,
+        ),
+        (
+            "enabled: ${VAR} set to false, beside a good one",
+            {"a": good, "b": _config("b", rpc, enabled="${T1_BOT_ON}")},
+            {},
+            set(),
+            True,
+        ),
+        (
+            "enabled: ${VAR} that is not set, beside a good one",
+            {"a": good, "b": _config("b", rpc, enabled="${T1_NEVER_SET}")},
+            {},
+            set(),
+            False,
+        ),
     )
-    for label, configs, exits, refused, want in cases:
-        got, started = _run_all_bots(tmp, configs, exits, refused)
-        if got is not want:
-            problems.append(f"run_all_bots, {label}: {got!r}, expected {want}")
-        if "a" not in started:
-            problems.append(f"run_all_bots, {label}: bot a was not started")
+    os.environ["T1_BOT_ON"] = "false"
+    try:
+        for label, configs, exits, refused, want in cases:
+            got, started, folder = _run_all_bots(tmp, configs, exits, refused)
+            if got is not want:
+                problems.append(f"run_all_bots, {label}: {got!r}, expected {want}")
+            if "a" not in started:
+                problems.append(f"run_all_bots, {label}: bot a was not started")
+            enabled = configs.get("b", {}).get("enabled") is True
+            if "b" in started and not enabled:
+                problems.append(f"run_all_bots, {label}: the disabled bot started")
+            if want and (folder / "logs").exists():
+                problems.append(f"run_all_bots, {label}: logs/ was written")
+    finally:
+        os.environ.pop("T1_BOT_ON", None)
     return _report(problems)
 
 
-def check_g_ctrl_c_is_clean(tmp: str) -> bool:
+def _ctrl_c(tmp: str, *, separate_process: bool) -> list[str]:
+    """Ctrl+C a running bot through its process group; what went wrong."""
     problems = []
     with _node() as (rpc, _):
-        folder = _folder(tmp, {"live": _config("live", rpc)})
+        config = _config("live", rpc, separate_process=separate_process)
+        folder = _folder(tmp, {"live": config})
         bot = subprocess.Popen(  # noqa: S603
             [sys.executable, str(RUNNER)],
             cwd=folder,
@@ -472,6 +553,7 @@ def check_g_ctrl_c_is_clean(tmp: str) -> bool:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            start_new_session=True,
         )
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline and bot.poll() is None:
@@ -480,11 +562,11 @@ def check_g_ctrl_c_is_clean(tmp: str) -> bool:
             time.sleep(0.2)
         running = bot.poll() is None
         if running:
-            bot.send_signal(signal.SIGINT)
+            os.killpg(bot.pid, signal.SIGINT)
         try:
             out, _ = bot.communicate(timeout=60)
         except subprocess.TimeoutExpired:
-            bot.kill()
+            os.killpg(bot.pid, signal.SIGKILL)
             out, _ = bot.communicate()
             problems.append("the bot did not stop within 60 s of Ctrl+C")
     if not running:
@@ -495,6 +577,152 @@ def check_g_ctrl_c_is_clean(tmp: str) -> bool:
         problems.append("no clean shutdown line")
     if bot.returncode != 130:  # noqa: PLR2004 - the status after SIGINT
         problems.append(f"exit {bot.returncode}, expected 130")
+    return problems
+
+
+def check_g_ctrl_c_is_clean(tmp: str) -> bool:
+    problems = []
+    for separate_process in (False, True):
+        mode = "own process" if separate_process else "main process"
+        problems += [
+            f"{mode}: {p}" for p in _ctrl_c(tmp, separate_process=separate_process)
+        ]
+    return _report(problems)
+
+
+# Runs `main` with a trader that fails naming the configured host. Forked, so a
+# separate process inherits the stand-ins.
+FAILING_TRADER = """
+import multiprocessing, sys
+sys.path.insert(0, sys.argv[1])
+multiprocessing.set_start_method("fork")
+import aiohttp
+import bot_runner
+
+class Trader:
+    stopped_on_error = False
+
+    def __init__(self, settings):
+        self.host = settings.rpc_endpoint.split("/")[2]
+
+    async def start(self):
+        raise aiohttp.ClientConnectionError(
+            f"Cannot connect to host {self.host}:443 ssl:default"
+        )
+
+async def node_answers(_endpoint):
+    return None
+
+bot_runner.UniversalTrader = Trader
+bot_runner.rpc_endpoint_problem = node_answers
+bot_runner.main([])
+"""
+
+
+def check_h_trader_error_is_masked(tmp: str) -> bool:
+    problems = []
+    host = "acct-77.yaml-only.example.net"
+    for separate_process in (False, True):
+        mode = "own process" if separate_process else "main process"
+        config = _config(
+            "failing",
+            f"https://{host}/q1w2e3r4t5y6u7i8o9p0",
+            separate_process=separate_process,
+        )
+        folder = _folder(tmp, {"failing": config})
+        run = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", FAILING_TRADER, str(PROJECT_ROOT / "src")],
+            cwd=folder,
+            env=_env(),
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        console = run.stdout + run.stderr
+        if "yaml-only" in console + _logs(folder):
+            problems.append(f"{mode}: the host was printed")
+        logged = console.count("ClientConnectionError: Cannot connect to host")
+        if logged != 1:
+            problems.append(f"{mode}: the error was logged {logged} times, expected 1")
+        if run.returncode != 1:
+            problems.append(f"{mode}: exit {run.returncode}, expected 1")
+    return _report(problems)
+
+
+class _Client:
+    rpc_endpoint = ""
+
+    async def get_health(self) -> str:
+        return "ok"
+
+    async def close(self) -> None:
+        return None
+
+
+class _Listener:
+    """A listener that ends at once, with an error or without one."""
+
+    def __init__(self, *, fails: bool) -> None:
+        self.fails = fails
+
+    async def listen_for_tokens(self, *_args: object, **_kwargs: object) -> None:
+        if self.fails:
+            raise ConnectionError("the stream ended")  # noqa: TRY003
+
+
+def _real_trader(*, listener_fails: bool, resume_fails: bool) -> Callable:
+    """Builds a real UniversalTrader on stand-in RPC, listener and cleanup."""
+
+    def build(settings: object) -> object:
+        originals = (
+            universal_trader.SolanaClient,
+            universal_trader.ListenerFactory.create_listener,
+        )
+        universal_trader.SolanaClient = lambda *_a, **_k: _Client()
+        universal_trader.ListenerFactory.create_listener = staticmethod(
+            lambda **_k: _Listener(fails=listener_fails)
+        )
+        try:
+            trader = universal_trader.UniversalTrader(settings)
+        finally:
+            universal_trader.SolanaClient = originals[0]
+            universal_trader.ListenerFactory.create_listener = staticmethod(
+                originals[1]
+            )
+
+        async def nothing() -> None:
+            return None
+
+        async def unreadable() -> list:
+            raise RuntimeError("positions file unreadable")  # noqa: TRY003
+
+        trader._resolve_quote_token_programs = nothing  # noqa: SLF001
+        trader._cleanup_resources = nothing  # noqa: SLF001
+        if resume_fails:
+            trader.positions.resume = unreadable
+        return trader
+
+    return build
+
+
+def check_i_trader_error_stop_fails_the_run(tmp: str) -> bool:
+    problems = []
+    with _node() as (rpc, _):
+        config = _config("yolo", rpc)
+        config["filters"]["yolo_mode"] = True
+        folder = _folder(tmp, {"yolo": config})
+        for label, listener_fails, resume_fails, want in (
+            ("Trading stopped due to error", False, True, False),
+            ("Token listening stopped due to error", True, False, False),
+            ("the listener just ended", False, False, True),
+        ):
+            trader = _real_trader(
+                listener_fails=listener_fails, resume_fails=resume_fails
+            )
+            ran, _, _ = _start_in_process(folder, "yolo", trader)
+            if ran is not want:
+                problems.append(f"{label}: start_bot -> {ran!r}, expected {want}")
     return _report(problems)
 
 
@@ -523,6 +751,14 @@ def main() -> int:
         ),
         ("F: exit status 0 only when every enabled bot ran", check_f_exit_status),
         ("G: Ctrl+C ends cleanly with exit 130", check_g_ctrl_c_is_clean),
+        (
+            "H: a trader's error is logged once, masked, in either mode",
+            check_h_trader_error_is_masked,
+        ),
+        (
+            "I: a trader stopped by an error fails the run",
+            check_i_trader_error_stop_fails_the_run,
+        ),
     ]
     passed = 0
     with tempfile.TemporaryDirectory() as tmp:

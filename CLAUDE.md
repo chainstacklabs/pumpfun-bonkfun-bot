@@ -198,4 +198,4 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
 - Bots with `separate_process: true` run in their own process, one log file each.
 - `pump_bot` runs **every** `bots/*.yaml` in the current folder (four of five
   committed configs ship `enabled: false`). Exit 0 only when every enabled bot
-  ran; 1 when one can't start or none is enabled, with one line saying why.
+  ran without an error; 1 otherwise, with one line saying why.

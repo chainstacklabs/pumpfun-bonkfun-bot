@@ -339,6 +339,7 @@ class _Trader:
     """Stands in for UniversalTrader: records the settings it was given."""
 
     built: list = []  # noqa: RUF012
+    stopped_on_error = False
 
     def __init__(self, settings: object) -> None:
         _Trader.built.append(settings)
@@ -482,7 +483,7 @@ def main() -> int:
     """Run every check and report."""
     bot_runner.UniversalTrader = _Trader
     bot_runner.setup_logging = lambda _name: None
-    bot_runner.rpc_unreachable_reason = _node_answers
+    bot_runner.rpc_endpoint_problem = _node_answers
     checks = [
         ("A: a pumpfun-cli keystore unlocks", check_a_cli_keystore_unlocks),
         ("B: every refusal names its cause", check_b_refusals_name_the_cause),

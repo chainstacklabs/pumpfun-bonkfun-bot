@@ -112,6 +112,22 @@ PLATFORM_LISTENER_COMPATIBILITY = {
 }
 
 
+def disabled_in_yaml(path: str) -> bool:
+    """Whether the file's raw YAML says `enabled: false`.
+
+    Read before `${VAR}` interpolation and validation, so a disabled config is
+    skipped even when it could not load. False when the file cannot be read or
+    `enabled` is anything else, `${VAR}` included: such a config is loaded and
+    checked as usual.
+    """
+    try:
+        with Path(path).open() as f:
+            raw = yaml.safe_load(f)
+    except (OSError, yaml.YAMLError):
+        return False
+    return isinstance(raw, dict) and raw.get("enabled") is False
+
+
 def load_bot_config(path: str) -> dict:
     """Load and validate a bot configuration from a YAML file."""
     config_path = Path(path)
