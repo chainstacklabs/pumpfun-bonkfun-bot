@@ -99,6 +99,19 @@ class UniversalTrader:
     #: time, so this has to cover all of them, not one.
     _CLEANUP_SHUTDOWN_BUDGET = 120.0
 
+    #: Set when `start` caught an error that ended trading.
+    _trading_error = False
+
+    @property
+    def stopped_on_error(self) -> bool:
+        """Whether trading or token listening ended on an error, not a stop."""
+        return self._trading_error or self.intake.stopped_on_error
+
+    def _log_trading_error(self) -> None:
+        """Log the error that ended trading and keep it for `stopped_on_error`."""
+        logger.exception("Trading stopped due to error")
+        self._trading_error = True
+
     def __init__(self, settings: TraderSettings) -> None:
         """Initialize the universal trader.
 
@@ -345,8 +358,8 @@ class UniversalTrader:
                 # before cleanup.
                 await positions.wait_all()
 
-        except Exception:
-            logger.exception("Trading stopped due to error")
+        except Exception:  # noqa: BLE001 - logged by _log_trading_error
+            self._log_trading_error()
 
         finally:
             # Shutdown or an error: stop what is still open and wait for each

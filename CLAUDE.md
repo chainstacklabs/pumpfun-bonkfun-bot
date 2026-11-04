@@ -127,8 +127,9 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
   Normalize at the boundary: a `Signature` is neither JSON serializable nor
   sliceable, and solana-py's `confirm_transaction` rejects a `str`.
 - **The endpoints carry their API key in the URL, so any log line holding one is
-  a leak.** `install_secret_redaction` (`utils/logger.py`) masks the value at
-  log-record creation, and every entry point calls it before attaching a handler.
+  a leak.** `install_secret_redaction` (`utils/logger.py`) masks the value, its
+  host and the traceback at log-record creation, and every entry point calls it
+  before attaching a handler; `bot_runner.mask_endpoints` adds a config's own.
   Redact the **rendered** message, not `record.msg` plus the string arguments —
   httpx2 passes its URL as a `URL` object, so a type check skips the one argument
   that matters.
@@ -195,7 +196,6 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
   `shreds` — not `logs` (LaunchLab's logs never name the coin).
   Adding a listener means updating `PLATFORM_LISTENER_COMPATIBILITY` there too.
 - Bots with `separate_process: true` run in their own process, one log file each.
-- `pump_bot` runs **every** `bots/*.yaml`, and four of the five committed configs
-  ship `enabled: false`. With all of them disabled it prints nothing and exits 0,
-  indistinguishable from a clean run — check that `logs/<name>_<timestamp>.log`
-  appeared before reading anything into a run.
+- `pump_bot` runs **every** `bots/*.yaml` in the current folder (four of five
+  committed configs ship `enabled: false`). Exit 0 only when every enabled bot
+  ran without an error; 1 otherwise, with one line saying why.

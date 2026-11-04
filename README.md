@@ -77,7 +77,7 @@ Each YAML file in `bots/` is one bot instance. They ship with commented defaults
 
 Set `platform` to `"pump_fun"`, `"launchlab"`, `"lets_bonk"` or `"stonk_fun"`. pump.fun supports all four listeners; the LaunchLab platforms support `blocks`, `geyser` and `shreds` but **not** `logs`. The bot validates the pairing at startup and refuses to run an invalid one.
 
-Set `enabled: false` to keep a config around without running it. Every bot with `enabled: true` starts when you run the bot.
+Set `enabled: false` to keep a config around without running it; such a file is skipped unread, so it need not be valid. Every bot with `enabled: true` starts when you run the bot.
 
 ### 5. Run
 
@@ -87,6 +87,10 @@ uv run src/bot_runner.py   # or directly
 ```
 
 Logs land in `logs/{bot_name}_{timestamp}.log`.
+
+Run it from the folder that holds `bots/`: it reads `bots/*.yaml` there and writes `logs/`, `trades/` and `positions/` beside it. `pump_bot --help` says this and starts nothing.
+
+A bot that can't run is not started, with one line saying why: a config that fails validation, a wallet that won't unlock, or an `rpc_endpoint` that doesn't answer or rejects the request. With every bot disabled the bot says so. The exit status is 0 only when every enabled bot started and finished without an error, 1 otherwise, and 130 after Ctrl+C.
 
 ## Configuration reference
 

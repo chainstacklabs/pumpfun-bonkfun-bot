@@ -1,12 +1,15 @@
 """Solana client abstraction for blockchain operations."""
 
 import asyncio
+import json
 import random
+import socket
 import struct
 from time import monotonic
 from typing import Any
 
 import aiohttp
+from aiohttp.http_exceptions import HttpProcessingError
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Processed
 from solana.rpc.core import TxOptsModel
@@ -29,6 +32,9 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 HTTP_TOO_MANY_REQUESTS = 429
+HTTP_CLIENT_ERROR = 400
+HTTP_UNAUTHORIZED = 401
+HTTP_FORBIDDEN = 403
 
 # Length of the `[instruction_index, error_detail]` pair inside
 # `{"InstructionError": [...]}` -- fixed by the RPC's `meta.err` shape.
@@ -170,6 +176,97 @@ def _describe_program_error(err: object) -> str | None:
     if description is None:
         return None
     return f"pump.fun IDL: {description}"
+
+
+# What a failed request says, matched on the error or on the OS error inside
+# a connection error, in this order. Each is a plain reason naming no URL.
+_UNREACHABLE_CAUSES = (
+    (aiohttp.InvalidURL, "not an http(s) URL"),
+    (aiohttp.NonHttpUrlClientError, "not an http(s) URL"),
+    (aiohttp.TooManyRedirects, "too many redirects"),
+    (aiohttp.ClientSSLError, "TLS handshake failed"),
+    (aiohttp.ServerDisconnectedError, "the server closed the connection"),
+    (aiohttp.ClientPayloadError, "the answer was cut off"),
+    (socket.gaierror, "cannot resolve the host name"),
+    (ConnectionRefusedError, "connection refused"),
+    # IDNA rejects the name before any lookup, e.g. a label over 63 characters.
+    (UnicodeError, "invalid host name"),
+    (ValueError, "not a valid URL"),
+)
+
+
+def _unreachable_cause(error: Exception, timeout: float) -> str:
+    """A few plain words on why a request got no answer.
+
+    Never the exception's own text: aiohttp's carries the URL.
+    """
+    if isinstance(error, TimeoutError):
+        return f"no answer within {timeout:g} s"
+    os_error = getattr(error, "os_error", None)
+    for kind, cause in _UNREACHABLE_CAUSES:
+        if isinstance(error, kind) or isinstance(os_error, kind):
+            return cause
+    if isinstance(error, aiohttp.ClientResponseError):
+        # aiohttp reports a reply it could not parse as a 400 of its own.
+        if isinstance(error.__cause__, HttpProcessingError):
+            return "the answer is not HTTP"
+        return f"HTTP {error.status}"
+    if isinstance(os_error, OSError) and os_error.strerror:
+        return os_error.strerror
+    return type(error).__name__
+
+
+def _is_json_rpc(body: bytes) -> bool:
+    """Whether a reply body is a JSON-RPC envelope (result or error).
+
+    A Solana node always sends the `jsonrpc` key; a gateway's own
+    `{"error": ...}` page does not, so it does not count as an answer.
+    """
+    try:
+        answer = json.loads(body)
+    except ValueError:
+        return False
+    return isinstance(answer, dict) and "jsonrpc" in answer
+
+
+async def rpc_endpoint_problem(
+    endpoint: str, attempts: int = 3, timeout: float = 10.0
+) -> str | None:
+    """What keeps `endpoint` from serving the bot, or None when it answers.
+
+    Sends `getHealth` up to `attempts` times, 1 s then 2 s apart, each bounded
+    by `timeout` seconds. A JSON-RPC envelope is an answer whatever the HTTP
+    status, an error object included (a 503 from a node that is behind, a
+    400), and so is HTTP 429. HTTP 401 and 403 are final at once.
+
+    Returns:
+        None, `rejected the request (HTTP 401)` (or 403), or
+        `is unreachable (<cause>)`; never a URL
+    """
+    body = {"jsonrpc": "2.0", "id": 1, "method": "getHealth"}
+    reason = None
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=timeout)
+    ) as session:
+        for attempt in range(attempts):
+            if attempt:
+                await asyncio.sleep(2 ** (attempt - 1))
+            try:
+                async with session.post(endpoint, json=body) as response:
+                    if response.status in (HTTP_UNAUTHORIZED, HTTP_FORBIDDEN):
+                        return f"rejected the request (HTTP {response.status})"
+                    if response.status == HTTP_TOO_MANY_REQUESTS or _is_json_rpc(
+                        await response.read()
+                    ):
+                        return None
+                    reason = (
+                        f"HTTP {response.status}"
+                        if response.status >= HTTP_CLIENT_ERROR
+                        else "the answer is not JSON-RPC"
+                    )
+            except (TimeoutError, aiohttp.ClientError, ValueError) as e:
+                reason = _unreachable_cause(e, timeout)
+    return f"is unreachable ({reason})"
 
 
 class SolanaClient:

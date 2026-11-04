@@ -57,6 +57,8 @@ class TokenIntake:
         self.pool_queue: asyncio.Queue[tuple[PoolReady, float]] = asyncio.Queue()
         self.processed_tokens: set[str] = set()
         self.token_timestamps: dict[str, float] = {}
+        # Set when the listener ended on an error rather than a stop.
+        self.stopped_on_error = False
 
     def skip_reason(self, token_info: TokenInfo) -> str | None:
         """Why the configured filters refuse this coin, or None to trade it.
@@ -152,6 +154,7 @@ class TokenIntake:
             )
         except Exception:
             logger.exception("Token listening stopped due to error")
+            self.stopped_on_error = True
         finally:
             processor_task.cancel()
             try:
@@ -353,6 +356,7 @@ class TokenIntake:
             )
         except Exception:
             logger.exception("Token listening stopped due to error")
+            self.stopped_on_error = True
         finally:
             processor_task.cancel()
             try:

@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import logging
 import multiprocessing
@@ -25,11 +26,14 @@ except ImportError:
     )
 
 from config_loader import (
+    disabled_in_yaml,
     get_platform_from_config,
+    get_supported_listeners_for_platform,
     load_bot_config,
     print_config_summary,
     validate_platform_listener_combination,
 )
+from core.client import rpc_endpoint_problem
 from core.keystore import KeystoreError, keystore_private_key, password_from_env
 from core.wallet import Wallet
 from interfaces.core import Platform
@@ -37,24 +41,58 @@ from trading.position_store import holds_positions
 from trading.settings import DEFAULT_MAX_EXIT_SELL_ATTEMPTS, TraderSettings
 from trading.universal_trader import UniversalTrader
 from utils.logger import (
+    file_handler,
     get_logger,
     install_secret_redaction,
+    register_endpoint,
     register_secret,
     setup_file_logging,
 )
 
 logger = get_logger(__name__)
 
+# Exit status after Ctrl+C, as a shell reports a process ended by SIGINT.
+EXIT_INTERRUPTED = 130
+
+USAGE = """\
+Run every bot configured in bots/*.yaml under the current folder.
+A bot whose YAML says `enabled: false` is skipped.
+
+Each bot writes its log to logs/, its trades to trades/ and its open
+positions to positions/, all under the current folder.
+
+Exit status: 0 when every enabled bot started and finished without an error,
+1 when a config could not be loaded, a bot could not start or stopped on an
+error, or no bot is enabled, 130 when stopped with Ctrl+C."""
+
+
+def _log_file(stem: str) -> str:
+    """`logs/<stem>_<timestamp>.log`, creating `logs/`."""
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return str(log_dir / f"{stem}_{timestamp}.log")
+
 
 def setup_logging(bot_name: str):
     """Set up logging to file for a specific bot instance."""
-    log_dir = Path("logs")
-    log_dir.mkdir(exist_ok=True)
+    setup_file_logging(_log_file(bot_name))
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_filename = log_dir / f"{bot_name}_{timestamp}.log"
 
-    setup_file_logging(str(log_filename))
+def mask_endpoints(cfg: dict) -> None:
+    """Mask the config's endpoints, their hosts and the Geyser token in logs.
+
+    The environment variables the configs ship with are masked already; this
+    covers an endpoint written into the YAML or read from another variable.
+    """
+    geyser = cfg.get("geyser") or {}
+    for endpoint in (cfg.get("rpc_endpoint"), cfg.get("wss_endpoint")):
+        if isinstance(endpoint, str):
+            register_endpoint(endpoint)
+    if isinstance(geyser.get("endpoint"), str):
+        register_endpoint(geyser["endpoint"])
+    if isinstance(geyser.get("api_token"), str):
+        register_secret(geyser["api_token"])
 
 
 def positions_file_for(name: str | None, config_file: str | None = None) -> str | None:
@@ -173,50 +211,45 @@ def unlock_keystore(cfg: dict) -> None:
     logger.info(f"Wallet {Wallet(private_key).pubkey} unlocked from keystore {path}")
 
 
-async def start_bot(config_path: str, positions_file: str | None = None):
-    """Start a trading bot with the configuration from the specified path."""
-    cfg = load_bot_config(config_path)
+async def start_bot(config_path: str, positions_file: str | None = None) -> bool:
+    """Start the bot configured in `config_path` and run it until it ends.
+
+    A bot that cannot run (config, platform, keystore, `rpc_endpoint`) logs one
+    line saying why and is not started. Nothing raises out of here but a
+    cancellation: an error is logged, masked, and reported as False.
+
+    Returns:
+        True when the bot started and ended normally; False when it was not
+        started or its trader stopped on an error
+    """
+    try:
+        cfg = load_bot_config(config_path)
+    except Exception as e:  # noqa: BLE001 - any cause gets the same one line
+        logger.error(f"Could not load {config_path}: {_one_line(e)}")  # noqa: TRY400
+        return False
+    mask_endpoints(cfg)
     setup_logging(cfg["name"])
     print_config_summary(cfg)
 
-    # Get and validate platform from configuration
     try:
-        platform = get_platform_from_config(cfg)
-        logging.info(f"Detected platform: {platform.value}")
-    except ValueError as e:
-        logging.exception(f"Platform configuration error: {e}")
-        return
-
-    # Validate platform support
-    try:
-        from platforms import platform_factory
-
-        if not platform_factory.registry.is_platform_supported(platform):
-            logging.error(
-                f"Platform {platform.value} is not supported. Available platforms: {[p.value for p in platform_factory.get_supported_platforms()]}"
-            )
-            return
-    except Exception as e:
-        logging.exception(f"Could not validate platform support: {e}")
-        return
-
-    # Validate listener compatibility
-    listener_type = cfg["filters"]["listener_type"]
-    if not validate_platform_listener_combination(platform, listener_type):
-        from config_loader import get_supported_listeners_for_platform
-
-        supported = get_supported_listeners_for_platform(platform)
-        logging.error(
-            f"Listener '{listener_type}' is not compatible with platform '{platform.value}'. Supported listeners: {supported}"
-        )
-        return
+        platform = _startable_platform(cfg)
+    except Exception as e:  # noqa: BLE001 - any cause gets the same one line
+        logger.error(f"Bot '{cfg['name']}' not started: {_one_line(e)}")  # noqa: TRY400
+        return False
 
     if "keystore" in cfg:
         try:
             unlock_keystore(cfg)
         except KeystoreError as e:
             logger.error(f"Bot '{cfg['name']}' not started: {e}")  # noqa: TRY400
-            return
+            return False
+
+    # Checked here, before the trader starts listening: a bot that cannot reach
+    # its node would detect coins and fail every buy.
+    problem = await rpc_endpoint_problem(cfg["rpc_endpoint"])
+    if problem:
+        logger.error(f"Bot '{cfg['name']}' not started: rpc_endpoint {problem}")
+        return False
 
     # Initialize universal trader with platform-specific configuration
     try:
@@ -225,45 +258,74 @@ async def start_bot(config_path: str, positions_file: str | None = None):
         await trader.start()
 
     except Exception as e:
-        logging.exception(f"Failed to initialize or start trader: {e}")
-        raise
+        # Logged here, masked, and not re-raised: in its own process the error
+        # would reach multiprocessing, which prints it raw.
+        logger.exception(f"Failed to initialize or start trader: {e}")
+        return False
+    return not trader.stopped_on_error
 
 
 def run_bot_process(config_path, positions_file: str | None = None):
-    asyncio.run(start_bot(config_path, positions_file))
+    """A bot's own process: exit 1 unless it ran normally, 130 on Ctrl+C.
 
-
-def _startable_platform(cfg: dict, bot_name: str) -> Platform | None:
-    """The bot's platform, or None (with the reason logged) when it cannot run."""
+    Nothing may escape: multiprocessing prints an uncaught error unmasked.
+    """
     try:
-        platform = get_platform_from_config(cfg)
+        ran = asyncio.run(start_bot(config_path, positions_file))
+    except KeyboardInterrupt:
+        sys.exit(EXIT_INTERRUPTED)
+    except Exception:
+        # Logged masked: multiprocessing would print it raw.
+        logger.exception(f"Bot process for {config_path} stopped on an error")
+        sys.exit(1)
+    if not ran:
+        sys.exit(1)
 
-        # Check platform support
-        from platforms import platform_factory
 
-        if not platform_factory.registry.is_platform_supported(platform):
-            logging.error(
-                f"Platform {platform.value} is not supported for bot '{bot_name}'. Available platforms: {[p.value for p in platform_factory.get_supported_platforms()]}"
-            )
-            return None
+def _one_line(error: Exception) -> str:
+    """An exception's message on one line, or its type when it has none."""
+    return " ".join(str(error).split()) or type(error).__name__
 
-        # Validate listener compatibility
-        listener_type = cfg["filters"]["listener_type"]
-        if not validate_platform_listener_combination(platform, listener_type):
-            from config_loader import get_supported_listeners_for_platform
 
-            supported = get_supported_listeners_for_platform(platform)
-            logging.error(
-                f"Listener '{listener_type}' is not compatible with platform '{platform.value}' for bot '{bot_name}'. Supported listeners: {supported}"
-            )
-            return None
+def _startable_platform(cfg: dict) -> Platform:
+    """The bot's platform, checked to be supported and to take its listener.
 
-    except Exception as e:
-        logging.exception(
-            f"Invalid platform configuration for bot '{bot_name}': {e}. Skipping..."
+    Raises:
+        ValueError: The platform is unknown, unsupported or lacks the listener
+    """
+    platform = get_platform_from_config(cfg)
+
+    from platforms import platform_factory
+
+    if not platform_factory.registry.is_platform_supported(platform):
+        available = [p.value for p in platform_factory.get_supported_platforms()]
+        msg = f"platform {platform.value} is not supported; available: {available}"
+        raise ValueError(msg)
+
+    listener_type = cfg["filters"]["listener_type"]
+    if not validate_platform_listener_combination(platform, listener_type):
+        supported = get_supported_listeners_for_platform(platform)
+        msg = (
+            f"listener '{listener_type}' is not compatible with platform "
+            f"'{platform.value}'; supported: {supported}"
         )
-        return None
+        raise ValueError(msg)
     return platform
+
+
+def _log_config_error(file: Path, error: Exception) -> None:
+    """Log one line naming a config that cannot run, also into `logs/`.
+
+    The bot has no log file of its own yet, so the line gets one named after
+    the config file: `logs/<file stem>_<timestamp>.log`.
+    """
+    handler = file_handler(_log_file(file.stem))
+    logger.addHandler(handler)
+    try:
+        logger.error(f"Could not load {file}: {_one_line(error)}")
+    finally:
+        logger.removeHandler(handler)
+        handler.close()
 
 
 def _shared_positions_files(bots: list[tuple[Path, dict]]) -> dict[Path, str]:
@@ -304,45 +366,64 @@ def _shared_positions_files(bots: list[tuple[Path, dict]]) -> dict[Path, str]:
     return own
 
 
-def run_all_bots():
-    """Run all bots defined in YAML files in the 'bots' directory."""
+def run_all_bots() -> bool:
+    """Run all bots defined in YAML files in the 'bots' directory.
+
+    Returns:
+        True only when every config loaded and every enabled bot, at least
+        one, started and ended normally
+    """
     bot_dir = Path("bots")
     if not bot_dir.exists():
         logging.error(f"Bot directory '{bot_dir}' not found")
-        return
+        return False
 
     bot_files = sorted(bot_dir.glob("*.yaml"))
     if not bot_files:
         logging.error(f"No bot configuration files found in '{bot_dir}'")
-        return
+        return False
 
     logging.info(f"Found {len(bot_files)} bot configuration files")
 
     processes = []
     skipped_bots = 0
+    disabled = 0
+    all_ok = True
 
     # Check every file first, so bots sharing a name are known before any starts.
     startable: list[tuple[Path, dict, Platform]] = []
     for file in bot_files:
+        if disabled_in_yaml(str(file)):
+            skipped_bots += 1
+            disabled += 1
+            continue
         try:
             cfg = load_bot_config(str(file))
+            mask_endpoints(cfg)
             bot_name = cfg.get("name", file.stem)
 
             # Skip bots with enabled=False
             if not cfg.get("enabled", True):
                 logging.info(f"Skipping disabled bot '{bot_name}'")
                 skipped_bots += 1
+                disabled += 1
                 continue
 
-            platform = _startable_platform(cfg, bot_name)
-            if platform is None:
-                skipped_bots += 1
-                continue
-            startable.append((file, cfg, platform))
+            startable.append((file, cfg, _startable_platform(cfg)))
 
-        except Exception:
-            logging.exception(f"Failed to load bot from {file}")
+        except Exception as e:  # noqa: BLE001 - any cause gets the same one line
+            _log_config_error(file, e)
             skipped_bots += 1
+            all_ok = False
+
+    if not startable:
+        invalid = len(bot_files) - disabled
+        logger.error(
+            f"No bot to run in {bot_dir}/: {len(bot_files)} found, "
+            f"{disabled} disabled"
+            + (f", {invalid} could not be loaded" if invalid else "")
+        )
+        return False
 
     positions_files = _shared_positions_files([(f, cfg) for f, cfg, _ in startable])
 
@@ -366,11 +447,13 @@ def run_all_bots():
                 logging.info(
                     f"Starting bot '{bot_name}' ({platform.value}) in main process"
                 )
-                asyncio.run(start_bot(str(file), positions_file))
+                if not asyncio.run(start_bot(str(file), positions_file)):
+                    all_ok = False
 
         except Exception as e:
             logging.exception(f"Failed to start bot from {file}: {e}")
             skipped_bots += 1
+            all_ok = False
 
     logging.info(
         f"Started {len(bot_files) - skipped_bots} bots, skipped {skipped_bots} disabled/invalid bots"
@@ -380,9 +463,26 @@ def run_all_bots():
     for p in processes:
         p.join()
         logging.info(f"Process {p.name} completed")
+        if p.exitcode != 0:
+            all_ok = False
+    return all_ok
 
 
-def main() -> None:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Read the command line: `-h`/`--help` prints `USAGE` and exits 0.
+
+    Any argument other than help is a usage error (exit 2), so a mistyped flag
+    never starts a bot.
+    """
+    parser = argparse.ArgumentParser(
+        description=USAGE, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Run every enabled bot; exit 0 only when all of them ran normally."""
+    parse_args(argv)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -409,7 +509,16 @@ def main() -> None:
     except Exception as e:
         logging.warning(f"Could not load platform information: {e}")
 
-    run_all_bots()
+    try:
+        all_ok = run_all_bots()
+    except KeyboardInterrupt:
+        # The trader already shut down cleanly; a traceback would add nothing.
+        sys.exit(EXIT_INTERRUPTED)
+    except Exception:
+        # Logged masked: Python would print it raw.
+        logger.exception("The bot runner stopped on an error")
+        all_ok = False
+    sys.exit(0 if all_ok else 1)
 
 
 if __name__ == "__main__":

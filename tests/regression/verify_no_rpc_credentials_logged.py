@@ -13,8 +13,8 @@ Offline machine checks, no network and no funds moved:
 
   1. `redact` masks a secret-bearing query parameter, URL userinfo, and an
      opaque path segment — the three shapes a provider credential takes.
-  2. `redact` masks an exact value registered from the environment, keeping the
-     host so a log line still says which provider answered.
+  2. `redact` masks an exact value registered from the environment, and its
+     host wherever it appears alone, as in a connection error.
   3. A logger this repo has never heard of, logging at INFO, comes out
      redacted — including when the URL is a non-`str` argument, which is how
      httpx2 passes it and how the first version of this guard was defeated.
@@ -106,20 +106,25 @@ def check_redact_masks_every_credential_shape() -> bool:
 
 
 def check_redact_masks_a_registered_value() -> bool:
-    """An exact environment value is masked, and the host survives."""
+    """An exact environment value is masked, its host with it.
+
+    Many providers put the account in the host, so the host is as much a
+    credential as the path; check 3 shows a host nobody configured survives.
+    """
     endpoint = "https://rpc.example.com/9f8e7d6c5b4a39281706"
     os.environ["SOLANA_NODE_RPC_ENDPOINT"] = endpoint
     try:
         install_secret_redaction()
         cleaned = redact(f"connecting to {endpoint}")
+        alone = redact("Cannot connect to host rpc.example.com:443 ssl:default")
     finally:
         del os.environ["SOLANA_NODE_RPC_ENDPOINT"]
         install_secret_redaction()
     if "9f8e7d6c5b4a39281706" in cleaned:
         print(f"     the registered value survived: {cleaned}")
         return False
-    if "rpc.example.com" not in cleaned:
-        print(f"     the host was masked too, which makes the line useless: {cleaned}")
+    if "rpc.example.com" in cleaned + alone:
+        print(f"     the host survived: {cleaned} / {alone}")
         return False
     return True
 
@@ -244,7 +249,7 @@ def main() -> int:
             check_redact_masks_every_credential_shape,
         ),
         (
-            "redact masks a registered value, keeping the host",
+            "redact masks a registered value and its host",
             check_redact_masks_a_registered_value,
         ),
         ("an unlisted logger is redacted too", check_an_unknown_logger_is_redacted),

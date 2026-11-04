@@ -23,7 +23,8 @@ a bot:
      A `private_key` config never touches the keystore code.
   E. The decrypted key and the password are masked in later log lines.
 
-Offline: the trader is a recorder; config loading and `start_bot` are real.
+Offline: the trader is a recorder and the node always answers; config loading
+and `start_bot` are real.
 
 Usage:
     uv run tests/regression/verify_encrypted_wallet.py
@@ -338,6 +339,7 @@ class _Trader:
     """Stands in for UniversalTrader: records the settings it was given."""
 
     built: list = []  # noqa: RUF012
+    stopped_on_error = False
 
     def __init__(self, settings: object) -> None:
         _Trader.built.append(settings)
@@ -473,10 +475,15 @@ def check_e_secrets_masked() -> bool:
     return _report(problems)
 
 
+async def _node_answers(_endpoint: str) -> None:
+    return None
+
+
 def main() -> int:
     """Run every check and report."""
     bot_runner.UniversalTrader = _Trader
     bot_runner.setup_logging = lambda _name: None
+    bot_runner.rpc_endpoint_problem = _node_answers
     checks = [
         ("A: a pumpfun-cli keystore unlocks", check_a_cli_keystore_unlocks),
         ("B: every refusal names its cause", check_b_refusals_name_the_cause),
