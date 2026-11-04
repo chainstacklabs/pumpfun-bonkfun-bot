@@ -35,7 +35,8 @@ Two trades were cut short by Ctrl+C:
      is held at the amount and fill price its transaction shows and rewritten
      as landed, with its trade-log line, unless the wallet no longer holds it
      (sold by hand while the bot was down: cleared) or holds less (held at
-     what is left); a reverted one is cleared; one no
+     what is left, still at its fill price); a reverted one is cleared; only
+     the first lookup searches the whole history; one no
      node knows yet is looked at again until it shows up. Once its blockhash
      has expired (by block height, or two minutes after the send when none
      was recorded) the balance decides: none held clears it, a balance holds
@@ -48,7 +49,8 @@ Two trades were cut short by Ctrl+C:
      is read, says so once, and then counts profit and loss from that price.
   I. In a running session an unconfirmed buy is resolved by the same
      resolver: once it shows up it is held at the transaction's amounts and
-     logged; one that expired with nothing held is removed.
+     logged, and once sold its account is closed by post-session cleanup; one
+     that expired with nothing held is removed.
   J. A sold position waiting to close its empty account (`cleanup.mode:
      after_sell`) when the trader is cancelled closes it before the trader
      exits, and the shutdown log does not call it open.
@@ -61,6 +63,16 @@ Two trades were cut short by Ctrl+C:
      on any attempt leaves it possibly sent. The signer reports the signature
      and its last valid block height once, before the first attempt.
   N. Shutdown names the buys still pending, and only those.
+  O. The client reads a signature's status as REVERTED or SUCCESS only at
+     "confirmed" or above (an error at "processed" is not final), returns the
+     slot it landed in, searches the history only when asked, and reads an
+     account at a minimum slot: a node behind it fails the read rather than
+     answering "not found".
+  P. A buy still being resolved holds its position slot: no other coin is
+     bought meanwhile.
+  Q. A node behind the slot a decision rests on (the slot the buy landed in,
+     or the one its expiry was seen at) keeps the record pending; it never
+     clears it on its "not found".
 
 Offline: the RPC client, the seller and the account close are stubs; the
 trader, intake, buyer, position manager and store are the real ones. Runs in a
@@ -113,6 +125,8 @@ RECEIVED_RAW = 19_500_000  # what the buy delivers, read back from its transacti
 SPENT_LAMPORTS = 3_000_000  # what it paid, read back from its transaction
 FILL_PRICE = SPENT_LAMPORTS / 1e9 / (RECEIVED_RAW / 1e6)
 LAST_VALID = 1_000  # the block height past which a buy's blockhash is dead
+LANDED_SLOT = 500  # the slot a looked-up signature landed in
+EXPIRY_SLOT = 600  # the slot the expiry was seen at
 CAP_RAW = 20_000_000  # the most a pending buy can have delivered
 SHARED_RAW = 50_000_000  # a wallet balance that also holds another bot's coins
 PARTIAL_RAW = 5_000_000  # what is left of a landed buy partly sold by hand
@@ -191,6 +205,12 @@ class _Client:
         self.accounts: dict[Pubkey, SimpleNamespace] = {}
         self.fresh: set[Pubkey] = set()
         self.unreadable: set[Pubkey] = set()
+        # The slot the answering node has reached; accounts in `behind` are
+        # newer than it, so it reports them missing unless asked for a later
+        # slot, which it refuses.
+        self.node_slot = 10**9
+        self.behind: set[Pubkey] = set()
+        self.history: dict[str, list[bool]] = {}
 
     async def calculate_priority_fee(self, *_args: object) -> None:
         self.at.add("fee")
@@ -224,16 +244,21 @@ class _Client:
         status = await self.confirm_transaction_detailed(*args, **kwargs)
         return status is ConfirmationStatus.SUCCESS
 
-    async def get_signature_outcome(self, signature: object) -> object:
+    async def get_signature_outcome(
+        self, signature: object, *, search_history: bool = True
+    ) -> tuple[object, int | None]:
         key = str(signature)
         self.lookups[key] = self.lookups.get(key, 0) + 1
+        self.history.setdefault(key, []).append(search_history)
         script = self.outcomes.get(key)
         if script:
-            return script.pop(0) if len(script) > 1 else script[0]
-        return self.outcome
+            status = script.pop(0) if len(script) > 1 else script[0]
+        else:
+            status = self.outcome
+        return status, (LANDED_SLOT if status is not None else None)
 
-    async def get_block_height(self) -> int:
-        return self.block_height
+    async def get_block_height_and_slot(self) -> tuple[int, int]:
+        return self.block_height, EXPIRY_SLOT
 
     async def get_buy_transaction_details(
         self, signature: object, *_args: object, **_kwargs: object
@@ -252,12 +277,18 @@ class _Client:
             self.fresh.add(_account(token))
 
     async def get_account_info(
-        self, pubkey: Pubkey, commitment: str | None = None
+        self,
+        pubkey: Pubkey,
+        commitment: str | None = None,
+        min_context_slot: int | None = None,
     ) -> SimpleNamespace:
         if pubkey in self.unreadable:
             raise RuntimeError("rpc down")  # noqa: TRY003
+        if min_context_slot is not None and min_context_slot > self.node_slot:
+            raise RuntimeError("Minimum context slot has not been reached")  # noqa: TRY003
         lags = commitment not in ("confirmed", "processed")  # None is finalized
-        if pubkey not in self.accounts or (lags and pubkey in self.fresh):
+        unseen = pubkey in self.behind  # landed after the node's own slot
+        if pubkey not in self.accounts or (lags and pubkey in self.fresh) or unseen:
             raise ValueError(f"Account {pubkey} not found")  # noqa: TRY003
         return self.accounts[pubkey]
 
@@ -807,6 +838,15 @@ def _landed(
     return problems
 
 
+def _partial(partial: TradeResult | None) -> list[str]:
+    """What check F found wrong with a landed buy partly sold by hand."""
+    if partial is None or partial.amount_raw != PARTIAL_RAW:
+        return [f"PARTIAL: not held at the {PARTIAL_RAW} raw left: {partial}"]
+    if partial.price is None or abs(partial.price - FILL_PRICE) > FILL_PRICE * 1e-9:
+        return [f"PARTIAL: priced at {partial.price}, its fill was {FILL_PRICE}"]
+    return []
+
+
 def _shared(shared: TradeResult | None) -> list[str]:
     """What check F found wrong with a buy known only by a shared balance."""
     if shared is None or shared.amount_raw != CAP_RAW:
@@ -829,9 +869,10 @@ def _resolved(
     for name in ("REVERTED", "LOST", "NOHEIGHT", "SOLDHAND"):
         if name in records or name in held:
             problems.append(f"{name}: not cleared")
-    partial = held.get("PARTIAL")
-    if partial is None or partial.amount_raw != PARTIAL_RAW:
-        problems.append(f"PARTIAL: not held at the {PARTIAL_RAW} raw left: {partial}")
+    problems += _partial(held.get("PARTIAL"))
+    flags = client.history.get(sigs["LATE"], [])
+    if flags[:1] != [True] or any(flags[1:]):
+        problems.append(f"LATE: history searched {flags}, want the first lookup only")
     problems += _shared(held.get("SHARED"))
     for name in ("UNREAD", "WAITING", "NOHEIGHTNEW"):
         if not isinstance(records.get(name, {}).get("pending"), dict) or name in held:
@@ -881,41 +922,45 @@ def check_g_balances_read_at_confirmed(tmp: Path) -> bool:
 async def _check_h(tmp: Path) -> list[str]:
     problems = []
     token = _token("NOFILL")
-    client = _Client()
+    path = tmp / "h.json"
     manager = _manager(
-        tmp / "h.json",
-        client,
+        path,
+        _Client(),
         exit_strategy="tp_sl",
         take_profit_percentage=0.5,
         stop_loss_percentage=0.2,
         price_check_interval=0.01,
     )
-    prices: list[float | Exception] = [RuntimeError("feed down")] * 2
-    current = {"price": 1.0}
+    manager._PRICE_WARN_EVERY = 0.05  # noqa: SLF001
+    feed = {"state": "down", "price": 1.0}
+    reads: list[str] = []
 
     async def get_price(_token_info: TokenInfo) -> float:
-        if prices:
-            answer = prices.pop(0)
-            raise answer
-        return current["price"]
+        reads.append(feed["state"])
+        if feed["state"] == "down":
+            raise RuntimeError("feed down")  # noqa: TRY003
+        return 0.0 if feed["state"] == "zero" else feed["price"]
 
     manager.platform_implementations = SimpleNamespace(
         curve_market=SimpleNamespace(get_price=get_price), graduated_market=None
     )
     manager.store.load()
-    bought = TradeResult(success=True, amount=1.0, amount_raw=1_000_000, price=None)
+    bought = TradeResult(success=True, amount=1.0, amount_raw=OLD_RAW, price=None)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    manager.store.add(token, bought, now, WALLET.pubkey)
     with _logged() as logs:
-        task = asyncio.create_task(
-            manager.manage(
-                token, bought, entry_time=datetime.now(UTC).replace(tzinfo=None)
-            )
-        )
-        await asyncio.sleep(0.2)
+        task = asyncio.create_task(manager.manage(token, bought, entry_time=now))
+        await asyncio.sleep(0.3)
+        feed["state"] = "zero"  # a curve with nothing in it prices at 0.0
+        await asyncio.sleep(0.1)
         if manager.seller.sells:
             problems.append(
                 f"sold before a real price was known: {manager.seller.sells}"
             )
-        current["price"] = 0.7  # 30 % under the first price read
+        feed["state"] = "up"
+        await _until(lambda: _records(path)["NOFILL"]["buy"]["price"] is not None)
+        kept = _records(path)["NOFILL"]["buy"]["price"]
+        feed["price"] = 0.7  # 30 % under the first real price
         await _until(lambda: bool(manager.seller.sells))
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -924,8 +969,14 @@ async def _check_h(tmp: Path) -> list[str]:
         problems.append(
             f"stop loss did not fire off the first real price: {manager.seller.sells}"
         )
+    if kept != 1.0:
+        problems.append(f"the first real price was not kept in the file: {kept}")
     if logs.count("fill price of NOFILL is unknown") != 1:
         problems.append("the unknown fill price was not said exactly once")
+    down = reads.count("down")
+    still = logs.count("Still no price for NOFILL")
+    if not 1 <= still < down // 2:
+        problems.append(f"{still} repeat warnings over {down} failed reads")
     return problems
 
 
@@ -976,11 +1027,170 @@ async def _check_i(tmp: Path) -> list[str]:
         await _shut_down(task)
     if not cleared:
         problems.append(f"an expired buy with nothing held stayed: {run.records()}")
-    return problems
+    return problems + await _check_i_cleanup(tmp)
+
+
+async def _check_i_cleanup(tmp: Path) -> list[str]:
+    """A buy resolved in the run, then sold, is cleaned up after the session."""
+    token = _token("TRACKED")
+    run = _Run(tmp / "i3.json", [token], cleanup_mode="post_session")
+    run.client.hold(token, RECEIVED_RAW)
+    run.trader.positions._PENDING_RECHECK = 0.01  # noqa: SLF001
+    run.client.status = ConfirmationStatus.UNCONFIRMED
+    run.client.outcome = ConfirmationStatus.SUCCESS
+    handed: list[Pubkey] = []
+
+    async def post_session(_c: object, _w: object, mints: list, *_a: object) -> None:
+        handed.extend(mints)
+
+    with (
+        _stubbed_market(),
+        _patched(universal_trader, "handle_cleanup_post_session", post_session),
+    ):
+        task = asyncio.create_task(run.trader.start())
+        sold = await _until(lambda: bool(run.trader.positions.seller.sells))
+        await _shut_down(task)
+    if not sold:
+        return ["a buy resolved in the run was never sold"]
+    if token.mint not in handed:
+        return [f"post-session cleanup was not handed its account: {handed}"]
+    return []
 
 
 def check_i_resolved_in_the_same_run(tmp: Path) -> bool:
     return _report(asyncio.run(_check_i(tmp)))
+
+
+async def _check_p(tmp: Path) -> list[str]:
+    """A buy still being resolved holds its position slot."""
+    first, second = _token("FIRST"), _token("SECOND")
+    run = _Run(tmp / "p.json", [first, second])
+    run.hold_positions()
+    run.trader.positions._PENDING_RECHECK = 0.01  # noqa: SLF001
+    run.client.status = ConfirmationStatus.UNCONFIRMED
+    run.client.outcome = None  # blockhash alive: it stays unresolved
+    with _stubbed_market():
+        task = asyncio.create_task(run.trader.start())
+        if not await _until(lambda: bool(run.client.sent)):
+            return ["the first buy was never sent"]
+        await asyncio.sleep(0.3)
+        sent = list(run.client.sent)
+        await _shut_down(task)
+    problems = []
+    if len(sent) != 1:
+        problems.append(f"bought a second coin while the first was unresolved: {sent}")
+    if not isinstance(run.records().get(str(first.mint), {}).get("pending"), dict):
+        problems.append(f"the unresolved buy did not stay pending: {run.records()}")
+    return problems
+
+
+def check_p_pending_buy_holds_a_slot(tmp: Path) -> bool:
+    return _report(asyncio.run(_check_p(tmp)))
+
+
+async def _check_q(tmp: Path) -> list[str]:
+    """A node behind the slot a decision rests on keeps the record."""
+    landed, expired = _token("LANDEDLAG"), _token("EXPIREDLAG")
+    path = tmp / "q.json"
+    store = PositionStore(path)
+    sig_landed = _store_pending(store, landed)
+    _store_pending(store, expired)
+    client = _Client()
+    client.block_height = LAST_VALID + 1
+    client.outcomes = {sig_landed: [ConfirmationStatus.SUCCESS]}
+    for token in (landed, expired):
+        client.hold(token, RECEIVED_RAW)
+        client.behind.add(_account(token))  # the node has not seen them yet
+    client.node_slot = LANDED_SLOT - 1
+    manager = _manager(path, client)
+    held = _holding(manager)
+    with _patched(position_manager, "resolve_quote_token_program", _resolve_quote):
+        await manager.resume()
+        await _until(lambda: manager.open_count == 0, timeout=8.0)
+        await manager.stop()
+    records = _records(path)
+    problems = []
+    for name in ("LANDEDLAG", "EXPIREDLAG"):
+        if not isinstance(records.get(name, {}).get("pending"), dict):
+            problems.append(f"{name}: a node behind cleared it: {records.get(name)}")
+        if name in held:
+            problems.append(f"{name}: held off a node behind")
+    return problems
+
+
+def check_q_lagging_node_keeps_the_record(tmp: Path) -> bool:
+    return _report(asyncio.run(_check_q(tmp)))
+
+
+async def _check_o(_tmp: Path) -> list[str]:
+    """How the client reads a signature's status and an account at a slot."""
+    problems = []
+    client = object.__new__(SolanaClient)
+    answers: list[dict] = []
+    bodies: list[dict] = []
+
+    async def post_rpc(body: dict, **_k: object) -> dict:
+        bodies.append(body)
+        return answers.pop(0)
+
+    client.post_rpc = post_rpc
+
+    def status(confirmation: str, err: object = None) -> dict:
+        value = {"slot": 77, "err": err, "confirmationStatus": confirmation}
+        return {"result": {"value": [value]}}
+
+    cases = (
+        ("processed", status("processed"), ConfirmationStatus.UNCONFIRMED),
+        (
+            "processed, err",
+            status("processed", {"x": 1}),
+            ConfirmationStatus.UNCONFIRMED,
+        ),
+        ("confirmed, err", status("confirmed", {"x": 1}), ConfirmationStatus.REVERTED),
+        ("confirmed", status("confirmed"), ConfirmationStatus.SUCCESS),
+        ("finalized", status("finalized"), ConfirmationStatus.SUCCESS),
+        ("unknown", {"result": {"value": [None]}}, None),
+    )
+    for label, answer, want in cases:
+        answers.append(answer)
+        got, slot = await client.get_signature_outcome("sig", search_history=False)
+        if got is not want:
+            problems.append(f"status {label}: {got}, want {want}")
+        if want is not None and slot != 77:  # noqa: PLR2004
+            problems.append(f"status {label}: slot {slot}, want 77")
+    flags = [b["params"][1]["searchTransactionHistory"] for b in bodies]
+    if any(flags):
+        problems.append(f"searched the history when told not to: {flags}")
+    return problems + await _account_at_slot(client, answers, bodies)
+
+
+async def _account_at_slot(
+    client: SolanaClient, answers: list[dict], bodies: list[dict]
+) -> list[str]:
+    """Check O's account reads at a minimum slot, on the same stub RPC."""
+    problems = []
+    account = Pubkey.new_unique()
+    answers.append({"error": {"code": -32016, "message": "Minimum context slot"}})
+    try:
+        await client.get_account_info(account, min_context_slot=500)
+        problems.append("a node behind the slot answered instead of failing")
+    except ValueError:
+        problems.append("a node behind the slot read as 'not found'")
+    except RuntimeError:
+        pass
+    if bodies[-1]["params"][1].get("minContextSlot") != 500:  # noqa: PLR2004
+        problems.append(f"minContextSlot not sent: {bodies[-1]}")
+    answers.append({"result": {"context": {"slot": 501}, "value": None}})
+    try:
+        await client.get_account_info(account, min_context_slot=500)
+        problems.append("a missing account did not raise")
+    except ValueError:
+        pass
+    return problems
+
+
+def check_o_client_reads_status_and_slot(tmp: Path) -> bool:
+    return _report(asyncio.run(_check_o(tmp)))
 
 
 # J, K, L: a sold position closing its account at shutdown.
@@ -1243,6 +1453,9 @@ def main() -> None:
                 ("L: a hanging close is bounded", check_l_hanging_close_is_bounded),
                 ("M: SUBMIT_FAILED only when nothing can have left", check_m_never_sent_means_never_sent),
                 ("N: shutdown names the pending buys, only those", check_n_shutdown_names_pending_buys),
+                ("O: the client reads status, slot and accounts at a slot", check_o_client_reads_status_and_slot),
+                ("P: a buy being resolved holds its slot", check_p_pending_buy_holds_a_slot),
+                ("Q: a node behind cannot clear a buy", check_q_lagging_node_keeps_the_record),
             ]  # fmt: skip
             results = []
             for name, check in checks:

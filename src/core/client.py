@@ -1,6 +1,7 @@
 """Solana client abstraction for blockchain operations."""
 
 import asyncio
+import base64
 import json
 import random
 import socket
@@ -398,7 +399,10 @@ class SolanaClient:
         return None
 
     async def get_account_info(
-        self, pubkey: Pubkey, commitment: str | None = None
+        self,
+        pubkey: Pubkey,
+        commitment: str | None = None,
+        min_context_slot: int | None = None,
     ) -> Account:
         """Get account info from the blockchain.
 
@@ -408,6 +412,9 @@ class SolanaClient:
                 fresh state right after a geyser event). None is solana-py's
                 default, "finalized", which runs some seconds behind
                 "confirmed": an account a buy just created reads as missing.
+            min_context_slot: Refuse an answer from a node that has not reached
+                this slot: it raises instead of reporting an account it has not
+                seen yet as missing. Reads at "confirmed" unless `commitment`.
 
         Returns:
             The solders `Account` -- callers read attributes like `.data` and
@@ -415,7 +422,13 @@ class SolanaClient:
 
         Raises:
             ValueError: If account doesn't exist
+            RuntimeError: With `min_context_slot`, the node could not answer,
+                one behind that slot included
         """
+        if min_context_slot is not None:
+            return await self._account_at(
+                pubkey, commitment or "confirmed", min_context_slot
+            )
         await self._rate_limiter.acquire()
         client = await self.get_client()
         kwargs: dict[str, Any] = {"encoding": "base64"}
@@ -425,6 +438,38 @@ class SolanaClient:
         if not response.value:
             raise ValueError(f"Account {pubkey} not found")
         return response.value
+
+    async def _account_at(
+        self, pubkey: Pubkey, commitment: str, min_context_slot: int
+    ) -> Account:
+        """`getAccountInfo` with `minContextSlot`, which solana-py cannot send."""
+        body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getAccountInfo",
+            "params": [
+                str(pubkey),
+                {
+                    "encoding": "base64",
+                    "commitment": commitment,
+                    "minContextSlot": min_context_slot,
+                },
+            ],
+        }
+        response = await self.post_rpc(body)
+        if not response or "result" not in response:
+            error = (response or {}).get("error", {}).get("message", "no answer")
+            raise RuntimeError(f"getAccountInfo {pubkey}: {error}")  # noqa: TRY003
+        value = response["result"].get("value")
+        if value is None:
+            raise ValueError(f"Account {pubkey} not found")  # noqa: TRY003
+        return Account(
+            lamports=value["lamports"],
+            data=base64.b64decode(value["data"][0]),
+            owner=Pubkey.from_string(value["owner"]),
+            executable=value.get("executable", False),
+            rent_epoch=value.get("rentEpoch", 0),
+        )
 
     async def get_multiple_accounts(
         self, pubkeys: list[Pubkey], commitment: str | None = None
@@ -649,52 +694,63 @@ class SolanaClient:
         return await self.verify_transaction_status(signature)
 
     async def get_signature_outcome(
-        self, signature: str | Signature
-    ) -> ConfirmationStatus | None:
-        """What the cluster knows of a signature, searching its whole history.
+        self, signature: str | Signature, *, search_history: bool = True
+    ) -> tuple[ConfirmationStatus | None, int | None]:
+        """What the cluster knows of a signature, and the slot it landed in.
+
+        Args:
+            search_history: Look past the node's recent status cache, which
+                only holds the last few minutes; slower, so ask once
 
         Returns:
-            SUCCESS or REVERTED once confirmed; UNCONFIRMED when it is seen but
-            not confirmed yet, or the lookup failed; None when no node knows it,
-            which settles nothing until its blockhash has expired
+            The status: SUCCESS or REVERTED once confirmed; UNCONFIRMED when it
+            is seen but not confirmed yet (an error at "processed" included: the
+            fork may still be dropped), or the lookup failed; None when no node
+            knows it, which settles nothing until its blockhash has expired.
+            Then the slot it landed in, None unless seen.
         """
         body = {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "getSignatureStatuses",
-            "params": [[str(signature)], {"searchTransactionHistory": True}],
+            "params": [
+                [str(signature)],
+                {"searchTransactionHistory": search_history},
+            ],
         }
         response = await self.post_rpc(body)
         try:
             status = response["result"]["value"][0]
         except (KeyError, IndexError, TypeError):
             logger.warning(f"Could not read the status of {str(signature)[:16]}...")
-            return ConfirmationStatus.UNCONFIRMED
+            return ConfirmationStatus.UNCONFIRMED, None
         if status is None:
-            return None
+            return None, None
+        slot = status.get("slot")
+        if status.get("confirmationStatus") not in ("confirmed", "finalized"):
+            return ConfirmationStatus.UNCONFIRMED, slot
         if status.get("err"):
-            return ConfirmationStatus.REVERTED
-        if status.get("confirmationStatus") in ("confirmed", "finalized"):
-            return ConfirmationStatus.SUCCESS
-        return ConfirmationStatus.UNCONFIRMED
+            return ConfirmationStatus.REVERTED, slot
+        return ConfirmationStatus.SUCCESS, slot
 
-    async def get_block_height(self) -> int:
-        """The cluster's block height at "confirmed".
+    async def get_block_height_and_slot(self) -> tuple[int, int]:
+        """The cluster's block height and slot at "confirmed", read together.
 
         Raises:
-            RuntimeError: The node did not answer with one
+            RuntimeError: The node did not answer with them
         """
         body = {
             "jsonrpc": "2.0",
             "id": 1,
-            "method": "getBlockHeight",
+            "method": "getEpochInfo",
             "params": [{"commitment": "confirmed"}],
         }
         response = await self.post_rpc(body)
-        height = response.get("result") if response else None
-        if isinstance(height, int):
-            return height
-        raise RuntimeError("no block height in the answer")  # noqa: TRY003
+        info = response.get("result") if response else None
+        try:
+            return int(info["blockHeight"]), int(info["absoluteSlot"])
+        except (KeyError, TypeError, ValueError):
+            raise RuntimeError("no block height in the answer") from None  # noqa: TRY003
 
     async def verify_transaction_succeeded(self, signature: str | Signature) -> bool:
         """Check whether a landed transaction actually executed successfully.

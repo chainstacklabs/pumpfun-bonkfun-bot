@@ -99,6 +99,8 @@ class PositionManager:
     #: Seconds after its send a buy with no recorded block height is taken to
     #: be past landing; a blockhash lives about 60 to 90.
     _PENDING_EXPIRY = 120.0
+    #: Seconds between warnings while a position waits for its first price.
+    _PRICE_WARN_EVERY = 60.0
     #: Where positions are kept across restarts; None keeps them in memory only.
     #: Also a class default: verifiers build a manager without `__init__`.
     store: PositionStore | None = None
@@ -249,17 +251,25 @@ class PositionManager:
         pending = stored.pending or PendingBuy()
         label = f"{token_info.symbol} ({token_info.mint})"
         signature = sent.tx_signature
+        first = True
         while True:
-            outcome = await self._signature_outcome(signature)
+            # Every balance read below names the slot this decision rests on:
+            # a node behind it errors, which keeps the record, rather than
+            # answering "not found", which would clear it.
+            outcome, slot = await self._signature_outcome(signature, first=first)
+            first = False
             if outcome is ConfirmationStatus.SUCCESS:
-                buy = await self._landed_buy(token_info, sent, pending, label)
+                buy = await self._landed_buy(token_info, sent, pending, label, slot)
                 break
             if outcome is ConfirmationStatus.REVERTED:
                 logger.info(f"The buy of {label} ({signature}) reverted; clearing it")
                 self.store.remove(token_info.mint)
                 return None
-            if await self._past_landing(stored):
-                buy = await self._buy_from_balance(token_info, sent, pending, label)
+            expired, slot = await self._past_landing(stored)
+            if expired:
+                buy = await self._buy_from_balance(
+                    token_info, sent, pending, label, slot
+                )
                 break
             await asyncio.sleep(self._PENDING_RECHECK)
         if buy is None:
@@ -269,27 +279,40 @@ class PositionManager:
         return buy
 
     async def _signature_outcome(
-        self, signature: str | None
-    ) -> ConfirmationStatus | None:
-        """The signature's status; UNCONFIRMED when the lookup fails."""
+        self, signature: str | None, *, first: bool
+    ) -> tuple[ConfirmationStatus | None, int | None]:
+        """The signature's status and slot; UNCONFIRMED when the lookup fails.
+
+        Only the first lookup searches the whole history: a buy sent before a
+        restart may have aged out of the recent status cache, while one still
+        unknown after that lands, if ever, inside it.
+        """
         if not signature:
-            return None
+            return None, None
         try:
-            return await self.solana_client.get_signature_outcome(signature)
+            return await self.solana_client.get_signature_outcome(
+                signature, search_history=first
+            )
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Could not look up {signature[:16]}...: {e}")
-            return ConfirmationStatus.UNCONFIRMED
+            return ConfirmationStatus.UNCONFIRMED, None
 
-    async def _past_landing(self, stored: StoredPosition) -> bool:
-        """Whether the buy's transaction can no longer land."""
+    async def _past_landing(self, stored: StoredPosition) -> tuple[bool, int | None]:
+        """Whether the buy can no longer land, and the slot that was seen at.
+
+        The slot is None when the expiry came from the clock (no block height
+        recorded, or none readable).
+        """
         last_valid = stored.pending.last_valid_block_height if stored.pending else None
         if last_valid is not None:
             try:
-                return await self.solana_client.get_block_height() > last_valid
+                height, slot = await self.solana_client.get_block_height_and_slot()
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"Could not read the block height ({e})")
+            else:
+                return height > last_valid, slot
         held_for = (_utc_now() - stored.entry_time).total_seconds()
-        return held_for > self._PENDING_EXPIRY
+        return held_for > self._PENDING_EXPIRY, None
 
     async def _landed_buy(
         self,
@@ -297,6 +320,7 @@ class PositionManager:
         sent: TradeResult,
         pending: PendingBuy,
         label: str,
+        slot: int | None,
     ) -> TradeResult | None:
         """The amounts and fill price a landed buy's transaction shows.
 
@@ -304,7 +328,11 @@ class PositionManager:
         bot was down) is cleared, one partly sold is held at what is left, and
         an unreadable balance leaves the record pending. Falls back to the
         balance alone when the transaction's amounts cannot be read; the price
-        is then unknown (None).
+        is then unknown (None). The fill price is the transaction's, whatever
+        is left of it.
+
+        Args:
+            slot: The slot the buy landed in; balance reads refuse a node behind it
         """
         quote_mint = normalize_quote_mint(token_info.quote_mint)
         tokens_raw, spent = await self.solana_client.get_buy_transaction_details(
@@ -314,8 +342,19 @@ class PositionManager:
             quote_mint=quote_mint,
         )
         if not tokens_raw:
-            return await self._buy_from_balance(token_info, sent, pending, label)
-        held = await self._held_raw(token_info)
+            return await self._buy_from_balance(token_info, sent, pending, label, slot)
+        spent = spent if spent is not None else pending.spend_raw
+        price = None
+        if spent:
+            try:
+                price = (
+                    spent
+                    / quote_units_per_token(quote_mint)
+                    / (tokens_raw / 10**TOKEN_DECIMALS)
+                )
+            except ValueError:
+                logger.warning(f"Could not price the fill of {label}")
+        held = await self._held_raw(token_info, slot)
         if held is None:
             logger.error(
                 f"Could not confirm the wallet's balance of {label}; its buy "
@@ -331,13 +370,6 @@ class PositionManager:
             return None
         tokens_raw = min(tokens_raw, held)
         amount = tokens_raw / 10**TOKEN_DECIMALS
-        spent = spent if spent is not None else pending.spend_raw
-        price = None
-        if spent:
-            try:
-                price = spent / quote_units_per_token(quote_mint) / amount
-            except ValueError:
-                logger.warning(f"Could not price the fill of {label}")
         logger.info(
             f"The buy of {label} ({sent.tx_signature}) landed: {tokens_raw} raw "
             f"at {price if price is not None else 'an unknown price'}"
@@ -357,15 +389,20 @@ class PositionManager:
         sent: TradeResult,
         pending: PendingBuy,
         label: str,
+        slot: int | None,
     ) -> TradeResult | None:
         """A buy known only by the wallet's balance, never more than it can hold.
+
+        Args:
+            slot: The slot the decision rests on; balance reads refuse a node
+                behind it
 
         Returns:
             The position at the balance held, capped at what the buy can have
             delivered, with no price; None when nothing is held (the record is
             cleared) or the balance cannot be read (it stays pending)
         """
-        held = await self._held_raw(token_info)
+        held = await self._held_raw(token_info, slot)
         if held is None:
             logger.error(
                 f"Could not confirm the wallet's balance of {label}; its buy "
@@ -645,15 +682,21 @@ class PositionManager:
             return False
         return True
 
-    async def _held_raw(self, token_info: TokenInfo) -> int | None:
+    async def _held_raw(
+        self, token_info: TokenInfo, min_context_slot: int | None = None
+    ) -> int | None:
         """Raw amount of the coin in the wallet's account; None when unsure.
 
         A balance above zero is taken at once. Zero clears the position for
         good, so every read must agree: an RPC node lagging behind may not
         show yet the account a buy just made. A read that fails leaves the
         answer None, which keeps the position. Reads are at "confirmed": the
-        client's default, "finalized", runs seconds behind a fresh buy.
+        client's default, "finalized", runs seconds behind a fresh buy. With
+        `min_context_slot`, a node behind that slot fails the read.
         """
+        at_slot = (
+            {} if min_context_slot is None else {"min_context_slot": min_context_slot}
+        )
         reads, nothing_held = 3, 0
         for attempt in range(reads):
             if attempt:
@@ -663,7 +706,7 @@ class PositionManager:
                 if program is None:
                     program = (
                         await self.solana_client.get_account_info(
-                            token_info.mint, commitment="confirmed"
+                            token_info.mint, commitment="confirmed", **at_slot
                         )
                     ).owner
                 account = self.wallet.get_associated_token_address(
@@ -672,7 +715,7 @@ class PositionManager:
                 try:
                     data = (
                         await self.solana_client.get_account_info(
-                            account, commitment="confirmed"
+                            account, commitment="confirmed", **at_slot
                         )
                     ).data
                 except ValueError:
@@ -973,12 +1016,16 @@ class PositionManager:
 
         Its buy price would be an estimate, which in `extreme_fast_mode` can be
         far enough off to fire a stop loss at once; no exit runs until a price
-        has been read. Re-read every `price_check_interval` until one is.
+        has been read. Re-read every `price_check_interval` until one above
+        zero is, warning every `_PRICE_WARN_EVERY` seconds meanwhile; the price
+        is then kept in the store as the position's entry price.
         """
         logger.warning(
             f"The fill price of {token_info.symbol} is unknown; its exit waits for "
             f"a price read and counts profit and loss from it"
         )
+        loop = asyncio.get_running_loop()
+        warned_at = loop.time()
         while True:
             try:
                 price = await self._read_price(token_info)
@@ -986,8 +1033,16 @@ class PositionManager:
                 logger.debug(f"Price read for {token_info.symbol} failed: {e}")
             else:
                 if price > 0:
-                    return price
+                    break
+            if loop.time() - warned_at >= self._PRICE_WARN_EVERY:
+                warned_at = loop.time()
+                logger.warning(f"Still no price for {token_info.symbol}")
             await asyncio.sleep(self.price_check_interval)
+        # Kept, so a restart counts from the same baseline.
+        if self.store is not None:
+            self.store.set_price(token_info.mint, price)
+        logger.info(f"Entry price of {token_info.symbol} taken as {price:.10f}")
+        return price
 
     async def _current_price_or(self, token_info: TokenInfo, fallback: float) -> float:
         """Read the current price, falling back to the last known one.

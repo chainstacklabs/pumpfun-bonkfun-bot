@@ -353,6 +353,14 @@ class PositionStore:
         record["buy"]["amount_raw"] = amount_raw
         self._write()
 
+    def set_price(self, mint: Pubkey, price: float) -> None:
+        """Record the entry price of a position bought at an unknown price."""
+        record = self._records.get(str(mint))
+        if record is None:
+            return
+        record["buy"]["price"] = price
+        self._write()
+
     def remove(self, mint: Pubkey) -> None:
         """Drop a position that has been sold; a mint not in the file is a no-op."""
         if self._records.pop(str(mint), None) is not None:

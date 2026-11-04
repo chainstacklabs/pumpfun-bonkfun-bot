@@ -27,13 +27,17 @@ signed leaves nothing. `TransactionNotSent` is the only send error that is
 `SUBMIT_FAILED` buy removes it; any other failure keeps it and starts
 `open_pending`, and no `UNCONFIRMED` buy is cleaned up as a failed buy, monitored
 or not. `open_pending` (also what `resume` runs for a pending record) resolves by
-signature (`getSignatureStatuses`, whole history): landed → the transaction's
-amounts and fill price, capped by the balance held (none: cleared, unreadable:
-kept pending), logged to trades.log; reverted → cleared; unknown →
-looked at again until the blockhash expired, then the balance decides, capped at
-`max_amount_raw`, price None. A position with price None reads a price before
-any exit runs. Balance reads on resume are at `confirmed`; the client's default
-is `finalized`, seconds behind. Only a sale of all of it removes a position
+signature (`getSignatureStatuses`; only the first lookup searches the whole
+history; SUCCESS or REVERTED only at `confirmed` or above): landed → the
+transaction's fill price and amounts, the amount capped by the balance held
+(none: cleared, unreadable: kept pending), logged to trades.log; reverted →
+cleared; unknown → looked at again until the blockhash expired, then the balance
+decides, capped at `max_amount_raw`, price None. Those balance reads pass
+`min_context_slot` (the slot the buy landed in, or the one its expiry was seen
+at): a node behind it errors, which keeps the record, instead of answering "not
+found". A position with price None reads a price above zero before any exit
+runs, and keeps it in the store (`set_price`). Balance reads on resume are at
+`confirmed`; the client's default is `finalized`, seconds behind. Only a sale of all of it removes a position
 (a sale the curve could pay for only in part leaves the rest in the file, still
 monitored, and no cleanup runs): a position stopped at shutdown, or whose exit
 gave up or could not be resolved, still holds its coin.
