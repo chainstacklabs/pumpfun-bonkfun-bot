@@ -17,6 +17,12 @@ the shutdown budget with them:
      the full settle time before reading it, then closes it.
   D. An account that fails to close, or one still holding tokens without force
      burn, does not stop the others from closing.
+  E. Shutdown cleanup leaves alone a coin whose position is still in the
+     positions file (stopped at shutdown, kept for the next start), even with
+     `force_close_with_burn`, and closes the coins already sold.
+  F. A close that fails before it reaches the RPC (deriving the account) does
+     not end the batch early: the others close, and none is still running when
+     cleanup returns and the client is closed.
 
 Usage:
     uv run tests/regression/verify_cleanup_closes_every_account.py
@@ -24,8 +30,10 @@ Usage:
 
 import asyncio
 import sys
+import tempfile
 import time
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -40,6 +48,10 @@ from cleanup.modes import (  # noqa: E402
     handle_cleanup_post_session,
 )
 from core.pubkeys import SystemAddresses  # noqa: E402
+from interfaces.core import Platform, TokenInfo  # noqa: E402
+from trading.base import TradeResult  # noqa: E402
+from trading.position_manager import PositionManager  # noqa: E402
+from trading.position_store import PositionStore  # noqa: E402
 from trading.universal_trader import UniversalTrader  # noqa: E402
 
 SPEEDUP = 100
@@ -75,30 +87,45 @@ class _Client:
         self.balances = balances
         self.failing = failing
         self.closed: list[Pubkey] = []
+        # Every account any transaction named, burn or close.
+        self.touched: set[Pubkey] = set()
+        self.in_flight = 0
+
+    async def _call(self, delay: float) -> None:
+        """One RPC round trip, counted while it is in flight."""
+        self.in_flight += 1
+        try:
+            await _real_sleep(delay)
+        finally:
+            self.in_flight -= 1
 
     async def get_account_info(self, address: Pubkey) -> SimpleNamespace:
-        await _real_sleep(RPC_DELAY)
+        await self._call(RPC_DELAY)
         self.events.append(("read", address))
         return SimpleNamespace(data=bytes(165), owner=SystemAddresses.TOKEN_PROGRAM)
 
     async def get_token_account_balance(self, address: Pubkey) -> int:
-        await _real_sleep(RPC_DELAY)
+        await self._call(RPC_DELAY)
         return self.balances.get(address, 0)
 
     async def build_and_send_transaction(
         self, instructions: list, *_a: object, **_k: object
     ) -> str:
-        await _real_sleep(RPC_DELAY)
+        await self._call(RPC_DELAY)
         account = instructions[-1].accounts[0].pubkey
         if account in self.failing:
             raise _SendError
+        self.touched.update(m.pubkey for ix in instructions for m in ix.accounts)
         if bytes(instructions[-1].data) == CLOSE_ACCOUNT:
             self.closed.append(account)
         return "STUB_SIGNATURE"
 
     async def confirm_transaction(self, *_a: object, **_k: object) -> bool:
-        await _real_sleep(RPC_DELAY * 2)
+        await self._call(RPC_DELAY * 2)
         return True
+
+    async def close(self) -> None:
+        return None
 
 
 def _wallet() -> SimpleNamespace:
@@ -243,6 +270,101 @@ def check_d_failures_stay_local() -> bool:
     return ok
 
 
+def _stored(mint: Pubkey, path: Path) -> PositionManager:
+    """A position manager whose positions file holds one open position, `mint`."""
+    manager = object.__new__(PositionManager)
+    manager.store = PositionStore(path)
+    manager.store.add(
+        TokenInfo(
+            name="kept", symbol="KEPT", uri="", mint=mint, platform=Platform.PUMP_FUN
+        ),
+        TradeResult(success=True, amount=1.0, amount_raw=1_000_000, price=1e-8),
+        datetime.now(UTC).replace(tzinfo=None),
+    )
+    return manager
+
+
+def check_e_kept_positions_left_alone() -> bool:
+    """E: a coin kept for the next start is neither burned nor closed."""
+    mints = _mints(4)
+    kept = mints[2]
+    events: list = []
+    # Every account still holds tokens: force burn would burn any it reached.
+    client = _Client(events, dict.fromkeys(mints, 1000), set())
+    trader = object.__new__(UniversalTrader)
+    trader.settings = SimpleNamespace(
+        cleanup_mode="post_session",
+        cleanup_with_priority_fee=False,
+        cleanup_force_close_with_burn=True,
+    )
+    trader.solana_client = client
+    trader.wallet = _wallet()
+    trader.priority_fee_manager = None
+    trader.traded_mints = set(mints)
+    trader.traded_token_programs = {
+        str(m): SystemAddresses.TOKEN_PROGRAM for m in mints
+    }
+    trader.intake = SimpleNamespace(forget_unprocessed=lambda: None)
+    with tempfile.TemporaryDirectory() as tmp:
+        trader.positions = _stored(kept, Path(tmp) / "positions.json")
+        _run(trader._cleanup_resources, events)  # noqa: SLF001
+    expected = sorted(str(m) for m in mints if m != kept)
+    ok = kept not in client.touched and sorted(map(str, client.closed)) == expected
+    if not ok:
+        print(
+            f"    kept coin touched: {kept in client.touched}; closed "
+            f"{len(client.closed)} of the {len(expected)} sold"
+        )
+    return ok
+
+
+def check_f_failed_derivation_stays_local() -> bool:
+    """F: one account failing before any RPC call leaves no close behind."""
+    mints = _mints(8)
+    broken = mints[3]
+    wallet = _wallet()
+
+    def derive(mint: Pubkey, _program: Pubkey) -> Pubkey:
+        if mint == broken:
+            raise ValueError("derivation failed")  # noqa: TRY003
+        return mint
+
+    wallet.get_associated_token_address = derive
+    events: list = []
+    client = _Client(events, {}, set())
+    outcome: dict = {}
+
+    async def go() -> None:
+        try:
+            await handle_cleanup_post_session(
+                client,
+                wallet,
+                mints,
+                [SystemAddresses.TOKEN_PROGRAM] * len(mints),
+                None,
+                "post_session",
+                cleanup_with_prior_fee=False,
+                force_burn=False,
+            )
+        except Exception as error:  # noqa: BLE001 - what the check reports
+            outcome["raised"] = error
+        outcome["in_flight"] = client.in_flight
+
+    _run(go, events)
+    expected = sorted(str(m) for m in mints if m != broken)
+    ok = (
+        "raised" not in outcome
+        and outcome["in_flight"] == 0
+        and sorted(map(str, client.closed)) == expected
+    )
+    if not ok:
+        print(
+            f"    raised {outcome.get('raised')!r}, {outcome['in_flight']} close(s) "
+            f"still in flight on return, closed {len(client.closed)}/{len(expected)}"
+        )
+    return ok
+
+
 def main() -> int:
     """Run every check and report."""
     checks = [
@@ -253,6 +375,14 @@ def main() -> int:
         ),
         ("C: a single account still settles first", check_c_single_account),
         ("D: one failing account does not stop the rest", check_d_failures_stay_local),
+        (
+            "E: a position kept for the next start is not cleaned up",
+            check_e_kept_positions_left_alone,
+        ),
+        (
+            "F: a close failing before any RPC call leaves none running",
+            check_f_failed_derivation_stays_local,
+        ),
     ]
     failed = 0
     for label, check in checks:

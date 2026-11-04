@@ -97,7 +97,7 @@ The YAML files are commented inline. The sections that matter most:
 - **`priority_fees`** — fixed or dynamic. Dynamic costs an extra RPC call, which slows the buy.
 - **`filters`** — `listener_type`, `max_token_age`, name/creator matching, `marry_mode` (buy only, never sell), `yolo_mode` (trade continuously).
 - **`retries`** — attempts and the wait windows around creation, buy, and the next token.
-- **`cleanup`** — when to close leftover token accounts: `disabled`, `on_fail`, `after_sell`, `post_session`.
+- **`cleanup`** — when to close leftover token accounts: `disabled`, `on_fail`, `after_sell`, `post_session`. `force_close_with_burn` burns what is left in an account before closing it. `post_session` leaves alone the coins of positions kept for the next start (see [Positions survive a restart](#positions-survive-a-restart)); their accounts are cleaned up at the end of the session that sells them.
 - **`node.max_rps`** — cap requests per second to match your provider's plan.
 
 ### Extreme fast mode
@@ -163,7 +163,8 @@ the next one is taken when a position closes. A coin detected while every slot i
 taken waits in the queue, so `max_token_age` decides whether it is still bought.
 Positions under `exit_strategy: manual` or `marry_mode` are never sold, so they
 take no slot. On shutdown the bot stops monitoring the open positions before
-cleanup runs; their tokens stay in the wallet, and the next start resumes them.
+cleanup runs; their tokens stay in the wallet, `post_session` cleanup does not
+burn or close their accounts, and the next start resumes them.
 
 ### Positions survive a restart
 
@@ -179,9 +180,8 @@ is below the limit again. A resumed `time_based` position whose wait has run out
 sells at once, priced at the market rather than at its old buy price.
 
 The wallet decides what is left to sell. A position whose coin the wallet no
-longer holds (sold by hand, or burned by `post_session` cleanup with
-`force_close_with_burn`) is cleared, not sold again; one holding less than was
-bought sells what is held. The bot clears a position only when three balance
+longer holds (sold or burned by hand) is cleared, not sold again; one holding
+less than was bought sells what is held. The bot clears a position only when three balance
 reads, a second apart, all find nothing, since an RPC node lagging behind may
 not show a fresh buy yet. A position whose balance cannot be read stays in the
 file and is tried again on the next start, and so does one whose exit gave up.

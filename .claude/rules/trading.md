@@ -9,7 +9,8 @@ Each position's exit runs as its own task (`PositionManager.open`), up to
 a slot is free. Shutdown stops every position task and waits for each to end
 **before** cleanup: post-session cleanup burns and closes token accounts, so it
 must never race a sell still in flight. `verify_concurrent_positions.py` guards
-the order.
+the order. It skips every coin still in the positions file: those are kept for
+the next start (`verify_cleanup_closes_every_account.py`).
 
 Each monitored position is in `positions/<bot name>.json` (`PositionStore`) from
 its buy until its **sale**, and only a sale removes it: a position stopped at

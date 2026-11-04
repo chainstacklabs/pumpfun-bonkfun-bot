@@ -391,13 +391,27 @@ class UniversalTrader:
             logger.error("Cleanup failed", exc_info=task.exception())
 
     async def _cleanup_resources(self) -> None:
-        """Perform cleanup operations before shutting down."""
+        """Perform cleanup operations before shutting down.
+
+        A coin whose position is still in the positions file is left alone:
+        it is kept for the next start to resume, and `force_close_with_burn`
+        would burn it. Its account is cleaned up after the session that sells it.
+        """
         settings = self.settings
-        if self.traded_mints:
+        kept = self.positions.stored_mints()
+        mints_list = [mint for mint in self.traded_mints if str(mint) not in kept]
+        if (
+            len(mints_list) < len(self.traded_mints)
+            and settings.cleanup_mode == "post_session"
+        ):
+            logger.info(
+                f"Leaving {len(self.traded_mints) - len(mints_list)} token "
+                f"account(s) open: their positions are kept for the next start"
+            )
+        if mints_list:
             try:
-                logger.info(f"Cleaning up {len(self.traded_mints)} traded token(s)...")
+                logger.info(f"Cleaning up {len(mints_list)} traded token(s)...")
                 # Build parallel lists of mints and token_program_ids
-                mints_list = list(self.traded_mints)
                 token_program_ids = [
                     self.traded_token_programs.get(str(mint)) for mint in mints_list
                 ]

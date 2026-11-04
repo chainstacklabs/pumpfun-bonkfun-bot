@@ -106,9 +106,17 @@ class AccountCleanupManager:
             async with slots:
                 await self._close_ata(mint, token_program_id)
 
-        await asyncio.gather(
-            *(close(m, p) for m, p in zip(mints, token_program_ids, strict=True))
+        # Gathered with the exceptions, so an error in one close can't return
+        # early with the others still running into the client closing.
+        results = await asyncio.gather(
+            *(close(m, p) for m, p in zip(mints, token_program_ids, strict=True)),
+            return_exceptions=True,
         )
+        for mint, result in zip(mints, results, strict=True):
+            if isinstance(result, Exception):
+                logger.warning(
+                    f"Cleanup failed for the token account of {mint}: {result!s}"
+                )
 
     async def _settle(self) -> None:
         """Let the RPC node catch up with a sell that just landed.
@@ -127,9 +135,8 @@ class AccountCleanupManager:
         if token_program_id is None:
             token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
 
-        ata = self.wallet.get_associated_token_address(mint, token_program_id)
-
         try:
+            ata = self.wallet.get_associated_token_address(mint, token_program_id)
             priority_fee = (
                 await self.priority_fee_manager.calculate_priority_fee([ata])
                 if self.use_priority_fee
@@ -211,4 +218,4 @@ class AccountCleanupManager:
                     logger.error(f"Failed to close ATA {ata}: {tx_sig}")
 
         except Exception as e:
-            logger.warning(f"Cleanup failed for ATA {ata}: {e!s}")
+            logger.warning(f"Cleanup failed for the token account of {mint}: {e!s}")
