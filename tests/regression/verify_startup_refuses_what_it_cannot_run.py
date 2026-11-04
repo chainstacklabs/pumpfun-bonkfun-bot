@@ -126,6 +126,7 @@ class _Node(BaseHTTPRequestHandler):
             "401": (401, "unauthorized"),
             "403": (403, json.dumps({"jsonrpc": "2.0", "error": {"code": -1}})),
             "500": (500, "oops"),
+            "404gateway": (404, json.dumps({"error": "Not Found"})),
             "html": (200, "<html>not a node</html>"),
             "redirect": (307, ""),
         }.get(self.behaviour, (200, "{}"))
@@ -388,6 +389,7 @@ def check_e_probe_names_the_cause(_tmp: str) -> bool:
         ("401", "rejected the request (HTTP 401)", 1),
         ("403", "rejected the request (HTTP 403)", 1),
         ("500", "is unreachable (HTTP 500)", 2),
+        ("404gateway", "is unreachable (HTTP 404)", 2),
         ("html", "is unreachable (the answer is not JSON-RPC)", 2),
         ("redirect", "is unreachable (too many redirects)", None),
         ("garbage", "is unreachable (the answer is not HTTP)", 2),

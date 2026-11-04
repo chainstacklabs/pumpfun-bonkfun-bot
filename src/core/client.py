@@ -217,14 +217,16 @@ def _unreachable_cause(error: Exception, timeout: float) -> str:
 
 
 def _is_json_rpc(body: bytes) -> bool:
-    """Whether a reply body is a JSON-RPC envelope (result or error)."""
+    """Whether a reply body is a JSON-RPC envelope (result or error).
+
+    A Solana node always sends the `jsonrpc` key; a gateway's own
+    `{"error": ...}` page does not, so it does not count as an answer.
+    """
     try:
         answer = json.loads(body)
     except ValueError:
         return False
-    return isinstance(answer, dict) and bool(
-        {"jsonrpc", "result", "error"} & answer.keys()
-    )
+    return isinstance(answer, dict) and "jsonrpc" in answer
 
 
 async def rpc_endpoint_problem(
