@@ -123,6 +123,29 @@ def _refresh_quote_mint(token_info: TokenInfo, pool_state: dict) -> Pubkey:
     return quote_mint
 
 
+def _refresh_creator(
+    token_info: TokenInfo, pool_state: dict, address_provider: AddressProvider
+) -> None:
+    """Take the coin's creator, and pump.fun's creator vault, from the curve read.
+
+    A fee-sharing setup can rewrite `BondingCurve.creator` after launch, in its
+    own transaction, so the listener's creator goes stale and a `creator_vault`
+    derived from it reverts with ConstraintSeeds (2006). A read without a
+    creator leaves token_info as it is.
+    """
+    fresh_creator = pool_state.get("creator")
+    if not fresh_creator:
+        return
+    creator = (
+        Pubkey.from_string(fresh_creator)
+        if isinstance(fresh_creator, str)
+        else fresh_creator
+    )
+    token_info.creator = creator
+    if hasattr(address_provider, "derive_creator_vault"):
+        token_info.creator_vault = address_provider.derive_creator_vault(creator)
+
+
 class PlatformAwareBuyer(Trader):
     """Platform-aware token buyer that works with any supported platform."""
 
@@ -245,6 +268,7 @@ class PlatformAwareBuyer(Trader):
                     "is_cashback_coin", token_info.is_cashback_coin
                 )
                 quote_mint = _refresh_quote_mint(token_info, pool_state)
+                _refresh_creator(token_info, pool_state, address_provider)
 
             # A quote asset with no configured amount cannot be traded: spending
             # `amount` of it would be a different order of magnitude.
@@ -567,18 +591,7 @@ class PlatformAwareBuyer(Trader):
         token_info.transfer_fee_bps = pool_state.get(
             "transfer_fee_bps", token_info.transfer_fee_bps
         )
-        fresh_creator = pool_state.get("creator")
-        if fresh_creator:
-            new_creator = (
-                Pubkey.from_string(fresh_creator)
-                if isinstance(fresh_creator, str)
-                else fresh_creator
-            )
-            token_info.creator = new_creator
-            if hasattr(address_provider, "derive_creator_vault"):
-                token_info.creator_vault = address_provider.derive_creator_vault(
-                    new_creator
-                )
+        _refresh_creator(token_info, pool_state, address_provider)
         self._apply_token_program(token_info, fresh_token_program, address_provider)
         return None
 
@@ -771,24 +784,7 @@ class PlatformAwareSeller(Trader):
                     pool_state.get("transfer_fee_bps", 0),
                 )
                 graduated = pool_state.get("graduated", False)
-                # The program may delegate BC.creator to a PFEE-owned PDA after
-                # the initial creator buy, so the create-time vault on
-                # token_info goes stale before the sell lands and the sell
-                # reverts with ConstraintSeeds (0x7d6).
-                fresh_creator = pool_state.get("creator")
-                if fresh_creator:
-                    from solders.pubkey import Pubkey as _Pubkey
-
-                    new_creator = (
-                        _Pubkey.from_string(fresh_creator)
-                        if isinstance(fresh_creator, str)
-                        else fresh_creator
-                    )
-                    token_info.creator = new_creator
-                    if hasattr(address_provider, "derive_creator_vault"):
-                        token_info.creator_vault = (
-                            address_provider.derive_creator_vault(new_creator)
-                        )
+                _refresh_creator(token_info, pool_state, address_provider)
             except Exception as e:  # noqa: BLE001
                 logger.warning(
                     f"Could not refresh curve flags before sell ({e}); "

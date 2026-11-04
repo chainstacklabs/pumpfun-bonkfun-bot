@@ -243,6 +243,12 @@ can still log a `CreatePoolEvent`.
   entirely. Event
   parsers populate `quote_mint` from `CreateEvent`, which carries `quote_mint` and
   `virtual_quote_reserves` as trailing fields.
+- **`BondingCurve.creator` can change after launch.** Setting up creator-fee
+  sharing (`MigrateBondingCurveCreator`, often in its own transaction a slot after
+  the create) moves it to the coin's fee-sharing config, so `CreateEvent.creator`
+  goes stale and a `creator_vault` derived from it reverts `ConstraintSeeds`
+  (2006). Every path that reads the curve before a buy or sell takes the creator
+  from that read; only the zero-RPC `extreme_fast_mode` buy trades on the event's.
 
 ## Holder reward coins
 
