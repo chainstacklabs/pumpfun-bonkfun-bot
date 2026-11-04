@@ -7,6 +7,7 @@ its sell, and `resume` picks those up again after a restart.
 """
 
 import asyncio
+import dataclasses
 import struct
 from datetime import UTC, datetime
 from enum import Enum
@@ -61,6 +62,7 @@ class ExitSellVerdict(Enum):
     """
 
     SOLD = "sold"  # confirmed on this attempt, the ordinary happy path
+    PARTIAL = "partial"  # part of it sold; the rest is still held and monitored
     LATE_SUCCESS = "late_success"  # it landed after all — stop, do not resell
     RETRY = "retry"  # provably nothing happened on chain
     STOP = "stop"  # still unknown — a blind resell is the worse risk
@@ -453,54 +455,33 @@ class PositionManager:
         if entry_time is not None:
             token_price = await self._current_price_or(token_info, token_price)
 
-        for attempt in range(1, self.max_exit_sell_attempts + 1):
+        # Set once part of it sold: the curve paid out all it had, so later
+        # attempts on the rest wait `price_check_interval` for it to refill.
+        curve_short = False
+        attempt = 0
+        while attempt < self.max_exit_sell_attempts:
+            attempt += 1
             sell_result: TradeResult = await self.seller.execute(
                 token_info,
                 token_amount=buy_result.amount,
                 token_price=token_price,
                 token_amount_raw=buy_result.amount_raw,
             )
-
-            if sell_result.success:
-                logger.info(f"Successfully sold {token_info.symbol}")
-                self._forget(token_info)
-                trade_log.log_trade(
-                    "sell",
-                    token_info,
-                    sell_result.price,
-                    sell_result.amount,
-                    sell_result.tx_signature,
-                )
-                # Close ATA if enabled
-                await self._cleanup_after_exit(token_info)
-                return
-
-            logger.error(
-                f"Failed to sell {token_info.symbol} (attempt "
-                f"{attempt}/{self.max_exit_sell_attempts}): "
-                f"{sell_result.error_message}"
+            verdict, left = await self._settle_time_based_sell(
+                token_info, sell_result, buy_result, attempt
             )
-
-            verdict = await self._classify_failed_exit_sell(token_info, sell_result)
-            if verdict is ExitSellVerdict.LATE_SUCCESS:
-                # The sell landed; only its confirmation was late. Run the same
-                # cleanup a first-try success would, minus the trade log: the
-                # amounts were never read back.
-                logger.info(f"Sell of {token_info.symbol} confirmed late")
-                self._forget(token_info)
-                await self._cleanup_after_exit(token_info)
+            if verdict in (ExitSellVerdict.SOLD, ExitSellVerdict.STOP):
                 return
-            if verdict is ExitSellVerdict.STOP:
-                logger.error(
-                    f"Stopping exit attempts for {token_info.symbol} after "
-                    f"{attempt} attempt(s) - the last sell could not be "
-                    f"resolved. Position stays open and is no longer monitored."
+            if verdict is ExitSellVerdict.PARTIAL:
+                # What is left gets a fresh attempt budget.
+                buy_result = dataclasses.replace(
+                    buy_result, amount=left / 10**TOKEN_DECIMALS, amount_raw=left
                 )
-                return
-
-            if attempt >= self.max_exit_sell_attempts:
+                attempt, curve_short = 0, True
+            elif attempt >= self.max_exit_sell_attempts:
                 break
-
+            if curve_short:
+                await asyncio.sleep(self.price_check_interval)
             # The seller turns token_price into the slippage floor, and a revert
             # usually means that floor no longer matches the market, so re-read
             # the price rather than repeating the same unpayable ask.
@@ -511,6 +492,60 @@ class PositionManager:
             f"{self.max_exit_sell_attempts} attempts. Position stays open "
             f"and is no longer monitored - tokens are still held."
         )
+
+    async def _settle_time_based_sell(
+        self,
+        token_info: TokenInfo,
+        sell_result: TradeResult,
+        held: TradeResult,
+        attempt: int,
+    ) -> tuple[ExitSellVerdict, int]:
+        """Act on one time-based exit sell: log it, settle it, clean up once sold.
+
+        Args:
+            held: What the sell was asked to sell, as `amount`/`amount_raw`
+
+        Returns:
+            The verdict, SOLD once all of it is sold (late or not), and the raw
+            tokens left when the verdict is PARTIAL (0 otherwise)
+        """
+        if sell_result.success:
+            trade_log.log_trade(
+                "sell",
+                token_info,
+                sell_result.price,
+                sell_result.amount,
+                sell_result.tx_signature,
+            )
+            verdict = ExitSellVerdict.SOLD
+        else:
+            logger.error(
+                f"Failed to sell {token_info.symbol} (attempt "
+                f"{attempt}/{self.max_exit_sell_attempts}): "
+                f"{sell_result.error_message}"
+            )
+            verdict = await self._classify_failed_exit_sell(token_info, sell_result)
+            if verdict is ExitSellVerdict.STOP:
+                logger.error(
+                    f"Stopping exit attempts for {token_info.symbol} after "
+                    f"{attempt} attempt(s) - the last sell could not be "
+                    f"resolved. Position stays open and is no longer monitored."
+                )
+            if verdict is not ExitSellVerdict.LATE_SUCCESS:
+                return verdict, 0
+            # The sell landed; only its confirmation was late. Settle it like a
+            # first-try success, minus the trade log: the amounts were never
+            # read back.
+            logger.info(f"Sell of {token_info.symbol} confirmed late")
+
+        left = self._settle_sale(
+            token_info, sell_result.amount_raw, held.amount, held.amount_raw
+        )
+        if left:
+            return ExitSellVerdict.PARTIAL, left
+        logger.info(f"Successfully sold {token_info.symbol}")
+        await self._cleanup_after_exit(token_info)
+        return ExitSellVerdict.SOLD, 0
 
     async def _classify_failed_exit_sell(
         self, token_info: TokenInfo, sell_result: TradeResult
@@ -685,14 +720,14 @@ class PositionManager:
                             f"{exit_price:.8f} {quote_label}"
                         )
 
-                    exit_sell_attempts += 1
-                    if await self._run_exit_attempt(
+                    exit_sell_attempts = await self._run_exit_attempt(
                         token_info,
                         position,
                         exit_reason,
                         exit_price,
-                        exit_sell_attempts,
-                    ):
+                        exit_sell_attempts + 1,
+                    )
+                    if exit_sell_attempts is None:
                         break
                     # Keep monitoring: the next iteration re-reads the price and
                     # retries the sell with a floor that matches the market.
@@ -721,14 +756,14 @@ class PositionManager:
                         f"the price is unreadable - exiting against the last "
                         f"known price {last_known_price:.8f} {quote_label}"
                     )
-                    exit_sell_attempts += 1
-                    if await self._run_exit_attempt(
+                    exit_sell_attempts = await self._run_exit_attempt(
                         token_info,
                         position,
                         ExitReason.MAX_HOLD_TIME,
                         last_known_price,
-                        exit_sell_attempts,
-                    ):
+                        exit_sell_attempts + 1,
+                    )
+                    if exit_sell_attempts is None:
                         break
 
                 await asyncio.sleep(
@@ -742,7 +777,7 @@ class PositionManager:
         exit_reason: ExitReason,
         price: float,
         attempt: int,
-    ) -> bool:
+    ) -> int | None:
         """Make one bounded attempt to close the position.
 
         Args:
@@ -752,15 +787,18 @@ class PositionManager:
             attempt: 1-based attempt counter, for the bound and the logs
 
         Returns:
-            True when monitoring should stop, whether because the position is
-            closed, because the outcome could not be resolved, or because the
-            attempt budget is spent.
+            The attempts spent so far, 0 after a partial sale (what is left gets
+            a fresh budget), or None when monitoring should stop: the position
+            is closed, the outcome could not be resolved, or the attempt budget
+            is spent.
         """
         verdict = await self._attempt_position_exit(
             token_info, position, exit_reason, price
         )
+        if verdict is ExitSellVerdict.PARTIAL:
+            return 0
         if verdict is not ExitSellVerdict.RETRY:
-            return True
+            return None
 
         if attempt >= self.max_exit_sell_attempts:
             logger.error(
@@ -768,8 +806,8 @@ class PositionManager:
                 f"{attempt} attempts. Position stays open "
                 f"and is no longer monitored - tokens are still held."
             )
-            return True
-        return False
+            return None
+        return attempt
 
     async def _attempt_position_exit(
         self,
@@ -781,14 +819,15 @@ class PositionManager:
         """Sell the position once and report what came of it.
 
         Args:
-            position: The open position, closed in place on success
+            position: The open position, closed in place once all of it sold,
+                reduced to what is left when only part of it did
             exit_reason: Why the exit fired
             price: Price the sell is floored against. The seller turns it into
                 `min_quote_output`, so it must be a price the pool can pay — an
                 exit fires precisely because the price left the entry price.
 
         Returns:
-            SOLD, LATE_SUCCESS, RETRY, or STOP
+            SOLD, PARTIAL, LATE_SUCCESS, RETRY, or STOP
         """
         # Log PnL before exit
         pnl = position.get_pnl(price)
@@ -805,15 +844,8 @@ class PositionManager:
             token_amount_raw=position.quantity_raw,
         )
 
+        quote_label = quote_symbol(normalize_quote_mint(token_info.quote_mint))
         if sell_result.success:
-            # Close position with actual exit price
-            position.close_position(sell_result.price, exit_reason)
-            self._forget(token_info)
-
-            logger.info(
-                f"Successfully exited position: {exit_reason.value} "
-                f"({token_info.symbol})"
-            )
             trade_log.log_trade(
                 "sell",
                 token_info,
@@ -821,12 +853,26 @@ class PositionManager:
                 sell_result.amount,
                 sell_result.tx_signature,
             )
+            if self._settle_position(token_info, position, sell_result):
+                pnl = position.get_pnl(sell_result.price, quantity=sell_result.amount)
+                logger.info(
+                    f"PnL on the part sold: {pnl['price_change_pct']:.2f}% "
+                    f"({pnl['unrealized_pnl_quote']:.6f} {quote_label})"
+                )
+                return ExitSellVerdict.PARTIAL
+            sold = sell_result.amount
 
-            final_pnl = position.get_pnl()
+            # Close position with actual exit price
+            position.close_position(sell_result.price, exit_reason)
+            logger.info(
+                f"Successfully exited position: {exit_reason.value} "
+                f"({token_info.symbol})"
+            )
+            # Only what this sell sold: an earlier partial sale logged its own.
+            final_pnl = position.get_pnl(quantity=sold)
             logger.info(
                 f"Final PnL: {final_pnl['price_change_pct']:.2f}% "
-                f"({final_pnl['unrealized_pnl_quote']:.6f} "
-                f"{quote_symbol(normalize_quote_mint(token_info.quote_mint))})"
+                f"({final_pnl['unrealized_pnl_quote']:.6f} {quote_label})"
             )
             await self._cleanup_after_exit(token_info)
             return ExitSellVerdict.SOLD
@@ -837,8 +883,9 @@ class PositionManager:
         if verdict is ExitSellVerdict.LATE_SUCCESS:
             # The sell landed, only its confirmation was late. Close against the
             # price it was floored at; the real fill was never read back.
+            if self._settle_position(token_info, position, sell_result):
+                return ExitSellVerdict.PARTIAL
             position.close_position(price, exit_reason)
-            self._forget(token_info)
             logger.info(f"Position for {token_info.symbol} closed by a late fill")
             await self._cleanup_after_exit(token_info)
         elif verdict is ExitSellVerdict.STOP:
@@ -848,6 +895,62 @@ class PositionManager:
                 f"longer monitored."
             )
         return verdict
+
+    def _settle_position(
+        self, token_info: TokenInfo, position: Position, sell_result: TradeResult
+    ) -> bool:
+        """Settle a landed exit sell against `position`.
+
+        Returns:
+            Whether part of it is left: `position` now holds only that part
+        """
+        left = self._settle_sale(
+            token_info, sell_result.amount_raw, position.quantity, position.quantity_raw
+        )
+        if left:
+            position.quantity, position.quantity_raw = left / 10**TOKEN_DECIMALS, left
+        return bool(left)
+
+    def _settle_sale(
+        self,
+        token_info: TokenInfo,
+        sold_raw: int | None,
+        quantity: float,
+        quantity_raw: int | None,
+    ) -> int:
+        """Take a landed exit sell off the position in the store.
+
+        A sell the curve could pay for only in part leaves the rest held: the
+        store keeps the position with what is left, and no cleanup may run
+        until that is sold too.
+
+        Args:
+            sold_raw: Raw tokens the sell sold; None when the seller did not
+                say, taken as all of it
+            quantity: Whole tokens the sell was asked to sell
+            quantity_raw: The same in raw units, None when only `quantity` is
+                known (the seller then sells `int(quantity * 10**6)`)
+
+        Returns:
+            Raw tokens left unsold; 0 once the position is all sold
+        """
+        asked = (
+            quantity_raw
+            if quantity_raw is not None
+            else int(quantity * 10**TOKEN_DECIMALS)
+        )
+        if sold_raw is None or sold_raw >= asked:
+            self._forget(token_info)
+            return 0
+        left = asked - sold_raw
+        logger.warning(
+            f"Sold {sold_raw} of {asked} raw {token_info.symbol}: the curve could "
+            f"not pay for the rest. {left} raw stay held; the position stays open "
+            f"and sells them on a later attempt"
+        )
+        if self.store is not None:
+            self.store.reduce(token_info.mint, left / 10**TOKEN_DECIMALS, left)
+        return left
 
     def _forget(self, token_info: TokenInfo) -> None:
         """Take a sold position out of the store.

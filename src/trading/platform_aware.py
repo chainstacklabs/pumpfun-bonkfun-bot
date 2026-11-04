@@ -168,7 +168,7 @@ def _fit_sell_to_curve(
 
     A sell whose payout is more than the curve's `real_quote_reserves` reverts
     (6024 Overflow) however often it is resent, so sell the largest part that
-    fits and leave the rest in the wallet, like any unsold remainder.
+    fits. The rest stays in the wallet; the position keeps it open.
 
     Args:
         pool_state: The pump.fun curve read the sell is built from; None when
@@ -191,17 +191,45 @@ def _fit_sell_to_curve(
     sellable = max_sell_within_real_reserves(pool_state, amount)
     if sellable == amount:
         return amount, amount_decimal, price
+    if sellable == 0:
+        # The seller reports that the curve can pay nothing now.
+        return 0, 0.0, price
     logger.warning(
         f"The curve holds {pool_state['real_quote_reserves']} "
         f"raw quote units, less than selling all {amount} raw tokens would pay; "
         f"selling {sellable} raw tokens, the most it can pay for. The other "
-        f"{amount - sellable} stay in the wallet."
+        f"{amount - sellable} stay in the wallet, still held by the position."
     )
-    if sellable == 0:
-        return 0, 0.0, price
     sellable_decimal = sellable / 10**TOKEN_DECIMALS
     payout_price = sell_quote_out(pool_state, sellable) / quote_unit / sellable_decimal
     return sellable, sellable_decimal, min(price, payout_price)
+
+
+def _nothing_to_sell(token_info: TokenInfo, *, curve_short: bool) -> TradeResult:
+    """The result of a sell that sent nothing.
+
+    Args:
+        curve_short: The position holds tokens, but the curve's real reserves
+            can't pay anything for them now. Reported as SUBMIT_FAILED, so the
+            exit retries it as one more bounded attempt: the curve may refill
+            or graduate.
+    """
+    if not curve_short:
+        logger.info("No tokens to sell.")
+        return TradeResult(
+            success=False,
+            platform=token_info.platform,
+            error_message="No tokens to sell",
+        )
+    return TradeResult(
+        success=False,
+        platform=token_info.platform,
+        error_message=(
+            f"The {token_info.symbol} curve's real reserves can't pay anything "
+            f"for it now; nothing sent"
+        ),
+        failure_reason=TradeFailureReason.SUBMIT_FAILED,
+    )
 
 
 class PlatformAwareBuyer(Trader):
@@ -893,6 +921,7 @@ class PlatformAwareSeller(Trader):
                 f"Reference price per token: {token_price_sol:.8f} {quote_label}"
             )
 
+            requested = token_balance
             token_balance, token_balance_decimal, token_price_sol = _fit_sell_to_curve(
                 pool_state
                 if venue is curve and token_info.platform is Platform.PUMP_FUN
@@ -903,12 +932,7 @@ class PlatformAwareSeller(Trader):
                 quote_unit,
             )
             if token_balance == 0:
-                logger.info("No tokens to sell.")
-                return TradeResult(
-                    success=False,
-                    platform=token_info.platform,
-                    error_message="No tokens to sell",
-                )
+                return _nothing_to_sell(token_info, curve_short=requested > 0)
 
             # Calculate expected quote output with slippage protection, in the
             # quote mint's raw units.
@@ -972,16 +996,19 @@ class PlatformAwareSeller(Trader):
                     platform=token_info.platform,
                     tx_signature=tx_signature,
                     amount=token_balance_decimal,
+                    amount_raw=token_balance,
                     price=token_price_sol,
                 )
 
             # The signature belongs on the failure too. A caller weighing
             # another sell has to be able to re-check this one, and digging it
-            # back out of error_message as text is not that.
+            # back out of error_message as text is not that. So does the amount
+            # sent: one that lands late may have been cut to fit the curve.
             return TradeResult(
                 success=False,
                 platform=token_info.platform,
                 tx_signature=str(tx_signature),
+                amount_raw=token_balance,
                 error_message=(
                     f"Sell reverted on chain: {tx_signature}"
                     if status is ConfirmationStatus.REVERTED
@@ -1008,6 +1035,7 @@ class PlatformAwareSeller(Trader):
                 success=False,
                 platform=token_info.platform,
                 tx_signature=str(tx_signature),
+                amount_raw=token_balance,  # set before anything was sent
                 error_message=f"Sell outcome unknown for {tx_signature}: {e}",
                 failure_reason=TradeFailureReason.UNCONFIRMED,
             )

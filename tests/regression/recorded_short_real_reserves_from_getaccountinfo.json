@@ -5,20 +5,14 @@
   "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
   "reverted_sells": [
     {
-      "signature": "2krKrLXciybQoeDhep4wHG6gQbESAbWhdtWkEvPW2Uu7BNuPqUDfEWNDsntZKC9K6Gh4PESdQ8LJzqFJ8pxTcvDi",
-      "slot": 465156673,
       "amount": 152019543696,
       "min_sol_output": 2739523
     },
     {
-      "signature": "4JHzARtzJ16d3gb2mvXAdmUGWWkvnCBCFEyVF21iZknHUfRAykneqs575HQ76DkxAXEDRvanqBNxwqGuXXbJc2ab",
-      "slot": 465156680,
       "amount": 152019543696,
       "min_sol_output": 2739523
     },
     {
-      "signature": "4w47CZN8e1jHJxbWusq2zwGpHgpLaqo3b5Hgc2BrJKttoAMDVeq4gNgVa7TC4WKuidfKBBdwWGeopjxprqCqdGby",
-      "slot": 465156687,
       "amount": 152019543696,
       "min_sol_output": 2739523
     }

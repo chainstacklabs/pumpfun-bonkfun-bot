@@ -112,7 +112,8 @@ class StoredPosition:
     """One position read back from the file."""
 
     token_info: TokenInfo
-    #: The buy as it landed: price, amount, amount_raw and signature.
+    #: The buy as it landed: price, amount, amount_raw and signature. After a
+    #: partial sale the amounts are what is left.
     buy_result: TradeResult
     #: When the buy landed, naive UTC like `Position.entry_time`.
     entry_time: datetime
@@ -235,6 +236,20 @@ class PositionStore:
             },
             "token_info": encode_token_info(token_info),
         }
+        self._write()
+
+    def reduce(self, mint: Pubkey, amount: float, amount_raw: int) -> None:
+        """Keep only what is left of a position after part of it sold.
+
+        Args:
+            amount: Whole tokens still held
+            amount_raw: The same in raw token units
+        """
+        record = self._records.get(str(mint))
+        if record is None:
+            return
+        record["buy"]["amount"] = amount
+        record["buy"]["amount_raw"] = amount_raw
         self._write()
 
     def remove(self, mint: Pubkey) -> None:

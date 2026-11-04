@@ -58,7 +58,7 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   curve's lamports; past them the program reverts 6024 Overflow. The virtual
   reserves normally cover the real ones, but on a mayhem-mode coin they drift
   far apart, so the seller sells the largest part of a position the curve can
-  pay for and leaves the rest in the wallet.
+  pay for, and the position stays open with the rest for a later attempt.
 - Even for SOL-paired coins you must pass **wrapped SOL** as `quote_mint`, not
   `Pubkey::default()`. Transfers still happen in native SOL, and the
   `associated_quote_*` accounts are only seed-constrained — do **not** create the
