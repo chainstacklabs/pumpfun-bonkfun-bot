@@ -97,7 +97,7 @@ The YAML files are commented inline. The sections that matter most:
 - **`priority_fees`** — fixed or dynamic. Dynamic costs an extra RPC call, which slows the buy.
 - **`filters`** — `listener_type`, `max_token_age`, name/creator matching, `marry_mode` (buy only, never sell), `yolo_mode` (trade continuously).
 - **`retries`** — attempts and the wait windows around creation, buy, and the next token.
-- **`cleanup`** — when to close leftover token accounts: `disabled`, `on_fail`, `after_sell`, `post_session`. `force_close_with_burn` burns what is left in an account before closing it. `post_session` leaves alone the coins of positions kept for the next start (see [Positions survive a restart](#positions-survive-a-restart)); their accounts are cleaned up at the end of the session that sells them.
+- **`cleanup`** — when to close leftover token accounts: `disabled`, `on_fail`, `after_sell`, `post_session`. `force_close_with_burn` burns what is left in an account before closing it; under `exit_strategy: manual` or `marry_mode` post-session cleanup burns nothing, since those coins are meant to be held, and closes only empty accounts. `post_session` leaves alone the coins of positions kept for the next start (see [Positions survive a restart](#positions-survive-a-restart)); their accounts are cleaned up at the end of the session that sells them.
 - **`node.max_rps`** — cap requests per second to match your provider's plan.
 
 ### Extreme fast mode
@@ -140,8 +140,10 @@ trade:
 Every listener the platform supports reports migrations. The filters,
 `quote_amounts` and the exit strategies apply as for launches, with two
 differences: `match_string` is checked against the coin's on-chain metadata, and
-`bro_address` against the creator its curve records. `max_token_age` counts from
-the moment the migration was seen, and `wait_after_creation` is waited before the
+`bro_address` against the creator its curve records. A LaunchLab coin is bought
+only when its curve is under a platform config the bot trades, not just the
+migration naming one. `max_token_age` counts from the moment the migration was
+seen, in single-token mode too, and `wait_after_creation` is waited before the
 buy. The bot buys once the pool is readable, waiting up to 10 seconds for it;
 `shreds` sees a migration before it runs, so its pool does not exist yet.
 `extreme_fast_mode: true` with `entry: migration` is refused at startup.
@@ -185,7 +187,9 @@ less than was bought sells what is held. The bot clears a position only when thr
 reads, a second apart, all find nothing, since an RPC node lagging behind may
 not show a fresh buy yet. A position whose balance cannot be read stays in the
 file and is tried again on the next start, and so does one whose exit gave up.
-Delete an entry from the file to stop the bot managing that coin.
+Each position names the wallet that bought it: a bot started with another
+wallet leaves it in the file, neither sold nor cleared, until that wallet trades
+again. Delete an entry from the file to stop the bot managing that coin.
 
 The file is named after the bot's `name`, with any character other than letters,
 digits, `.`, `_` and `-` replaced by `_`. Names that differ only in case share a
