@@ -37,6 +37,13 @@ Offline machine checks, no network and no funds moved:
      skips stale reports. The trader in migration mode, single-token and
      continuous, buys what the intake hands it, and in `new_launch` mode asks
      the listener for no migrations.
+  G. A stream reports a migration before every node serves its slot, and on
+     LaunchLab the buy completing the curve can share that slot. The curve is
+     read at `processed` and re-read until it shows as completed, bounded by
+     the pool wait; a report whose curve never showed completed does not use
+     the mint up, so a later report is still bought, while one refused for
+     another reason does. An executed LaunchLab report whose curve reads as
+     not completed at first is bought through the real resolver.
 
 Usage:
     uv run tests/regression/verify_migration_entry.py
@@ -46,6 +53,7 @@ import asyncio
 import base64
 import copy
 import json
+import struct
 import sys
 from collections.abc import Awaitable, Callable
 from itertools import count
@@ -124,7 +132,8 @@ def _pool_ready(coin: dict, **changes: object) -> PoolReady:
 
 
 def _resolve(coin: dict, accounts: dict | None = None, **changes: object) -> object:
-    resolver = MigrationResolver(_FixtureClient(accounts or coin["accounts"]))
+    # A short wait: a curve that is not completed is re-read until it runs out.
+    resolver = MigrationResolver(_FixtureClient(accounts or coin["accounts"]), 0.2)
     try:
         return asyncio.run(resolver.resolve(_pool_ready(coin, **changes)))
     except PoolNotTradable as e:
@@ -704,6 +713,165 @@ def check_f_continuous_and_trader() -> bool:  # noqa: C901, PLR0915
     return not problems
 
 
+# ------------------------------------------------- G: curve read lags the stream
+
+
+def _not_complete(coin: dict) -> object:
+    pump = coin["pool_ready"]["platform"] == "pump_fun"
+
+    def edit(data: bytearray) -> None:
+        if pump:
+            # The curve before its completing buy: reserves left, not complete.
+            data[8:24] = struct.pack("<QQ", 300_000_000_000_000, 80_000_000_000)
+            data[48] = 0
+        else:
+            data[_LAUNCHLAB_STATUS_OFFSET] = 0
+
+    return edit
+
+
+class _LaggingClient(_FixtureClient):
+    """Serves a coin's curve as not completed until the node "catches up".
+
+    The first `lag` curve reads are stale (with `missing`, the account is not
+    found); with `confirmed_lags`, every read not at `processed` is stale too,
+    as on a node whose confirmed view trails the stream.
+    """
+
+    def __init__(
+        self,
+        coin: dict,
+        lag: int,
+        *,
+        confirmed_lags: bool = False,
+        missing: bool = False,
+    ) -> None:
+        super().__init__(coin["accounts"])
+        self.curve = Pubkey.from_string(coin["curve"])
+        stale = _with_data(coin, coin["curve"], _not_complete(coin))[coin["curve"]]
+        self.stale = SimpleNamespace(
+            data=base64.b64decode(stale["data"]),
+            owner=Pubkey.from_string(stale["owner"]),
+        )
+        self.lag, self.confirmed_lags, self.curve_reads = lag, confirmed_lags, 0
+        self.missing = missing
+
+    async def get_account_info(
+        self, address: Pubkey, commitment: str | None = None
+    ) -> SimpleNamespace:
+        if address == self.curve:
+            self.curve_reads += 1
+            if self.curve_reads <= self.lag or (
+                self.confirmed_lags and commitment != "processed"
+            ):
+                if self.missing:
+                    raise ValueError(f"Account {address} not found")  # noqa: TRY003
+                return self.stale
+        return await super().get_account_info(address, commitment)
+
+
+def check_g_curve_read_lags_stream() -> bool:  # noqa: C901, PLR0912, PLR0915
+    original_poll = migration.POOL_POLL_SECONDS
+    problems = []
+    try:
+        migration.POOL_POLL_SECONDS = 0.01
+        for coin in FIXTURE:
+            label = coin["label"]
+            client = _LaggingClient(coin, 3)
+            try:
+                got = asyncio.run(
+                    MigrationResolver(client, 5.0).resolve(_pool_ready(coin))
+                )
+            except PoolNotTradable as e:
+                got = e
+            if not isinstance(got, TokenInfo) or client.curve_reads != 4:  # noqa: PLR2004
+                problems.append(
+                    f"{label}: completed on the 4th read: {got}, {client.curve_reads} reads"
+                )
+            client = _LaggingClient(coin, 0, confirmed_lags=True)
+            try:
+                got = asyncio.run(
+                    MigrationResolver(client, 0.0).resolve(_pool_ready(coin))
+                )
+            except PoolNotTradable as e:
+                got = e
+            if not isinstance(got, TokenInfo):
+                problems.append(f"{label}: not read at processed: {got}")
+            for case, client in (
+                ("not completed", _LaggingClient(coin, 10**6)),
+                ("not readable", _LaggingClient(coin, 10**6, missing=True)),
+            ):
+                resolve = MigrationResolver(client, 0.2).resolve(_pool_ready(coin))
+                try:
+                    got = asyncio.run(asyncio.wait_for(resolve, 3))
+                except (PoolNotTradable, TimeoutError) as e:
+                    got = e
+                if not isinstance(got, PoolNotTradable) or not got.not_yet_visible:
+                    problems.append(f"{label}: never {case}: {got!r}")
+            client = _LaggingClient(coin, 3, missing=True)
+            try:
+                got = asyncio.run(
+                    MigrationResolver(client, 5.0).resolve(_pool_ready(coin))
+                )
+            except PoolNotTradable as e:
+                got = e
+            if not isinstance(got, TokenInfo):
+                problems.append(f"{label}: readable on the 4th read: {got}")
+            mint = coin["pool_ready"]["mint"]
+            no_mint = {k: v for k, v in coin["accounts"].items() if k != mint}
+            if not (
+                isinstance(r := _resolve(coin, no_mint), PoolNotTradable)
+                and not r.not_yet_visible
+            ):
+                problems.append(f"{label}: a missing mint counted as not yet visible")
+
+        # Intake: a curve that never showed completed leaves the mint open for a
+        # later executed report; a refusal for another reason uses it up.
+        for label, first, want_bought in (
+            ("not yet visible", PoolNotTradable("x", not_yet_visible=True), True),
+            ("refused", PoolNotTradable("the pool is quoted in another mint"), False),
+        ):
+            coin = _token("LAGCOIN")
+            resolver = _Resolver(
+                {(coin.mint, "first"): first, (coin.mint, "again"): coin}
+            )
+            intake = _intake(
+                [
+                    _report(coin.mint, signature="first"),
+                    _report(coin.mint, signature="again"),
+                ],
+                resolver,
+                token_wait_timeout=1,
+            )
+            found = _wait(intake)
+            if (found is not None) is not want_bought:
+                problems.append(f"intake, {label}: found {found and found.symbol}")
+
+        # End to end, as on mainnet: an executed LaunchLab report whose curve the
+        # node still shows as not completed is bought once it catches up.
+        coin = next(
+            c
+            for c in FIXTURE
+            if c["pool_ready"]["platform"] != "pump_fun"
+            and Pubkey.from_string(c["pool_ready"]["quote_mint"]) == WSOL_MINT
+        )
+        resolver = MigrationResolver(_LaggingClient(coin, 3, confirmed_lags=True), 5.0)
+
+        async def pool_ready(_token_info: TokenInfo) -> bool:
+            return True
+
+        resolver.wait_for_pool = pool_ready
+        intake = _intake([_pool_ready(coin)], resolver, token_wait_timeout=3)
+        found = _wait(intake)
+        if found is None or str(found.mint) != coin["pool_ready"]["mint"]:
+            problems.append(f"executed LaunchLab report, curve behind: found {found}")
+    finally:
+        migration.POOL_POLL_SECONDS = original_poll
+    for problem in problems:
+        print(f"    {problem}")
+    return not problems
+
+
 def main() -> int:
     """Run every check and report."""
     checks = [
@@ -713,10 +881,15 @@ def main() -> int:
         ("D: the pool wait polls within its budget", check_d_pool_wait),
         ("E: single-token mode filters and keeps attempts open", check_e_single_token),
         ("F: continuous mode and the trader", check_f_continuous_and_trader),
+        ("G: a curve read behind the stream", check_g_curve_read_lags_stream),
     ]
     passed = 0
     for label, check in checks:
-        ok = check()
+        try:
+            ok = check()
+        except Exception as error:  # noqa: BLE001 - report and continue
+            print(f"    {type(error).__name__}: {error}")
+            ok = False
         print(f"{'PASS' if ok else 'FAIL'} {label}")
         passed += ok
     print(f"\n{passed}/{len(checks)} checks passed")

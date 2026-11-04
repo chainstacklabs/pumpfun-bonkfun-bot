@@ -93,9 +93,13 @@ once, one report per attempt; read the pool before trading it. *Detecting a migr
 `trade.entry: migration` is the consumer (`trading/intake.py`,
 `trading/migration.py`). It reads the coin's curve, mint and metadata to apply
 the filters, then waits up to `POOL_WAIT_SECONDS` for the pool to be readable.
-A pre-execution report that leaves nothing to buy (curve not complete, a quote
-the curve does not use, no pool in time) does not use the mint up, so a later
-attempt is still bought; an executed one does.
+The curve is read at `processed` and re-read for up to `POOL_WAIT_SECONDS`
+until it shows as completed: a stream reports a migration before every node
+serves its slot, and a LaunchLab migration can land in the slot of the buy that
+completed the curve. A pre-execution report that leaves nothing to buy (curve
+not complete, a quote the curve does not use, no pool in time) does not use the
+mint up, so a later attempt is still bought; an executed one does, unless its
+curve never showed as completed.
 
 ## Listener and decoder pitfalls
 

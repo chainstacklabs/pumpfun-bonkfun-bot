@@ -257,10 +257,12 @@ class TokenIntake:
     async def _prepare_pool(self, pool: PoolReady) -> TokenInfo | None:
         """The coin behind a migration, once filtered and its pool readable.
 
-        A coin is processed once. The exception is a pre-execution report
+        A coin is processed once. The exceptions: a pre-execution report
         (shreds) that leaves nothing to buy -- a curve not yet complete, a
         quote mint the curve does not use, a pool that never appears --
-        because another attempt for the same mint may still land.
+        because another attempt for the same mint may still land; and any
+        report whose curve the chain did not yet show as completed, which a
+        lagging node causes as well as an attempt that cannot land.
 
         Returns:
             The coin to buy, or None when it is skipped
@@ -273,7 +275,7 @@ class TokenIntake:
             token_info = await self.pool_resolver.resolve(pool)
         except PoolNotTradable as e:
             logger.info(f"Skipping migrated coin {pool.mint} - {e}")
-            if not retry_allowed:
+            if not (retry_allowed or e.not_yet_visible):
                 self.processed_tokens.add(key)
             return None
         reason = self.migration_skip_reason(token_info)
