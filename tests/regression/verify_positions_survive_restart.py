@@ -148,7 +148,10 @@ class _Client:
     def hold(self, token: TokenInfo, raw: int) -> None:
         self.accounts[_ata(token)] = _token_account(token.mint, raw)
 
-    async def get_account_info(self, pubkey: Pubkey) -> SimpleNamespace:
+    async def get_account_info(
+        self, pubkey: Pubkey, commitment: str | None = None
+    ) -> SimpleNamespace:
+        del commitment  # every read sees the same state here
         self.reads.setdefault(pubkey, []).append(time.monotonic())
         if self.down:
             raise RuntimeError("rpc down")  # noqa: TRY003

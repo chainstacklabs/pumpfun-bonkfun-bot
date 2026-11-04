@@ -2,8 +2,8 @@
 
 Monitoring, the exit strategies, bounded exit retries and post-exit cleanup.
 Each position runs as its own task, up to `trade.max_open_positions` at once.
-With a `PositionStore`, each monitored position is on disk from its buy until
-its sell, and `resume` picks those up again after a restart.
+With a `PositionStore`, each monitored position is on disk from the moment its
+buy is sent until its sell, and `resume` picks those up again after a restart.
 """
 
 import asyncio
@@ -20,6 +20,7 @@ from core.pubkeys import (
     TOKEN_DECIMALS,
     normalize_quote_mint,
     quote_symbol,
+    quote_units_per_token,
     resolve_quote_token_program,
 )
 from core.wallet import Wallet
@@ -32,7 +33,7 @@ from interfaces.core import (
 )
 from platforms import PlatformImplementations
 from trading import trade_log
-from trading.base import TradeResult
+from trading.base import PendingBuy, TradeResult
 from trading.platform_aware import PlatformAwareSeller
 from trading.position import ExitReason, Position
 from trading.position_store import PositionStore, StoredPosition
@@ -93,9 +94,20 @@ class PositionManager:
 
     #: Seconds `stop` waits for the cancelled position tasks to end.
     _STOP_BUDGET = 30.0
+    #: Seconds between looks at a buy sent but not resolved.
+    _PENDING_RECHECK = 2.0
+    #: Seconds after its send a buy with no recorded block height is taken to
+    #: be past landing; a blockhash lives about 60 to 90.
+    _PENDING_EXPIRY = 120.0
+    #: Seconds between warnings while a position waits for its first price.
+    _PRICE_WARN_EVERY = 60.0
     #: Where positions are kept across restarts; None keeps them in memory only.
     #: Also a class default: verifiers build a manager without `__init__`.
     store: PositionStore | None = None
+    #: Position tasks past their sale, closing the coin's account: shutdown
+    #: lets them finish rather than stopping them. Rebound, never mutated, so
+    #: the class default serves a manager built without `__init__` too.
+    _sold: frozenset[asyncio.Task] = frozenset()
 
     def __init__(  # noqa: PLR0913
         self,
@@ -153,6 +165,272 @@ class PositionManager:
         """Positions whose exit strategy is still running."""
         return sum(not task.done() for task in self._open)
 
+    def hold_pending(
+        self, token_info: TokenInfo, sent: TradeResult, pending: PendingBuy
+    ) -> None:
+        """Keep a buy that was just sent in the store until it is resolved.
+
+        A shutdown or crash before the buy confirms leaves it there, with its
+        signature, and the next start resolves it (`open_pending`). `open`
+        replaces it once the buy confirms; `resolve_failed_buy` drops it once
+        the buy provably did not land, or resolves it in this run. Only for
+        monitored positions, like `open`.
+
+        Args:
+            sent: The signature, and the expected amount and price
+        """
+        if self.store is not None and self.monitors:
+            self.store.add(
+                token_info, sent, _utc_now(), self.wallet.pubkey, pending=pending
+            )
+
+    def resolve_failed_buy(
+        self, token_info: TokenInfo, buy_result: TradeResult
+    ) -> bool:
+        """Settle the pending record of a buy that did not come back successful.
+
+        A buy that reverted, or never reached the chain, holds nothing and its
+        record is dropped. Any other failure may have delivered the coin: the
+        record stays and a task resolves it from its signature (`open_pending`).
+
+        Returns:
+            Whether the record stays, so the coin may be held and must not be
+            cleaned up as a failed buy
+        """
+        if self.store is None or str(token_info.mint) not in self.store.pending_mints():
+            return False
+        if buy_result.failure_reason in (
+            TradeFailureReason.REVERTED,
+            TradeFailureReason.SUBMIT_FAILED,
+        ):
+            self.store.remove(token_info.mint)
+            return False
+        logger.warning(
+            f"The buy of {token_info.symbol} ({buy_result.tx_signature}) could "
+            f"not be confirmed; resolving it from its signature"
+        )
+        stored = self.store.pending(token_info.mint)
+        if stored is not None:
+            self.open_pending(stored)
+        return True
+
+    def open_pending(self, stored: StoredPosition) -> asyncio.Task:
+        """Resolve a buy sent but not settled, then hold it if it landed.
+
+        Runs as a position task: it takes a slot and `stop` cancels it, which
+        leaves the record pending for the next start. The signature decides:
+        a landed buy is held at the amounts and price its transaction shows, a
+        reverted one is cleared. One no node knows is looked at again until
+        its blockhash has expired; then the wallet's balance decides, capped
+        at what the buy can have delivered.
+        """
+        task = asyncio.create_task(
+            self._hold_pending(stored), name=f"pending-{stored.token_info.mint}"
+        )
+        self._open.add(task)
+        task.add_done_callback(self._open.discard)
+        return task
+
+    async def _hold_pending(self, stored: StoredPosition) -> None:
+        token_info = stored.token_info
+        try:
+            buy = await self._resolve_buy(stored)
+            if buy is not None:
+                await self.manage(token_info, buy, entry_time=stored.entry_time)
+        except Exception:
+            logger.exception(f"Error resolving the buy of {token_info.symbol}")
+
+    async def _resolve_buy(self, stored: StoredPosition) -> TradeResult | None:
+        """What a pending buy delivered, or None when it holds nothing (yet).
+
+        A landed buy is rewritten as an ordinary position and logged to the
+        trade log. None leaves the record cleared, or still pending when the
+        wallet's balance cannot be read.
+        """
+        token_info, sent = stored.token_info, stored.buy_result
+        pending = stored.pending or PendingBuy()
+        label = f"{token_info.symbol} ({token_info.mint})"
+        signature = sent.tx_signature
+        first = True
+        while True:
+            # Every balance read below names the slot this decision rests on:
+            # a node behind it errors, which keeps the record, rather than
+            # answering "not found", which would clear it.
+            outcome, slot = await self._signature_outcome(signature, first=first)
+            first = False
+            if outcome is ConfirmationStatus.SUCCESS:
+                buy = await self._landed_buy(token_info, sent, pending, label, slot)
+                break
+            if outcome is ConfirmationStatus.REVERTED:
+                logger.info(f"The buy of {label} ({signature}) reverted; clearing it")
+                self.store.remove(token_info.mint)
+                return None
+            expired, slot = await self._past_landing(stored)
+            if expired:
+                buy = await self._buy_from_balance(
+                    token_info, sent, pending, label, slot
+                )
+                break
+            await asyncio.sleep(self._PENDING_RECHECK)
+        if buy is None:
+            return None
+        self.store.add(token_info, buy, stored.entry_time, self.wallet.pubkey)
+        trade_log.log_trade("buy", token_info, buy.price, buy.amount, signature)
+        return buy
+
+    async def _signature_outcome(
+        self, signature: str | None, *, first: bool
+    ) -> tuple[ConfirmationStatus | None, int | None]:
+        """The signature's status and slot; UNCONFIRMED when the lookup fails.
+
+        Only the first lookup searches the whole history: a buy sent before a
+        restart may have aged out of the recent status cache, while one still
+        unknown after that lands, if ever, inside it.
+        """
+        if not signature:
+            return None, None
+        try:
+            return await self.solana_client.get_signature_outcome(
+                signature, search_history=first
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Could not look up {signature[:16]}...: {e}")
+            return ConfirmationStatus.UNCONFIRMED, None
+
+    async def _past_landing(self, stored: StoredPosition) -> tuple[bool, int | None]:
+        """Whether the buy can no longer land, and the slot that was seen at.
+
+        The slot is None when the expiry came from the clock (no block height
+        recorded, or none readable).
+        """
+        last_valid = stored.pending.last_valid_block_height if stored.pending else None
+        if last_valid is not None:
+            try:
+                height, slot = await self.solana_client.get_block_height_and_slot()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Could not read the block height ({e})")
+            else:
+                return height > last_valid, slot
+        held_for = (_utc_now() - stored.entry_time).total_seconds()
+        return held_for > self._PENDING_EXPIRY, None
+
+    async def _landed_buy(
+        self,
+        token_info: TokenInfo,
+        sent: TradeResult,
+        pending: PendingBuy,
+        label: str,
+        slot: int | None,
+    ) -> TradeResult | None:
+        """The amounts and fill price a landed buy's transaction shows.
+
+        The wallet is still the truth: a coin sold or moved since (while the
+        bot was down) is cleared, one partly sold is held at what is left, and
+        an unreadable balance leaves the record pending. Falls back to the
+        balance alone when the transaction's amounts cannot be read; the price
+        is then unknown (None). The fill price is the transaction's, whatever
+        is left of it.
+
+        Args:
+            slot: The slot the buy landed in; balance reads refuse a node behind it
+        """
+        quote_mint = normalize_quote_mint(token_info.quote_mint)
+        tokens_raw, spent = await self.solana_client.get_buy_transaction_details(
+            sent.tx_signature,
+            token_info.mint,
+            pending.quote_destination,
+            quote_mint=quote_mint,
+        )
+        if not tokens_raw:
+            return await self._buy_from_balance(token_info, sent, pending, label, slot)
+        spent = spent if spent is not None else pending.spend_raw
+        price = None
+        if spent:
+            try:
+                price = (
+                    spent
+                    / quote_units_per_token(quote_mint)
+                    / (tokens_raw / 10**TOKEN_DECIMALS)
+                )
+            except ValueError:
+                logger.warning(f"Could not price the fill of {label}")
+        held = await self._held_raw(token_info, slot)
+        if held is None:
+            logger.error(
+                f"Could not confirm the wallet's balance of {label}; its buy "
+                f"{sent.tx_signature} stays pending in {self.store.path}"
+            )
+            return None
+        if held == 0:
+            logger.info(
+                f"Clearing position in {label}: its buy landed but the wallet no "
+                f"longer holds it, so it was sold or moved while the bot was down"
+            )
+            self.store.remove(token_info.mint)
+            return None
+        tokens_raw = min(tokens_raw, held)
+        amount = tokens_raw / 10**TOKEN_DECIMALS
+        logger.info(
+            f"The buy of {label} ({sent.tx_signature}) landed: {tokens_raw} raw "
+            f"at {price if price is not None else 'an unknown price'}"
+        )
+        return TradeResult(
+            success=True,
+            platform=token_info.platform,
+            tx_signature=sent.tx_signature,
+            amount=amount,
+            amount_raw=tokens_raw,
+            price=price,
+        )
+
+    async def _buy_from_balance(
+        self,
+        token_info: TokenInfo,
+        sent: TradeResult,
+        pending: PendingBuy,
+        label: str,
+        slot: int | None,
+    ) -> TradeResult | None:
+        """A buy known only by the wallet's balance, never more than it can hold.
+
+        Args:
+            slot: The slot the decision rests on; balance reads refuse a node
+                behind it
+
+        Returns:
+            The position at the balance held, capped at what the buy can have
+            delivered, with no price; None when nothing is held (the record is
+            cleared) or the balance cannot be read (it stays pending)
+        """
+        held = await self._held_raw(token_info, slot)
+        if held is None:
+            logger.error(
+                f"Could not confirm the wallet's balance of {label}; its buy "
+                f"{sent.tx_signature} stays pending in {self.store.path}"
+            )
+            return None
+        if held == 0:
+            logger.info(
+                f"Clearing position in {label}: the wallet holds none, so its "
+                f"buy {sent.tx_signature} never landed"
+            )
+            self.store.remove(token_info.mint)
+            return None
+        cap = pending.max_amount_raw
+        amount_raw = held if cap is None else min(held, cap)
+        logger.info(
+            f"The buy of {label} ({sent.tx_signature}) is known only by the "
+            f"wallet's balance: holding {amount_raw} raw of the {held} held"
+        )
+        return TradeResult(
+            success=True,
+            platform=token_info.platform,
+            tx_signature=sent.tx_signature,
+            amount=amount_raw / 10**TOKEN_DECIMALS,
+            amount_raw=amount_raw,
+            price=None,
+        )
+
     def open(
         self,
         token_info: TokenInfo,
@@ -209,26 +487,33 @@ class PositionManager:
 
         Shutdown cleanup closes token accounts, burning what is left with
         `force_close_with_burn`, so it must not start while a position may
-        still sell. Runs to the end through a cancellation of its caller, bounded
-        by `_STOP_BUDGET`; the coins stay in the wallet.
+        still sell. A position already sold is not stopped: the close of its
+        empty account runs to the end. Runs to the end through a cancellation
+        of its caller, bounded by `_STOP_BUDGET`; the coins stay in the wallet.
         """
-        tasks = {task for task in self._open if not task.done()}
+        self._report_pending()
+        tasks = {t for t in self._open if not t.done()}
         if not tasks:
             return
-        logger.info(
-            f"Stopping {len(tasks)} open position(s); their tokens stay in the wallet"
-        )
-        for task in tasks:
+        held, closing = tasks - self._sold, tasks & self._sold
+        if held:
+            logger.info(
+                f"Stopping {len(held)} open position(s); their tokens stay in "
+                f"the wallet"
+            )
+        if closing:
+            logger.info(
+                f"Waiting for {len(closing)} sold position(s) to close their "
+                f"token account"
+            )
+        for task in held:
             task.cancel()
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._STOP_BUDGET
         while not all(task.done() for task in tasks):
             remaining = deadline - loop.time()
             if remaining <= 0:
-                logger.warning(
-                    f"{sum(not t.done() for t in tasks)} position task(s) did not "
-                    f"stop within {self._STOP_BUDGET}s"
-                )
+                self._give_up_stopping(tasks)
                 return
             try:
                 await asyncio.wait(tasks, timeout=remaining)
@@ -236,6 +521,37 @@ class PositionManager:
                 # The shutdown arriving again; the tasks are already cancelled
                 # and cleanup still has to run after them.
                 continue
+
+    def _give_up_stopping(self, tasks: set[asyncio.Task]) -> None:
+        """Log what `stop` leaves running, and cancel the account closes.
+
+        A close still running would race the client closing at shutdown; the
+        rent it leaves is reclaimed by `tools/cleanup_accounts.py <MINT>`.
+        """
+        closes = {t for t in tasks & self._sold if not t.done()}
+        for task in closes:
+            task.cancel()
+        if closes:
+            logger.warning(
+                f"{len(closes)} token account close(s) did not finish within "
+                f"{self._STOP_BUDGET}s; reclaim the rent with "
+                f"tools/cleanup_accounts.py <MINT>"
+            )
+        positions = sum(not t.done() for t in tasks - closes)
+        if positions:
+            logger.warning(
+                f"{positions} position task(s) did not stop within {self._STOP_BUDGET}s"
+            )
+
+    def _report_pending(self) -> None:
+        """Name the buys sent but never settled, kept for the next start."""
+        pending = set() if self.store is None else self.store.pending_mints()
+        if pending:
+            logger.warning(
+                f"{len(pending)} buy(s) sent but not confirmed stay in "
+                f"{self.store.path}: {', '.join(sorted(pending))}. The next start "
+                f"resolves each from the wallet's balance"
+            )
 
     def stored_mints(self) -> set[str]:
         """Every mint in the store, resumed or not; empty without a store."""
@@ -272,23 +588,43 @@ class PositionManager:
                 resumed.append(position.token_info)
         return resumed
 
-    async def _resume_one(self, stored: StoredPosition) -> bool:
-        token_info, buy = stored.token_info, stored.buy_result
-        label = f"{token_info.symbol} ({token_info.mint})"
+    def _not_ours(self, stored: StoredPosition, label: str) -> bool:
+        """Whether another platform or wallet holds the position (logged)."""
+        token_info = stored.token_info
         if token_info.platform != self.platform:
             logger.warning(
                 f"Position in {label} is on {token_info.platform.value}, this bot "
                 f"trades {self.platform.value}; it stays in {self.store.path} and "
                 f"is not monitored this run"
             )
-            return False
+            return True
         if stored.wallet is not None and stored.wallet != str(self.wallet.pubkey):
             logger.warning(
                 f"Position in {label} was bought by wallet {stored.wallet}, this "
                 f"bot trades from {self.wallet.pubkey}; it stays in "
                 f"{self.store.path} and is not monitored this run"
             )
+            return True
+        return False
+
+    async def _resume_pending(self, stored: StoredPosition, label: str) -> bool:
+        """Start resolving a buy the last run sent but never settled."""
+        if not await self._quote_resolved(stored.token_info, label):
             return False
+        logger.info(
+            f"Resolving the buy of {label} sent before the bot stopped "
+            f"({stored.buy_result.tx_signature}) from its signature"
+        )
+        self.open_pending(stored)
+        return True
+
+    async def _resume_one(self, stored: StoredPosition) -> bool:
+        token_info, buy = stored.token_info, stored.buy_result
+        label = f"{token_info.symbol} ({token_info.mint})"
+        if self._not_ours(stored, label):
+            return False
+        if stored.pending is not None:
+            return await self._resume_pending(stored, label)
         held = await self._held_raw(token_info)
         if held is None:
             logger.error(
@@ -303,16 +639,7 @@ class PositionManager:
             )
             self.store.remove(token_info.mint)
             return False
-        try:
-            await resolve_quote_token_program(
-                normalize_quote_mint(token_info.quote_mint),
-                self.solana_client.get_account_info,
-            )
-        except Exception:
-            logger.exception(
-                f"Could not resolve the quote mint of {label}; its position "
-                f"stays in {self.store.path} and is not monitored this run"
-            )
+        if not await self._quote_resolved(token_info, label):
             return False
 
         bought_raw = (
@@ -340,14 +667,36 @@ class PositionManager:
         self.open(token_info, buy, entry_time=stored.entry_time)
         return True
 
-    async def _held_raw(self, token_info: TokenInfo) -> int | None:
+    async def _quote_resolved(self, token_info: TokenInfo, label: str) -> bool:
+        """Resolve the coin's quote mint; False (logged) when it cannot be."""
+        try:
+            await resolve_quote_token_program(
+                normalize_quote_mint(token_info.quote_mint),
+                self.solana_client.get_account_info,
+            )
+        except Exception:
+            logger.exception(
+                f"Could not resolve the quote mint of {label}; its position "
+                f"stays in {self.store.path} and is not monitored this run"
+            )
+            return False
+        return True
+
+    async def _held_raw(
+        self, token_info: TokenInfo, min_context_slot: int | None = None
+    ) -> int | None:
         """Raw amount of the coin in the wallet's account; None when unsure.
 
         A balance above zero is taken at once. Zero clears the position for
         good, so every read must agree: an RPC node lagging behind may not
         show yet the account a buy just made. A read that fails leaves the
-        answer None, which keeps the position.
+        answer None, which keeps the position. Reads are at "confirmed": the
+        client's default, "finalized", runs seconds behind a fresh buy. With
+        `min_context_slot`, a node behind that slot fails the read.
         """
+        at_slot = (
+            {} if min_context_slot is None else {"min_context_slot": min_context_slot}
+        )
         reads, nothing_held = 3, 0
         for attempt in range(reads):
             if attempt:
@@ -356,13 +705,19 @@ class PositionManager:
                 program = token_info.token_program_id
                 if program is None:
                     program = (
-                        await self.solana_client.get_account_info(token_info.mint)
+                        await self.solana_client.get_account_info(
+                            token_info.mint, commitment="confirmed", **at_slot
+                        )
                     ).owner
                 account = self.wallet.get_associated_token_address(
                     token_info.mint, program
                 )
                 try:
-                    data = (await self.solana_client.get_account_info(account)).data
+                    data = (
+                        await self.solana_client.get_account_info(
+                            account, commitment="confirmed", **at_slot
+                        )
+                    ).data
                 except ValueError:
                     nothing_held += 1  # no account seen
                     continue
@@ -408,10 +763,13 @@ class PositionManager:
         entry_time: datetime | None = None,
     ) -> None:
         """Handle take profit/stop loss exit strategy."""
+        entry_price = buy_result.price
+        if entry_price is None:
+            entry_price = await self._first_price(token_info)
         position = Position.create_from_buy_result(
             mint=token_info.mint,
             symbol=token_info.symbol,
-            entry_price=buy_result.price,
+            entry_price=entry_price,
             quantity=buy_result.amount,
             quantity_raw=buy_result.amount_raw,
             take_profit_percentage=self.take_profit_percentage,
@@ -460,7 +818,9 @@ class PositionManager:
         # read since, and reading one would cost an RPC call on the happy path.
         # A resumed one was bought before the restart, so its buy price is stale.
         token_price = buy_result.price
-        if entry_time is not None:
+        if token_price is None:
+            token_price = await self._first_price(token_info)
+        elif entry_time is not None:
             token_price = await self._current_price_or(token_info, token_price)
 
         # Set once part of it sold: the curve paid out all it had, so later
@@ -650,6 +1010,39 @@ class PositionManager:
                 self._graduated_mints.add(token_info.mint)
                 logger.info(f"{token_info.symbol} has graduated; pricing off its pool")
             return await market.get_price(token_info)
+
+    async def _first_price(self, token_info: TokenInfo) -> float:
+        """A real price for a position whose fill price was never read.
+
+        Its buy price would be an estimate, which in `extreme_fast_mode` can be
+        far enough off to fire a stop loss at once; no exit runs until a price
+        has been read. Re-read every `price_check_interval` until one above
+        zero is, warning every `_PRICE_WARN_EVERY` seconds meanwhile; the price
+        is then kept in the store as the position's entry price.
+        """
+        logger.warning(
+            f"The fill price of {token_info.symbol} is unknown; its exit waits for "
+            f"a price read and counts profit and loss from it"
+        )
+        loop = asyncio.get_running_loop()
+        warned_at = loop.time()
+        while True:
+            try:
+                price = await self._read_price(token_info)
+            except Exception as e:  # noqa: BLE001
+                logger.debug(f"Price read for {token_info.symbol} failed: {e}")
+            else:
+                if price > 0:
+                    break
+            if loop.time() - warned_at >= self._PRICE_WARN_EVERY:
+                warned_at = loop.time()
+                logger.warning(f"Still no price for {token_info.symbol}")
+            await asyncio.sleep(self.price_check_interval)
+        # Kept, so a restart counts from the same baseline.
+        if self.store is not None:
+            self.store.set_price(token_info.mint, price)
+        logger.info(f"Entry price of {token_info.symbol} taken as {price:.10f}")
+        return price
 
     async def _current_price_or(self, token_info: TokenInfo, fallback: float) -> float:
         """Read the current price, falling back to the last known one.
@@ -973,16 +1366,25 @@ class PositionManager:
     async def _cleanup_after_exit(self, token_info: TokenInfo) -> None:
         """Run the configured post-sell cleanup for a closed position.
 
+        Meanwhile the position counts as sold: `stop` lets it finish, bounded,
+        rather than cancelling it in the settle wait, which left the sold
+        coin's empty account open.
+
         Args:
             token_info: Token whose account may now be closable
         """
-        await handle_cleanup_after_sell(
-            self.solana_client,
-            self.wallet,
-            token_info.mint,
-            token_info.token_program_id,
-            self.priority_fee_manager,
-            self.cleanup_mode,
-            self.cleanup_with_priority_fee,
-            self.cleanup_force_close_with_burn,
-        )
+        position = asyncio.current_task()
+        self._sold |= {position}
+        try:
+            await handle_cleanup_after_sell(
+                self.solana_client,
+                self.wallet,
+                token_info.mint,
+                token_info.token_program_id,
+                self.priority_fee_manager,
+                self.cleanup_mode,
+                self.cleanup_with_priority_fee,
+                self.cleanup_force_close_with_burn,
+            )
+        finally:
+            self._sold -= {position}

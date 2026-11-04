@@ -74,7 +74,7 @@ from core.pubkeys import (  # noqa: E402
     SystemAddresses,
     resolve_quote_token_program,
 )
-from interfaces.core import Platform, TokenInfo  # noqa: E402
+from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E402
 from platforms import PlatformImplementations  # noqa: E402
 from platforms.pumpfun.pumpswap_market import (  # noqa: E402
     _CONFIG_BUYBACK_RECIPIENTS_OFFSET,
@@ -422,6 +422,11 @@ class _StubClient:
 
     async def confirm_transaction(self, *_a: object, **_k: object) -> bool:
         return True
+
+    async def confirm_transaction_detailed(
+        self, *_a: object, **_k: object
+    ) -> ConfirmationStatus:
+        return ConfirmationStatus.SUCCESS
 
     async def get_buy_transaction_details(
         self,

@@ -46,6 +46,11 @@ stopped on an error still exited 0.
      `Token listening stopped due to error` in yolo mode) makes `start_bot`
      report the bot did not run normally; one whose listener just ends does
      not.
+  J. SIGTERM to the process group takes the same path as Ctrl+C, in the main
+     process and in its own, also when the bot was started with SIGINT
+     ignored, as a shell starts a background job, and when only the main
+     process gets it while the bot runs in its own: the trader's shutdown
+     line, no `KeyboardInterrupt` traceback, exit 143, nothing left running.
 
 Offline: the bot runs against a stand-in JSON-RPC node on 127.0.0.1 and a
 closed local port; no funds move.
@@ -70,6 +75,7 @@ from collections.abc import Callable, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
+from typing import NamedTuple
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -542,14 +548,45 @@ def check_f_exit_status(tmp: str) -> bool:
     return _report(problems)
 
 
-def _ctrl_c(tmp: str, *, separate_process: bool) -> list[str]:
-    """Ctrl+C a running bot through its process group; what went wrong."""
+# Runs the runner with SIGINT ignored, as a background job starts.
+IGNORING_SIGINT = """
+import runpy, signal, sys
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+
+
+class _Stop(NamedTuple):
+    """How a running bot is stopped, and the exit status that should follow."""
+
+    sig: signal.Signals = signal.SIGINT
+    want: int = 130
+    #: Started with SIGINT ignored, as a shell starts a background job.
+    sigint_ignored: bool = False
+    #: Sent to the whole process group, as a terminal does; else the main
+    #: process alone.
+    group: bool = True
+
+
+CTRL_C = _Stop()
+
+
+def _ctrl_c(tmp: str, *, separate_process: bool, stop: _Stop = CTRL_C) -> list[str]:
+    """Ctrl+C (or `stop`) a running bot; what went wrong."""
+    sig, want, sigint_ignored, group = stop
     problems = []
     with _node() as (rpc, _):
         config = _config("live", rpc, separate_process=separate_process)
         folder = _folder(tmp, {"live": config})
+        # A shell starts a background job (`&`) with SIGINT ignored.
+        command = (
+            [sys.executable, "-c", IGNORING_SIGINT, str(RUNNER)]
+            if sigint_ignored
+            else [sys.executable, str(RUNNER)]
+        )
         bot = subprocess.Popen(  # noqa: S603
-            [sys.executable, str(RUNNER)],
+            command,
             cwd=folder,
             env=_env(),
             stdout=subprocess.PIPE,
@@ -564,21 +601,24 @@ def _ctrl_c(tmp: str, *, separate_process: bool) -> list[str]:
             time.sleep(0.2)
         running = bot.poll() is None
         if running:
-            os.killpg(bot.pid, signal.SIGINT)
+            if group:
+                os.killpg(bot.pid, sig)
+            else:
+                os.kill(bot.pid, sig)
         try:
             out, _ = bot.communicate(timeout=60)
         except subprocess.TimeoutExpired:
             os.killpg(bot.pid, signal.SIGKILL)
             out, _ = bot.communicate()
-            problems.append("the bot did not stop within 60 s of Ctrl+C")
+            problems.append(f"the bot did not stop within 60 s of {sig.name}")
     if not running:
         problems.append(f"the bot never reached its listener: {out[-300:]!r}")
     if "KeyboardInterrupt" in out:
         problems.append("a KeyboardInterrupt traceback was printed")
     if "Universal Trader has shut down" not in out + _logs(folder):
         problems.append("no clean shutdown line")
-    if bot.returncode != 130:  # noqa: PLR2004 - the status after SIGINT
-        problems.append(f"exit {bot.returncode}, expected 130")
+    if bot.returncode != want:
+        problems.append(f"exit {bot.returncode}, expected {want}")
     return problems
 
 
@@ -589,6 +629,26 @@ def check_g_ctrl_c_is_clean(tmp: str) -> bool:
         problems += [
             f"{mode}: {p}" for p in _ctrl_c(tmp, separate_process=separate_process)
         ]
+    return _report(problems)
+
+
+def check_j_sigterm_is_clean(tmp: str) -> bool:
+    problems = []
+    for separate_process in (False, True):
+        mode = "own process" if separate_process else "main process"
+        for ignored in (False, True):
+            found = _ctrl_c(
+                tmp,
+                separate_process=separate_process,
+                stop=_Stop(signal.SIGTERM, 143, sigint_ignored=ignored),
+            )
+            label = f"{mode}{', SIGINT ignored' if ignored else ''}"
+            problems += [f"{label}: {p}" for p in found]
+    # Only the main process gets it, as from `kill <pid>` or a service manager.
+    found = _ctrl_c(
+        tmp, separate_process=True, stop=_Stop(signal.SIGTERM, 143, group=False)
+    )
+    problems += [f"own process, SIGTERM to the main process only: {p}" for p in found]
     return _report(problems)
 
 
@@ -761,6 +821,7 @@ def main() -> int:
             "I: a trader stopped by an error fails the run",
             check_i_trader_error_stop_fails_the_run,
         ),
+        ("J: SIGTERM stops like Ctrl+C, exit 143", check_j_sigterm_is_clean),
     ]
     passed = 0
     with tempfile.TemporaryDirectory() as tmp:

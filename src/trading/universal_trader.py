@@ -28,7 +28,7 @@ from core.pubkeys import (
     resolve_quote_token_program,
 )
 from core.wallet import Wallet
-from interfaces.core import Platform, TokenInfo
+from interfaces.core import Platform, TokenInfo, TradeFailureReason
 from monitoring.listener_factory import ListenerFactory
 from platforms import get_platform_implementations
 from platforms.launchlab_presets import (
@@ -236,6 +236,9 @@ class UniversalTrader:
                 else None
             ),
         )
+        # A buy sent is on disk before it confirms, so a shutdown or crash
+        # while it is in flight does not lose the coin.
+        self.buyer.on_sent = self.positions.hold_pending
 
         self.extreme_fast_mode = settings.extreme_fast_mode
         self.wait_time_after_creation = settings.wait_time_after_creation
@@ -544,6 +547,14 @@ class UniversalTrader:
     ) -> None:
         """Handle failed token purchase."""
         logger.error(f"Failed to buy {token_info.symbol}: {buy_result.error_message}")
+        if self.positions.resolve_failed_buy(token_info, buy_result):
+            # Resolved in its own task; if it lands, cleanup closes its account.
+            self._track_traded(token_info)
+            return
+        if buy_result.failure_reason is TradeFailureReason.UNCONFIRMED:
+            # It may have delivered the coin, also where nothing is monitored
+            # (manual, marry mode): cleaning up as a failed buy could burn it.
+            return
         settings = self.settings
         # Close ATA if enabled
         await handle_cleanup_after_failure(

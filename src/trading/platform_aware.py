@@ -1,12 +1,15 @@
 """Execution: the buyer and the seller, trading through the coin's `Market`."""
 
 import asyncio
+import dataclasses
+from collections.abc import Callable
 from decimal import Decimal
 from time import monotonic
 
 from solders.pubkey import Pubkey
+from solders.signature import Signature
 
-from core.client import SolanaClient
+from core.client import SolanaClient, TransactionNotSent
 from core.priority_fee.manager import PriorityFeeManager
 from core.pubkeys import (
     TOKEN_DECIMALS,
@@ -32,7 +35,7 @@ from platforms.pumpfun.curve_manager import (
     max_sell_within_real_reserves,
     sell_quote_out,
 )
-from trading.base import Trader, TradeResult
+from trading.base import PendingBuy, Trader, TradeResult
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -232,8 +235,24 @@ def _nothing_to_sell(token_info: TokenInfo, *, curve_short: bool) -> TradeResult
     )
 
 
+class _MaybeSent(Exception):  # noqa: N818 - names an outcome
+    """A buy's send failed after signing, in a way that may have delivered it."""
+
+    def __init__(self, signature: Signature) -> None:
+        super().__init__(f"send of {signature} failed; it may still land")
+        self.signature = signature
+
+
 class PlatformAwareBuyer(Trader):
     """Platform-aware token buyer that works with any supported platform."""
+
+    #: Called once a buy's transaction may have reached the chain: when the send
+    #: returns, and when it fails or is cancelled after signing. Handed the
+    #: coin, a failed `TradeResult` (UNCONFIRMED) with the signature and the
+    #: expected amount and price, and what resolving it needs. The trader keeps
+    #: it in the positions file until the buy is resolved. Must not block or
+    #: raise. None: nothing is told.
+    on_sent: Callable[[TokenInfo, TradeResult, PendingBuy], None] | None = None
 
     def __init__(
         self,
@@ -305,7 +324,17 @@ class PlatformAwareBuyer(Trader):
         return self.quote_amounts.get(quote_mint)
 
     async def execute(self, token_info: TokenInfo) -> TradeResult:
-        """Execute buy operation using platform-specific implementations."""
+        """Execute buy operation using platform-specific implementations.
+
+        A failure says what is known: SUBMIT_FAILED when nothing can have
+        reached the network, REVERTED, or UNCONFIRMED with the signature when
+        it may have landed (a send that failed ambiguously, say on a read
+        timeout, included). A pre-send skip (quote gate, unreadable curve) has
+        none.
+        """
+        # Set once the buy is sent: from then on a failure is not "nothing
+        # happened".
+        tx_signature: Signature | None = None
         try:
             implementations = get_platform_implementations(
                 token_info.platform, self.client
@@ -465,7 +494,27 @@ class PlatformAwareBuyer(Trader):
                 f"(max: {max_quote_amount_raw / quote_unit:.6f} {quote_label})"
             )
 
-            tx_signature = await self.client.build_and_send_transaction(
+            tx_signature = await self._send(
+                token_info,
+                TradeResult(
+                    success=False,
+                    platform=token_info.platform,
+                    amount=token_amount,
+                    price=token_price_sol,
+                    failure_reason=TradeFailureReason.UNCONFIRMED,
+                ),
+                PendingBuy(
+                    # Exact-in buys get more than sized when the price fell.
+                    max_amount_raw=(
+                        int(token_amount * (1 + self.slippage) * 10**TOKEN_DECIMALS)
+                        if exact_in
+                        else token_amount_raw
+                    ),
+                    quote_destination=self._quote_destination(
+                        token_info, venue, address_provider
+                    ),
+                    spend_raw=max_quote_amount_raw if exact_in else None,
+                ),
                 instructions,
                 self.wallet.keypair,
                 skip_preflight=True,
@@ -481,9 +530,9 @@ class PlatformAwareBuyer(Trader):
                 ),
             )
 
-            success = await self.client.confirm_transaction(tx_signature)
+            status = await self.client.confirm_transaction_detailed(tx_signature)
 
-            if success:
+            if status is ConfirmationStatus.SUCCESS:
                 logger.info(f"Buy transaction confirmed: {tx_signature}")
 
                 sol_destination = venue.quote_destination(
@@ -570,14 +619,108 @@ class PlatformAwareBuyer(Trader):
                 return TradeResult(
                     success=False,
                     platform=token_info.platform,
-                    error_message=f"Transaction failed to confirm: {tx_signature}",
+                    tx_signature=str(tx_signature),
+                    error_message=(
+                        f"Buy reverted on chain: {tx_signature}"
+                        if status is ConfirmationStatus.REVERTED
+                        else f"Transaction failed to confirm: {tx_signature}"
+                    ),
+                    failure_reason=_FAILURE_REASON_FOR[status],
                 )
 
         except Exception as e:
             logger.exception("Buy operation failed")
+            if isinstance(e, _MaybeSent):
+                tx_signature = e.signature
+            # After the send, a throw (reading the amounts back, say) leaves a
+            # buy that may have landed: an unknown, never "nothing was sent".
             return TradeResult(
-                success=False, platform=token_info.platform, error_message=str(e)
+                success=False,
+                platform=token_info.platform,
+                tx_signature=str(tx_signature) if tx_signature else None,
+                error_message=str(e),
+                failure_reason=(
+                    TradeFailureReason.UNCONFIRMED
+                    if tx_signature
+                    else TradeFailureReason.SUBMIT_FAILED
+                ),
             )
+
+    async def _send(
+        self,
+        token_info: TokenInfo,
+        sent: TradeResult,
+        pending: PendingBuy,
+        *args: object,
+        **kwargs: object,
+    ) -> Signature:
+        """Send the buy and tell `on_sent` it may be on chain.
+
+        `on_sent` hears of it once the send returns, or once the transaction
+        was signed when a cancellation lands mid-send or the send fails in a
+        way that may still have delivered it: a send under way may reach the
+        chain whatever happens to this task.
+
+        Args:
+            sent: What `on_sent` is handed, minus the signature
+            pending: The same, minus the block height the signer reports
+            *args, **kwargs: For `build_and_send_transaction`
+
+        Raises:
+            TransactionNotSent: Nothing can have reached the network
+            _MaybeSent: The send failed after signing and may have landed
+        """
+        signed: list[tuple[Signature, int | None]] = []
+
+        def on_signed(signature: Signature, last_valid: int | None) -> None:
+            signed.append((signature, last_valid))
+
+        def tell(signature: Signature) -> None:
+            last_valid = signed[0][1] if signed else None
+            self._tell_sent(
+                token_info,
+                dataclasses.replace(sent, tx_signature=str(signature)),
+                dataclasses.replace(pending, last_valid_block_height=last_valid),
+            )
+
+        try:
+            signature = await self.client.build_and_send_transaction(
+                *args, on_signed=on_signed, **kwargs
+            )
+        except asyncio.CancelledError:
+            if signed:
+                tell(signed[0][0])
+            raise
+        except TransactionNotSent:
+            raise
+        except Exception as e:
+            if not signed:
+                raise
+            tell(signed[0][0])
+            raise _MaybeSent(signed[0][0]) from e
+        tell(signature)
+        return signature
+
+    def _tell_sent(
+        self, token_info: TokenInfo, sent: TradeResult, pending: PendingBuy
+    ) -> None:
+        if self.on_sent is not None:
+            self.on_sent(token_info, sent, pending)
+
+    def _quote_destination(
+        self,
+        token_info: TokenInfo,
+        venue: Market,
+        address_provider: AddressProvider,
+    ) -> str | None:
+        """Where the buy's spend lands, for reading it back; None if unknown."""
+        try:
+            destination = venue.quote_destination(
+                token_info
+            ) or self._get_sol_destination(token_info, address_provider)
+        except NotImplementedError:
+            return None
+        return str(destination)
 
     async def _read_token_balance(self, token_info: TokenInfo) -> int | None:
         """Read how many of a coin the wallet actually holds.

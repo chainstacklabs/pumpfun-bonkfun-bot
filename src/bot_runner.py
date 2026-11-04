@@ -2,7 +2,9 @@ import argparse
 import asyncio
 import logging
 import multiprocessing
+import os
 import re
+import signal
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -53,6 +55,71 @@ logger = get_logger(__name__)
 
 # Exit status after Ctrl+C, as a shell reports a process ended by SIGINT.
 EXIT_INTERRUPTED = 130
+# Exit status after SIGTERM, as a shell reports a process ended by it.
+EXIT_TERMINATED = 143
+# Holds SIGTERM once received, so the exit status can say which signal it was.
+_terminated: set[int] = set()
+# The bot this process is running right now, for the SIGTERM handler to cancel.
+_running: list[asyncio.Task] = []
+# Bots this process started in their own processes, for SIGTERM to reach.
+_children: list[multiprocessing.Process] = []
+
+
+def _stop_on_sigterm() -> None:
+    """Make SIGTERM stop the bots the way Ctrl+C does.
+
+    The handler cancels the running bot, as `asyncio.run` does on Ctrl+C: its
+    trader stops its positions and cleans up, then the process exits 143. It
+    does not go through SIGINT, which a shell ignores in a job it starts in the
+    background. SIGTERM is passed on to every bot in its own process, so one
+    sent to the main process alone stops them all; only the first SIGTERM a
+    process gets acts, later ones are ignored. With no bot running here (the
+    main process waiting for its bot processes) it raises `KeyboardInterrupt`,
+    and multiprocessing then waits for the bot processes to finish stopping.
+    """
+
+    def on_sigterm(signum: int, _frame: object) -> None:
+        if _terminated:
+            return  # already stopping; SIGKILL is the way to force it
+        _terminated.add(signum)
+        for child in _children:
+            if child.is_alive() and child.pid is not None:
+                os.kill(child.pid, signal.SIGTERM)
+        bot = _running[-1] if _running else None
+        if bot is not None and not bot.done():
+            bot.get_loop().call_soon_threadsafe(bot.cancel)
+            return
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, on_sigterm)
+
+
+def _run_bot(config_path: str, positions_file: str | None) -> bool:
+    """`asyncio.run(start_bot(...))`, cancellable by SIGTERM.
+
+    Raises:
+        KeyboardInterrupt: Ctrl+C or SIGTERM stopped the bot
+    """
+
+    async def run() -> bool:
+        _running.append(asyncio.current_task())
+        try:
+            return await start_bot(config_path, positions_file)
+        finally:
+            _running.pop()
+
+    try:
+        return asyncio.run(run())
+    except asyncio.CancelledError:
+        if _terminated:
+            raise KeyboardInterrupt from None
+        raise
+
+
+def _interrupted_status() -> int:
+    """143 when SIGTERM stopped the process, 130 for Ctrl+C."""
+    return EXIT_TERMINATED if _terminated else EXIT_INTERRUPTED
+
 
 USAGE = """\
 Run every bot configured in bots/*.yaml under the current folder.
@@ -63,7 +130,8 @@ positions to positions/, all under the current folder.
 
 Exit status: 0 when every enabled bot started and finished without an error,
 1 when a config could not be loaded, a bot could not start or stopped on an
-error, or no bot is enabled, 130 when stopped with Ctrl+C."""
+error, or no bot is enabled, 130 when stopped with Ctrl+C, 143 when stopped
+with SIGTERM. Both stop the bots the same way."""
 
 
 def _log_file(stem: str) -> str:
@@ -268,12 +336,17 @@ async def start_bot(config_path: str, positions_file: str | None = None) -> bool
 def run_bot_process(config_path, positions_file: str | None = None):
     """A bot's own process: exit 1 unless it ran normally, 130 on Ctrl+C.
 
-    Nothing may escape: multiprocessing prints an uncaught error unmasked.
+    143 on SIGTERM. Nothing may escape: multiprocessing prints an uncaught
+    error unmasked.
     """
+    # A forked bot process starts with copies of its parent's lists.
+    _children.clear()
+    _terminated.clear()
+    _stop_on_sigterm()
     try:
-        ran = asyncio.run(start_bot(config_path, positions_file))
+        ran = _run_bot(config_path, positions_file)
     except KeyboardInterrupt:
-        sys.exit(EXIT_INTERRUPTED)
+        sys.exit(_interrupted_status())
     except Exception:
         # Logged masked: multiprocessing would print it raw.
         logger.exception(f"Bot process for {config_path} stopped on an error")
@@ -443,11 +516,12 @@ def run_all_bots() -> bool:
                 )
                 p.start()
                 processes.append(p)
+                _children.append(p)
             else:
                 logging.info(
                     f"Starting bot '{bot_name}' ({platform.value}) in main process"
                 )
-                if not asyncio.run(start_bot(str(file), positions_file)):
+                if not _run_bot(str(file), positions_file):
                     all_ok = False
 
         except Exception as e:
@@ -483,6 +557,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> None:
     """Run every enabled bot; exit 0 only when all of them ran normally."""
     parse_args(argv)
+    _stop_on_sigterm()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -513,7 +588,7 @@ def main(argv: list[str] | None = None) -> None:
         all_ok = run_all_bots()
     except KeyboardInterrupt:
         # The trader already shut down cleanly; a traceback would add nothing.
-        sys.exit(EXIT_INTERRUPTED)
+        sys.exit(_interrupted_status())
     except Exception:
         # Logged masked: Python would print it raw.
         logger.exception("The bot runner stopped on an error")
