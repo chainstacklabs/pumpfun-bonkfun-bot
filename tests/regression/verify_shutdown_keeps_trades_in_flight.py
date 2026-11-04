@@ -33,7 +33,9 @@ Two trades were cut short by Ctrl+C:
      up either.
   F. The next start resolves a pending buy by its signature: one that landed
      is held at the amount and fill price its transaction shows and rewritten
-     as landed, with its trade-log line; a reverted one is cleared; one no
+     as landed, with its trade-log line, unless the wallet no longer holds it
+     (sold by hand while the bot was down: cleared) or holds less (held at
+     what is left); a reverted one is cleared; one no
      node knows yet is looked at again until it shows up. Once its blockhash
      has expired (by block height, or two minutes after the send when none
      was recorded) the balance decides: none held clears it, a balance holds
@@ -113,6 +115,7 @@ FILL_PRICE = SPENT_LAMPORTS / 1e9 / (RECEIVED_RAW / 1e6)
 LAST_VALID = 1_000  # the block height past which a buy's blockhash is dead
 CAP_RAW = 20_000_000  # the most a pending buy can have delivered
 SHARED_RAW = 50_000_000  # a wallet balance that also holds another bot's coins
+PARTIAL_RAW = 5_000_000  # what is left of a landed buy partly sold by hand
 OLD_RAW = 1_000_000  # a position bought before records could be pending
 SHUTDOWN_LIMIT = 2.0  # seconds; check L's stop budget is 0.3
 
@@ -725,7 +728,10 @@ def _records(path: Path) -> dict[str, dict]:
 
 
 async def _check_f(tmp: Path) -> list[str]:
-    names = "LANDED REVERTED LATE LOST SHARED UNREAD WAITING NOHEIGHT NOHEIGHTNEW OLD"
+    names = (
+        "LANDED REVERTED LATE LOST SHARED UNREAD WAITING NOHEIGHT NOHEIGHTNEW OLD "
+        "SOLDHAND PARTIAL"
+    )
     tokens = {name: _token(name) for name in names.split()}
     path = tmp / "f.json"
     store = PositionStore(path)
@@ -738,7 +744,15 @@ async def _check_f(tmp: Path) -> list[str]:
     client = _Client()
     client.block_height = LAST_VALID + 1  # every recorded blockhash has expired
     sigs = {}
-    for name in ("LANDED", "REVERTED", "LOST", "SHARED", "UNREAD"):
+    for name in (
+        "LANDED",
+        "REVERTED",
+        "LOST",
+        "SHARED",
+        "UNREAD",
+        "SOLDHAND",
+        "PARTIAL",
+    ):
         sigs[name] = _store_pending(store, tokens[name])
     for name in ("LATE", "WAITING"):  # blockhashes still alive
         sigs[name] = _store_pending(store, tokens[name], last_valid=10**9)
@@ -751,7 +765,12 @@ async def _check_f(tmp: Path) -> list[str]:
         sigs["REVERTED"]: [ConfirmationStatus.REVERTED],
         # Not known on the first look, landed on a later one.
         sigs["LATE"]: [None, None, ConfirmationStatus.SUCCESS],
+        sigs["SOLDHAND"]: [ConfirmationStatus.SUCCESS],
+        sigs["PARTIAL"]: [ConfirmationStatus.SUCCESS],
     }
+    for name in ("LANDED", "LATE"):  # landed seconds ago: not finalized yet
+        client.hold(tokens[name], RECEIVED_RAW, fresh=True)
+    client.hold(tokens["PARTIAL"], PARTIAL_RAW)
     client.hold(tokens["OLD"], OLD_RAW)
     client.hold(tokens["SHARED"], SHARED_RAW)
     client.unreadable.add(_account(tokens["UNREAD"]))
@@ -760,12 +779,10 @@ async def _check_f(tmp: Path) -> list[str]:
     held = _holding(manager)
     with _patched(position_manager, "resolve_quote_token_program", _resolve_quote):
         await manager.resume()
-        settled = {"LANDED", "LATE", "SHARED", "OLD"}
+        settled = {"LANDED", "LATE", "SHARED", "OLD", "PARTIAL"}
+        cleared = {"REVERTED", "LOST", "NOHEIGHT", "SOLDHAND"}
         await _until(
-            lambda: (
-                settled <= set(held)
-                and not {"REVERTED", "LOST", "NOHEIGHT"} & set(_records(path))
-            ),
+            lambda: settled <= set(held) and not cleared & set(_records(path)),
             timeout=8.0,
         )
         await _until(lambda: client.lookups.get(sigs["WAITING"], 0) >= 3)  # noqa: PLR2004
@@ -790,6 +807,15 @@ def _landed(
     return problems
 
 
+def _shared(shared: TradeResult | None) -> list[str]:
+    """What check F found wrong with a buy known only by a shared balance."""
+    if shared is None or shared.amount_raw != CAP_RAW:
+        return [f"SHARED: not capped at what the buy can hold: {shared}"]
+    if shared.price is not None:
+        return [f"SHARED: priced off the estimate {shared.price}, not unknown"]
+    return []
+
+
 def _resolved(
     held: dict[str, TradeResult],
     records: dict[str, dict],
@@ -800,14 +826,13 @@ def _resolved(
     problems = []
     for name in ("LANDED", "LATE"):
         problems += _landed(name, held.get(name), records.get(name, {}), sigs[name])
-    for name in ("REVERTED", "LOST", "NOHEIGHT"):
+    for name in ("REVERTED", "LOST", "NOHEIGHT", "SOLDHAND"):
         if name in records or name in held:
             problems.append(f"{name}: not cleared")
-    shared = held.get("SHARED")
-    if shared is None or shared.amount_raw != CAP_RAW:
-        problems.append(f"SHARED: not capped at what the buy can hold: {shared}")
-    elif shared.price is not None:
-        problems.append(f"SHARED: priced off the estimate {shared.price}, not unknown")
+    partial = held.get("PARTIAL")
+    if partial is None or partial.amount_raw != PARTIAL_RAW:
+        problems.append(f"PARTIAL: not held at the {PARTIAL_RAW} raw left: {partial}")
+    problems += _shared(held.get("SHARED"))
     for name in ("UNREAD", "WAITING", "NOHEIGHTNEW"):
         if not isinstance(records.get(name, {}).get("pending"), dict) or name in held:
             problems.append(
@@ -915,6 +940,7 @@ async def _check_i(tmp: Path) -> list[str]:
     problems = []
     late, gone = _token("LATE"), _token("GONE")
     run = _Run(tmp / "i.json", [late])
+    run.client.hold(late, RECEIVED_RAW)
     run.hold_positions()
     run.trader.positions._PENDING_RECHECK = 0.01  # noqa: SLF001
     run.client.status = ConfirmationStatus.UNCONFIRMED

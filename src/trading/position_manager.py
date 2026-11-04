@@ -300,8 +300,11 @@ class PositionManager:
     ) -> TradeResult | None:
         """The amounts and fill price a landed buy's transaction shows.
 
-        Falls back to the wallet's balance when the transaction's amounts
-        cannot be read; the price is then unknown (None).
+        The wallet is still the truth: a coin sold or moved since (while the
+        bot was down) is cleared, one partly sold is held at what is left, and
+        an unreadable balance leaves the record pending. Falls back to the
+        balance alone when the transaction's amounts cannot be read; the price
+        is then unknown (None).
         """
         quote_mint = normalize_quote_mint(token_info.quote_mint)
         tokens_raw, spent = await self.solana_client.get_buy_transaction_details(
@@ -312,6 +315,21 @@ class PositionManager:
         )
         if not tokens_raw:
             return await self._buy_from_balance(token_info, sent, pending, label)
+        held = await self._held_raw(token_info)
+        if held is None:
+            logger.error(
+                f"Could not confirm the wallet's balance of {label}; its buy "
+                f"{sent.tx_signature} stays pending in {self.store.path}"
+            )
+            return None
+        if held == 0:
+            logger.info(
+                f"Clearing position in {label}: its buy landed but the wallet no "
+                f"longer holds it, so it was sold or moved while the bot was down"
+            )
+            self.store.remove(token_info.mint)
+            return None
+        tokens_raw = min(tokens_raw, held)
         amount = tokens_raw / 10**TOKEN_DECIMALS
         spent = spent if spent is not None else pending.spend_raw
         price = None

@@ -28,7 +28,8 @@ signed leaves nothing. `TransactionNotSent` is the only send error that is
 `open_pending`, and no `UNCONFIRMED` buy is cleaned up as a failed buy, monitored
 or not. `open_pending` (also what `resume` runs for a pending record) resolves by
 signature (`getSignatureStatuses`, whole history): landed → the transaction's
-amounts and fill price, logged to trades.log; reverted → cleared; unknown →
+amounts and fill price, capped by the balance held (none: cleared, unreadable:
+kept pending), logged to trades.log; reverted → cleared; unknown →
 looked at again until the blockhash expired, then the balance decides, capped at
 `max_amount_raw`, price None. A position with price None reads a price before
 any exit runs. Balance reads on resume are at `confirmed`; the client's default

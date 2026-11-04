@@ -185,6 +185,7 @@ other way, a timeout say, may still have landed and is kept. The bot resolves a
 pending buy by its signature, at the next start if it was stopped or killed
 while the buy was in flight, and in the same run when its confirmation never
 came: a buy that landed is held at the amount and price its transaction shows,
+as far as the wallet still holds it (none held clears it, as for any position),
 one that reverted is cleared, and one no node knows is looked at again until its
 blockhash has expired. Then the wallet's balance decides: none held clears it,
 and a balance is held up to what the buy can have delivered, so a coin another
