@@ -67,5 +67,4 @@ async def handle_cleanup_post_session(
         manager = AccountCleanupManager(
             client, wallet, priority_fee_manager, cleanup_with_prior_fee, force_burn
         )
-        for mint, token_program_id in zip(mints, token_program_ids):
-            await manager.cleanup_ata(mint, token_program_id)
+        await manager.cleanup_atas(mints, token_program_ids)

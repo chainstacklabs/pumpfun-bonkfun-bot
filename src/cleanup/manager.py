@@ -53,6 +53,11 @@ def harvest_withheld_to_mint(mint: Pubkey, token_account: Pubkey) -> Instruction
 class AccountCleanupManager:
     """Handles safe cleanup of token accounts (ATA) after trading sessions."""
 
+    #: Seconds to let the RPC node catch up with a sell before reading accounts.
+    SETTLE_SECONDS = 15.0
+    #: Closes `cleanup_atas` keeps in flight at once.
+    CONCURRENT_CLOSES = 4
+
     def __init__(
         self,
         client: SolanaClient,
@@ -74,28 +79,62 @@ class AccountCleanupManager:
     async def cleanup_ata(
         self, mint: Pubkey, token_program_id: Pubkey | None = None
     ) -> None:
-        """Attempt to burn any remaining tokens and close the ATA.
-        Skips if account doesn't exist or is already empty/closed.
+        """Wait for the RPC node to settle, then burn what is left if asked and close the ATA.
+
+        Skips an account that doesn't exist, or holds tokens without force burn.
 
         Args:
-            mint: Token mint address
-            token_program_id: Token program (TOKEN or TOKEN_2022). Defaults to TOKEN_2022_PROGRAM
+            token_program_id: TOKEN or TOKEN_2022; None means TOKEN_2022
         """
+        await self._settle()
+        await self._close_ata(mint, token_program_id)
+
+    async def cleanup_atas(
+        self, mints: list[Pubkey], token_program_ids: list[Pubkey | None]
+    ) -> None:
+        """`cleanup_ata` for many accounts: one settle wait, then the closes side by side.
+
+        The wait covers the last sell before cleanup, so one is enough however
+        many accounts follow. At most `CONCURRENT_CLOSES` closes are in flight.
+        """
+        if not mints:
+            return
+        await self._settle()
+        slots = asyncio.Semaphore(self.CONCURRENT_CLOSES)
+
+        async def close(mint: Pubkey, token_program_id: Pubkey | None) -> None:
+            async with slots:
+                await self._close_ata(mint, token_program_id)
+
+        await asyncio.gather(
+            *(close(m, p) for m, p in zip(mints, token_program_ids, strict=True))
+        )
+
+    async def _settle(self) -> None:
+        """Let the RPC node catch up with a sell that just landed.
+
+        Read straight after it, the account can still show the sold tokens: the
+        account is then skipped, or the burn of tokens already sold fails the
+        close with it.
+        """
+        logger.info(
+            f"Waiting for {self.SETTLE_SECONDS:g} seconds for RPC node to synchronize..."
+        )
+        await asyncio.sleep(self.SETTLE_SECONDS)
+
+    async def _close_ata(self, mint: Pubkey, token_program_id: Pubkey | None) -> None:
+        """Burn what is left if asked and close the ATA; never raises."""
         if token_program_id is None:
             token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
 
         ata = self.wallet.get_associated_token_address(mint, token_program_id)
 
-        priority_fee = (
-            await self.priority_fee_manager.calculate_priority_fee([ata])
-            if self.use_priority_fee
-            else None
-        )
-
-        logger.info("Waiting for 15 seconds for RPC node to synchronize...")
-        await asyncio.sleep(15)
-
         try:
+            priority_fee = (
+                await self.priority_fee_manager.calculate_priority_fee([ata])
+                if self.use_priority_fee
+                else None
+            )
             try:
                 account = await self.client.get_account_info(ata)
             except ValueError:

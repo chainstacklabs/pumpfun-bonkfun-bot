@@ -92,8 +92,8 @@ class UniversalTrader:
     """Universal trading coordinator that works with any supported platform."""
 
     #: Seconds shutdown cleanup may take before the process exits regardless.
-    #: Cleanup settles for 15s per account before reading it, so this has to
-    #: cover a session's worth of traded coins, not one.
+    #: Cleanup settles once, then closes a session's traded coins a few at a
+    #: time, so this has to cover all of them, not one.
     _CLEANUP_SHUTDOWN_BUDGET = 120.0
 
     def __init__(self, settings: TraderSettings) -> None:
@@ -351,9 +351,9 @@ class UniversalTrader:
         """Run cleanup to completion even though shutdown arrives as a cancellation.
 
         Shutdown reaches this coroutine as a cancellation, and `_cleanup_resources`
-        awaits once per account — a settle wait, then an RPC read. Awaiting it
-        directly meant the first of those re-raised `CancelledError` and every
-        account after it kept its rent, silently: the run ends without even
+        awaits a settle wait, then RPC reads per account. Awaiting it directly
+        meant the first of those re-raised `CancelledError` and every account
+        after it kept its rent, silently: the run ends without even
         logging that it shut down. Running it as its own task and absorbing the
         cancellation lets it finish.
 
