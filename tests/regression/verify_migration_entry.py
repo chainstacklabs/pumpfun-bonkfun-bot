@@ -18,6 +18,9 @@ Offline machine checks, no network and no funds moved:
   A. Config: every committed bot config still validates and runs `new_launch`;
      `entry: migration` validates, with `extreme_fast_mode` on it is refused
      naming `extreme_fast_mode`, and an unknown entry is refused.
+     `extreme_fast_mode` set from the environment is the bool it spells, in
+     any case: `false` lets a migration bot start with it off, `TRUE` is
+     refused.
   B. Metadata: the name, symbol and uri decode from a Token-2022 mint's own
      metadata extension and from a Metaplex account, equal to the creation's.
   C. A report resolves to the coin the buyer needs: its curve (pump.fun's
@@ -53,8 +56,10 @@ import asyncio
 import base64
 import copy
 import json
+import os
 import struct
 import sys
+import tempfile
 from collections.abc import Awaitable, Callable
 from itertools import count
 from pathlib import Path
@@ -186,9 +191,45 @@ def check_a_config() -> bool:
         else:
             if needle is not None:
                 problems.append(f"{label}: validated")
+    problems += _interpolated_fast_mode(base)
     for problem in problems:
         print(f"    {problem}")
     return not problems
+
+
+def _interpolated_fast_mode(base: dict) -> list[str]:
+    """`extreme_fast_mode: ${VAR}` on a migration bot, loaded from a file."""
+    problems = []
+    config = copy.deepcopy(base)
+    config.pop("env_file", None)
+    config.pop("geyser", None)
+    config.update(
+        rpc_endpoint="http://127.0.0.1:8899",
+        wss_endpoint="ws://127.0.0.1:8900",
+        private_key=str(Keypair()),
+    )
+    config["trade"].update(entry="migration", extreme_fast_mode="${VERIFY_XFM}")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "bot.yaml"
+        path.write_text(yaml.safe_dump(config))
+        for value, expected in (("false", False), ("False", False), ("TRUE", True)):
+            os.environ["VERIFY_XFM"] = value
+            try:
+                loaded = config_loader.load_bot_config(str(path))
+            except ValueError as e:
+                if expected is not True or "extreme_fast_mode" not in str(e):
+                    problems.append(f"VERIFY_XFM={value}: refused: {e}")
+                continue
+            finally:
+                os.environ.pop("VERIFY_XFM", None)
+            if expected is True:
+                problems.append(f"VERIFY_XFM={value}: validated")
+            elif loaded["trade"]["extreme_fast_mode"] is not False:
+                problems.append(
+                    f"VERIFY_XFM={value}: loaded as "
+                    f"{loaded['trade']['extreme_fast_mode']!r}"
+                )
+    return problems
 
 
 # ---------------------------------------------------------------- B: metadata
