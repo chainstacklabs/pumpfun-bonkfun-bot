@@ -4,22 +4,24 @@ A listener reports a migration as a `PoolReady`: the mint, the pool and its
 quote mint, nothing else. `MigrationResolver` reads the rest from chain -- the
 curve for the coin's creator, flags and transfer fee, the mint for its token
 program and metadata -- and waits for the pool to be readable before the buyer
-is handed the coin. The curve is re-read until it shows as completed, since a
-stream reports a migration before every node serves the slot it landed in, and
-on LaunchLab the buy that completes the curve can share that slot; both waits
-are bounded by `POOL_WAIT_SECONDS`. The buyer then finds the curve graduated
-and buys in the pool, as it does for any graduated coin.
+is handed the coin. Mint and curve are re-read until the mint exists and the
+curve shows as completed, since a stream reports a migration before every node
+serves the slot it landed in: a coin can be created and migrated in the same
+second, and on LaunchLab the buy that completes the curve can share that slot.
+Both waits are bounded by `POOL_WAIT_SECONDS`. The buyer then finds the curve
+graduated and buys in the pool, as it does for any graduated coin.
 """
 
 import asyncio
 from time import monotonic, time
 
+from solders.account import Account
 from solders.pubkey import Pubkey
 
 from core.client import SolanaClient
 from core.pubkeys import cached_quote_token_program, normalize_quote_mint
 from core.token_metadata import decode_token_metadata, metadata_address
-from interfaces.core import Platform, PoolReady, TokenInfo
+from interfaces.core import CurveManager, Platform, PoolReady, TokenInfo
 from platforms import get_platform_implementations
 from utils.logger import get_logger
 
@@ -37,8 +39,8 @@ class PoolNotTradable(Exception):  # noqa: N818
     """This report of a migration leaves nothing to buy; the message says why.
 
     `not_yet_visible` is set when the chain did not show the migration within
-    the wait (curve unreadable or not completed), which a lagging node can
-    cause: such a report must not use the mint up.
+    the wait (mint missing, curve unreadable or not completed), which a lagging
+    node can cause: such a report must not use the mint up.
     """
 
     def __init__(self, message: str, *, not_yet_visible: bool = False) -> None:
@@ -74,13 +76,13 @@ class MigrationResolver:
     async def resolve(self, pool: PoolReady) -> TokenInfo:
         """Read the coin behind a migration.
 
-        The curve is read at `processed`, the commitment the streams report
-        at, and re-read for up to `pool_wait_seconds` until it shows as
-        completed.
+        Mint and curve are read at `processed`, the commitment the streams
+        report at, and re-read for up to `pool_wait_seconds` until the mint
+        exists and the curve shows as completed.
 
         Raises:
-            PoolNotTradable: If the mint is missing, the curve stays unreadable
-                or not completed through the wait (an attempt that cannot land,
+            PoolNotTradable: If the mint stays missing, or the curve unreadable
+                or not completed, through the wait (an attempt that cannot land,
                 or a node that has not caught up), the curve's quote mint is
                 not the reported pool's (an attempt naming a pool the coin will
                 not use), or a LaunchLab curve is under a platform config the
@@ -97,33 +99,9 @@ class MigrationResolver:
             else provider.derive_pool_address(pool.mint, quote_mint)
         )
 
-        deadline = monotonic() + self.pool_wait_seconds
-        while True:
-            try:
-                (
-                    mint_account,
-                    metaplex_account,
-                ) = await self.client.get_multiple_accounts(
-                    [pool.mint, metadata_address(pool.mint)]
-                )
-                state = await implementations.curve_manager.get_pool_state(
-                    curve_address, commitment="processed"
-                )
-            except Exception as e:  # noqa: BLE001
-                not_seen = PoolNotTradable(
-                    f"curve or mint unreadable ({e})", not_yet_visible=True
-                )
-            else:
-                if mint_account is None:
-                    raise PoolNotTradable("mint account not found")  # noqa: TRY003
-                if state.get("graduated"):
-                    break
-                not_seen = PoolNotTradable(
-                    "its curve has not completed", not_yet_visible=True
-                )
-            if monotonic() >= deadline:
-                raise not_seen
-            await asyncio.sleep(POOL_POLL_SECONDS)
+        state, mint_account, metaplex_account = await self._read_completed(
+            implementations.curve_manager, pool.mint, curve_address
+        )
         curve_quote = normalize_quote_mint(_pubkey(state.get("quote_mint")))
         if curve_quote != quote_mint:
             raise PoolNotTradable(  # noqa: TRY003
@@ -175,6 +153,52 @@ class MigrationResolver:
             token_info.platform_config = state.get("platform_config")
             token_info.transfer_fee_bps = state.get("transfer_fee_bps", 0)
         return token_info
+
+    async def _read_completed(
+        self, curve_manager: CurveManager, mint: Pubkey, curve_address: Pubkey
+    ) -> tuple[dict, Account, Account | None]:
+        """Curve state, mint and Metaplex account, once the curve shows as completed.
+
+        Both are read at `processed` and re-read until the mint exists and the
+        curve is completed, for up to `pool_wait_seconds`.
+
+        Raises:
+            PoolNotTradable: With `not_yet_visible`, when the wait ran out first
+        """
+        deadline = monotonic() + self.pool_wait_seconds
+        while True:
+            try:
+                (
+                    mint_account,
+                    metaplex_account,
+                ) = await self.client.get_multiple_accounts(
+                    [mint, metadata_address(mint)], commitment="processed"
+                )
+                state = None
+                if mint_account is not None:
+                    state = await curve_manager.get_pool_state(
+                        curve_address, commitment="processed"
+                    )
+            except Exception as e:  # noqa: BLE001
+                not_seen = PoolNotTradable(
+                    f"curve or mint unreadable ({e})", not_yet_visible=True
+                )
+            else:
+                if state is None:
+                    not_seen = PoolNotTradable(
+                        f"its mint was not visible within "
+                        f"{self.pool_wait_seconds:.1f}s",
+                        not_yet_visible=True,
+                    )
+                elif state.get("graduated"):
+                    return state, mint_account, metaplex_account
+                else:
+                    not_seen = PoolNotTradable(
+                        "its curve has not completed", not_yet_visible=True
+                    )
+            if monotonic() >= deadline:
+                raise not_seen
+            await asyncio.sleep(POOL_POLL_SECONDS)
 
     def _check_platform_config(self, platform: Platform, state: dict) -> None:
         """Refuse a LaunchLab curve under a platform config the bot does not trade.

@@ -103,7 +103,7 @@ filters:
   # sell included; "standard" coins charge none. Omit to take every coin.
   #max_transfer_fee_bps: 100
   listener_type: "geyser" # "geyser" or "blocks" for stonk_fun
-  max_token_age: 0.001 # Maximum token age in seconds for processing
+  max_token_age: 0.001 # Seconds since the bot detected the coin (its launch, or its migration with entry: migration), not its age on chain; older coins are skipped
   marry_mode: false # Only buy tokens, skip selling
   yolo_mode: false # Continuously trade tokens
 

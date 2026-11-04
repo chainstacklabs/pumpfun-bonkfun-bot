@@ -304,7 +304,7 @@ class UniversalTrader:
             )
             logger.info(f"Max exit sell attempts: {positions.max_exit_sell_attempts}")
 
-        logger.info(f"Max token age: {intake.max_token_age} seconds")
+        logger.info(f"Max token age: {intake.max_token_age}s since detection")
 
         try:
             health_resp = await self.solana_client.get_health()
