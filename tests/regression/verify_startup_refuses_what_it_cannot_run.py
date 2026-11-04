@@ -47,8 +47,9 @@ stopped on an error still exited 0.
      report the bot did not run normally; one whose listener just ends does
      not.
   J. SIGTERM to the process group takes the same path as Ctrl+C, in the main
-     process and in its own: the trader's shutdown line, no
-     `KeyboardInterrupt` traceback, exit 143.
+     process and in its own, also when the bot was started with SIGINT
+     ignored, as a shell starts a background job: the trader's shutdown line,
+     no `KeyboardInterrupt` traceback, exit 143.
 
 Offline: the bot runs against a stand-in JSON-RPC node on 127.0.0.1 and a
 closed local port; no funds move.
@@ -545,20 +546,36 @@ def check_f_exit_status(tmp: str) -> bool:
     return _report(problems)
 
 
+# Runs the runner with SIGINT ignored, as a background job starts.
+IGNORING_SIGINT = """
+import runpy, signal, sys
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+
+
 def _ctrl_c(
     tmp: str,
     *,
     separate_process: bool,
     sig: signal.Signals = signal.SIGINT,
     want: int = 130,
+    sigint_ignored: bool = False,
 ) -> list[str]:
     """Ctrl+C (or `sig`) a running bot through its process group; what went wrong."""
     problems = []
     with _node() as (rpc, _):
         config = _config("live", rpc, separate_process=separate_process)
         folder = _folder(tmp, {"live": config})
+        # A shell starts a background job (`&`) with SIGINT ignored.
+        command = (
+            [sys.executable, "-c", IGNORING_SIGINT, str(RUNNER)]
+            if sigint_ignored
+            else [sys.executable, str(RUNNER)]
+        )
         bot = subprocess.Popen(  # noqa: S603
-            [sys.executable, str(RUNNER)],
+            command,
             cwd=folder,
             env=_env(),
             stdout=subprocess.PIPE,
@@ -605,10 +622,16 @@ def check_j_sigterm_is_clean(tmp: str) -> bool:
     problems = []
     for separate_process in (False, True):
         mode = "own process" if separate_process else "main process"
-        found = _ctrl_c(
-            tmp, separate_process=separate_process, sig=signal.SIGTERM, want=143
-        )
-        problems += [f"{mode}: {p}" for p in found]
+        for ignored in (False, True):
+            found = _ctrl_c(
+                tmp,
+                separate_process=separate_process,
+                sig=signal.SIGTERM,
+                want=143,
+                sigint_ignored=ignored,
+            )
+            label = f"{mode}{', SIGINT ignored' if ignored else ''}"
+            problems += [f"{label}: {p}" for p in found]
     return _report(problems)
 
 

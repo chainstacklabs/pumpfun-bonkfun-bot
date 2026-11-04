@@ -58,22 +58,54 @@ EXIT_INTERRUPTED = 130
 EXIT_TERMINATED = 143
 # Holds SIGTERM once received, so the exit status can say which signal it was.
 _terminated: set[int] = set()
+# The bot this process is running right now, for the SIGTERM handler to cancel.
+_running: list[asyncio.Task] = []
 
 
 def _stop_on_sigterm() -> None:
     """Make SIGTERM stop the bots the way Ctrl+C does.
 
-    The handler raises SIGINT in its place: `asyncio.run` then cancels the
-    running bot, whose trader stops its positions and cleans up, and
-    `KeyboardInterrupt` ends the process. Send it to the process group, as a
-    terminal sends Ctrl+C, so a bot in its own process stops too.
+    The handler cancels the running bot, as `asyncio.run` does on Ctrl+C: its
+    trader stops its positions and cleans up, then the process exits 143. It
+    does not go through SIGINT, which a shell ignores in a job it starts in the
+    background. With no bot running (the main process waiting for bots in
+    their own processes), or on a second SIGTERM, it raises
+    `KeyboardInterrupt`. Send it to the process group, as a terminal sends
+    Ctrl+C, so a bot in its own process stops too.
     """
 
     def on_sigterm(signum: int, _frame: object) -> None:
+        first = not _terminated
         _terminated.add(signum)
-        signal.raise_signal(signal.SIGINT)
+        bot = _running[-1] if _running else None
+        if first and bot is not None and not bot.done():
+            bot.get_loop().call_soon_threadsafe(bot.cancel)
+            return
+        raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, on_sigterm)
+
+
+def _run_bot(config_path: str, positions_file: str | None) -> bool:
+    """`asyncio.run(start_bot(...))`, cancellable by SIGTERM.
+
+    Raises:
+        KeyboardInterrupt: Ctrl+C or SIGTERM stopped the bot
+    """
+
+    async def run() -> bool:
+        _running.append(asyncio.current_task())
+        try:
+            return await start_bot(config_path, positions_file)
+        finally:
+            _running.pop()
+
+    try:
+        return asyncio.run(run())
+    except asyncio.CancelledError:
+        if _terminated:
+            raise KeyboardInterrupt from None
+        raise
 
 
 def _interrupted_status() -> int:
@@ -301,7 +333,7 @@ def run_bot_process(config_path, positions_file: str | None = None):
     """
     _stop_on_sigterm()
     try:
-        ran = asyncio.run(start_bot(config_path, positions_file))
+        ran = _run_bot(config_path, positions_file)
     except KeyboardInterrupt:
         sys.exit(_interrupted_status())
     except Exception:
@@ -477,7 +509,7 @@ def run_all_bots() -> bool:
                 logging.info(
                     f"Starting bot '{bot_name}' ({platform.value}) in main process"
                 )
-                if not asyncio.run(start_bot(str(file), positions_file)):
+                if not _run_bot(str(file), positions_file):
                     all_ok = False
 
         except Exception as e:
