@@ -43,12 +43,20 @@ _URL_USERINFO = re.compile(r"(?<=//)[^/@\s]+(?=@)")
 
 REDACTED = "***"
 
+_TRACEBACK = logging.Formatter()
+
 # Exact values pulled from the environment at install time. Pattern matching
 # cannot know that a bare token is a secret; this does.
 _literal_secrets: list[str] = []
 # Secrets that never sat in the environment, such as a key decrypted from a
 # keystore. Kept apart so re-reading the environment does not drop them.
 _registered_secrets: list[str] = []
+# Endpoints named by a bot config rather than an environment variable.
+_registered_endpoints: list[str] = []
+# The hosts of every known endpoint, matched on their own: an error from
+# aiohttp or gRPC names the host (`Cannot connect to host ...`) without the URL.
+# Holds one pattern, or none before any endpoint is known.
+_secret_hosts: list[re.Pattern[str]] = []
 _redaction_installed = False
 
 # Environment variables whose value must never appear in a log line. The
@@ -62,6 +70,13 @@ _SECRET_ENV_VARS = (
     "PUMPFUN_PASSWORD",
 )
 
+# Of those, the ones holding an endpoint, whose host is masked as well.
+_ENDPOINT_ENV_VARS = (
+    "SOLANA_NODE_RPC_ENDPOINT",
+    "SOLANA_NODE_WSS_ENDPOINT",
+    "GEYSER_ENDPOINT",
+)
+
 # Shortest value worth substring-matching. A one- or two-character variable
 # would match half the alphabet and redact the whole log.
 _MIN_LITERAL_SECRET_LEN = 8
@@ -70,9 +85,10 @@ _MIN_LITERAL_SECRET_LEN = 8
 def redact(text: str) -> str:
     """Strip credentials out of one string.
 
-    Masks, in order: any exact value registered from the environment, URL
-    userinfo, secret-bearing query parameters, and long opaque URL path
-    segments. Safe to call on a string that holds no secret.
+    Masks, in order: any exact value registered from the environment, the
+    host (and port) of a known endpoint, URL userinfo, secret-bearing query
+    parameters, and long opaque URL path segments. Safe to call on a string
+    that holds no secret.
 
     Args:
         text: The string to clean, typically a log message
@@ -83,28 +99,53 @@ def redact(text: str) -> str:
     for secret in _literal_secrets:
         if secret in text:
             text = text.replace(secret, _redact_endpoint(secret))
+    for hosts in _secret_hosts:
+        text = hosts.sub(REDACTED, text)
     text = _URL_USERINFO.sub(REDACTED, text)
     text = _SECRET_QUERY.sub(lambda m: f"{m.group(1)}={REDACTED}", text)
     return _SECRET_PATH_SEGMENT.sub(f"/{REDACTED}", text)
 
 
 def _redact_endpoint(secret: str) -> str:
-    """Replace one known secret, keeping the host when it is a URL.
+    """Replace one known secret, keeping only the scheme when it is a URL.
 
-    A bare `***` in place of an endpoint hides which provider answered, which
-    is the one thing a reader needs from that line. The host is not the
-    credential, so it stays.
-
-    Args:
-        secret: The exact value read from the environment
+    The host goes too: many providers put the account in it.
 
     Returns:
-        `scheme://host/***` for a URL, `***` for anything else
+        `scheme://***` for a URL, `***` for anything else
     """
     parts = urlsplit(secret)
     if parts.scheme and parts.hostname:
-        return f"{parts.scheme}://{parts.hostname}/{REDACTED}"
+        return f"{parts.scheme}://{REDACTED}"
     return REDACTED
+
+
+def _endpoint_host(endpoint: str) -> str | None:
+    """The host of a URL or of a bare `host:port` gRPC target.
+
+    None for a single-label host such as `localhost`: masking a plain word
+    would hide it everywhere it appears, and such a host names no account.
+    """
+    try:
+        host = urlsplit(endpoint if "//" in endpoint else f"//{endpoint}").hostname
+    except ValueError:
+        return None
+    if host and ("." in host or ":" in host):
+        return host
+    return None
+
+
+def _host_pattern(endpoints: list[str]) -> re.Pattern[str] | None:
+    """Match any of the endpoints' hosts as a whole name, with its port."""
+    hosts = sorted(
+        {host for e in endpoints if (host := _endpoint_host(e))}, key=len, reverse=True
+    )
+    if not hosts:
+        return None
+    names = "|".join(re.escape(host) for host in hosts)
+    # Not part of a longer name on either side: `rpc.example.com` leaves
+    # `myrpc.example.com` and `rpc.example.com.au` alone.
+    return re.compile(rf"(?i)(?<![\w.-])(?:{names})(?::\d+)?(?![\w-]|\.[\w-])")
 
 
 def silence_http_client_loggers() -> None:
@@ -133,6 +174,9 @@ def install_secret_redaction() -> None:
         if value and len(value) >= _MIN_LITERAL_SECRET_LEN:
             _literal_secrets.append(value)
     _literal_secrets.extend(_registered_secrets)
+    endpoints = [os.environ.get(name) or "" for name in _ENDPOINT_ENV_VARS]
+    hosts = _host_pattern(endpoints + _registered_endpoints)
+    _secret_hosts[:] = [hosts] if hosts else []
     # Longest first, so an endpoint is masked before a token that is a prefix
     # of it can replace half of it.
     _literal_secrets.sort(key=len, reverse=True)
@@ -163,6 +207,15 @@ def register_secret(value: str) -> None:
         install_secret_redaction()
 
 
+def register_endpoint(value: str) -> None:
+    """Mask an endpoint and its host in every later log record."""
+    if value and value not in _registered_endpoints:
+        _registered_endpoints.append(value)
+        if len(value) >= _MIN_LITERAL_SECRET_LEN and value not in _registered_secrets:
+            _registered_secrets.append(value)
+        install_secret_redaction()
+
+
 def _redact_record(record: logging.LogRecord) -> logging.LogRecord:
     """Mask any credential in a record, message and arguments together.
 
@@ -175,12 +228,18 @@ def _redact_record(record: logging.LogRecord) -> logging.LogRecord:
     The rendered text replaces the record only when redaction changed something,
     so an ordinary line keeps its original message and arguments.
 
-    Args:
-        record: The record as the factory built it
+    A traceback is rendered and redacted here too: the formatter renders it
+    after the factory, and an exception's text (gRPC's `details`, aiohttp's
+    `Cannot connect to host`) names the endpoint.
 
     Returns:
         The same record, credentials masked
     """
+    if isinstance(record.exc_info, tuple) and not record.exc_text:
+        try:
+            record.exc_text = redact(_TRACEBACK.formatException(record.exc_info))
+        except Exception:  # noqa: BLE001 - a malformed record must not break logging
+            record.exc_text = REDACTED
     try:
         message = record.getMessage()
     except Exception:  # noqa: BLE001 - a malformed record must not break logging
@@ -246,13 +305,18 @@ def setup_file_logging(
         ):
             return  # File handler already added
 
-    formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+    root_logger.addHandler(file_handler(filename, level))
+
+
+def file_handler(filename: str, level: int = logging.INFO) -> logging.FileHandler:
+    """A handler writing to `filename` in the format of the bot's log files."""
+    install_secret_redaction()
+    handler = logging.FileHandler(filename)
+    handler.setLevel(level)
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
     )
-
-    file_handler = logging.FileHandler(filename)
-    file_handler.setLevel(level)
-    file_handler.setFormatter(formatter)
-
-    root_logger.addHandler(file_handler)
+    return handler

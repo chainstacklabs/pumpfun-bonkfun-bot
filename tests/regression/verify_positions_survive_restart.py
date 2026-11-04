@@ -1058,10 +1058,13 @@ def _run_all_bots_started(
     for stem in configs:
         (bots / f"{stem}.yaml").write_text("")
 
-    async def start_bot(config_path: str, positions_file: str | None = None) -> None:
+    async def start_bot(config_path: str, positions_file: str | None = None) -> bool:
         started.append((Path(config_path).stem, positions_file))
+        return True
 
     class _Process:  # `separate_process: true`, run in place
+        exitcode = 0
+
         def __init__(self, target: Callable, args: tuple, name: str) -> None:
             self.target, self.args, self.name = target, args, name
 
@@ -1104,11 +1107,20 @@ def _start_bot_settings(config: dict, positions_file: str | None) -> TraderSetti
         async def start(self) -> None:
             return None
 
-    names = ("load_bot_config", "setup_logging", "print_config_summary")
+    async def node_answers(_endpoint: str) -> None:
+        return None
+
+    names = (
+        "load_bot_config",
+        "setup_logging",
+        "print_config_summary",
+        "rpc_unreachable_reason",
+    )
     originals = [getattr(bot_runner, n) for n in (*names, "UniversalTrader")]
     bot_runner.load_bot_config = lambda _path: config
     bot_runner.setup_logging = lambda _name: None
     bot_runner.print_config_summary = lambda _cfg: None
+    bot_runner.rpc_unreachable_reason = node_answers
     bot_runner.UniversalTrader = _Trader
     try:
         asyncio.run(bot_runner.start_bot("bots/any.yaml", positions_file))

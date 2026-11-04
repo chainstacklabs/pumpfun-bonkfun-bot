@@ -88,6 +88,10 @@ uv run src/bot_runner.py   # or directly
 
 Logs land in `logs/{bot_name}_{timestamp}.log`.
 
+Run it from the folder that holds `bots/`: it reads `bots/*.yaml` there and writes `logs/`, `trades/` and `positions/` beside it. `pump_bot --help` says this and starts nothing.
+
+A bot that can't run is not started, with one line saying why: a config that fails validation, a wallet that won't unlock, or an `rpc_endpoint` that doesn't answer. With every bot disabled the bot says so. The exit status is 0 only when every enabled bot started and finished, 1 otherwise, and 130 after Ctrl+C.
+
 ## Configuration reference
 
 The YAML files are commented inline. The sections that matter most:

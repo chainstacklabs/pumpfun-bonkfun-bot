@@ -2,6 +2,7 @@
 
 import asyncio
 import random
+import socket
 import struct
 from time import monotonic
 from typing import Any
@@ -29,6 +30,8 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 HTTP_TOO_MANY_REQUESTS = 429
+HTTP_CLIENT_ERROR = 400
+HTTP_SERVER_ERROR = 500
 
 # Length of the `[instruction_index, error_detail]` pair inside
 # `{"InstructionError": [...]}` -- fixed by the RPC's `meta.err` shape.
@@ -170,6 +173,66 @@ def _describe_program_error(err: object) -> str | None:
     if description is None:
         return None
     return f"pump.fun IDL: {description}"
+
+
+# What a failed request says, matched on the error or on the OS error inside
+# a connection error, in this order. Each is a plain reason naming no URL.
+_UNREACHABLE_CAUSES = (
+    (aiohttp.InvalidURL, "not an http(s) URL"),
+    (aiohttp.NonHttpUrlClientError, "not an http(s) URL"),
+    (aiohttp.ClientSSLError, "TLS handshake failed"),
+    (socket.gaierror, "cannot resolve the host name"),
+    (ConnectionRefusedError, "connection refused"),
+    (ValueError, "the answer is not JSON"),
+)
+
+
+def _unreachable_cause(error: Exception, timeout: float) -> str:
+    """A few plain words on why a request got no answer."""
+    if isinstance(error, TimeoutError):
+        return f"no answer within {timeout:g} s"
+    os_error = getattr(error, "os_error", None)
+    for kind, cause in _UNREACHABLE_CAUSES:
+        if isinstance(error, kind) or isinstance(os_error, kind):
+            return cause
+    if isinstance(os_error, OSError) and os_error.strerror:
+        return os_error.strerror
+    return str(error) or type(error).__name__
+
+
+async def rpc_unreachable_reason(
+    endpoint: str, attempts: int = 3, timeout: float = 10.0
+) -> str | None:
+    """Why `endpoint` gives no JSON-RPC answer, or None when it answers.
+
+    Sends `getHealth` up to `attempts` times, 1 s then 2 s apart, each bounded
+    by `timeout` seconds. Any JSON reply is an answer, an error object included
+    (an unhealthy node is still reachable), and so is HTTP 429. Any other 4xx
+    is final at once. The reason is short and holds no URL.
+    """
+    body = {"jsonrpc": "2.0", "id": 1, "method": "getHealth"}
+    reason = None
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=timeout)
+    ) as session:
+        for attempt in range(attempts):
+            if attempt:
+                await asyncio.sleep(2 ** (attempt - 1))
+            try:
+                async with session.post(endpoint, json=body) as response:
+                    if response.status == HTTP_TOO_MANY_REQUESTS:
+                        return None
+                    if response.status >= HTTP_CLIENT_ERROR:
+                        reason = f"HTTP {response.status}"
+                        if response.status < HTTP_SERVER_ERROR:
+                            return reason
+                        continue
+                    if isinstance(await response.json(content_type=None), dict):
+                        return None
+                    reason = "the answer is not JSON-RPC"
+            except (TimeoutError, aiohttp.ClientError, ValueError) as e:
+                reason = _unreachable_cause(e, timeout)
+    return reason
 
 
 class SolanaClient:
