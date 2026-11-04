@@ -28,6 +28,10 @@ from interfaces.core import (
 )
 from platforms import get_platform_implementations
 from platforms.curve_market import CurveMarket
+from platforms.pumpfun.curve_manager import (
+    max_sell_within_real_reserves,
+    sell_quote_out,
+)
 from trading.base import Trader, TradeResult
 from utils.logger import get_logger
 
@@ -144,6 +148,60 @@ def _refresh_creator(
     token_info.creator = creator
     if hasattr(address_provider, "derive_creator_vault"):
         token_info.creator_vault = address_provider.derive_creator_vault(creator)
+
+
+_CURVE_RESERVES = {
+    "virtual_token_reserves",
+    "virtual_quote_reserves",
+    "real_quote_reserves",
+}
+
+
+def _fit_sell_to_curve(
+    pool_state: dict | None,
+    amount: int,
+    amount_decimal: float,
+    price: float,
+    quote_unit: int,
+) -> tuple[int, float, float]:
+    """Shrink a pump.fun curve sell to what the curve can pay out.
+
+    A sell whose payout is more than the curve's `real_quote_reserves` reverts
+    (6024 Overflow) however often it is resent, so sell the largest part that
+    fits and leave the rest in the wallet, like any unsold remainder.
+
+    Args:
+        pool_state: The pump.fun curve read the sell is built from; None when
+            the sell does not go to a pump.fun curve or the read failed, and
+            the sell is left as it is then
+        amount: Raw tokens to sell
+        amount_decimal: `amount` in whole tokens
+        price: Reference price per whole token, in whole quote units
+        quote_unit: Raw units per whole quote unit
+
+    Returns:
+        (raw tokens, whole tokens, reference price) to sell with: the inputs
+        when the curve can pay for the whole sell. Otherwise the part it can pay
+        for (0 when it holds nothing), and the price lowered to the curve's own
+        payout for that part if the caller's is higher, so the slippage floor
+        and the cap come from the same read.
+    """
+    if pool_state is None or not _CURVE_RESERVES <= pool_state.keys():
+        return amount, amount_decimal, price
+    sellable = max_sell_within_real_reserves(pool_state, amount)
+    if sellable == amount:
+        return amount, amount_decimal, price
+    logger.warning(
+        f"The curve holds {pool_state['real_quote_reserves']} "
+        f"raw quote units, less than selling all {amount} raw tokens would pay; "
+        f"selling {sellable} raw tokens, the most it can pay for. The other "
+        f"{amount - sellable} stay in the wallet."
+    )
+    if sellable == 0:
+        return 0, 0.0, price
+    sellable_decimal = sellable / 10**TOKEN_DECIMALS
+    payout_price = sell_quote_out(pool_state, sellable) / quote_unit / sellable_decimal
+    return sellable, sellable_decimal, min(price, payout_price)
 
 
 class PlatformAwareBuyer(Trader):
@@ -759,6 +817,7 @@ class PlatformAwareSeller(Trader):
             sell_deductions = (0.0, 0)
             # Unknown when the refresh below fails; the curve is the default.
             graduated = False
+            pool_state = None
 
             # The sell account list is 16 (non-cashback) vs 17 (cashback) and
             # fee_recipient differs in mayhem mode; both can change between buy
@@ -834,6 +893,15 @@ class PlatformAwareSeller(Trader):
                 f"Reference price per token: {token_price_sol:.8f} {quote_label}"
             )
 
+            token_balance, token_balance_decimal, token_price_sol = _fit_sell_to_curve(
+                pool_state
+                if venue is curve and token_info.platform is Platform.PUMP_FUN
+                else None,
+                token_balance,
+                token_balance_decimal,
+                token_price_sol,
+                quote_unit,
+            )
             if token_balance == 0:
                 logger.info("No tokens to sell.")
                 return TradeResult(

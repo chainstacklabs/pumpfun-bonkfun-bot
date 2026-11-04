@@ -159,10 +159,10 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
 
 **Selling**
 
-- `PlatformAwareSeller.execute` does not read a price — the `token_price` it is
-  handed **is** the slippage floor (`min_quote_output = amount * price *
-  (1 - slippage)`). The caller owns that floor, so an exit prices off the value
-  that triggered it, never the entry price.
+- `PlatformAwareSeller.execute` floors a sell at the `token_price` it is handed
+  (`amount * price * (1 - slippage)`) and reads no price itself, so the caller
+  prices an exit off the value that triggered it. Only a pump.fun curve sell its
+  real reserves can't pay is cut to what they can, floored at that payout.
 - The seller's `max_retries` covers **transaction submission only**. An on-chain
   revert comes back as `success=False` and is retried in the monitor loop, where
   the price is re-read first, bounded by `trade.max_exit_sell_attempts` (default

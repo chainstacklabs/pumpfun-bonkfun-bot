@@ -52,6 +52,13 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   two u64). Volume tracking is unconditional now that `user_volume_accumulator`
   is mandatory. `max_sol_cost`/`min_sol_output` are in the **quote mint's** raw
   units — lamports for SOL, 1e-6 for USDC.
+- **A sell can't pay out more than `real_quote_reserves`.** It is priced on the
+  virtual reserves, `amount * virtual_quote / (virtual_token + amount)` rounded
+  down, and that payout, fees included, comes out of the real reserves and the
+  curve's lamports; past them the program reverts 6024 Overflow. The virtual
+  reserves normally cover the real ones, but on a mayhem-mode coin they drift
+  far apart, so the seller sells the largest part of a position the curve can
+  pay for and leaves the rest in the wallet.
 - Even for SOL-paired coins you must pass **wrapped SOL** as `quote_mint`, not
   `Pubkey::default()`. Transfers still happen in native SOL, and the
   `associated_quote_*` accounts are only seed-constrained — do **not** create the

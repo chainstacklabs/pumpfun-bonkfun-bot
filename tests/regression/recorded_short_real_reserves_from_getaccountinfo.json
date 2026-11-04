@@ -1,0 +1,51 @@
+{
+  "source": "mainnet getAccountInfo of the bonding curve and the Rent sysvar, getSignaturesForAddress and getTransaction",
+  "mint": "FKETYA3D5gcJhvTT9D2EWJJaNgtQkicMkQop7cmYpump",
+  "bonding_curve": "GoZhf9A422toq4orE2v2gVE9Wa3EUyydK2FbMa1GRv6A",
+  "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+  "reverted_sells": [
+    {
+      "signature": "2krKrLXciybQoeDhep4wHG6gQbESAbWhdtWkEvPW2Uu7BNuPqUDfEWNDsntZKC9K6Gh4PESdQ8LJzqFJ8pxTcvDi",
+      "slot": 465156673,
+      "amount": 152019543696,
+      "min_sol_output": 2739523
+    },
+    {
+      "signature": "4JHzARtzJ16d3gb2mvXAdmUGWWkvnCBCFEyVF21iZknHUfRAykneqs575HQ76DkxAXEDRvanqBNxwqGuXXbJc2ab",
+      "slot": 465156680,
+      "amount": 152019543696,
+      "min_sol_output": 2739523
+    },
+    {
+      "signature": "4w47CZN8e1jHJxbWusq2zwGpHgpLaqo3b5Hgc2BrJKttoAMDVeq4gNgVa7TC4WKuidfKBBdwWGeopjxprqCqdGby",
+      "slot": 465156687,
+      "amount": 152019543696,
+      "min_sol_output": 2739523
+    }
+  ],
+  "last_sell": {
+    "signature": "4vrcR6drE5oPRxSSKKybH2UNkNkw5eM4cti3Zy1ct6goTBb1hMWMS7HWwsm83zJQBx4EXkTLSLj8egRjjyRNYYoS",
+    "slot": 465155861,
+    "reserves_before": {
+      "virtual_sol_reserves": 38183628520,
+      "virtual_token_reserves": 1059331603335976,
+      "real_sol_reserves": 5333720
+    },
+    "token_amount": 48342151585,
+    "sol_amount": 1742414,
+    "fee": 16553,
+    "creator_fee": 5228,
+    "real_sol_reserves_after": 3591306,
+    "curve_lamports_before": 6827240,
+    "curve_lamports_after": 5084826,
+    "seller_lamports_change": 1715633,
+    "transaction_fee": 5000
+  },
+  "rent_sysvar": "2BMAAAAAAAAAAAAAAADwPzI=",
+  "curve_account": {
+    "slot": 465199933,
+    "owner": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+    "lamports": 5084826,
+    "data": "F7f4N2DYrGDJPFUdgMMDAJpY0eMIAAAAyaRC0e7EAgCKzDYAAAAAAACAxqR+jQMAAO/f7cL+8yNOOtXMgE+NjP3bRZtiaTRx90C3rgddhnsyAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACsI/wGAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+  }
+}
