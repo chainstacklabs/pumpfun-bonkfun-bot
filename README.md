@@ -90,7 +90,7 @@ Logs land in `logs/{bot_name}_{timestamp}.log`.
 
 Run it from the folder that holds `bots/`: it reads `bots/*.yaml` there and writes `logs/`, `trades/` and `positions/` beside it. `pump_bot --help` says this and starts nothing.
 
-A bot that can't run is not started, with one line saying why: a config that fails validation, a wallet that won't unlock, or an `rpc_endpoint` that doesn't answer or rejects the request. With every bot disabled the bot says so. The exit status is 0 only when every enabled bot started and finished without an error, 1 otherwise, 130 after Ctrl+C and 143 after SIGTERM, which stops the bots the same way; send either to the process group so a bot in its own process stops too.
+A bot that can't run is not started, with one line saying why: a config that fails validation, a wallet that won't unlock, or an `rpc_endpoint` that doesn't answer or rejects the request. With every bot disabled the bot says so. The exit status is 0 only when every enabled bot started and finished without an error, 1 otherwise, 130 after Ctrl+C and 143 after SIGTERM, which stops the bots the same way. Ctrl+C reaches a bot in its own process through the process group; SIGTERM sent to the main process alone is passed on to each of them.
 
 ## Configuration reference
 

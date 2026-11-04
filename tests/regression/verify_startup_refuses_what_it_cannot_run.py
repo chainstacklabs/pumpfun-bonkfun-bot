@@ -48,8 +48,9 @@ stopped on an error still exited 0.
      not.
   J. SIGTERM to the process group takes the same path as Ctrl+C, in the main
      process and in its own, also when the bot was started with SIGINT
-     ignored, as a shell starts a background job: the trader's shutdown line,
-     no `KeyboardInterrupt` traceback, exit 143.
+     ignored, as a shell starts a background job, and when only the main
+     process gets it while the bot runs in its own: the trader's shutdown
+     line, no `KeyboardInterrupt` traceback, exit 143, nothing left running.
 
 Offline: the bot runs against a stand-in JSON-RPC node on 127.0.0.1 and a
 closed local port; no funds move.
@@ -74,6 +75,7 @@ from collections.abc import Callable, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
+from typing import NamedTuple
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -555,15 +557,24 @@ runpy.run_path(sys.argv[0], run_name="__main__")
 """
 
 
-def _ctrl_c(
-    tmp: str,
-    *,
-    separate_process: bool,
-    sig: signal.Signals = signal.SIGINT,
-    want: int = 130,
-    sigint_ignored: bool = False,
-) -> list[str]:
-    """Ctrl+C (or `sig`) a running bot through its process group; what went wrong."""
+class _Stop(NamedTuple):
+    """How a running bot is stopped, and the exit status that should follow."""
+
+    sig: signal.Signals = signal.SIGINT
+    want: int = 130
+    #: Started with SIGINT ignored, as a shell starts a background job.
+    sigint_ignored: bool = False
+    #: Sent to the whole process group, as a terminal does; else the main
+    #: process alone.
+    group: bool = True
+
+
+CTRL_C = _Stop()
+
+
+def _ctrl_c(tmp: str, *, separate_process: bool, stop: _Stop = CTRL_C) -> list[str]:
+    """Ctrl+C (or `stop`) a running bot; what went wrong."""
+    sig, want, sigint_ignored, group = stop
     problems = []
     with _node() as (rpc, _):
         config = _config("live", rpc, separate_process=separate_process)
@@ -590,7 +601,10 @@ def _ctrl_c(
             time.sleep(0.2)
         running = bot.poll() is None
         if running:
-            os.killpg(bot.pid, sig)
+            if group:
+                os.killpg(bot.pid, sig)
+            else:
+                os.kill(bot.pid, sig)
         try:
             out, _ = bot.communicate(timeout=60)
         except subprocess.TimeoutExpired:
@@ -626,12 +640,15 @@ def check_j_sigterm_is_clean(tmp: str) -> bool:
             found = _ctrl_c(
                 tmp,
                 separate_process=separate_process,
-                sig=signal.SIGTERM,
-                want=143,
-                sigint_ignored=ignored,
+                stop=_Stop(signal.SIGTERM, 143, sigint_ignored=ignored),
             )
             label = f"{mode}{', SIGINT ignored' if ignored else ''}"
             problems += [f"{label}: {p}" for p in found]
+    # Only the main process gets it, as from `kill <pid>` or a service manager.
+    found = _ctrl_c(
+        tmp, separate_process=True, stop=_Stop(signal.SIGTERM, 143, group=False)
+    )
+    problems += [f"own process, SIGTERM to the main process only: {p}" for p in found]
     return _report(problems)
 
 

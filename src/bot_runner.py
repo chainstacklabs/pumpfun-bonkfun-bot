@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import logging
 import multiprocessing
+import os
 import re
 import signal
 import sys
@@ -60,6 +61,8 @@ EXIT_TERMINATED = 143
 _terminated: set[int] = set()
 # The bot this process is running right now, for the SIGTERM handler to cancel.
 _running: list[asyncio.Task] = []
+# Bots this process started in their own processes, for SIGTERM to reach.
+_children: list[multiprocessing.Process] = []
 
 
 def _stop_on_sigterm() -> None:
@@ -68,17 +71,22 @@ def _stop_on_sigterm() -> None:
     The handler cancels the running bot, as `asyncio.run` does on Ctrl+C: its
     trader stops its positions and cleans up, then the process exits 143. It
     does not go through SIGINT, which a shell ignores in a job it starts in the
-    background. With no bot running (the main process waiting for bots in
-    their own processes), or on a second SIGTERM, it raises
-    `KeyboardInterrupt`. Send it to the process group, as a terminal sends
-    Ctrl+C, so a bot in its own process stops too.
+    background. SIGTERM is passed on to every bot in its own process, so one
+    sent to the main process alone stops them all; only the first SIGTERM a
+    process gets acts, later ones are ignored. With no bot running here (the
+    main process waiting for its bot processes) it raises `KeyboardInterrupt`,
+    and multiprocessing then waits for the bot processes to finish stopping.
     """
 
     def on_sigterm(signum: int, _frame: object) -> None:
-        first = not _terminated
+        if _terminated:
+            return  # already stopping; SIGKILL is the way to force it
         _terminated.add(signum)
+        for child in _children:
+            if child.is_alive() and child.pid is not None:
+                os.kill(child.pid, signal.SIGTERM)
         bot = _running[-1] if _running else None
-        if first and bot is not None and not bot.done():
+        if bot is not None and not bot.done():
             bot.get_loop().call_soon_threadsafe(bot.cancel)
             return
         raise KeyboardInterrupt
@@ -331,6 +339,9 @@ def run_bot_process(config_path, positions_file: str | None = None):
     143 on SIGTERM. Nothing may escape: multiprocessing prints an uncaught
     error unmasked.
     """
+    # A forked bot process starts with copies of its parent's lists.
+    _children.clear()
+    _terminated.clear()
     _stop_on_sigterm()
     try:
         ran = _run_bot(config_path, positions_file)
@@ -505,6 +516,7 @@ def run_all_bots() -> bool:
                 )
                 p.start()
                 processes.append(p)
+                _children.append(p)
             else:
                 logging.info(
                     f"Starting bot '{bot_name}' ({platform.value}) in main process"
