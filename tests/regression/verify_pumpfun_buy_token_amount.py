@@ -30,7 +30,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from solders.pubkey import Pubkey  # noqa: E402
 
 from core.pubkeys import WSOL_MINT, SystemAddresses  # noqa: E402
-from interfaces.core import Platform, TokenInfo  # noqa: E402
+from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E402
 from platforms import PlatformImplementations  # noqa: E402
 from platforms.pumpfun.address_provider import (  # noqa: E402
     PumpFunAddresses,
@@ -83,6 +83,11 @@ class _Client:
 
     async def confirm_transaction(self, *_a, **_k) -> bool:
         return False
+
+    async def confirm_transaction_detailed(
+        self, *_a: object, **_k: object
+    ) -> ConfirmationStatus:
+        return ConfirmationStatus.REVERTED
 
 
 class _Curve:

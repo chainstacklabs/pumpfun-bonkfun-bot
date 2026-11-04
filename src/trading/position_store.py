@@ -1,9 +1,10 @@
 """Open positions on disk, so a restarted bot picks them up again.
 
 One JSON file per bot, `positions/<bot name>.json`, relative to the working
-directory like `logs/` and `trades/`. A position is added when its buy lands and
-removed once it is sold. The file is rewritten whole on every change through a
-temporary file, so a crash leaves either the old or the new version.
+directory like `logs/` and `trades/`. A position is added as `pending` when its
+buy is sent, rewritten when the buy lands, and removed once it is sold. The file
+is rewritten whole on every change through a temporary file, so a crash leaves
+either the old or the new version.
 """
 
 import dataclasses
@@ -105,6 +106,14 @@ def _wallet_of(record: dict) -> str | None:
     return wallet
 
 
+def _pending_of(record: dict) -> bool:
+    """Whether the record's buy was sent but never confirmed; TypeError if not a bool."""
+    pending = record.get("pending", False)
+    if not isinstance(pending, bool):
+        raise TypeError
+    return pending
+
+
 def _records_in(data: object) -> list:
     """The `positions` list of a parsed file; KeyError or TypeError without one."""
     records = data["positions"]
@@ -139,6 +148,10 @@ class StoredPosition:
     #: The wallet that bought it, base58; None in a record written before
     #: positions named their wallet.
     wallet: str | None = None
+    #: The buy was sent but its outcome never read: `buy_result` holds the
+    #: signature and the expected amount and price, and the wallet's balance
+    #: decides whether, and how much, it holds.
+    pending: bool = False
 
 
 class PositionStore:
@@ -199,6 +212,7 @@ class PositionStore:
                 _check_buy(buy)
                 token_info = _coin_of(record, mint)
                 wallet = _wallet_of(record)
+                pending = _pending_of(record)
                 positions.append(
                     StoredPosition(
                         token_info=token_info,
@@ -212,6 +226,7 @@ class PositionStore:
                         ),
                         entry_time=datetime.fromisoformat(record["entry_time"]),
                         wallet=wallet,
+                        pending=pending,
                     )
                 )
             except (ValueError, KeyError, TypeError, AttributeError):
@@ -242,20 +257,32 @@ class PositionStore:
         """Every mint in the file as last loaded or written, decodable or not."""
         return set(self._records)
 
+    def pending_mints(self) -> set[str]:
+        """Mints whose buy was sent and never confirmed."""
+        return {
+            mint
+            for mint, record in self._records.items()
+            if isinstance(record, dict) and record.get("pending") is True
+        }
+
     def add(
         self,
         token_info: TokenInfo,
         buy_result: TradeResult,
         entry_time: datetime,
         wallet: Pubkey | None = None,
+        *,
+        pending: bool = False,
     ) -> None:
-        """Record a position whose buy just landed.
+        """Record a position whose buy just landed, or was just sent.
 
         Args:
             wallet: The wallet holding the coin; only that wallet resumes it
+            pending: The buy was sent and its outcome is not known yet; the
+                record replaces any earlier one for the coin either way
         """
         mint = str(token_info.mint)
-        self._records[mint] = {
+        record = {
             "mint": mint,
             "symbol": token_info.symbol,
             "wallet": str(wallet) if wallet is not None else None,
@@ -270,6 +297,10 @@ class PositionStore:
             },
             "token_info": encode_token_info(token_info),
         }
+        if pending:
+            # Only on a pending record, so a landed one is written as before.
+            record["pending"] = True
+        self._records[mint] = record
         self._write()
 
     def reduce(self, mint: Pubkey, amount: float, amount_raw: int) -> None:

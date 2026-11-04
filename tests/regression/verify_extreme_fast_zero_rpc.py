@@ -37,7 +37,7 @@ from solders.pubkey import Pubkey  # noqa: E402
 from solders.transaction import VersionedTransaction  # noqa: E402
 
 from core.pubkeys import WSOL_MINT, SystemAddresses  # noqa: E402
-from interfaces.core import Platform, TokenInfo  # noqa: E402
+from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E402
 from platforms import PlatformImplementations  # noqa: E402
 from platforms.pumpfun.address_provider import PumpFunAddressProvider  # noqa: E402
 from platforms.pumpfun.event_parser import PumpFunEventParser  # noqa: E402
@@ -91,6 +91,11 @@ class _StubClient:
 
     async def confirm_transaction(self, _signature: str, **_kwargs: object) -> bool:
         return False
+
+    async def confirm_transaction_detailed(
+        self, *_a: object, **_k: object
+    ) -> ConfirmationStatus:
+        return ConfirmationStatus.REVERTED
 
     async def get_account_info(self, *_args: object, **_kwargs: object) -> None:
         self.reads += 1

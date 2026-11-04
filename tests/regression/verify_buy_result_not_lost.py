@@ -51,7 +51,7 @@ from solders.pubkey import Pubkey  # noqa: E402
 
 from core.client import SolanaClient  # noqa: E402
 from core.pubkeys import TOKEN_DECIMALS, WSOL_MINT  # noqa: E402
-from interfaces.core import Platform, TokenInfo  # noqa: E402
+from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E402
 from platforms import PlatformImplementations  # noqa: E402
 from trading import platform_aware  # noqa: E402
 from trading.base import TradeResult  # noqa: E402
@@ -140,6 +140,13 @@ class StubBuyClient:
 
     async def confirm_transaction(self, _signature: object) -> bool:
         return self.confirmed
+
+    async def confirm_transaction_detailed(
+        self, _signature: object
+    ) -> ConfirmationStatus:
+        if self.confirmed:
+            return ConfirmationStatus.SUCCESS
+        return ConfirmationStatus.REVERTED
 
     async def get_buy_transaction_details(
         self, *_args: object, **_kwargs: object

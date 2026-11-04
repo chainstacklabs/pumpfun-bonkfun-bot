@@ -236,6 +236,9 @@ class UniversalTrader:
                 else None
             ),
         )
+        # A buy sent is on disk before it confirms, so a shutdown or crash
+        # while it is in flight does not lose the coin.
+        self.buyer.on_sent = self.positions.hold_pending
 
         self.extreme_fast_mode = settings.extreme_fast_mode
         self.wait_time_after_creation = settings.wait_time_after_creation
@@ -544,6 +547,10 @@ class UniversalTrader:
     ) -> None:
         """Handle failed token purchase."""
         logger.error(f"Failed to buy {token_info.symbol}: {buy_result.error_message}")
+        if self.positions.resolve_failed_buy(token_info, buy_result):
+            # It may have delivered the coin: cleaning up as a failed buy could
+            # burn it.
+            return
         settings = self.settings
         # Close ATA if enabled
         await handle_cleanup_after_failure(

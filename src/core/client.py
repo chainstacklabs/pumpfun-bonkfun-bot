@@ -5,6 +5,7 @@ import json
 import random
 import socket
 import struct
+from collections.abc import Callable
 from time import monotonic
 from typing import Any
 
@@ -447,6 +448,7 @@ class SolanaClient:
         priority_fee: int | None = None,
         compute_unit_limit: int | None = None,
         account_data_size_limit: int | None = None,
+        on_signed: Callable[[Signature], None] | None = None,
     ) -> Signature:
         """Send a transaction with optional priority fee and compute unit limit.
 
@@ -459,6 +461,10 @@ class SolanaClient:
             compute_unit_limit: Compute unit limit. Defaults to 85,000.
             account_data_size_limit: Account data size limit in bytes. Reduces CU
                 cost from 16k to ~128 CU; must be the first instruction.
+            on_signed: Called with the signature once the transaction is signed,
+                before the first send, so a caller cancelled mid-send still knows
+                what may have reached the chain. Every retry resends the same
+                transaction. Must not block: it runs on the send path.
 
         Returns:
             Transaction signature.
@@ -499,6 +505,8 @@ class SolanaClient:
             signer_keypair.pubkey(), instructions, [], recent_blockhash
         )
         transaction = VersionedTransaction(message, [signer_keypair])
+        if on_signed is not None:
+            on_signed(transaction.signatures[0])
 
         for attempt in range(max_retries):
             try:

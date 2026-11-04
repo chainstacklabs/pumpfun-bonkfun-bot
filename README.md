@@ -170,12 +170,20 @@ taken waits in the queue, so `max_token_age` decides whether it is still bought.
 Positions under `exit_strategy: manual` or `marry_mode` are never sold, so they
 take no slot. On shutdown the bot stops monitoring the open positions before
 cleanup runs; their tokens stay in the wallet, `post_session` cleanup does not
-burn or close their accounts, and the next start resumes them.
+burn or close their accounts, and the next start resumes them. A position sold
+just before the shutdown still closes its empty account (`after_sell`) before the
+bot exits.
 
 ### Positions survive a restart
 
 Each position the bot monitors (`tp_sl` or `time_based`) is written to
-`positions/<bot name>.json` when its buy lands and removed once it is sold. On
+`positions/<bot name>.json` as soon as its buy is sent, marked `"pending": true`
+with the buy's signature until the buy confirms, and removed once it is sold. A
+buy that reverts or never reached the network leaves nothing. So a bot stopped,
+or killed, while a buy is in flight finds it on the next start, which reads the
+wallet's balance: a coin the buy delivered is resumed at the amount held, and a
+buy that never landed is cleared. A buy whose confirmation never came stays
+pending in the file the same way, and is not cleaned up as a failed buy. On
 start the bot reads that file and resumes each position before it takes a new
 coin, with the bot's current exit strategy: `max_hold_time` and `wait_after_buy`
 count from the original buy, take profit and stop loss from its entry price.
