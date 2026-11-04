@@ -1,14 +1,15 @@
-"""Verify a shutdown never loses a buy in flight or a sold coin's account close.
+"""Verify a buy in flight is never lost, and a sold coin's close survives shutdown.
 
 Two trades were cut short by Ctrl+C:
 
 - A buy already sent when the shutdown came was lost. The cancellation reached
   the buyer while it waited for the confirmation, nothing was written to
   `positions/<bot name>.json`, and the next start knew nothing of the coin: the
-  tokens sat in the wallet unmanaged. A buy is now kept in the file as
-  `pending`, with its signature, from the moment it may have reached the chain
-  until it is settled, and the next start resolves a pending record from the
-  wallet's balance.
+  tokens sat in the wallet unmanaged. A buy is now kept in the file as pending,
+  with its signature and what resolving it needs, from the moment it may have
+  reached the chain until it is resolved, and a resolver settles it by its
+  signature: on the next start, and in the same run when its confirmation never
+  came.
 - A position sold just before the shutdown was waiting for the RPC node to
   settle before closing its empty account. Shutdown cancelled it as if it were
   still open (`Stopping 1 open position(s)`), and the account kept its rent.
@@ -16,28 +17,48 @@ Two trades were cut short by Ctrl+C:
 
   A. A cancellation while the buy waits for its confirmation (continuous mode,
      the shutdown path SIGINT takes) leaves the coin in the file as pending,
-     with the signature sent, already on disk before the confirmation
-     resolves; post-session cleanup neither burns nor closes it.
+     with the signature sent and its blockhash's last valid block height,
+     already on disk before the confirmation resolves; post-session cleanup
+     neither burns nor closes it.
   B. A cancellation in the middle of the send still leaves it, with the
      signature of the transaction being sent.
   C. A cancellation before anything was signed leaves nothing.
   D. In single-token mode a cancellation during the confirmation keeps it too.
   E. Without a shutdown: a buy that lands replaces the pending record with the
-     amounts read back; one that reverts, or whose send fails (SUBMIT_FAILED),
-     leaves no record and is cleaned up as a failed buy; one whose outcome is
-     unknown stays pending and is not cleaned up, since that could burn it.
-  F. The next start resolves a pending record from the wallet's balance: a coin
-     held is resumed with the amount held and rewritten as a landed position;
-     one the wallet holds none of is cleared, never sold; an unreadable balance
-     keeps it pending. A record written before records could be pending
-     resumes as before.
-  G. A cancellation while a sold position waits to close its empty account
-     (`cleanup.mode: after_sell`) lets the close finish before the trader
-     exits, and the shutdown log does not call that position open.
-  H. With one position held and one sold, only the held one is stopped and
+     amounts read back; one that reverts, or whose send provably never left
+     (SUBMIT_FAILED), leaves no record and is cleaned up as a failed buy; one
+     whose send failed ambiguously after signing, or whose confirmation never
+     came, stays pending and is not cleaned up, since that could burn it;
+     under `manual` nothing is written and an unconfirmed buy is not cleaned
+     up either.
+  F. The next start resolves a pending buy by its signature: one that landed
+     is held at the amount and fill price its transaction shows and rewritten
+     as landed, with its trade-log line; a reverted one is cleared; one no
+     node knows yet is looked at again until it shows up. Once its blockhash
+     has expired (by block height, or two minutes after the send when none
+     was recorded) the balance decides: none held clears it, a balance holds
+     at most what the buy can have delivered, with no price, and an
+     unreadable balance keeps it pending. A record written before records
+     could be pending resumes as before.
+  G. Balances on restart are read at "confirmed": a buy that landed seconds
+     ago, not yet "finalized", is resumed, not cleared.
+  H. A position whose fill price is unknown runs no exit until a real price
+     is read, says so once, and then counts profit and loss from that price.
+  I. In a running session an unconfirmed buy is resolved by the same
+     resolver: once it shows up it is held at the transaction's amounts and
+     logged; one that expired with nothing held is removed.
+  J. A sold position waiting to close its empty account (`cleanup.mode:
+     after_sell`) when the trader is cancelled closes it before the trader
+     exits, and the shutdown log does not call it open.
+  K. With one position held and one sold, only the held one is stopped and
      counted, and the sold one still closes its account.
-  I. A close that hangs is cancelled once the stop budget runs out, with a
+  L. A close that hangs is cancelled once the stop budget runs out, with a
      warning, so shutdown still ends.
+  M. A send is SUBMIT_FAILED only when no attempt can have reached the
+     network (no connection, a node refusal, a 4xx); a read timeout or a 5xx
+     on any attempt leaves it possibly sent. The signer reports the signature
+     and its last valid block height once, before the first attempt.
+  N. Shutdown names the buys still pending, and only those.
 
 Offline: the RPC client, the seller and the account close are stubs; the
 trader, intake, buyer, position manager and store are the real ones. Runs in a
@@ -56,7 +77,7 @@ import struct
 import sys
 import tempfile
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -64,18 +85,22 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import base58  # noqa: E402
+import httpx2  # noqa: E402
+from solana.rpc.core import RPCException  # noqa: E402
+from solders.hash import Hash  # noqa: E402
 from solders.keypair import Keypair  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 from solders.signature import Signature  # noqa: E402
 
+from core.client import SolanaClient, TransactionNotSent  # noqa: E402
 from core.pubkeys import TOKEN_PROGRAM, WSOL_MINT  # noqa: E402
 from core.wallet import Wallet  # noqa: E402
 from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E402
 from platforms import PlatformImplementations  # noqa: E402
 from trading import platform_aware, position_manager, universal_trader  # noqa: E402
-from trading.base import TradeResult  # noqa: E402
+from trading.base import PendingBuy, TradeResult  # noqa: E402
 from trading.position_manager import PositionManager  # noqa: E402
-from trading.position_store import PositionStore, encode_token_info  # noqa: E402
+from trading.position_store import PositionStore  # noqa: E402
 from trading.settings import TraderSettings  # noqa: E402
 
 KEY = base58.b58encode(bytes(Keypair())).decode()
@@ -83,12 +108,13 @@ WALLET = Wallet(KEY)
 CURVE = Pubkey.new_unique()
 TOKENS = 20  # what an extreme_fast_mode buy asks for
 RECEIVED_RAW = 19_500_000  # what the buy delivers, read back from its transaction
-HELD_RAW = 18_000_000  # what the wallet holds at the next start
-SHUTDOWN_LIMIT = 2.0  # seconds; check I's stop budget is 0.3
-
-
-async def _no_fee(*_args: object) -> None:
-    return None
+SPENT_LAMPORTS = 3_000_000  # what it paid, read back from its transaction
+FILL_PRICE = SPENT_LAMPORTS / 1e9 / (RECEIVED_RAW / 1e6)
+LAST_VALID = 1_000  # the block height past which a buy's blockhash is dead
+CAP_RAW = 20_000_000  # the most a pending buy can have delivered
+SHARED_RAW = 50_000_000  # a wallet balance that also holds another bot's coins
+OLD_RAW = 1_000_000  # a position bought before records could be pending
+SHUTDOWN_LIMIT = 2.0  # seconds; check L's stop budget is 0.3
 
 
 async def _empty(*_args: object, **_kwargs: object) -> list:
@@ -129,12 +155,18 @@ def _token(symbol: str) -> TokenInfo:
     )
 
 
+def _account(token: TokenInfo) -> Pubkey:
+    return WALLET.get_associated_token_address(token.mint, TOKEN_PROGRAM)
+
+
 class _Client:
     """The RPC: a send and a confirmation that wait when told to.
 
     `send_gate` holds a send after the transaction is signed; `confirm_gate`
     holds the confirmation, which then answers `status`. `fee_gate` holds the
-    buyer before it signs anything.
+    buyer before it signs anything. `send_error` fails the send after signing.
+    Signature lookups answer from `outcomes` (by signature, else `outcome`).
+    Accounts in `fresh` landed too recently to show at "finalized".
     """
 
     rpc_endpoint = ""
@@ -143,14 +175,19 @@ class _Client:
         self.fee_gate: asyncio.Event | None = None
         self.send_gate: asyncio.Event | None = None
         self.confirm_gate: asyncio.Event | None = None
-        self.send_raises = False
+        self.send_error: Exception | None = None
         self.status = ConfirmationStatus.SUCCESS
         self.signed: list[str] = []
         self.sent: list[str] = []
         self.at: set[str] = set()
-        # Token accounts by address, for the balance reads on resume.
+        self.outcomes: dict[str, list[ConfirmationStatus | None]] = {}
+        self.outcome: ConfirmationStatus | None = None
+        self.lookups: dict[str, int] = {}
+        self.block_height = 0
+        self.details: dict[str, tuple[int | None, int | None]] = {}
         self.accounts: dict[Pubkey, SimpleNamespace] = {}
-        self.down = False
+        self.fresh: set[Pubkey] = set()
+        self.unreadable: set[Pubkey] = set()
 
     async def calculate_priority_fee(self, *_args: object) -> None:
         self.at.add("fee")
@@ -163,12 +200,12 @@ class _Client:
         signature = Signature.new_unique()
         self.signed.append(str(signature))
         if on_signed is not None:
-            on_signed(signature)
+            on_signed(signature, LAST_VALID)
         self.at.add("send")
         if self.send_gate is not None:
             await self.send_gate.wait()
-        if self.send_raises:
-            raise ConnectionError("node unreachable")  # noqa: TRY003
+        if self.send_error is not None:
+            raise self.send_error
         self.sent.append(str(signature))
         return signature
 
@@ -184,25 +221,40 @@ class _Client:
         status = await self.confirm_transaction_detailed(*args, **kwargs)
         return status is ConfirmationStatus.SUCCESS
 
+    async def get_signature_outcome(self, signature: object) -> object:
+        key = str(signature)
+        self.lookups[key] = self.lookups.get(key, 0) + 1
+        script = self.outcomes.get(key)
+        if script:
+            return script.pop(0) if len(script) > 1 else script[0]
+        return self.outcome
+
+    async def get_block_height(self) -> int:
+        return self.block_height
+
     async def get_buy_transaction_details(
-        self, *_args: object, **_kwargs: object
-    ) -> tuple[int, int]:
-        return RECEIVED_RAW, 3_000_000
+        self, signature: object, *_args: object, **_kwargs: object
+    ) -> tuple[int | None, int | None]:
+        return self.details.get(str(signature), (RECEIVED_RAW, SPENT_LAMPORTS))
 
     async def get_token_account_balance(self, *_args: object) -> int:
         return RECEIVED_RAW
 
-    def hold(self, token: TokenInfo, raw: int) -> None:
-        account = WALLET.get_associated_token_address(token.mint, TOKEN_PROGRAM)
+    def hold(self, token: TokenInfo, raw: int, *, fresh: bool = False) -> None:
         data = bytes(token.mint) + bytes(WALLET.pubkey) + struct.pack("<Q", raw)
-        self.accounts[account] = SimpleNamespace(
+        self.accounts[_account(token)] = SimpleNamespace(
             data=data + bytes(93), owner=TOKEN_PROGRAM
         )
+        if fresh:
+            self.fresh.add(_account(token))
 
-    async def get_account_info(self, pubkey: Pubkey) -> SimpleNamespace:
-        if self.down:
+    async def get_account_info(
+        self, pubkey: Pubkey, commitment: str | None = None
+    ) -> SimpleNamespace:
+        if pubkey in self.unreadable:
             raise RuntimeError("rpc down")  # noqa: TRY003
-        if pubkey not in self.accounts:
+        lags = commitment not in ("confirmed", "processed")  # None is finalized
+        if pubkey not in self.accounts or (lags and pubkey in self.fresh):
             raise ValueError(f"Account {pubkey} not found")  # noqa: TRY003
         return self.accounts[pubkey]
 
@@ -226,10 +278,14 @@ class _Listener:
 
 
 class _Seller:
+    def __init__(self) -> None:
+        self.sells: list[tuple[str, float]] = []
+
     async def execute(
-        self, _token_info: TokenInfo, token_amount: float, token_price: float,
+        self, token_info: TokenInfo, token_amount: float, token_price: float,
         token_amount_raw: int | None = None,
     ) -> TradeResult:  # fmt: skip
+        self.sells.append((token_info.symbol, token_price))
         return TradeResult(
             success=True,
             price=token_price,
@@ -250,6 +306,9 @@ class _Logs(logging.Handler):
     def has(self, text: str) -> bool:
         return any(text in line for line in self.lines)
 
+    def count(self, text: str) -> int:
+        return sum(text in line for line in self.lines)
+
 
 class _Run:
     """One trader on the stub RPC; a real buyer, intake, positions and store."""
@@ -258,6 +317,7 @@ class _Run:
         self.path = path
         self.client = _Client()
         self.events: list[str] = []
+        self.handled = asyncio.Event()
         fields = {
             "rpc_endpoint": "",
             "wss_endpoint": "",
@@ -296,6 +356,17 @@ class _Run:
         self.trader._resolve_quote_token_programs = self._nothing  # noqa: SLF001
         self.trader.buyer.priority_fee_manager = self.client
         self.trader.positions.seller = _Seller()
+        # Set once the trader has handled the buy's outcome, landed or not.
+        for name in ("_handle_successful_buy", "_handle_failed_buy"):
+            handler = getattr(self.trader, name)
+
+            async def handled(*args: object, _handler: Callable = handler) -> None:
+                try:
+                    await _handler(*args)
+                finally:
+                    self.handled.set()
+
+            setattr(self.trader, name, handled)
 
     async def _nothing(self) -> None:
         return None
@@ -303,8 +374,8 @@ class _Run:
     def hold_positions(self) -> None:
         """Positions wait in their exit until cancelled; nothing is sold."""
 
-        async def manage(token_info: TokenInfo, *_a: object, **_k: object) -> None:
-            self.events.append(f"hold {token_info.symbol}")
+        async def manage(token_info: TokenInfo, buy: TradeResult, **_k: object) -> None:
+            self.events.append(f"hold {token_info.symbol} {buy.amount_raw}")
             await asyncio.Event().wait()
 
         self.trader.positions.manage = manage
@@ -373,13 +444,23 @@ def _report(problems: list[str]) -> bool:
     return not problems
 
 
+def _trade_lines() -> list[dict]:
+    path = Path("trades/trades.log")
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
 def _check_pending(run: _Run, token: TokenInfo, signature: str) -> list[str]:
     record = run.records().get(str(token.mint))
     if record is None:
         return [f"{token.symbol} is not in the positions file: {run.records()}"]
     problems = []
-    if record.get("pending") is not True:
+    pending = record.get("pending")
+    if not isinstance(pending, dict):
         problems.append(f"record is not pending: {record}")
+    elif pending.get("last_valid_block_height") != LAST_VALID:
+        problems.append(f"record lacks its blockhash's last valid height: {pending}")
     if record["buy"]["tx_signature"] != signature:
         problems.append(
             f"record names {record['buy']['tx_signature']}, the buy was {signature}"
@@ -387,7 +468,7 @@ def _check_pending(run: _Run, token: TokenInfo, signature: str) -> list[str]:
     return problems
 
 
-# A, B, C: continuous mode, cancelled at three points of the buy.
+# A, B, C, D: cancelled at each point of the buy.
 
 
 async def _check_a(tmp: Path) -> list[str]:
@@ -468,9 +549,6 @@ def check_c_cancelled_before_signing(tmp: Path) -> bool:
     return _report(asyncio.run(_check_c(tmp)))
 
 
-# D: single-token mode.
-
-
 async def _check_d(tmp: Path) -> list[str]:
     token = _token("SINGLE")
     run = _Run(tmp / "d.json", [token], yolo_mode=False)
@@ -492,7 +570,9 @@ def check_d_single_token_mode(tmp: Path) -> bool:
 # E: each outcome of a buy without a shutdown.
 
 
-async def _outcome(tmp: Path, name: str, **client: object) -> tuple[_Run, list, dict]:
+async def _outcome(
+    tmp: Path, name: str, settings: dict | None = None, **client: object
+) -> tuple[_Run, list, dict]:
     """Run one buy to its outcome; the run, failure cleanups and the record."""
     token = _token(name)
     run = _Run(
@@ -500,8 +580,10 @@ async def _outcome(tmp: Path, name: str, **client: object) -> tuple[_Run, list, 
         [token],
         cleanup_mode="on_fail",
         cleanup_force_close_with_burn=True,
+        **(settings or {}),
     )
-    run.hold_positions()
+    if run.trader.positions.monitors:
+        run.hold_positions()
     for key, value in client.items():
         setattr(run.client, key, value)
     failed: list[Pubkey] = []
@@ -514,22 +596,16 @@ async def _outcome(tmp: Path, name: str, **client: object) -> tuple[_Run, list, 
         _patched(universal_trader, "handle_cleanup_after_failure", after_failure),
     ):
         task = asyncio.create_task(run.trader.start())
-        await _until(
-            lambda: f"hold {name}" in run.events or bool(failed) or bool(run.records())
-        )
-        await asyncio.sleep(0.05)
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(run.handled.wait(), 5.0)
         await _shut_down(task)
     return run, failed, run.records().get(str(token.mint), {})
 
 
-async def _check_e(tmp: Path) -> list[str]:
+async def _check_e(tmp: Path) -> list[str]:  # noqa: C901
     problems = []
     run, failed, record = await _outcome(tmp, "LANDED")
-    if (
-        not record
-        or record.get("pending")
-        or record["buy"]["amount_raw"] != RECEIVED_RAW
-    ):
+    if not record or "pending" in record or record["buy"]["amount_raw"] != RECEIVED_RAW:
         problems.append(f"landed: not rewritten with the amount read back: {record}")
     run, failed, record = await _outcome(
         tmp, "REVERTED", status=ConfirmationStatus.REVERTED
@@ -538,16 +614,39 @@ async def _check_e(tmp: Path) -> list[str]:
         problems.append(f"reverted: left a record: {record}")
     if len(failed) != 1:
         problems.append("reverted: not cleaned up as a failed buy")
-    run, failed, record = await _outcome(tmp, "NOTSENT", send_raises=True)
+    run, failed, record = await _outcome(
+        tmp, "NOTSENT", send_error=TransactionNotSent("refused")
+    )
     if record or run.client.sent:
-        problems.append(f"send failed: left a record: {record}")
+        problems.append(f"never sent: left a record: {record}")
+    if len(failed) != 1:
+        problems.append("never sent: not cleaned up as a failed buy")
+    run, failed, record = await _outcome(
+        tmp, "AMBIGUOUS", send_error=TimeoutError("read timed out")
+    )
+    if not isinstance(record.get("pending"), dict):
+        problems.append(f"send failed after signing: not kept pending: {record}")
+    elif record["buy"]["tx_signature"] != run.client.signed[0]:
+        problems.append(f"send failed after signing: wrong signature: {record}")
+    if failed:
+        problems.append("send failed after signing: cleaned up, which can burn it")
     run, failed, record = await _outcome(
         tmp, "UNKNOWN", status=ConfirmationStatus.UNCONFIRMED
     )
-    if record.get("pending") is not True:
+    if not isinstance(record.get("pending"), dict):
         problems.append(f"unconfirmed: not kept pending: {record}")
     if failed:
         problems.append("unconfirmed: cleaned up as a failed buy, which can burn it")
+    run, failed, record = await _outcome(
+        tmp,
+        "MANUAL",
+        {"exit_strategy": "manual"},
+        status=ConfirmationStatus.UNCONFIRMED,
+    )
+    if run.records():
+        problems.append(f"manual: a pending record was written: {run.records()}")
+    if failed:
+        problems.append("manual: an unconfirmed buy was cleaned up, which can burn it")
     return problems
 
 
@@ -555,21 +654,21 @@ def check_e_outcomes_without_shutdown(tmp: Path) -> bool:
     return _report(asyncio.run(_check_e(tmp)))
 
 
-# F: the next start.
+# F, G, H: the next start.
 
 
-def _manager(path: Path, client: _Client) -> tuple[PositionManager, list]:
-    settings = TraderSettings(
-        rpc_endpoint="",
-        wss_endpoint="",
-        private_key=KEY,
-        buy_amount=0.003,
-        buy_slippage=0.3,
-        sell_slippage=0.3,
-        exit_strategy="time_based",
-    )
+def _manager(path: Path, client: _Client, **settings: object) -> PositionManager:
+    fields = {
+        "rpc_endpoint": "",
+        "wss_endpoint": "",
+        "private_key": KEY,
+        "buy_amount": 0.003,
+        "buy_slippage": 0.3,
+        "sell_slippage": 0.3,
+        "exit_strategy": "time_based",
+    }
     manager = PositionManager(
-        settings,
+        TraderSettings(**(fields | settings)),
         seller=_Seller(),
         solana_client=client,
         wallet=WALLET,
@@ -577,119 +676,288 @@ def _manager(path: Path, client: _Client) -> tuple[PositionManager, list]:
         platform_implementations=SimpleNamespace(),
         store=PositionStore(path),
     )
-    held: list[tuple[str, int | None]] = []
+    manager._PENDING_RECHECK = 0.01  # noqa: SLF001
+    return manager
+
+
+def _holding(manager: PositionManager) -> dict[str, TradeResult]:
+    """Replace the exit strategy with a recorder of what each position holds."""
+    held: dict[str, TradeResult] = {}
 
     async def manage(token_info: TokenInfo, buy: TradeResult, **_k: object) -> None:
-        held.append((token_info.symbol, buy.amount_raw))
+        held[token_info.symbol] = buy
+        await asyncio.Event().wait()
 
     manager.manage = manage
-    return manager, held
+    return held
 
 
-def _pending_record(token: TokenInfo) -> dict:
-    """A record as a buy sent but never confirmed leaves it."""
-    return {
-        "mint": str(token.mint),
-        "symbol": token.symbol,
-        "wallet": str(WALLET.pubkey),
-        "entry_time": datetime.now(UTC).replace(tzinfo=None).isoformat(),
-        "buy": {
-            "price": 1.5e-7,
-            "amount": float(TOKENS),
-            "amount_raw": None,
-            "tx_signature": f"sig-{token.symbol}",
-        },
-        "token_info": encode_token_info(token),
-        "pending": True,
-    }
+def _store_pending(
+    store: PositionStore,
+    token: TokenInfo,
+    *,
+    last_valid: int | None = LAST_VALID,
+    sent_ago: float = 0.0,
+) -> str:
+    signature = f"sig-{token.symbol}"
+    store.add(
+        token,
+        TradeResult(
+            success=False, amount=float(TOKENS), price=1.5e-4, tx_signature=signature
+        ),
+        datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=sent_ago),
+        WALLET.pubkey,
+        pending=PendingBuy(
+            max_amount_raw=CAP_RAW,
+            quote_destination=str(CURVE),
+            last_valid_block_height=last_valid,
+        ),
+    )
+    return signature
+
+
+async def _resolve_quote(*_a: object) -> Pubkey:
+    return TOKEN_PROGRAM
+
+
+def _records(path: Path) -> dict[str, dict]:
+    return {r["symbol"]: r for r in json.loads(path.read_text())["positions"]}
 
 
 async def _check_f(tmp: Path) -> list[str]:
-    landed, lost, unknown, old = (
-        _token(s) for s in ("LANDED", "LOST", "UNKNOWN", "OLD")
-    )
+    names = "LANDED REVERTED LATE LOST SHARED UNREAD WAITING NOHEIGHT NOHEIGHTNEW OLD"
+    tokens = {name: _token(name) for name in names.split()}
     path = tmp / "f.json"
-    # A record as a landed buy has always been written, never pending.
     store = PositionStore(path)
     store.add(
-        old,
+        tokens["OLD"],
+        TradeResult(success=True, amount=1.0, amount_raw=OLD_RAW, price=1.0),
+        datetime.now(UTC).replace(tzinfo=None),
+        WALLET.pubkey,
+    )
+    client = _Client()
+    client.block_height = LAST_VALID + 1  # every recorded blockhash has expired
+    sigs = {}
+    for name in ("LANDED", "REVERTED", "LOST", "SHARED", "UNREAD"):
+        sigs[name] = _store_pending(store, tokens[name])
+    for name in ("LATE", "WAITING"):  # blockhashes still alive
+        sigs[name] = _store_pending(store, tokens[name], last_valid=10**9)
+    sigs["NOHEIGHT"] = _store_pending(
+        store, tokens["NOHEIGHT"], last_valid=None, sent_ago=200
+    )
+    sigs["NOHEIGHTNEW"] = _store_pending(store, tokens["NOHEIGHTNEW"], last_valid=None)
+    client.outcomes = {
+        sigs["LANDED"]: [ConfirmationStatus.SUCCESS],
+        sigs["REVERTED"]: [ConfirmationStatus.REVERTED],
+        # Not known on the first look, landed on a later one.
+        sigs["LATE"]: [None, None, ConfirmationStatus.SUCCESS],
+    }
+    client.hold(tokens["OLD"], OLD_RAW)
+    client.hold(tokens["SHARED"], SHARED_RAW)
+    client.unreadable.add(_account(tokens["UNREAD"]))
+
+    manager = _manager(path, client)
+    held = _holding(manager)
+    with _patched(position_manager, "resolve_quote_token_program", _resolve_quote):
+        await manager.resume()
+        settled = {"LANDED", "LATE", "SHARED", "OLD"}
+        await _until(
+            lambda: (
+                settled <= set(held)
+                and not {"REVERTED", "LOST", "NOHEIGHT"} & set(_records(path))
+            ),
+            timeout=8.0,
+        )
+        await _until(lambda: client.lookups.get(sigs["WAITING"], 0) >= 3)  # noqa: PLR2004
+        await manager.stop()
+    return _resolved(held, _records(path), client, sigs)
+
+
+def _landed(
+    name: str, buy: TradeResult | None, record: dict, signature: str
+) -> list[str]:
+    """What check F found wrong with a pending buy that landed."""
+    problems = []
+    if buy is None or buy.amount_raw != RECEIVED_RAW:
+        problems.append(f"{name}: not held at the transaction's amount: {buy}")
+    elif buy.price is None or abs(buy.price - FILL_PRICE) > FILL_PRICE * 1e-9:
+        problems.append(f"{name}: not priced at its fill {FILL_PRICE}: {buy.price}")
+    if "pending" in record or record.get("buy", {}).get("amount_raw") != RECEIVED_RAW:
+        problems.append(f"{name}: not rewritten as a landed position: {record}")
+    lines = [t for t in _trade_lines() if t.get("tx_hash") == signature]
+    if [t["action"] for t in lines] != ["buy"]:
+        problems.append(f"{name}: no single trade-log buy line: {lines}")
+    return problems
+
+
+def _resolved(
+    held: dict[str, TradeResult],
+    records: dict[str, dict],
+    client: _Client,
+    sigs: dict[str, str],
+) -> list[str]:
+    """What check F found wrong with the positions held and the file left."""
+    problems = []
+    for name in ("LANDED", "LATE"):
+        problems += _landed(name, held.get(name), records.get(name, {}), sigs[name])
+    for name in ("REVERTED", "LOST", "NOHEIGHT"):
+        if name in records or name in held:
+            problems.append(f"{name}: not cleared")
+    shared = held.get("SHARED")
+    if shared is None or shared.amount_raw != CAP_RAW:
+        problems.append(f"SHARED: not capped at what the buy can hold: {shared}")
+    elif shared.price is not None:
+        problems.append(f"SHARED: priced off the estimate {shared.price}, not unknown")
+    for name in ("UNREAD", "WAITING", "NOHEIGHTNEW"):
+        if not isinstance(records.get(name, {}).get("pending"), dict) or name in held:
+            problems.append(
+                f"{name}: did not stay pending, unheld: {records.get(name)}"
+            )
+    if client.lookups.get(sigs["WAITING"], 0) < 3:  # noqa: PLR2004
+        problems.append("WAITING: its signature was not looked at again")
+    if held.get("OLD") is None or held["OLD"].amount_raw != OLD_RAW:
+        problems.append(f"OLD: a record without `pending` did not resume: {held}")
+    return problems
+
+
+def check_f_next_start_resolves_by_signature(tmp: Path) -> bool:
+    return _report(asyncio.run(_check_f(tmp)))
+
+
+async def _check_g(tmp: Path) -> list[str]:
+    token = _token("FRESH")
+    path = tmp / "g.json"
+    PositionStore(path).add(
+        token,
         TradeResult(success=True, amount=1.0, amount_raw=1_000_000, price=1.0),
         datetime.now(UTC).replace(tzinfo=None),
         WALLET.pubkey,
     )
-    data = json.loads(path.read_text())
-    data["positions"] += [_pending_record(t) for t in (landed, lost, unknown)]
-    path.write_text(json.dumps(data))
-
     client = _Client()
-    client.hold(landed, HELD_RAW)
-    client.hold(old, 1_000_000)
-    original = asyncio.sleep
-
-    async def quick(delay: float, *args: object) -> object:
-        return await original(min(delay, 0.01), *args)
-
-    async def resolve_quote(*_a: object) -> Pubkey:
-        return TOKEN_PROGRAM
-
-    after, held = _manager(path, client)
-    with (
-        _patched(position_manager.asyncio, "sleep", quick),
-        _patched(position_manager, "resolve_quote_token_program", resolve_quote),
-    ):
-        # The UNKNOWN coin's balance cannot be read: down for its reads only.
-        unknown_account = WALLET.get_associated_token_address(
-            unknown.mint, TOKEN_PROGRAM
-        )
-        real_read = client.get_account_info
-
-        async def read(pubkey: Pubkey) -> SimpleNamespace:
-            if pubkey == unknown_account:
-                raise RuntimeError("rpc down")  # noqa: TRY003
-            return await real_read(pubkey)
-
-        client.get_account_info = read
-        resumed = {t.symbol for t in await after.resume()}
-        await after.wait_all()
-
-    return _resolved(
-        resumed,
-        held,
-        {r["symbol"]: r for r in json.loads(path.read_text())["positions"]},
-    )
-
-
-def _resolved(resumed: set[str], held: list, records: dict[str, dict]) -> list[str]:
-    """What check F found wrong with the resume and the file it left."""
+    client.hold(token, 1_000_000, fresh=True)  # landed, not finalized yet
+    manager = _manager(path, client)
+    held = _holding(manager)
+    with _patched(position_manager, "resolve_quote_token_program", _resolve_quote):
+        resumed = await manager.resume()
+        await asyncio.sleep(0.05)
+        await manager.stop()
     problems = []
-    if resumed != {"LANDED", "OLD"}:
-        problems.append(f"resumed {sorted(resumed)}, expected LANDED and OLD")
-    if ("LANDED", HELD_RAW) not in held:
-        problems.append(
-            f"LANDED not held at the {HELD_RAW} raw the wallet holds: {held}"
-        )
-    if ("OLD", 1_000_000) not in held:
-        problems.append(f"a record without `pending` did not resume as before: {held}")
-    landed_record = records.get("LANDED", {})
-    if (
-        landed_record.get("pending")
-        or landed_record.get("buy", {}).get("amount_raw") != HELD_RAW
-    ):
-        problems.append(f"LANDED not rewritten as a landed position: {landed_record}")
-    if "LOST" in records:
-        problems.append("a pending buy the wallet holds none of was not cleared")
-    if any(symbol == "LOST" for symbol, _ in held):
-        problems.append("a pending buy the wallet holds none of was sold")
-    if records.get("UNKNOWN", {}).get("pending") is not True:
-        problems.append(f"an unreadable balance did not keep it pending: {records}")
+    if [t.symbol for t in resumed] != ["FRESH"] or "FRESH" not in held:
+        problems.append("a coin held at confirmed, not yet finalized, was not resumed")
+    if "FRESH" not in _records(path):
+        problems.append("a coin held at confirmed was cleared")
     return problems
 
 
-def check_f_next_start_resolves_pending(tmp: Path) -> bool:
-    return _report(asyncio.run(_check_f(tmp)))
+def check_g_balances_read_at_confirmed(tmp: Path) -> bool:
+    return _report(asyncio.run(_check_g(tmp)))
 
 
-# G, H, I: a sold position closing its account at shutdown.
+async def _check_h(tmp: Path) -> list[str]:
+    problems = []
+    token = _token("NOFILL")
+    client = _Client()
+    manager = _manager(
+        tmp / "h.json",
+        client,
+        exit_strategy="tp_sl",
+        take_profit_percentage=0.5,
+        stop_loss_percentage=0.2,
+        price_check_interval=0.01,
+    )
+    prices: list[float | Exception] = [RuntimeError("feed down")] * 2
+    current = {"price": 1.0}
+
+    async def get_price(_token_info: TokenInfo) -> float:
+        if prices:
+            answer = prices.pop(0)
+            raise answer
+        return current["price"]
+
+    manager.platform_implementations = SimpleNamespace(
+        curve_market=SimpleNamespace(get_price=get_price), graduated_market=None
+    )
+    manager.store.load()
+    bought = TradeResult(success=True, amount=1.0, amount_raw=1_000_000, price=None)
+    with _logged() as logs:
+        task = asyncio.create_task(
+            manager.manage(
+                token, bought, entry_time=datetime.now(UTC).replace(tzinfo=None)
+            )
+        )
+        await asyncio.sleep(0.2)
+        if manager.seller.sells:
+            problems.append(
+                f"sold before a real price was known: {manager.seller.sells}"
+            )
+        current["price"] = 0.7  # 30 % under the first price read
+        await _until(lambda: bool(manager.seller.sells))
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    if manager.seller.sells != [("NOFILL", 0.7)]:
+        problems.append(
+            f"stop loss did not fire off the first real price: {manager.seller.sells}"
+        )
+    if logs.count("fill price of NOFILL is unknown") != 1:
+        problems.append("the unknown fill price was not said exactly once")
+    return problems
+
+
+def check_h_unknown_fill_waits_for_a_price(tmp: Path) -> bool:
+    return _report(asyncio.run(_check_h(tmp)))
+
+
+# I: an unconfirmed buy resolved in the same run.
+
+
+async def _check_i(tmp: Path) -> list[str]:
+    problems = []
+    late, gone = _token("LATE"), _token("GONE")
+    run = _Run(tmp / "i.json", [late])
+    run.hold_positions()
+    run.trader.positions._PENDING_RECHECK = 0.01  # noqa: SLF001
+    run.client.status = ConfirmationStatus.UNCONFIRMED
+    run.client.outcome = None
+    with _stubbed_market():
+        task = asyncio.create_task(run.trader.start())
+        if not await _until(lambda: bool(run.client.sent)):
+            return ["the buy was never sent"]
+        signature = run.client.sent[0]
+        await _until(lambda: run.client.lookups.get(signature, 0) >= 2)  # noqa: PLR2004
+        run.client.outcomes[signature] = [ConfirmationStatus.SUCCESS]
+        held = await _until(lambda: f"hold LATE {RECEIVED_RAW}" in run.events)
+        await _shut_down(task)
+    if not held:
+        problems.append(f"a buy that showed up later was not held: {run.events}")
+    record = run.records().get(str(late.mint), {})
+    if "pending" in record or record.get("buy", {}).get("amount_raw") != RECEIVED_RAW:
+        problems.append(f"it was not rewritten as a landed position: {record}")
+    if not any(t.get("tx_hash") == signature for t in _trade_lines()):
+        problems.append("no trade-log buy line for it")
+
+    run = _Run(tmp / "i2.json", [gone])
+    run.hold_positions()
+    run.trader.positions._PENDING_RECHECK = 0.01  # noqa: SLF001
+    run.client.status = ConfirmationStatus.UNCONFIRMED
+    run.client.outcome = None
+    run.client.block_height = LAST_VALID + 1
+    with _stubbed_market():
+        task = asyncio.create_task(run.trader.start())
+        cleared = await _until(
+            lambda: bool(run.client.sent) and not run.records(), timeout=6.0
+        )
+        await _shut_down(task)
+    if not cleared:
+        problems.append(f"an expired buy with nothing held stayed: {run.records()}")
+    return problems
+
+
+def check_i_resolved_in_the_same_run(tmp: Path) -> bool:
+    return _report(asyncio.run(_check_i(tmp)))
+
+
+# J, K, L: a sold position closing its account at shutdown.
 
 
 class _Close:
@@ -713,10 +981,10 @@ class _Close:
         self.closed.append(str(mint))
 
 
-async def _check_g(tmp: Path) -> list[str]:
+async def _check_j(tmp: Path) -> list[str]:
     problems = []
     token = _token("SOLD")
-    run = _Run(tmp / "g.json", [token], cleanup_mode="after_sell")
+    run = _Run(tmp / "j.json", [token], cleanup_mode="after_sell")
     close = _Close()
     with (
         _stubbed_market(),
@@ -739,18 +1007,15 @@ async def _check_g(tmp: Path) -> list[str]:
     return problems
 
 
-def check_g_close_after_sell_finishes(tmp: Path) -> bool:
-    return _report(asyncio.run(_check_g(tmp)))
+def check_j_close_after_sell_finishes(tmp: Path) -> bool:
+    return _report(asyncio.run(_check_j(tmp)))
 
 
-async def _check_h(tmp: Path) -> list[str]:
+async def _check_k(tmp: Path) -> list[str]:
     problems = []
     sold, held = _token("SOLD"), _token("HELD")
-    path = tmp / "h.json"
-    client = _Client()
-    manager, _ = _manager(path, client)
-    manager.manage = PositionManager.manage.__get__(manager)
-    manager.cleanup_mode = "after_sell"
+    path = tmp / "k.json"
+    manager = _manager(path, _Client(), cleanup_mode="after_sell")
     manager.wait_time_after_buy = 0
     close = _Close()
     bought = TradeResult(success=True, amount=1.0, amount_raw=1_000_000, price=1.0)
@@ -780,14 +1045,14 @@ async def _check_h(tmp: Path) -> list[str]:
     return problems
 
 
-def check_h_only_held_positions_are_stopped(tmp: Path) -> bool:
-    return _report(asyncio.run(_check_h(tmp)))
+def check_k_only_held_positions_are_stopped(tmp: Path) -> bool:
+    return _report(asyncio.run(_check_k(tmp)))
 
 
-async def _check_i(tmp: Path) -> list[str]:
+async def _check_l(tmp: Path) -> list[str]:
     problems = []
     token = _token("HANG")
-    run = _Run(tmp / "i.json", [token], cleanup_mode="after_sell")
+    run = _Run(tmp / "l.json", [token], cleanup_mode="after_sell")
     run.trader.positions._STOP_BUDGET = 0.3  # noqa: SLF001
     close = _Close(settle=3600)
     with (
@@ -812,8 +1077,119 @@ async def _check_i(tmp: Path) -> list[str]:
     return problems
 
 
-def check_i_hanging_close_is_bounded(tmp: Path) -> bool:
-    return _report(asyncio.run(_check_i(tmp)))
+def check_l_hanging_close_is_bounded(tmp: Path) -> bool:
+    return _report(asyncio.run(_check_l(tmp)))
+
+
+# M: what counts as never sent.
+
+
+def _wrapped(cause: Exception) -> Exception:
+    """An error as solana-py raises it: a wrapper whose cause is the HTTP error."""
+    error = RuntimeError(f"{type(cause).__name__} raised in SendTransaction")
+    error.__cause__ = cause
+    return error
+
+
+def _status_error(code: int) -> Exception:
+    request = httpx2.Request("POST", "https://node.invalid")
+    return _wrapped(
+        httpx2.HTTPStatusError(
+            "status", request=request, response=httpx2.Response(code, request=request)
+        )
+    )
+
+
+async def _send_raises(errors: list[Exception]) -> tuple[type, list[tuple]]:
+    """Run the real send with every attempt failing; what it raised and signed."""
+    client = object.__new__(SolanaClient)
+    client._cached_last_valid_block_height = 4242  # noqa: SLF001
+    client._rate_limiter = SimpleNamespace(acquire=_empty)  # noqa: SLF001
+    script = list(errors)
+
+    async def send_transaction(*_a: object, **_k: object) -> None:
+        raise script.pop(0)
+
+    async def get_client() -> SimpleNamespace:
+        return SimpleNamespace(send_transaction=send_transaction)
+
+    async def blockhash() -> Hash:
+        return Hash.default()
+
+    client.get_client = get_client
+    client.get_cached_blockhash = blockhash
+    signed: list[tuple] = []
+    with _patched(asyncio, "sleep", _empty):
+        try:
+            await client.build_and_send_transaction(
+                [],
+                Keypair(),
+                max_retries=len(errors),
+                on_signed=lambda sig, height: signed.append((sig, height)),
+            )
+        except Exception as e:  # noqa: BLE001 - the type is the answer
+            return type(e), signed
+    return type(None), signed
+
+
+async def _check_m(_tmp: Path) -> list[str]:
+    problems = []
+    refused = RPCException("Blockhash not found")
+    connect = _wrapped(httpx2.ConnectError("refused"))
+    read = _wrapped(httpx2.ReadTimeout("timed out"))
+    cases = (
+        ("node refusals", [refused, refused], True),
+        ("no connection", [connect, connect], True),
+        ("HTTP 429", [_status_error(429), refused], True),
+        ("a read timeout, then a refusal", [read, refused], False),
+        ("a refusal, then a read timeout", [refused, read], False),
+        ("HTTP 502", [_status_error(502), connect], False),
+    )
+    with _logged():
+        for label, errors, never in cases:
+            raised, signed = await _send_raises(errors)
+            if (raised is TransactionNotSent) is not never:
+                want = "TransactionNotSent" if never else "the attempt's own error"
+                problems.append(f"{label}: raised {raised.__name__}, want {want}")
+            if len(signed) != 1 or signed[0][1] != 4242:  # noqa: PLR2004
+                problems.append(f"{label}: signer reported {signed}, want one, height")
+    return problems
+
+
+def check_m_never_sent_means_never_sent(tmp: Path) -> bool:
+    return _report(asyncio.run(_check_m(tmp)))
+
+
+# N: shutdown names what is still pending.
+
+
+async def _check_n(tmp: Path) -> list[str]:
+    problems = []
+    landed, pending = _token("LANDED"), _token("PENDING")
+    path = tmp / "n.json"
+    manager = _manager(path, _Client())
+    manager.store.load()
+    manager.store.add(
+        landed,
+        TradeResult(success=True, amount=1.0, amount_raw=1, price=1.0),
+        datetime.now(UTC).replace(tzinfo=None),
+        WALLET.pubkey,
+    )
+    _store_pending(manager.store, pending)
+    if manager.store.pending_mints() != {str(pending.mint)}:
+        problems.append(f"pending_mints: {manager.store.pending_mints()}")
+    with _logged() as logs:
+        await manager.stop()
+    lines = [line for line in logs.lines if "sent but not confirmed" in line]
+    if len(lines) != 1 or str(pending.mint) not in lines[0]:
+        problems.append(f"shutdown did not name the pending buy: {logs.lines}")
+    elif str(landed.mint) in lines[0]:
+        problems.append(f"shutdown called a landed position pending: {lines[0]}")
+    return problems
+
+
+def check_n_shutdown_names_pending_buys(tmp: Path) -> bool:
+    return _report(asyncio.run(_check_n(tmp)))
 
 
 def main() -> None:
@@ -827,20 +1203,25 @@ def main() -> None:
         os.chdir(tmp)  # the trade log writes under trades/ in the working dir
         try:
             checks = [
-                ("A: cancelled while the buy confirms, kept pending", lambda: check_a_cancelled_during_confirmation(tmp)),
-                ("B: cancelled mid-send, kept with its signature", lambda: check_b_cancelled_mid_send(tmp)),
-                ("C: cancelled before signing, nothing kept", lambda: check_c_cancelled_before_signing(tmp)),
-                ("D: single-token mode keeps it too", lambda: check_d_single_token_mode(tmp)),
-                ("E: landed, reverted, unsent and unknown buys", lambda: check_e_outcomes_without_shutdown(tmp)),
-                ("F: the next start resolves pending buys", lambda: check_f_next_start_resolves_pending(tmp)),
-                ("G: a sold coin's close finishes at shutdown", lambda: check_g_close_after_sell_finishes(tmp)),
-                ("H: only held positions are stopped", lambda: check_h_only_held_positions_are_stopped(tmp)),
-                ("I: a hanging close is bounded", lambda: check_i_hanging_close_is_bounded(tmp)),
+                ("A: cancelled while the buy confirms, kept pending", check_a_cancelled_during_confirmation),
+                ("B: cancelled mid-send, kept with its signature", check_b_cancelled_mid_send),
+                ("C: cancelled before signing, nothing kept", check_c_cancelled_before_signing),
+                ("D: single-token mode keeps it too", check_d_single_token_mode),
+                ("E: each outcome of a buy, and manual", check_e_outcomes_without_shutdown),
+                ("F: the next start resolves pending buys by signature", check_f_next_start_resolves_by_signature),
+                ("G: restart reads balances at confirmed", check_g_balances_read_at_confirmed),
+                ("H: an unknown fill waits for a real price", check_h_unknown_fill_waits_for_a_price),
+                ("I: an unconfirmed buy is resolved in the same run", check_i_resolved_in_the_same_run),
+                ("J: a sold coin's close finishes at shutdown", check_j_close_after_sell_finishes),
+                ("K: only held positions are stopped", check_k_only_held_positions_are_stopped),
+                ("L: a hanging close is bounded", check_l_hanging_close_is_bounded),
+                ("M: SUBMIT_FAILED only when nothing can have left", check_m_never_sent_means_never_sent),
+                ("N: shutdown names the pending buys, only those", check_n_shutdown_names_pending_buys),
             ]  # fmt: skip
             results = []
             for name, check in checks:
                 try:
-                    ok = check()
+                    ok = check(tmp)
                 except Exception as e:  # noqa: BLE001 - a crash is a failed check
                     print(f"    raised {type(e).__name__}: {e}")
                     ok = False

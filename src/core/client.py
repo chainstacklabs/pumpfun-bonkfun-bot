@@ -10,10 +10,11 @@ from time import monotonic
 from typing import Any
 
 import aiohttp
+import httpx2
 from aiohttp.http_exceptions import HttpProcessingError
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Processed
-from solana.rpc.core import TxOptsModel
+from solana.rpc.core import RPCException, TxOptsModel
 from solders.account import Account
 from solders.compute_budget import set_compute_unit_limit, set_compute_unit_price
 from solders.hash import Hash
@@ -270,8 +271,40 @@ async def rpc_endpoint_problem(
     return f"is unreachable ({reason})"
 
 
+class TransactionNotSent(Exception):  # noqa: N818 - names an outcome
+    """No attempt of a send can have reached the network.
+
+    Every attempt either never left this process (no connection, none free in
+    the pool) or was refused by the node with an error before it took the
+    transaction. Any other failure, a read timeout above all, may have been
+    accepted and is raised as it is.
+    """
+
+
+# HTTP statuses from here up are server errors: a proxy may have passed it on.
+_FIRST_SERVER_ERROR = 500
+
+
+def _never_sent(error: Exception) -> bool:
+    """Whether a failed send attempt provably did not reach the network."""
+    if isinstance(error, RPCException):
+        return True  # the node answered with an error: it took nothing
+    cause = error.__cause__ or error
+    if isinstance(
+        cause, httpx2.ConnectError | httpx2.ConnectTimeout | httpx2.PoolTimeout
+    ):
+        return True
+    return (
+        isinstance(cause, httpx2.HTTPStatusError)
+        and cause.response.status_code < _FIRST_SERVER_ERROR  # a 4xx: refused
+    )
+
+
 class SolanaClient:
     """Abstraction for Solana RPC client operations."""
+
+    #: The block height past which the cached blockhash can no longer land.
+    _cached_last_valid_block_height: int | None = None
 
     def __init__(self, rpc_endpoint: str, max_rps: float = 25.0):
         """Initialize Solana client with RPC endpoint.
@@ -295,9 +328,16 @@ class SolanaClient:
         """Start background task to update recent blockhash."""
         while True:
             try:
-                blockhash = await self.get_latest_blockhash()
+                await self._rate_limiter.acquire()
+                client = await self.get_client()
+                latest = (
+                    await client.get_latest_blockhash(commitment="processed")
+                ).value
                 async with self._blockhash_lock:
-                    self._cached_blockhash = blockhash
+                    self._cached_blockhash = latest.blockhash
+                    self._cached_last_valid_block_height = (
+                        latest.last_valid_block_height
+                    )
             except Exception as e:
                 logger.warning(f"Blockhash fetch failed: {e!s}")
             finally:
@@ -365,7 +405,9 @@ class SolanaClient:
         Args:
             pubkey: Public key of the account
             commitment: Optional commitment override (e.g., "processed" for
-                fresh state right after a geyser event; default "confirmed")
+                fresh state right after a geyser event). None is solana-py's
+                default, "finalized", which runs some seconds behind
+                "confirmed": an account a buy just created reads as missing.
 
         Returns:
             The solders `Account` -- callers read attributes like `.data` and
@@ -395,7 +437,8 @@ class SolanaClient:
 
         Args:
             pubkeys: Public keys of the accounts
-            commitment: Optional commitment override (default "confirmed")
+            commitment: Optional commitment override. None is solana-py's
+                default, "finalized", which runs behind "confirmed".
 
         Returns:
             One entry per pubkey, in order -- a solders `Account` or None.
@@ -448,7 +491,7 @@ class SolanaClient:
         priority_fee: int | None = None,
         compute_unit_limit: int | None = None,
         account_data_size_limit: int | None = None,
-        on_signed: Callable[[Signature], None] | None = None,
+        on_signed: Callable[[Signature, int | None], None] | None = None,
     ) -> Signature:
         """Send a transaction with optional priority fee and compute unit limit.
 
@@ -461,13 +504,19 @@ class SolanaClient:
             compute_unit_limit: Compute unit limit. Defaults to 85,000.
             account_data_size_limit: Account data size limit in bytes. Reduces CU
                 cost from 16k to ~128 CU; must be the first instruction.
-            on_signed: Called with the signature once the transaction is signed,
-                before the first send, so a caller cancelled mid-send still knows
-                what may have reached the chain. Every retry resends the same
-                transaction. Must not block: it runs on the send path.
+            on_signed: Called with the signature and the block height past which
+                the transaction can no longer land (None when unknown) once it
+                is signed, before the first send, so a caller cancelled or failed
+                mid-send still knows what may have reached the chain. Every retry
+                resends the same transaction. Must not block: it runs on the
+                send path.
 
         Returns:
             Transaction signature.
+
+        Raises:
+            TransactionNotSent: No attempt can have reached the network
+            Exception: The last attempt's error, when one of them may have
         """
         client = await self.get_client()
 
@@ -500,14 +549,17 @@ class SolanaClient:
             instructions = fee_instructions + instructions
 
         recent_blockhash = await self.get_cached_blockhash()
+        last_valid_block_height = self._cached_last_valid_block_height
         # No address lookup tables: the bot builds every account list itself.
         message = MessageV0.try_compile(
             signer_keypair.pubkey(), instructions, [], recent_blockhash
         )
         transaction = VersionedTransaction(message, [signer_keypair])
         if on_signed is not None:
-            on_signed(transaction.signatures[0])
+            on_signed(transaction.signatures[0], last_valid_block_height)
 
+        # Set once an attempt failed in a way that may still have delivered it.
+        maybe_sent = False
         for attempt in range(max_retries):
             try:
                 await self._rate_limiter.acquire()
@@ -518,10 +570,13 @@ class SolanaClient:
                 return response.value
 
             except Exception as e:
+                maybe_sent = maybe_sent or not _never_sent(e)
                 if attempt == max_retries - 1:
                     logger.exception(
                         f"Failed to send transaction after {max_retries} attempts"
                     )
+                    if not maybe_sent:
+                        raise TransactionNotSent(str(e)) from e
                     raise
 
                 wait_time = 2**attempt
@@ -592,6 +647,54 @@ class SolanaClient:
             return ConfirmationStatus.UNCONFIRMED
 
         return await self.verify_transaction_status(signature)
+
+    async def get_signature_outcome(
+        self, signature: str | Signature
+    ) -> ConfirmationStatus | None:
+        """What the cluster knows of a signature, searching its whole history.
+
+        Returns:
+            SUCCESS or REVERTED once confirmed; UNCONFIRMED when it is seen but
+            not confirmed yet, or the lookup failed; None when no node knows it,
+            which settles nothing until its blockhash has expired
+        """
+        body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getSignatureStatuses",
+            "params": [[str(signature)], {"searchTransactionHistory": True}],
+        }
+        response = await self.post_rpc(body)
+        try:
+            status = response["result"]["value"][0]
+        except (KeyError, IndexError, TypeError):
+            logger.warning(f"Could not read the status of {str(signature)[:16]}...")
+            return ConfirmationStatus.UNCONFIRMED
+        if status is None:
+            return None
+        if status.get("err"):
+            return ConfirmationStatus.REVERTED
+        if status.get("confirmationStatus") in ("confirmed", "finalized"):
+            return ConfirmationStatus.SUCCESS
+        return ConfirmationStatus.UNCONFIRMED
+
+    async def get_block_height(self) -> int:
+        """The cluster's block height at "confirmed".
+
+        Raises:
+            RuntimeError: The node did not answer with one
+        """
+        body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getBlockHeight",
+            "params": [{"commitment": "confirmed"}],
+        }
+        response = await self.post_rpc(body)
+        height = response.get("result") if response else None
+        if isinstance(height, int):
+            return height
+        raise RuntimeError("no block height in the answer")  # noqa: TRY003
 
     async def verify_transaction_succeeded(self, signature: str | Signature) -> bool:
         """Check whether a landed transaction actually executed successfully.

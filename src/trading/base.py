@@ -47,6 +47,21 @@ class TradeResult:
         }
 
 
+@dataclass(frozen=True)
+class PendingBuy:
+    """What resolving a buy sent but not settled needs beyond its signature."""
+
+    #: The most raw tokens it can have delivered; a balance read never claims
+    #: more, so a coin also held for another reason is not sold with it.
+    max_amount_raw: int | None = None
+    #: The account its spend lands in, to read the spend back; None: the curve.
+    quote_destination: str | None = None
+    #: An exact-in buy's spend in raw quote units, known before it was sent.
+    spend_raw: int | None = None
+    #: The block height past which it can no longer land; None when unknown.
+    last_valid_block_height: int | None = None
+
+
 class Trader(ABC):
     """Enhanced base interface for trading operations with platform support."""
 

@@ -90,7 +90,7 @@ Logs land in `logs/{bot_name}_{timestamp}.log`.
 
 Run it from the folder that holds `bots/`: it reads `bots/*.yaml` there and writes `logs/`, `trades/` and `positions/` beside it. `pump_bot --help` says this and starts nothing.
 
-A bot that can't run is not started, with one line saying why: a config that fails validation, a wallet that won't unlock, or an `rpc_endpoint` that doesn't answer or rejects the request. With every bot disabled the bot says so. The exit status is 0 only when every enabled bot started and finished without an error, 1 otherwise, and 130 after Ctrl+C.
+A bot that can't run is not started, with one line saying why: a config that fails validation, a wallet that won't unlock, or an `rpc_endpoint` that doesn't answer or rejects the request. With every bot disabled the bot says so. The exit status is 0 only when every enabled bot started and finished without an error, 1 otherwise, 130 after Ctrl+C and 143 after SIGTERM, which stops the bots the same way; send either to the process group so a bot in its own process stops too.
 
 ## Configuration reference
 
@@ -177,13 +177,21 @@ bot exits.
 ### Positions survive a restart
 
 Each position the bot monitors (`tp_sl` or `time_based`) is written to
-`positions/<bot name>.json` as soon as its buy is sent, marked `"pending": true`
-with the buy's signature until the buy confirms, and removed once it is sold. A
-buy that reverts or never reached the network leaves nothing. So a bot stopped,
-or killed, while a buy is in flight finds it on the next start, which reads the
-wallet's balance: a coin the buy delivered is resumed at the amount held, and a
-buy that never landed is cleared. A buy whose confirmation never came stays
-pending in the file the same way, and is not cleaned up as a failed buy. On
+`positions/<bot name>.json` as soon as its buy may have reached the network,
+with a `pending` entry and the buy's signature until the buy is resolved, and
+removed once it is sold. A buy that reverts, or provably never left the bot (no
+connection, or the node refused it), leaves nothing; one whose send failed any
+other way, a timeout say, may still have landed and is kept. The bot resolves a
+pending buy by its signature, at the next start if it was stopped or killed
+while the buy was in flight, and in the same run when its confirmation never
+came: a buy that landed is held at the amount and price its transaction shows,
+one that reverted is cleared, and one no node knows is looked at again until its
+blockhash has expired. Then the wallet's balance decides: none held clears it,
+and a balance is held up to what the buy can have delivered, so a coin another
+bot holds in the same wallet is not sold with it. A position whose fill price
+could not be read takes profit and loss from the first price it reads, and runs
+no exit before then. A buy that may have landed is never cleaned up as a failed
+buy, under any exit strategy. On
 start the bot reads that file and resumes each position before it takes a new
 coin, with the bot's current exit strategy: `max_hold_time` and `wait_after_buy`
 count from the original buy, take profit and stop loss from its entry price.

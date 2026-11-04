@@ -1,8 +1,9 @@
 """Open positions on disk, so a restarted bot picks them up again.
 
 One JSON file per bot, `positions/<bot name>.json`, relative to the working
-directory like `logs/` and `trades/`. A position is added as `pending` when its
-buy is sent, rewritten when the buy lands, and removed once it is sold. The file
+directory like `logs/` and `trades/`. A position is added with a `pending`
+object when its buy is sent, rewritten without it once the buy is resolved as
+landed, and removed once it is sold. The file
 is rewritten whole on every change through a temporary file, so a crash leaves
 either the old or the new version.
 """
@@ -19,7 +20,7 @@ from pathlib import Path
 from solders.pubkey import Pubkey
 
 from interfaces.core import Platform, TokenInfo
-from trading.base import TradeResult
+from trading.base import PendingBuy, TradeResult
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -67,8 +68,9 @@ def decode_token_info(encoded: dict) -> TokenInfo:
 def _check_buy(buy: dict) -> None:
     """Raise TypeError unless the stored buy's amounts are usable numbers.
 
-    `amount` and `price` are finite numbers, `amount_raw` a whole number of raw
-    units or null. A hand-edited `"1.0"` would otherwise fail later, outside
+    `amount` is a finite number, `price` one or null (the fill was never read:
+    the position takes the first price it reads), `amount_raw` a whole number of
+    raw units or null. A hand-edited `"1.0"` would otherwise fail later, outside
     the per-record guard, and stop the bot on every start.
     """
 
@@ -83,7 +85,8 @@ def _check_buy(buy: dict) -> None:
     raw_ok = raw is None or (
         isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0
     )
-    if not (real(buy["amount"]) and real(buy["price"]) and raw_ok):
+    price_ok = buy["price"] is None or real(buy["price"])
+    if not (real(buy["amount"]) and price_ok and raw_ok):
         raise TypeError
 
 
@@ -106,12 +109,32 @@ def _wallet_of(record: dict) -> str | None:
     return wallet
 
 
-def _pending_of(record: dict) -> bool:
-    """Whether the record's buy was sent but never confirmed; TypeError if not a bool."""
-    pending = record.get("pending", False)
-    if not isinstance(pending, bool):
+def _whole(value: object) -> bool:
+    return value is None or (isinstance(value, int) and not isinstance(value, bool))
+
+
+def _pending_of(record: dict) -> PendingBuy | None:
+    """The record's unresolved buy, None for a landed one; TypeError if malformed."""
+    pending = record.get("pending")
+    if pending is None:
+        return None
+    if not isinstance(pending, dict):
         raise TypeError
-    return pending
+    found = PendingBuy(
+        max_amount_raw=pending.get("max_amount_raw"),
+        quote_destination=pending.get("quote_destination"),
+        spend_raw=pending.get("spend_raw"),
+        last_valid_block_height=pending.get("last_valid_block_height"),
+    )
+    destination = found.quote_destination
+    if not (
+        _whole(found.max_amount_raw)
+        and _whole(found.spend_raw)
+        and _whole(found.last_valid_block_height)
+        and (destination is None or isinstance(destination, str))
+    ):
+        raise TypeError
+    return found
 
 
 def _records_in(data: object) -> list:
@@ -148,10 +171,33 @@ class StoredPosition:
     #: The wallet that bought it, base58; None in a record written before
     #: positions named their wallet.
     wallet: str | None = None
-    #: The buy was sent but its outcome never read: `buy_result` holds the
-    #: signature and the expected amount and price, and the wallet's balance
-    #: decides whether, and how much, it holds.
-    pending: bool = False
+    #: Set while the buy was sent but its outcome is not resolved:
+    #: `buy_result` then holds the signature and the expected amount and price.
+    pending: PendingBuy | None = None
+
+
+def _decode(mint: str, record: dict) -> StoredPosition:
+    """One record as a `StoredPosition`.
+
+    Raises:
+        ValueError, KeyError, TypeError, AttributeError: It does not decode
+    """
+    buy = record["buy"]
+    _check_buy(buy)
+    return StoredPosition(
+        token_info=_coin_of(record, mint),
+        buy_result=TradeResult(
+            success=True,
+            platform=Platform(record["token_info"]["platform"]),
+            tx_signature=buy.get("tx_signature"),
+            amount=buy["amount"],
+            amount_raw=buy.get("amount_raw"),
+            price=buy["price"],
+        ),
+        entry_time=datetime.fromisoformat(record["entry_time"]),
+        wallet=_wallet_of(record),
+        pending=_pending_of(record),
+    )
 
 
 class PositionStore:
@@ -208,27 +254,7 @@ class PositionStore:
         positions = []
         for mint, record in self._records.items():
             try:
-                buy = record["buy"]
-                _check_buy(buy)
-                token_info = _coin_of(record, mint)
-                wallet = _wallet_of(record)
-                pending = _pending_of(record)
-                positions.append(
-                    StoredPosition(
-                        token_info=token_info,
-                        buy_result=TradeResult(
-                            success=True,
-                            platform=Platform(record["token_info"]["platform"]),
-                            tx_signature=buy.get("tx_signature"),
-                            amount=buy["amount"],
-                            amount_raw=buy.get("amount_raw"),
-                            price=buy["price"],
-                        ),
-                        entry_time=datetime.fromisoformat(record["entry_time"]),
-                        wallet=wallet,
-                        pending=pending,
-                    )
-                )
+                positions.append(_decode(mint, record))
             except (ValueError, KeyError, TypeError, AttributeError):
                 logger.exception(
                     f"Position for {mint} in {self.path} does not decode; "
@@ -257,12 +283,21 @@ class PositionStore:
         """Every mint in the file as last loaded or written, decodable or not."""
         return set(self._records)
 
+    def pending(self, mint: Pubkey) -> StoredPosition | None:
+        """The coin's record if its buy is still unresolved and it decodes."""
+        if str(mint) not in self.pending_mints():
+            return None
+        try:
+            return _decode(str(mint), self._records[str(mint)])
+        except (ValueError, KeyError, TypeError, AttributeError):
+            return None
+
     def pending_mints(self) -> set[str]:
         """Mints whose buy was sent and never confirmed."""
         return {
             mint
             for mint, record in self._records.items()
-            if isinstance(record, dict) and record.get("pending") is True
+            if isinstance(record, dict) and isinstance(record.get("pending"), dict)
         }
 
     def add(
@@ -272,14 +307,15 @@ class PositionStore:
         entry_time: datetime,
         wallet: Pubkey | None = None,
         *,
-        pending: bool = False,
+        pending: PendingBuy | None = None,
     ) -> None:
         """Record a position whose buy just landed, or was just sent.
 
         Args:
             wallet: The wallet holding the coin; only that wallet resumes it
-            pending: The buy was sent and its outcome is not known yet; the
-                record replaces any earlier one for the coin either way
+            pending: Set while the buy was sent and its outcome is not
+                resolved; the record replaces any earlier one for the coin
+                either way
         """
         mint = str(token_info.mint)
         record = {
@@ -297,9 +333,9 @@ class PositionStore:
             },
             "token_info": encode_token_info(token_info),
         }
-        if pending:
+        if pending is not None:
             # Only on a pending record, so a landed one is written as before.
-            record["pending"] = True
+            record["pending"] = dataclasses.asdict(pending)
         self._records[mint] = record
         self._write()
 

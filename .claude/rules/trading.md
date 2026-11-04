@@ -18,14 +18,21 @@ Under `manual` or `marry_mode` it burns nothing and only closes empty accounts.
 
 Each monitored position is in `positions/<bot name>.json` (`PositionStore`) from
 the moment its buy **may have reached the chain** until its **sale**. The buyer's
-`on_sent` writes it as `pending`, with the signature and the expected amount,
-once the send returns, or when a cancellation lands mid-send (the signature
-comes from `build_and_send_transaction`'s `on_signed`); a buy cancelled before
-it was signed leaves nothing. A landed buy rewrites it; a `REVERTED` or
-`SUBMIT_FAILED` buy removes it; any other failure keeps it pending and skips the
-failed-buy cleanup, which could burn a coin the buy delivered. A pending record
-is resumed at the balance the wallet holds and rewritten as landed, or cleared
-by the same balance rule as below. Only a sale of all of it removes a position
+`on_sent` writes it with a `pending` object (`PendingBuy`: the most it can
+deliver, where its spend lands, an exact-in spend, the blockhash's last valid
+block height) once the send returns, or once it was signed when a cancellation
+or an ambiguous send error lands (`on_signed`); a buy cancelled before it was
+signed leaves nothing. `TransactionNotSent` is the only send error that is
+`SUBMIT_FAILED`. A confirmed buy rewrites the record; a `REVERTED` or
+`SUBMIT_FAILED` buy removes it; any other failure keeps it and starts
+`open_pending`, and no `UNCONFIRMED` buy is cleaned up as a failed buy, monitored
+or not. `open_pending` (also what `resume` runs for a pending record) resolves by
+signature (`getSignatureStatuses`, whole history): landed → the transaction's
+amounts and fill price, logged to trades.log; reverted → cleared; unknown →
+looked at again until the blockhash expired, then the balance decides, capped at
+`max_amount_raw`, price None. A position with price None reads a price before
+any exit runs. Balance reads on resume are at `confirmed`; the client's default
+is `finalized`, seconds behind. Only a sale of all of it removes a position
 (a sale the curve could pay for only in part leaves the rest in the file, still
 monitored, and no cleanup runs): a position stopped at shutdown, or whose exit
 gave up or could not be resolved, still holds its coin.

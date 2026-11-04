@@ -46,6 +46,9 @@ stopped on an error still exited 0.
      `Token listening stopped due to error` in yolo mode) makes `start_bot`
      report the bot did not run normally; one whose listener just ends does
      not.
+  J. SIGTERM to the process group takes the same path as Ctrl+C, in the main
+     process and in its own: the trader's shutdown line, no
+     `KeyboardInterrupt` traceback, exit 143.
 
 Offline: the bot runs against a stand-in JSON-RPC node on 127.0.0.1 and a
 closed local port; no funds move.
@@ -542,8 +545,14 @@ def check_f_exit_status(tmp: str) -> bool:
     return _report(problems)
 
 
-def _ctrl_c(tmp: str, *, separate_process: bool) -> list[str]:
-    """Ctrl+C a running bot through its process group; what went wrong."""
+def _ctrl_c(
+    tmp: str,
+    *,
+    separate_process: bool,
+    sig: signal.Signals = signal.SIGINT,
+    want: int = 130,
+) -> list[str]:
+    """Ctrl+C (or `sig`) a running bot through its process group; what went wrong."""
     problems = []
     with _node() as (rpc, _):
         config = _config("live", rpc, separate_process=separate_process)
@@ -564,21 +573,21 @@ def _ctrl_c(tmp: str, *, separate_process: bool) -> list[str]:
             time.sleep(0.2)
         running = bot.poll() is None
         if running:
-            os.killpg(bot.pid, signal.SIGINT)
+            os.killpg(bot.pid, sig)
         try:
             out, _ = bot.communicate(timeout=60)
         except subprocess.TimeoutExpired:
             os.killpg(bot.pid, signal.SIGKILL)
             out, _ = bot.communicate()
-            problems.append("the bot did not stop within 60 s of Ctrl+C")
+            problems.append(f"the bot did not stop within 60 s of {sig.name}")
     if not running:
         problems.append(f"the bot never reached its listener: {out[-300:]!r}")
     if "KeyboardInterrupt" in out:
         problems.append("a KeyboardInterrupt traceback was printed")
     if "Universal Trader has shut down" not in out + _logs(folder):
         problems.append("no clean shutdown line")
-    if bot.returncode != 130:  # noqa: PLR2004 - the status after SIGINT
-        problems.append(f"exit {bot.returncode}, expected 130")
+    if bot.returncode != want:
+        problems.append(f"exit {bot.returncode}, expected {want}")
     return problems
 
 
@@ -589,6 +598,17 @@ def check_g_ctrl_c_is_clean(tmp: str) -> bool:
         problems += [
             f"{mode}: {p}" for p in _ctrl_c(tmp, separate_process=separate_process)
         ]
+    return _report(problems)
+
+
+def check_j_sigterm_is_clean(tmp: str) -> bool:
+    problems = []
+    for separate_process in (False, True):
+        mode = "own process" if separate_process else "main process"
+        found = _ctrl_c(
+            tmp, separate_process=separate_process, sig=signal.SIGTERM, want=143
+        )
+        problems += [f"{mode}: {p}" for p in found]
     return _report(problems)
 
 
@@ -761,6 +781,7 @@ def main() -> int:
             "I: a trader stopped by an error fails the run",
             check_i_trader_error_stop_fails_the_run,
         ),
+        ("J: SIGTERM stops like Ctrl+C, exit 143", check_j_sigterm_is_clean),
     ]
     passed = 0
     with tempfile.TemporaryDirectory() as tmp:
