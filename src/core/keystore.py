@@ -28,8 +28,10 @@ CLI_DEFAULT_KEYSTORE = "~/.config/pumpfun-cli/wallet.enc"
 _KEYSTORE_VERSION = 1
 _KEY_LENGTH = 32
 _NONCE_LENGTH = 12
-# scrypt needs 128 * n * r bytes of memory. The CLI's settings take 256 MiB; a
-# file asking for more than 1 GiB is refused rather than allowed to exhaust RAM.
+# scrypt needs 128 * n * r bytes of memory, and p times that much work. The
+# CLI's settings take 256 MiB with p = 1; a file asking for more than 1 GiB, or
+# for more than that much work, is refused rather than allowed to exhaust RAM or
+# hold up the start.
 _MAX_SCRYPT_MEMORY = 1 << 30
 
 
@@ -87,9 +89,13 @@ def load_keystore(path: Path, password: str | None) -> Keypair:
         raise KeystoreError(path, f"could not be read: {e}") from None
 
     salt, n, r, p, nonce, ciphertext = _parse(data, path)
-    key = Scrypt(salt=salt, length=_KEY_LENGTH, n=n, r=r, p=p).derive(
-        password.encode("utf-8")
-    )
+    try:
+        key = Scrypt(salt=salt, length=_KEY_LENGTH, n=n, r=r, p=p).derive(
+            password.encode("utf-8")
+        )
+    except ValueError:
+        # Settings scrypt itself rejects, such as an n that is not a power of 2.
+        raise KeystoreError(path, "has invalid scrypt settings") from None
     try:
         secret = AESGCM(key).decrypt(nonce, ciphertext, None)
     except InvalidTag:
@@ -145,6 +151,8 @@ def _parse(data: object, path: Path) -> tuple[bytes, int, int, int, bytes, bytes
         raise not_a_wallet from None
     if 128 * n * r > _MAX_SCRYPT_MEMORY:
         raise KeystoreError(path, "asks for more scrypt memory than a wallet needs")
+    if 128 * n * r * p > _MAX_SCRYPT_MEMORY:
+        raise KeystoreError(path, "asks for more scrypt work than a wallet needs")
     if len(raw) <= _NONCE_LENGTH:
         raise not_a_wallet
     return salt, n, r, p, raw[:_NONCE_LENGTH], raw[_NONCE_LENGTH:]
