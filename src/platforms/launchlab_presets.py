@@ -52,3 +52,17 @@ def resolve_platform_configs(
             f"use platform 'launchlab' for other launchpads"
         )
     return narrowed
+
+
+def traded_platform_configs(
+    platform: Platform, configured: list[str] | None
+) -> frozenset[Pubkey] | None:
+    """The platform configs a bot trades: its setting, else what its platform covers.
+
+    None for every config on the program, and for pump.fun, which has none.
+
+    Raises:
+        ValueError: As `resolve_platform_configs`
+    """
+    narrowed = resolve_platform_configs(platform, configured)
+    return narrowed if narrowed is not None else LAUNCHLAB_PLATFORMS.get(platform)

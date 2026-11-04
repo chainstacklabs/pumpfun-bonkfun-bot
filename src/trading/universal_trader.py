@@ -31,7 +31,10 @@ from core.wallet import Wallet
 from interfaces.core import Platform, TokenInfo
 from monitoring.listener_factory import ListenerFactory
 from platforms import get_platform_implementations
-from platforms.launchlab_presets import resolve_platform_configs
+from platforms.launchlab_presets import (
+    resolve_platform_configs,
+    traded_platform_configs,
+)
 from trading import trade_log
 from trading.base import TradeResult
 from trading.intake import TokenIntake
@@ -196,7 +199,12 @@ class UniversalTrader:
             self.quote_amounts,
             allowed_quote_mints,
             pool_resolver=(
-                MigrationResolver(self.solana_client)
+                MigrationResolver(
+                    self.solana_client,
+                    platform_configs=traded_platform_configs(
+                        self.platform, settings.platform_configs
+                    ),
+                )
                 if self.entry == "migration"
                 else None
             ),
