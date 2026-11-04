@@ -18,6 +18,42 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def sell_quote_out(curve_state: dict[str, Any], amount: int) -> int:
+    """The quote a sell of `amount` raw tokens takes out of the curve, fees included.
+
+    The program prices a sell on the virtual reserves and pays it, fees and
+    all, out of `real_quote_reserves`.
+    """
+    virtual_tokens = curve_state["virtual_token_reserves"]
+    return amount * curve_state["virtual_quote_reserves"] // (virtual_tokens + amount)
+
+
+def max_sell_within_real_reserves(curve_state: dict[str, Any], amount: int) -> int:
+    """The largest part of `amount` the curve has the quote to pay for.
+
+    A sell whose payout is more than `real_quote_reserves` reverts with 6024
+    Overflow. That can't happen while the virtual reserves track the real ones,
+    but on a mayhem-mode coin they drift apart, and the curve can hold far less
+    than its price promises.
+
+    Returns:
+        `amount` when the curve can pay for all of it, else the most raw tokens
+        whose payout still fits; 0 when that payout would be nothing
+    """
+    virtual_tokens = curve_state["virtual_token_reserves"]
+    virtual_quote = curve_state["virtual_quote_reserves"]
+    real_quote = curve_state["real_quote_reserves"]
+    if sell_quote_out(curve_state, amount) <= real_quote:
+        return amount
+    # The payout rounds down, so it fits while
+    # amount * virtual_quote < (real_quote + 1) * (virtual_tokens + amount).
+    # virtual_quote > real_quote + 1 here, or the full sell would have fit.
+    bound = (real_quote + 1) * virtual_tokens - 1
+    sellable = min(amount, bound // (virtual_quote - real_quote - 1))
+    # Tokens that would be paid nothing are not worth a transaction.
+    return sellable if sell_quote_out(curve_state, sellable) > 0 else 0
+
+
 class PumpFunCurveManager(CurveManager):
     """Pump.Fun implementation of CurveManager interface using IDL-based decoding."""
 

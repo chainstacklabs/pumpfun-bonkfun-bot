@@ -7,8 +7,6 @@
   "creator_rewrite_signature": "3wMMTvi9dzpUai67LGDTDXwBNSbKgnJb6GBe2uLBYBPdh5LyZZcEPEbTqJBnxvZvMHgFLHKmeUgnrjYhz6ZDrNub",
   "creator_rewrite_slot": 465074306,
   "event_creator": "8TL3rhoL2bw5iER8sddTKAwUPBQBvc8D6Bk7o615CGGs",
-  "reverted_buy_signature": "5Mdj9oUuYpFhoWummdPwjRyEgYejc6bA93wsq2FDPAaYC6dovWB3rXvtEjHbA1jMqqwj6TRTBsT6R3UbGJmazRBo",
-  "reverted_buy_slot": 465074322,
   "reverted_buy_creator_vault": "7pTSeZ5EEVj7TPVzeshBMRYGWUZ6sDaUcoqDrFtzuS35",
   "program_expected_creator_vault": "3fGe5YmkPbAxsSZzjJs9M8vS8dz69UuVZhur7W3kSSdJ",
   "curve_account": {

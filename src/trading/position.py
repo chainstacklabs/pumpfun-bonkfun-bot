@@ -140,11 +140,15 @@ class Position:
         self.exit_reason = exit_reason
         self.exit_time = datetime.utcnow()
 
-    def get_pnl(self, current_price: float | None = None) -> dict:
+    def get_pnl(
+        self, current_price: float | None = None, quantity: float | None = None
+    ) -> dict:
         """Calculate profit/loss for the position.
 
         Args:
             current_price: Current price (uses exit_price if position is closed)
+            quantity: Whole tokens to count, such as the part a sell sold;
+                None counts the whole position
 
         Returns:
             Dictionary with PnL information
@@ -158,7 +162,9 @@ class Position:
 
         price_change = price_to_use - self.entry_price
         price_change_pct = (price_change / self.entry_price) * 100
-        unrealized_pnl = price_change * self.quantity
+        if quantity is None:
+            quantity = self.quantity
+        unrealized_pnl = price_change * quantity
 
         return {
             "entry_price": self.entry_price,
@@ -166,7 +172,7 @@ class Position:
             "price_change": price_change,
             "price_change_pct": price_change_pct,
             "unrealized_pnl_quote": unrealized_pnl,
-            "quantity": self.quantity,
+            "quantity": quantity,
         }
 
     def __str__(self) -> str:
