@@ -13,11 +13,12 @@ stopped on an error still exited 0.
      any other argument exits 2. Neither loads a config or writes `logs/`.
   B. A config that fails validation logs one line naming the file and the
      cause, no traceback, to the console and to a file in `logs/`; the run
-     exits 1.
+     exits 1. A `name` that is not a non-empty string is refused: it keys the
+     bot's positions file.
   C. With every bot disabled the run logs one line saying how many configs it
      found and that all are disabled, and exits 1. A config whose YAML says
-     `enabled: false` is skipped unread, so one that could not load writes no
-     log.
+     `enabled: false` is skipped before its settings are read, so one whose
+     settings could not load writes no log; its YAML must still parse.
   D. An enabled bot whose `rpc_endpoint` refuses connections logs
      `Bot '<name>' not started: rpc_endpoint is unreachable (connection
      refused)`, no traceback, never starts its trader, names no endpoint and
@@ -88,6 +89,7 @@ import yaml  # noqa: E402
 from solders.keypair import Keypair  # noqa: E402
 
 import bot_runner  # noqa: E402
+import config_loader  # noqa: E402
 import core.client  # noqa: E402
 from trading import universal_trader  # noqa: E402
 
@@ -275,6 +277,16 @@ def check_b_config_errors_are_one_line(tmp: str) -> bool:
             problems.append(f"{stem}: the line is not in logs/")
         if run.returncode != 1:
             problems.append(f"{stem}: exit {run.returncode}, expected 1")
+    # The name keys the positions file; a bot without one would have none.
+    for name in ("", "  ", None, False, 0, ["x"]):
+        try:
+            config_loader.validate_config({**_config("x", rpc), "name": name})
+        except ValueError as e:
+            if "name must be a non-empty string" not in str(e):
+                problems.append(f"name {name!r}: refused for {e}")
+        else:
+            problems.append(f"name {name!r} was accepted")
+    config_loader.validate_config(_config("named", rpc))
     return _report(problems)
 
 

@@ -205,6 +205,11 @@ def validate_config(config: dict) -> None:
         if field == "private_key" and "keystore" in config:
             continue  # the keystore stands in for it, checked below
         get_nested_value(config, field)
+    # The name keys the bot's positions file: without one the bot would keep
+    # its open positions in memory only, and shutdown cleanup could burn them.
+    if not isinstance(config["name"], str) or not config["name"].strip():
+        msg = "name must be a non-empty string"
+        raise ValueError(msg)
     validate_wallet_config(config)
 
     # Validate config rules

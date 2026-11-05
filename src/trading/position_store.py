@@ -71,8 +71,9 @@ def _check_buy(buy: dict) -> None:
 
     `amount` is a finite number, `price` one or null (the fill was never read:
     the position takes the first price it reads, as it does for a price of zero
-    or below), `amount_raw` a whole number of raw units or null. A hand-edited `"1.0"` would otherwise fail later, outside
-    the per-record guard, and stop the bot on every start.
+    or below), `amount_raw` a whole number of raw units or null. A hand-edited
+    `"1.0"` would otherwise fail later, outside the per-record guard, and stop
+    the bot on every start.
     """
 
     def real(value: object) -> bool:
