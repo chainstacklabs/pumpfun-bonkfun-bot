@@ -733,14 +733,12 @@ class PositionManager:
                 f"The wallet holds {held} raw of {label}, less than the "
                 f"{bought_raw} bought; the position sells what is held"
             )
-            buy = TradeResult(
-                success=True,
-                platform=buy.platform,
-                tx_signature=buy.tx_signature,
-                amount=held / 10**TOKEN_DECIMALS,
-                amount_raw=held,
-                price=buy.price,
+            # The buy's deltas stay: its cost per token is unchanged. The file
+            # keeps the smaller amount, so a later start never sells more.
+            buy = dataclasses.replace(
+                buy, amount=held / 10**TOKEN_DECIMALS, amount_raw=held
             )
+            self.store.reduce(token_info.mint, buy.amount, held)
         logger.info(
             f"Resuming position in {label}: {buy.amount} tokens bought at "
             f"{buy.price} on {stored.entry_time.isoformat()} UTC"

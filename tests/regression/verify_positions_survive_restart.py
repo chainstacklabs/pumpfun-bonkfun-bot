@@ -19,10 +19,14 @@ its buy until its sell, and the next start resumes it:
      its first sell is floored at the price now, not the stale buy price.
   G. A position whose coin the wallet no longer holds (sold while the bot was
      down, or its account closed) is cleared and never sold.
-  H. A wallet holding less than was bought sells what it holds.
+  H. A wallet holding less than was bought sells what it holds, keeps that
+     smaller amount in the file and keeps the buy's chain-read cost.
   I. A position whose balance cannot be read is neither sold nor cleared.
   J. A record that does not decode (also a hand-edited amount that is not a
-     number, or no usable mint) stays in the file and the rest resume; a file that cannot be read (not JSON, not
+     number, a negative amount in a pending buy, or no usable mint, such as a
+     number) stays in the file and the rest resume, and so does a second
+     record for a mint, the first resuming; a stored price of zero or below
+     resumes as unread; a file that cannot be read (not JSON, not
      UTF-8, no permission) is moved aside, never over an earlier one, and one
      that cannot be moved is never written over.
   K. The trader resumes before it takes a coin: resumed positions hold slots
@@ -78,6 +82,7 @@ from solders.pubkey import Pubkey  # noqa: E402
 
 import bot_runner  # noqa: E402
 from core.pubkeys import TOKEN_PROGRAM, WSOL_MINT  # noqa: E402
+from core.trade_deltas import TradeDeltas  # noqa: E402
 from core.wallet import Wallet  # noqa: E402
 from interfaces.core import (  # noqa: E402
     ConfirmationStatus,
@@ -86,7 +91,7 @@ from interfaces.core import (  # noqa: E402
     TradeFailureReason,
 )
 from trading import universal_trader  # noqa: E402
-from trading.base import TradeResult  # noqa: E402
+from trading.base import PendingBuy, TradeResult  # noqa: E402
 from trading.position_manager import PositionManager  # noqa: E402
 from trading.position_store import PositionStore  # noqa: E402
 from trading.settings import TraderSettings  # noqa: E402
@@ -539,8 +544,44 @@ async def _check_h(tmp: Path) -> list[str]:
     return []
 
 
+async def _check_h_kept(tmp: Path) -> list[str]:
+    """The smaller amount reaches the file, and the buy keeps its deltas."""
+    path = tmp / "h-kept.json"
+    coin = _token("KEPT")
+    deltas = TradeDeltas(
+        tokens_raw=BOUGHT_RAW, quote_raw=-1_000_000, network_fee_lamports=5_000
+    )
+    buy = _buy()
+    buy.deltas = deltas
+    PositionStore(path).add(coin, buy, _now())
+    rig = _Rig(path)
+    rig.client.hold(coin, 400_000)
+    opened: list[TradeResult] = []
+    original = rig.pm.open
+
+    def spy(token_info: TokenInfo, buy_result: TradeResult, **kw: object):  # noqa: ANN202
+        opened.append(buy_result)
+        return original(token_info, buy_result, **kw)
+
+    rig.pm.open = spy
+    await rig.pm.resume()
+    stored = json.loads(path.read_text())["positions"][0]["buy"]
+    await rig.pm.stop()
+    problems = []
+    if stored["amount_raw"] != 400_000:  # noqa: PLR2004
+        problems.append(
+            f"the file keeps {stored['amount_raw']} raw, not the 400000 held"
+        )
+    if not opened or opened[0].deltas != deltas or opened[0].amount_raw != 400_000:  # noqa: PLR2004
+        problems.append(f"resumed as {opened}, without the buy's deltas")
+    return problems
+
+
 def check_h_sells_what_is_held(tmp: Path) -> bool:
-    return _report(asyncio.run(_check_h(tmp)))
+    async def both() -> list[str]:
+        return await _check_h(tmp) + await _check_h_kept(tmp)
+
+    return _report(asyncio.run(both()))
 
 
 async def _check_i(tmp: Path) -> list[str]:
@@ -583,6 +624,9 @@ def check_j_bad_records_are_kept(tmp: Path) -> bool:
         problems.append(f"after a write the file holds {_stored(path)}")
     problems += _check_j_bad_amounts(tmp)
     problems += _check_j_no_mint(tmp)
+    problems += _check_j_duplicate_mint(tmp)
+    problems += _check_j_bad_pending(tmp)
+    problems += _check_j_zero_price(tmp)
 
     path.write_text("{not json")
     if PositionStore(path).load():
@@ -646,6 +690,8 @@ def _check_j_no_mint(tmp: Path) -> list[str]:
         {k: v for k, v in template.items() if k != "mint"},
         {**template, "mint": ["list"]},
         {**template, "mint": {"a": 1}},
+        {**template, "mint": 7},
+        {**template, "mint": 8, "pending": {"max_amount_raw": 1}},
         "not a record",
         None,
     ]
@@ -665,6 +711,66 @@ def _check_j_no_mint(tmp: Path) -> list[str]:
     if kept != bad:
         problems.append(f"no mint: after a write the file holds {kept}")
     return problems
+
+
+def _check_j_duplicate_mint(tmp: Path) -> list[str]:
+    """A second record for one mint: the first resumes, both stay in the file."""
+    path = tmp / "j-twice.json"
+    twice, other = _token("TWICE"), _token("OTHER")
+    store = PositionStore(path)
+    store.add(twice, _buy(), _now())
+    store.add(other, _buy(), _now())
+    data = json.loads(path.read_text())
+    first, second = data["positions"][0], json.loads(json.dumps(data["positions"][0]))
+    second["buy"].update(amount=2.0, amount_raw=2 * BOUGHT_RAW)
+    data["positions"].append(second)
+    path.write_text(json.dumps(data))
+    store = PositionStore(path)
+    loaded = {str(p.token_info.mint): p.buy_result.amount_raw for p in store.load()}
+    problems = []
+    if loaded != {str(twice.mint): BOUGHT_RAW, str(other.mint): BOUGHT_RAW}:
+        problems.append(f"twice: loaded {loaded}, expected the first record")
+    store.remove(other.mint)  # rewrites the file
+    kept = json.loads(path.read_text())["positions"]
+    if kept != [first, second]:
+        problems.append(f"twice: after a write the file holds {kept}")
+    return problems
+
+
+def _check_j_bad_pending(tmp: Path) -> list[str]:
+    """A pending buy with a negative amount, spend or block height: not loaded."""
+    path = tmp / "j-pending.json"
+    store = PositionStore(path)
+    fields = ("max_amount_raw", "spend_raw", "last_valid_block_height")
+    for field in fields:
+        store.add(
+            _token(field[:4].upper()),
+            _buy(),
+            _now(),
+            pending=PendingBuy(
+                max_amount_raw=10, spend_raw=10, last_valid_block_height=10
+            ),
+        )
+    data = json.loads(path.read_text())
+    for record, field in zip(data["positions"], fields, strict=True):
+        record["pending"][field] = -1
+    path.write_text(json.dumps(data))
+    loaded = PositionStore(path).load()
+    if loaded:
+        return [f"negative pending: loaded {[p.pending for p in loaded]}"]
+    return []
+
+
+def _check_j_zero_price(tmp: Path) -> list[str]:
+    """A stored price of zero or below is taken as unread, not as a price."""
+    path = tmp / "j-price.json"
+    store = PositionStore(path)
+    for price in (0, -1.0):
+        store.add(_token("ZERO"), _buy(price=price), _now())
+    prices = [p.buy_result.price for p in PositionStore(path).load()]
+    if prices != [None, None]:
+        return [f"zero price: resumed at {prices}, expected unread"]
+    return []
 
 
 def _check_j_unreadable_bytes(tmp: Path) -> list[str]:
