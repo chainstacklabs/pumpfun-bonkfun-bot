@@ -72,6 +72,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import base58  # noqa: E402
 import websockets  # noqa: E402
+from _fakes import _FakeChannel, _FakeSocket, _FeedEnd, _keys, _report  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 from solders.transaction import VersionedTransaction  # noqa: E402
 
@@ -93,10 +94,6 @@ PUMP_IDL = IDLParser(str(PROJECT_ROOT / "idl/pump_fun_idl.json"))
 PUMP_SWAP_IDL = IDLParser(str(PROJECT_ROOT / "idl/pump_swap_idl.json"))
 EVENT_CPI_TAG = bytes.fromhex("e445a52e51cb9a1d")
 LISTENERS = ("logs", "blocks", "geyser")
-
-
-class _FeedEnd(BaseException):
-    """Ends a listener loop once its scripted frames run out."""
 
 
 def _migrations() -> list[dict]:
@@ -133,15 +130,6 @@ def _create_tx() -> dict:
     """A real pump.fun create_v2, shaped as the migration fixture's entries."""
     tx = json.loads(CREATE_FIXTURE.read_text())
     return {"slot": 1, **tx}
-
-
-def _keys(tx: dict) -> list[str]:
-    loaded = tx["meta"].get("loadedAddresses") or {}
-    return (
-        tx["transaction"]["message"]["accountKeys"]
-        + loaded.get("writable", [])
-        + loaded.get("readonly", [])
-    )
 
 
 def _triple(pool: PoolReady) -> tuple[str, str, str]:
@@ -238,41 +226,6 @@ def _deshred_frame(entry: dict) -> geyser_pb2.SubscribeUpdateDeshred:
 # --- scripted transports --------------------------------------------------------
 
 
-class _FakeSocket:
-    """A websocket that answers subscriptions, then plays frames, then ends."""
-
-    def __init__(self, frames: list[dict]) -> None:
-        self.replies: deque[str] = deque()
-        self.frames = deque(json.dumps(frame) for frame in frames)
-
-    async def send(self, message: str) -> None:
-        self.replies.append(json.dumps({"id": json.loads(message)["id"], "result": 7}))
-
-    async def recv(self) -> str:
-        if self.replies:
-            return self.replies.popleft()
-        if self.frames:
-            return self.frames.popleft()
-        raise _FeedEnd
-
-    async def ping(self) -> None:
-        await asyncio.sleep(3600)
-
-    async def close(self) -> None:
-        return None
-
-    async def __aenter__(self) -> "_FakeSocket":
-        return self
-
-    async def __aexit__(self, *_exc: object) -> None:
-        return None
-
-
-class _FakeChannel:
-    async def close(self) -> None:
-        return None
-
-
 class _FakeStub:
     """A geyser stub whose first stream plays frames, then ends.
 
@@ -365,12 +318,6 @@ def _run(
 
 
 # --- checks ---------------------------------------------------------------------
-
-
-def _report(problems: list[str]) -> bool:
-    for problem in problems:
-        print(f"    {problem}")
-    return not problems
 
 
 def check_a_executed_listeners_report_real_migrations() -> bool:

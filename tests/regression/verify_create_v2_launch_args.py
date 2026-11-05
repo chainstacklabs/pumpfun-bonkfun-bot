@@ -60,13 +60,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "cookbook" / "pumpfun" / "trade"))
 sys.path.insert(0, str(PROJECT_ROOT / "cookbook" / "solana"))
 
+import pumpfun_create_and_buy_token_txv1 as launch  # noqa: E402
 import pumpfun_instructions as pump  # noqa: E402
 from solders.keypair import Keypair  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 from solders.transaction import VersionedTransaction  # noqa: E402
-
-sys.path.insert(0, str(PROJECT_ROOT / "cookbook" / "pumpfun" / "trade"))
-import pumpfun_create_and_buy_token_txv1 as launch  # noqa: E402
 
 DECODE_DIR = PROJECT_ROOT / "cookbook" / "pumpfun" / "decode"
 

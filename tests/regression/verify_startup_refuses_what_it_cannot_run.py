@@ -86,6 +86,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import base58  # noqa: E402
 import yaml  # noqa: E402
+from _fakes import _report  # noqa: E402
 from solders.keypair import Keypair  # noqa: E402
 
 import bot_runner  # noqa: E402
@@ -104,12 +105,6 @@ ENDPOINT_VARS = (
     "GEYSER_API_TOKEN",
     "PUMPFUN_PASSWORD",
 )
-
-
-def _report(problems: list[str]) -> bool:
-    for problem in problems:
-        print(f"    {problem}")
-    return not problems
 
 
 def _closed_port() -> int:

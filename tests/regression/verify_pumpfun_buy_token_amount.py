@@ -27,6 +27,7 @@ from types import SimpleNamespace
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from _fakes import _no_fee  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
 from core.pubkeys import WSOL_MINT, SystemAddresses  # noqa: E402
@@ -81,9 +82,6 @@ class _Client:
         self.sent.append(instructions)
         return "STUB_SIGNATURE"
 
-    async def confirm_transaction(self, *_a, **_k) -> bool:
-        return False
-
     async def confirm_transaction_detailed(
         self, *_a: object, **_k: object
     ) -> ConfirmationStatus:
@@ -99,10 +97,6 @@ class _Curve:
             "is_mayhem_mode": False,
             "is_cashback_coin": False,
         }
-
-
-async def _no_fee(_accounts: list) -> None:
-    return None
 
 
 def _buy_v2_args(*, extreme_fast: bool) -> tuple[int, int]:

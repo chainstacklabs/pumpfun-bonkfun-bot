@@ -18,12 +18,13 @@ Offline machine checks, no network and no funds moved. The real
 `_handle_time_based_exit` runs against a stub seller that reverts on demand and
 a stub curve manager serving a scripted price series:
 
-  1. A reverted sell is retried rather than abandoned after one attempt.
-  2. The first attempt prices off the buy — nothing fresher exists yet.
-  3. The retry prices off a freshly read price, not the stale buy price.
-  4. Retries are bounded by trade.max_exit_sell_attempts.
-  5. A sell that succeeds first time is not retried, and cleanup still runs.
-  6. A price re-read that fails does not abort the retry.
+  1. The first attempt prices off the buy — nothing fresher exists yet.
+  2. The retry prices off a freshly read price, not the stale buy price.
+  3. Retries are bounded by trade.max_exit_sell_attempts.
+  4. A sell that succeeds first time is not retried.
+  5. A price re-read that fails does not abort the retry.
+
+That a reverted sell is retried at all is `verify_exit_sell_confirmation.py`.
 
 Usage:
     uv run tests/regression/verify_time_based_exit_retry.py
@@ -37,6 +38,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from _fakes import _check  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
 from interfaces.core import (  # noqa: E402
@@ -146,7 +148,6 @@ def _make_trader(
     trader.cleanup_mode = "disabled"  # keeps handle_cleanup_after_sell a no-op
     trader.cleanup_with_priority_fee = False
     trader.cleanup_force_close_with_burn = False
-    trader.cleanups = []
     # Keep a verification run from writing to ./trades.
     trade_log.log_trade = lambda *_args, **_kwargs: None
     return trader
@@ -183,23 +184,8 @@ async def _run_exit(
     return seller, curve_manager
 
 
-def _check(label: str, passed: bool, detail: str) -> bool:  # noqa: FBT001
-    print(f"  [{'PASS' if passed else 'FAIL'}] {label}: {detail}")
-    return passed
-
-
-async def check_reverted_sell_is_retried() -> bool:
-    print("\n1. A reverted time-based sell is retried")
-    seller, _ = await _run_exit(fail_first=1)
-    return _check(
-        "sell attempts",
-        len(seller.prices_seen) == REVERT_THEN_RETRY,
-        f"{len(seller.prices_seen)} attempt(s) — the revert, then the retry",
-    )
-
-
 async def check_first_attempt_uses_buy_price() -> bool:
-    print("\n2. The first attempt still prices off the buy")
+    print("\n1. The first attempt still prices off the buy")
     seller, curve = await _run_exit(fail_first=0)
     return _check(
         "price handed to seller",
@@ -210,7 +196,7 @@ async def check_first_attempt_uses_buy_price() -> bool:
 
 
 async def check_retry_uses_fresh_price() -> bool:
-    print("\n3. The retry prices off a freshly read price")
+    print("\n2. The retry prices off a freshly read price")
     seller, curve = await _run_exit(fail_first=1)
     if len(seller.prices_seen) < REVERT_THEN_RETRY:
         return _check(
@@ -226,7 +212,7 @@ async def check_retry_uses_fresh_price() -> bool:
 
 
 async def check_retries_are_bounded() -> bool:
-    print("\n4. Retries are bounded by trade.max_exit_sell_attempts")
+    print("\n3. Retries are bounded by trade.max_exit_sell_attempts")
     cap = 2
     seller, _ = await _run_exit(fail_first=99, max_exit_sell_attempts=cap)
     return _check(
@@ -238,7 +224,7 @@ async def check_retries_are_bounded() -> bool:
 
 
 async def check_successful_sell_is_not_retried() -> bool:
-    print("\n5. A sell that lands first time is not retried")
+    print("\n4. A sell that lands first time is not retried")
     seller, _ = await _run_exit(fail_first=0)
     return _check(
         "sell attempts", len(seller.prices_seen) == 1, f"{len(seller.prices_seen)}"
@@ -246,7 +232,7 @@ async def check_successful_sell_is_not_retried() -> bool:
 
 
 async def check_price_read_failure_still_retries() -> bool:
-    print("\n6. A failed price re-read does not abort the retry")
+    print("\n5. A failed price re-read does not abort the retry")
     seller, curve = await _run_exit(fail_first=1, price_read_raises=True)
     return _check(
         "sell attempts",
@@ -262,7 +248,6 @@ async def main() -> None:
     print("=" * 72)
 
     results = [
-        await check_reverted_sell_is_retried(),
         await check_first_attempt_uses_buy_price(),
         await check_retry_uses_fresh_price(),
         await check_retries_are_bounded(),

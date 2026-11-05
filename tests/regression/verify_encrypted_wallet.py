@@ -44,6 +44,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import base58  # noqa: E402
 import yaml  # noqa: E402
+from _fakes import _report  # noqa: E402
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: E402
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt  # noqa: E402
 from solders.keypair import Keypair  # noqa: E402
@@ -74,12 +75,6 @@ def _logs_config() -> dict:
     config["rpc_endpoint"] = "http://127.0.0.1:8899"
     config["wss_endpoint"] = "ws://127.0.0.1:8900"
     return config
-
-
-def _report(problems: list[str]) -> bool:
-    for problem in problems:
-        print(f"    {problem}")
-    return not problems
 
 
 def _keystore(

@@ -42,6 +42,8 @@ from types import SimpleNamespace
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from _fakes import _check  # noqa: E402
+
 import monitoring.universal_block_listener as block_listener_module  # noqa: E402
 from interfaces.core import Platform  # noqa: E402
 from monitoring.universal_block_listener import UniversalBlockListener  # noqa: E402
@@ -93,11 +95,6 @@ def _socket_that_swallows_cancellation() -> SimpleNamespace:
         return ""
 
     return SimpleNamespace(recv=recv)
-
-
-def _check(label: str, passed: bool, detail: str) -> bool:  # noqa: FBT001
-    print(f"  [{'PASS' if passed else 'FAIL'}] {label}: {detail}")
-    return passed
 
 
 async def _read_once_while_cancelled(listener: object) -> str:

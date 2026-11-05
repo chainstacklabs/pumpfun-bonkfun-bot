@@ -49,15 +49,14 @@ Usage:
 """
 
 import base64
-import json
 import struct
 import sys
-from collections.abc import Iterator
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from _fakes import _check, _logs_from_fixture  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
 from interfaces.core import Platform  # noqa: E402
@@ -81,23 +80,6 @@ def _parser() -> PumpFunEventParser:
     )
 
 
-def _logs_from_fixture(path: Path) -> list[str] | None:
-    """Pull `meta.logMessages` out of a captured transaction fixture."""
-
-    def walk(node: object) -> Iterator[list[str]]:
-        if isinstance(node, dict):
-            for key, value in node.items():
-                if key in ("logMessages", "log_messages") and value:
-                    yield value
-                else:
-                    yield from walk(value)
-        elif isinstance(node, list):
-            for value in node:
-                yield from walk(value)
-
-    return next(walk(json.loads(path.read_text())), None)
-
-
 def _ordinary_fixture() -> tuple[Path, list[str]]:
     """A create fixture that carries no creator migration."""
     parser = _parser()
@@ -111,11 +93,6 @@ def _ordinary_fixture() -> tuple[Path, list[str]]:
         if token_info:
             return path, logs
     raise SystemExit("No ordinary create fixture found")  # noqa: TRY003
-
-
-def _check(label: str, passed: bool, detail: str) -> bool:  # noqa: FBT001
-    print(f"  [{'PASS' if passed else 'FAIL'}] {label}: {detail}")
-    return passed
 
 
 def check_migrated_creator_is_used() -> bool:

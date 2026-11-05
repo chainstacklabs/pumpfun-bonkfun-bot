@@ -35,6 +35,8 @@ from types import SimpleNamespace
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from _fakes import ErrorCapture, _check  # noqa: E402
+
 from interfaces.core import Platform  # noqa: E402
 from monitoring.universal_block_listener import UniversalBlockListener  # noqa: E402
 
@@ -86,17 +88,6 @@ class StubWebSocket:
         return json.dumps(self.frame)
 
 
-class ErrorCapture(logging.Handler):
-    """Collects records logged at ERROR or above."""
-
-    def __init__(self) -> None:
-        super().__init__(level=logging.ERROR)
-        self.records: list[logging.LogRecord] = []
-
-    def emit(self, record: logging.LogRecord) -> None:
-        self.records.append(record)
-
-
 def _make_listener() -> UniversalBlockListener:
     """Build a listener without touching the network."""
     return UniversalBlockListener(
@@ -121,11 +112,6 @@ async def _feed(frame: dict) -> tuple[object, list[logging.LogRecord]]:
     finally:
         logger.removeHandler(capture)
     return result, capture.records
-
-
-def _check(label: str, passed: bool, detail: str) -> bool:  # noqa: FBT001
-    print(f"  [{'PASS' if passed else 'FAIL'}] {label}: {detail}")
-    return passed
 
 
 async def check_null_block_returns_none() -> bool:

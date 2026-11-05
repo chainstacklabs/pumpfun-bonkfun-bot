@@ -69,6 +69,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import base58  # noqa: E402
 import yaml  # noqa: E402
+from _fakes import _deltas  # noqa: E402
 from solana.rpc.core import TransactionExpiredBlockheightExceededError  # noqa: E402
 from solders.hash import Hash  # noqa: E402
 from solders.keypair import Keypair  # noqa: E402
@@ -114,18 +115,6 @@ ERRORS_BEFORE_LANDING = 3  # confirmation waits that end on an error, "erroring"
 AccountCleanupManager.SETTLE_SECONDS = 0.0
 AccountCleanupManager.RESEND_DELAY = 0.001
 AccountCleanupManager.MAX_WAIT = 0.2
-
-
-def _deltas(tokens_raw: int | None, spent: int | None) -> TradeDeltas | None:
-    """A buy's transaction as the client reads it: `spent` is the venue's fill."""
-    if tokens_raw is None:
-        return None
-    return TradeDeltas(
-        tokens_raw=tokens_raw,
-        quote_raw=None if spent is None else -spent,
-        network_fee_lamports=0,
-        venue_quote_raw=spent,
-    )
 
 
 class _Logs(logging.Handler):
@@ -424,9 +413,6 @@ class _Chain:
 
     async def get_trade_deltas(self, *_a: object, **_k: object) -> TradeDeltas | None:
         return _deltas(*self.buy_details)
-
-    async def get_health(self) -> str:
-        return "ok"
 
     async def close(self) -> None:
         return None

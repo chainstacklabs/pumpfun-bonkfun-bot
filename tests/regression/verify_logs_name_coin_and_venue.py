@@ -96,6 +96,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import base58  # noqa: E402
 import websockets  # noqa: E402
+from _fakes import _FakeChannel, _FakeSocket, _FeedEnd  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 from solders.rpc.responses import GetSignatureStatusesResp  # noqa: E402
 from solders.signature import Signature  # noqa: E402
@@ -139,7 +140,6 @@ LAUNCHLAB_TXS = (
     HERE / "recorded_letsbonk_launches_from_gettransaction.json",
 )
 LAUNCHLAB_STREAMS = HERE / "raw_launchlab_creates_from_deshred.json"
-LAUNCHLAB_PLATFORMS = (Platform.LAUNCHLAB, Platform.LETS_BONK, Platform.STONK_FUN)
 # Buy 3BP2RDMcyNk4s4pZttVUf3jnVvV5BWphMv2eeuHeBMYgWijgxtyRJeUKFKci3EqCfWPgB8njjccSAZmgDw4PMN6R,
 # a pump.fun buy_v2 that landed and reverted on slippage, as `getTransaction`
 # returns it, and its `meta.err`.
@@ -172,10 +172,6 @@ WANTED_VENUES = {
 def _venue_names() -> dict[str, str | None]:
     classes = {"curve": CurveMarket, "pumpswap": PumpSwapMarket, "cpmm": CpmmMarket}
     return {label: getattr(cls, "name", None) for label, cls in classes.items()}
-
-
-class _FeedEnd(BaseException):
-    """Ends a listener loop once its scripted frames run out."""
 
 
 # --- log capture ----------------------------------------------------------------
@@ -343,41 +339,6 @@ def _frames(platform: Platform, kind: str) -> list:
 
 
 # --- scripted transports --------------------------------------------------------
-
-
-class _FakeSocket:
-    """A websocket that answers subscriptions, then plays frames, then ends."""
-
-    def __init__(self, frames: list[dict]) -> None:
-        self.replies: deque[str] = deque()
-        self.frames = deque(json.dumps(frame) for frame in frames)
-
-    async def send(self, message: str) -> None:
-        self.replies.append(json.dumps({"id": json.loads(message)["id"], "result": 7}))
-
-    async def recv(self) -> str:
-        if self.replies:
-            return self.replies.popleft()
-        if self.frames:
-            return self.frames.popleft()
-        raise _FeedEnd
-
-    async def ping(self) -> None:
-        await asyncio.sleep(3600)
-
-    async def close(self) -> None:
-        return None
-
-    async def __aenter__(self) -> "_FakeSocket":
-        return self
-
-    async def __aexit__(self, *_exc: object) -> None:
-        return None
-
-
-class _FakeChannel:
-    async def close(self) -> None:
-        return None
 
 
 class _FakeStub:
@@ -713,11 +674,8 @@ class _Curve:
     def get_sell_compute_unit_limit(self, *_a: object) -> int:
         return 100_000
 
-    def derive_pool_address(self, mint: Pubkey) -> Pubkey:
-        return mint
 
-
-def _pool(market_cls: type, price: float):  # noqa: ANN202, C901 — stub methods
+def _pool(market_cls: type, price: float):  # noqa: ANN202
     """The real pool market class, its chain reads and instructions stubbed."""
 
     class _Pool(market_cls):
@@ -726,9 +684,6 @@ def _pool(market_cls: type, price: float):  # noqa: ANN202, C901 — stub method
 
         async def get_market_state(self, *_a: object) -> dict:
             return {"price_per_token": price, "fee_fraction": 0.0, "pool": "POOL"}
-
-        async def get_price(self, *_a: object) -> float:
-            return price
 
         def quote_destination(self, *_a: object) -> None:
             return None

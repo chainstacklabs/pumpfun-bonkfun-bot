@@ -20,13 +20,16 @@ seller that records the price it is handed:
 
   1. A stop-loss exit passes the triggering price, not the entry price.
   2. A take-profit exit passes the triggering price too.
-  3. The floor built from the entry price is unpayable on a stop-loss, while
-     the floor from the triggering price is payable (why check 1 matters).
-  4. A failed sell is retried, and a retry that succeeds closes the position.
-  5. Retries are bounded, so a token that keeps reverting cannot pin the bot.
-  6. A price that recovers before the retry resets the attempt counter.
-  7. A successful sell still closes the position on the first attempt.
-  8. The cap comes from trade.max_exit_sell_attempts and is wired end to end.
+  3. A retry that lands after a failed sell closes the position.
+  4. Retries are bounded, so a token that keeps reverting cannot pin the bot.
+  5. A price that recovers before the retry resets the attempt counter.
+  6. A successful sell still closes the position on the first attempt.
+  7. The cap comes from trade.max_exit_sell_attempts, which validates from 1 to
+     100, and every shipped config documents it.
+
+That a revert is retried at all is `verify_exit_sell_confirmation.py`; that
+`bot_runner` hands the key to the trader with its default is
+`verify_trader_settings_wiring.py`.
 
 Usage:
     uv run tests/regression/verify_tp_sl_exit_price.py
@@ -40,9 +43,11 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+import yaml  # noqa: E402
+from _fakes import _check  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
-from core.pubkeys import WSOL_MINT, quote_units_per_token  # noqa: E402
+from config_loader import validate_config  # noqa: E402
 from interfaces.core import (  # noqa: E402
     Platform,
     TokenInfo,
@@ -57,7 +62,6 @@ from trading.settings import DEFAULT_MAX_EXIT_SELL_ATTEMPTS  # noqa: E402
 
 ENTRY_PRICE = 1.0e-6  # SOL per token
 QUANTITY = 1_000_000.0  # tokens, so entry notional is 1.0 SOL
-SELL_SLIPPAGE = 0.3  # bots/*.yaml default
 STOP_LOSS_PCT = 0.4
 TAKE_PROFIT_PCT = 0.4
 
@@ -165,31 +169,6 @@ def _make_position() -> Position:
     )
 
 
-def _slippage_floor(reference_price: float) -> int:
-    """Reproduce the seller's min_quote_output for the fixture position.
-
-    Mirrors PlatformAwareSeller.execute: expected output is amount * price,
-    then the slippage tolerance comes off it, in the quote mint's raw units.
-    """
-    expected_quote_output = QUANTITY * reference_price
-    return max(
-        1,
-        int(
-            (expected_quote_output * (1 - SELL_SLIPPAGE))
-            * quote_units_per_token(WSOL_MINT)
-        ),
-    )
-
-
-def _payable(price: float) -> int:
-    """Raw quote units the pool would return at `price`, ignoring curve impact.
-
-    Optimistic on purpose: a real sell moves the curve down and pays a fee, so
-    anything unpayable against this number is unpayable on chain too.
-    """
-    return int(QUANTITY * price * quote_units_per_token(WSOL_MINT))
-
-
 MONITOR_TIMEOUT = 10  # a bounded loop finishes in milliseconds here
 
 
@@ -214,11 +193,6 @@ async def _run_monitor(
     return position, seller, curve_manager
 
 
-def _check(label: str, passed: bool, detail: str) -> bool:  # noqa: FBT001
-    print(f"  [{'PASS' if passed else 'FAIL'}] {label}: {detail}")
-    return passed
-
-
 async def check_stop_loss_uses_trigger_price() -> bool:
     print("\n1. Stop-loss exit sells against the triggering price")
     _, seller, _ = await _run_monitor([ENTRY_PRICE, SL_TRIGGER_PRICE])
@@ -241,54 +215,21 @@ async def check_take_profit_uses_trigger_price() -> bool:
     )
 
 
-def check_stale_floor_is_unpayable() -> bool:
-    print("\n3. Why it matters: the entry-price floor is unpayable on a drop")
-    from_entry = _slippage_floor(ENTRY_PRICE)
-    from_trigger = _slippage_floor(SL_TRIGGER_PRICE)
-    payable = _payable(SL_TRIGGER_PRICE)
-    print(
-        f"       floor from entry price   : {from_entry:>14,} raw quote units\n"
-        f"       floor from trigger price : {from_trigger:>14,}\n"
-        f"       pool can pay (optimistic): {payable:>14,}"
-    )
-    ok = _check(
-        "entry-price floor exceeds what the pool can pay",
-        from_entry > payable,
-        f"{from_entry:,} > {payable:,}, so the sell reverts 6003",
-    )
-    return ok and _check(
-        "trigger-price floor is payable",
-        from_trigger <= payable,
-        f"{from_trigger:,} <= {payable:,}",
-    )
-
-
 async def check_failed_sell_is_retried() -> bool:
-    print("\n4. A failed sell is retried on the next price check")
-    fail_first = 1
+    print("\n3. A retry that lands after a failed sell closes the position")
     position, seller, _ = await _run_monitor(
-        [ENTRY_PRICE, SL_TRIGGER_PRICE], fail_first=fail_first
+        [ENTRY_PRICE, SL_TRIGGER_PRICE], fail_first=1
     )
-    expected = fail_first + 1  # the failure, then the retry that lands
-    ok = _check(
-        "seller called again after the failure",
-        len(seller.prices_seen) == expected,
-        f"{len(seller.prices_seen)} attempts, expected {expected}",
+    return _check(
+        "position closed after the retry landed",
+        not position.is_active,
+        f"{len(seller.prices_seen)} attempts, is_active={position.is_active}, "
+        f"exit_reason={position.exit_reason.value if position.exit_reason else None}",
     )
-    ok = (
-        _check(
-            "position closed after the retry landed",
-            not position.is_active,
-            f"is_active={position.is_active}, "
-            f"exit_reason={position.exit_reason.value if position.exit_reason else None}",
-        )
-        and ok
-    )
-    return ok
 
 
 async def check_retries_are_bounded() -> bool:
-    print("\n5. Retries are bounded, so a reverting token cannot pin the bot")
+    print("\n4. Retries are bounded, so a reverting token cannot pin the bot")
     # fail_first far above the cap: the loop must give up on its own, so the
     # timeout firing is itself a failure - it means the retry never terminates
     # and the bot would sit on this position forever.
@@ -328,7 +269,7 @@ async def check_retries_are_bounded() -> bool:
 
 
 async def check_recovery_resets_attempts() -> bool:
-    print("\n6. A price recovery between attempts resets the attempt counter")
+    print("\n5. A price recovery between attempts resets the attempt counter")
     # Fail every sell. The price dips below the stop loss, recovers to flat,
     # then dips again. With the counter reset on recovery, the cap applies to
     # each burst separately, so the total is one full cap plus the earlier dip.
@@ -344,7 +285,7 @@ async def check_recovery_resets_attempts() -> bool:
 
 
 async def check_successful_sell_closes_once() -> bool:
-    print("\n7. A successful sell still closes the position on the first attempt")
+    print("\n6. A successful sell still closes the position on the first attempt")
     position, seller, _ = await _run_monitor([ENTRY_PRICE, TP_TRIGGER_PRICE])
     ok = _check(
         "single sell attempt",
@@ -367,7 +308,7 @@ async def check_successful_sell_closes_once() -> bool:
 
 async def check_config_knob_is_honoured() -> bool:
     """The cap comes from trade.max_exit_sell_attempts, not a hardcoded value."""
-    print("\n8. trade.max_exit_sell_attempts drives the cap")
+    print("\n7. trade.max_exit_sell_attempts drives the cap")
     configured = 2  # deliberately different from the default
     _, seller, _ = await _run_monitor(
         [ENTRY_PRICE, SL_TRIGGER_PRICE],
@@ -381,24 +322,30 @@ async def check_config_knob_is_honoured() -> bool:
         f"(default {DEFAULT_MAX_EXIT_SELL_ATTEMPTS})",
     )
 
-    # Static wiring: a knob the runner never reads is a knob that does nothing.
-    runner = (PROJECT_ROOT / "src" / "bot_runner.py").read_text()
+    with (PROJECT_ROOT / "bots" / "bot-sniper-2-logs.yaml").open() as f:
+        base = yaml.safe_load(f)
+    wrong = []
+    for value, accepted in (
+        (1, True),
+        (100, True),
+        (0, False),
+        (101, False),
+        ("3", False),
+    ):
+        config = {**base, "trade": {**base["trade"], "max_exit_sell_attempts": value}}
+        try:
+            validate_config(config)
+        except ValueError as e:
+            if accepted or "trade.max_exit_sell_attempts" not in str(e):
+                wrong.append(f"{value!r}: {e}")
+        else:
+            if not accepted:
+                wrong.append(f"{value!r} accepted")
     ok = (
         _check(
-            "bot_runner reads it from the trade config",
-            'cfg["trade"].get(' in runner
-            and "max_exit_sell_attempts" in runner
-            and "DEFAULT_MAX_EXIT_SELL_ATTEMPTS" in runner,
-            "passed to the trader settings with the module default as fallback",
-        )
-        and ok
-    )
-    loader = (PROJECT_ROOT / "src" / "config_loader.py").read_text()
-    ok = (
-        _check(
-            "config_loader validates its range",
-            "trade.max_exit_sell_attempts" in loader,
-            "a 0 or a string in the YAML is rejected at startup",
+            "config validation takes 1 to 100 and refuses the rest by name",
+            not wrong,
+            "; ".join(wrong) or "1 and 100 accepted; 0, 101 and '3' refused",
         )
         and ok
     )
@@ -422,14 +369,12 @@ async def main() -> int:
     print("Verifying tp/sl exit pricing and retry behaviour")
     print(
         f"fixture: entry {ENTRY_PRICE:.8f} SOL, {QUANTITY:,.0f} tokens, "
-        f"SL -{STOP_LOSS_PCT:.0%}, TP +{TAKE_PROFIT_PCT:.0%}, "
-        f"sell slippage {SELL_SLIPPAGE:.0%}"
+        f"SL -{STOP_LOSS_PCT:.0%}, TP +{TAKE_PROFIT_PCT:.0%}"
     )
 
     results = [
         await check_stop_loss_uses_trigger_price(),
         await check_take_profit_uses_trigger_price(),
-        check_stale_floor_is_unpayable(),
         await check_failed_sell_is_retried(),
         await check_retries_are_bounded(),
         await check_recovery_resets_attempts(),

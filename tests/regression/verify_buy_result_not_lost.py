@@ -28,12 +28,12 @@ scripted `getTransaction` responses:
   3. `verify_transaction_succeeded` is True for a tx that lands after a lag.
   4. A reverted transaction is still False, however many times it is read.
   5. A confirmed buy whose amounts never parse is reported successful, with the
-     token amount taken from the wallet balance so the sell has a real figure.
-  6. That fallback amount is the balance actually held, not the expected amount.
-  7. A balance that predates the buy is capped at what this buy asked for, so
-     the exit cannot liquidate holdings this trade never created.
-  8. A buy whose transaction genuinely failed is still reported unsuccessful.
-  9. A confirmed buy whose quote destination is unknown (a LaunchLab coin
+     token amount, whole and raw, taken from the wallet balance actually held,
+     not the expected amount, so the sell has a real figure.
+  6. A balance that predates the buy is capped, whole and raw, at what this buy
+     asked for, so the exit cannot liquidate holdings this trade never created.
+  7. A buy whose transaction genuinely failed is still reported unsuccessful.
+  8. A confirmed buy whose quote destination is unknown (a LaunchLab coin
      with no quote vault recorded) is still a buy, read back without it.
 
 Usage:
@@ -49,6 +49,7 @@ from types import SimpleNamespace
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from _fakes import _check, _deltas  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
 from core.client import SolanaClient  # noqa: E402
@@ -73,18 +74,6 @@ AMOUNT_TOLERANCE = 1e-9  # float round-trip through raw token units
 LANDED_TX = {"meta": {"err": None, "preBalances": [], "postBalances": []}}
 REVERTED_TX = {"meta": {"err": {"InstructionError": [3, {"Custom": 6062}]}}}
 NULL_RESULT = {"jsonrpc": "2.0", "id": 1, "result": None}
-
-
-def _deltas(tokens_raw: int | None, spent: int | None) -> TradeDeltas | None:
-    """A buy's transaction as the client reads it: `spent` is the venue's fill."""
-    if tokens_raw is None:
-        return None
-    return TradeDeltas(
-        tokens_raw=tokens_raw,
-        quote_raw=None if spent is None else -spent,
-        network_fee_lamports=0,
-        venue_quote_raw=spent,
-    )
 
 
 class StubRpc:
@@ -152,9 +141,6 @@ class StubBuyClient:
         self, *_args: object, **_kwargs: object
     ) -> str:
         return SIGNATURE
-
-    async def confirm_transaction(self, _signature: object) -> bool:
-        return self.confirmed
 
     async def confirm_transaction_detailed(
         self, _signature: object, **_kwargs: object
@@ -232,11 +218,6 @@ async def _run_buy(
         platform_aware.get_platform_implementations = original
 
 
-def _check(label: str, passed: bool, detail: str) -> bool:  # noqa: FBT001
-    print(f"  [{'PASS' if passed else 'FAIL'}] {label}: {detail}")
-    return passed
-
-
 async def check_lagging_node_is_retried() -> bool:
     print("\n1. A transaction the node has not caught up to yet is retried")
     client, rpc = _client_with([NULL_RESULT, NULL_RESULT, _ok(LANDED_TX)])
@@ -280,48 +261,43 @@ async def check_revert_still_fails() -> bool:
     )
 
 
-async def check_unparseable_buy_is_not_lost() -> bool:
-    print("\n5. A confirmed buy whose amounts never parse is still a buy")
-    client = StubBuyClient(confirmed=True, details=(None, None))
-    result = await _run_buy(client)
-    return _check(
-        "TradeResult.success",
-        bool(result.success),
-        f"{result.success} (error_message={result.error_message!r})",
-    )
-
-
 async def check_fallback_amount_is_the_balance_held() -> bool:
-    print("\n6. The fallback sells the balance actually held, not the expected amount")
+    print("\n5. A confirmed buy whose amounts never parse sells the balance held")
     client = StubBuyClient(confirmed=True, details=(None, None))
     result = await _run_buy(client)
     held = TOKENS_RECEIVED_RAW / 10**TOKEN_DECIMALS
     return _check(
-        "TradeResult.amount",
-        result.success and abs(result.amount - held) < AMOUNT_TOLERANCE,
-        f"{result.amount} tokens (wallet holds {held}, "
+        "TradeResult.amount and amount_raw",
+        result.success
+        and abs(result.amount - held) < AMOUNT_TOLERANCE
+        and result.amount_raw == TOKENS_RECEIVED_RAW,
+        f"{result.amount} tokens, {result.amount_raw} raw (wallet holds {held}, "
         f"extreme_fast_mode expected {EXPECTED_TOKENS}), "
         f"{client.balance_reads} balance read(s)",
     )
 
 
 async def check_fallback_never_exceeds_what_was_bought() -> bool:
-    print("\n7. A balance predating the buy is capped at what this buy asked for")
+    print("\n6. A balance predating the buy is capped at what this buy asked for")
     client = StubBuyClient(
         confirmed=True, details=(None, None), balance_raw=PRIOR_HOLDING_RAW
     )
     result = await _run_buy(client)
     inflated = PRIOR_HOLDING_RAW / 10**TOKEN_DECIMALS
+    asked_raw = int(EXPECTED_TOKENS * 10**TOKEN_DECIMALS)
     return _check(
-        "TradeResult.amount",
-        result.success and abs(result.amount - EXPECTED_TOKENS) < AMOUNT_TOLERANCE,
-        f"{result.amount} tokens, not the full {inflated} on the books — "
+        "TradeResult.amount and amount_raw",
+        result.success
+        and abs(result.amount - EXPECTED_TOKENS) < AMOUNT_TOLERANCE
+        and result.amount_raw == asked_raw,
+        f"{result.amount} tokens, {result.amount_raw} raw, not the full "
+        f"{inflated} on the books — "
         f"the exit cannot sell a position this trade never opened",
     )
 
 
 async def check_failed_buy_still_fails() -> bool:
-    print("\n8. A buy whose transaction did not succeed is still a failure")
+    print("\n7. A buy whose transaction did not succeed is still a failure")
     client = StubBuyClient(confirmed=False, details=(None, None))
     result = await _run_buy(client)
     return _check(
@@ -332,7 +308,7 @@ async def check_failed_buy_still_fails() -> bool:
 
 
 async def check_unknown_quote_destination_is_not_lost() -> bool:
-    print("\n9. A confirmed buy with no known quote destination is still a buy")
+    print("\n8. A confirmed buy with no known quote destination is still a buy")
     client = StubBuyClient(confirmed=True, details=(TOKENS_RECEIVED_RAW, None))
     token_info = _make_token_info()
     token_info.platform = Platform.LAUNCHLAB
@@ -356,7 +332,6 @@ async def main() -> None:
         await check_retry_is_bounded(),
         await check_verify_succeeds_after_lag(),
         await check_revert_still_fails(),
-        await check_unparseable_buy_is_not_lost(),
         await check_fallback_amount_is_the_balance_held(),
         await check_fallback_never_exceeds_what_was_bought(),
         await check_failed_buy_still_fails(),

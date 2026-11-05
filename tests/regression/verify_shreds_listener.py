@@ -69,8 +69,6 @@ ORDINARY_FIXTURE = FIXTURE_DIR / "raw_create_v2_ordinary_from_deshred.json"
 LISTENER_SOURCE = PROJECT_ROOT / "src" / "monitoring" / "universal_shreds_listener.py"
 
 # create_v2 account indices, from idl/pump_fun_idl.json.
-CREATE_V2_MINT_INDEX = 0
-CREATE_V2_BONDING_CURVE_INDEX = 2
 CREATE_V2_USER_INDEX = 5
 # The index the code used to read, kept so the check states what it rules out.
 LEGACY_CREATE_USER_INDEX = 7

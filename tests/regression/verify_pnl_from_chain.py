@@ -70,6 +70,7 @@ from types import SimpleNamespace
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from _fakes import _no_fee  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 from solders.signature import Signature  # noqa: E402
 
@@ -212,9 +213,6 @@ class _Venue:
     def get_sell_compute_unit_limit(self, *_a: object) -> int:
         return 100_000
 
-    def derive_pool_address(self, mint: Pubkey) -> Pubkey:
-        return mint
-
 
 def _wire(venue: _Venue) -> PlatformImplementations:
     implementations = PlatformImplementations(
@@ -249,10 +247,6 @@ def _wallet(trade: dict) -> SimpleNamespace:
         keypair=None,
         get_associated_token_address=lambda *_a: Pubkey.default(),
     )
-
-
-async def _no_fee(_accounts: list) -> None:
-    return None
 
 
 def _fill_price(prefix: str, quote_mint: Pubkey) -> float:

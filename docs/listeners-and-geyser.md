@@ -121,7 +121,9 @@ against mainnet.
   envelope is the one part of a transaction whose format changes under you, and
   the installed solders is only ever one version behind. Route on
   `meta.logMessages`, which the RPC has already decoded and which is
-  version-agnostic; keep the byte decode as a fallback.
+  version-agnostic. A parser may read the envelope once the logs have routed a
+  transaction to it: pump.fun's when the logs carry no CreateEvent, LaunchLab's
+  for every launch, since its logs never name the coin.
 - **Match a create marker as a whole log line, not a substring.** Anchor writes
   `Program log: Instruction: <Name>` for every program, so
   `"Program log: Instruction: Create" in log` also accepts CreateTokenAccount,
