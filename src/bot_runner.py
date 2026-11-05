@@ -546,7 +546,7 @@ def run_all_bots() -> bool:
             all_ok = False
 
     logging.info(
-        f"Started {len(bot_files) - skipped_bots} bots, skipped {skipped_bots} disabled/invalid bots"
+        f"Launched {len(bot_files) - skipped_bots} bots, skipped {skipped_bots} disabled/invalid bots"
     )
 
     # Wait for all processes to complete
