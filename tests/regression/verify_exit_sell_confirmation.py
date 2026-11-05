@@ -24,7 +24,7 @@ against a stub seller and a stub client serving scripted confirmations:
   5. A re-check that is still unconfirmed stops rather than reselling blind.
   6. A failure carrying neither a reason nor a signature stops.
   7. A submit failure, which never reached the chain, is retried.
-  8. The seller populates tx_signature and failure_reason on its failure branch.
+  8. A sell that confirms as failed carries its signature and failure reason.
   9. confirm_transaction stays a bool, so no `if await ...` silently inverts.
  10. A throw after submission is UNCONFIRMED with its signature, not
      SUBMIT_FAILED - only the latter is safe to resend unchecked.
@@ -546,7 +546,9 @@ async def check_submit_failure_is_retried() -> bool:
 
 
 def check_seller_reports_failure_detail() -> bool:
-    """The seller's failure branch carries a signature and a reason.
+    """A sell that confirms as failed carries its signature and the reason.
+
+    The send side (SUBMIT_FAILED only for `TransactionNotSent`) is check 12.
 
     Returns:
         Whether the check passed
@@ -554,13 +556,12 @@ def check_seller_reports_failure_detail() -> bool:
     source = inspect.getsource(PlatformAwareSeller.execute)
     has_signature = "tx_signature=str(tx_signature)" in source
     has_reason = "failure_reason=_FAILURE_REASON_FOR[status]" in source
-    has_submit = "failure_reason=TradeFailureReason.SUBMIT_FAILED" in source
     uses_detailed = "confirm_transaction_detailed" in source
     return _check(
         "the seller populates tx_signature and failure_reason when a sell fails",
-        has_signature and has_reason and has_submit and uses_detailed,
+        has_signature and has_reason and uses_detailed,
         f"detailed confirm: {uses_detailed}, signature: {has_signature}, "
-        f"reason: {has_reason}, submit failure: {has_submit}",
+        f"reason: {has_reason}",
     )
 
 

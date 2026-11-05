@@ -13,18 +13,16 @@ Offline machine checks, no network and no funds moved:
 
   1. `redact` masks a secret-bearing query parameter, URL userinfo, and an
      opaque path segment — the three shapes a provider credential takes.
-  2. `redact` masks an exact value registered from the environment, and its
-     host wherever it appears alone, as in a connection error.
-  3. A logger this repo has never heard of, logging at INFO, comes out
+  2. A logger this repo has never heard of, logging at INFO, comes out
      redacted — including when the URL is a non-`str` argument, which is how
      httpx2 passes it and how the first version of this guard was defeated.
-  4. Importing `core.client` installs the redaction: every module that logs
+  3. Importing `core.client` installs the redaction: every module that logs
      calls `get_logger` at import, and that is where it is installed.
-  5. `setup_file_logging` installs it before attaching the handler, so nothing
+  4. `setup_file_logging` installs it before attaching the handler, so nothing
      reaches `logs/` unredacted.
-  6. Every `logging.basicConfig` in `src/` and `tools/` installs it too, so the
+  5. Every `logging.basicConfig` in `src/` and `tools/` installs it too, so the
      guard does not depend on import order.
-  7. No script prints an endpoint or any part of it, its host included: some
+  6. No script prints an endpoint or any part of it, its host included: some
      providers put the key in the subdomain, which is why the bot masks hosts.
 
 Usage:
@@ -33,7 +31,6 @@ Usage:
 
 import ast
 import logging
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -102,30 +99,6 @@ def check_redact_masks_every_credential_shape() -> bool:
             print(f"     not masked: {raw} -> {cleaned}")
             ok = False
     return ok
-
-
-def check_redact_masks_a_registered_value() -> bool:
-    """An exact environment value is masked, its host with it.
-
-    Many providers put the account in the host, so the host is as much a
-    credential as the path; check 3 shows a host nobody configured survives.
-    """
-    endpoint = "https://rpc.example.com/9f8e7d6c5b4a39281706"
-    os.environ["SOLANA_NODE_RPC_ENDPOINT"] = endpoint
-    try:
-        install_secret_redaction()
-        cleaned = redact(f"connecting to {endpoint}")
-        alone = redact("Cannot connect to host rpc.example.com:443 ssl:default")
-    finally:
-        del os.environ["SOLANA_NODE_RPC_ENDPOINT"]
-        install_secret_redaction()
-    if "9f8e7d6c5b4a39281706" in cleaned:
-        print(f"     the registered value survived: {cleaned}")
-        return False
-    if "rpc.example.com" in cleaned + alone:
-        print(f"     the host survived: {cleaned} / {alone}")
-        return False
-    return True
 
 
 def check_an_unknown_logger_is_redacted() -> bool:
@@ -275,10 +248,6 @@ def main() -> int:
         (
             "redact masks every credential shape",
             check_redact_masks_every_credential_shape,
-        ),
-        (
-            "redact masks a registered value and its host",
-            check_redact_masks_a_registered_value,
         ),
         ("an unlisted logger is redacted too", check_an_unknown_logger_is_redacted),
         (

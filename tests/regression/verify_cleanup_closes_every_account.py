@@ -23,9 +23,9 @@ the shutdown budget with them:
   F. A close that fails before it reaches the RPC (deriving the account) does
      not end the batch early: the others close, and none is still running when
      cleanup returns and the client is closed.
-  G. Under `exit_strategy: manual` or `marry_mode` shutdown cleanup burns
-     nothing, even with `force_close_with_burn`: a coin still held keeps its
-     tokens and its account, and an account already empty is closed.
+
+That nothing is burned under `manual` or `marry_mode` is check E of
+`verify_cleanup_closes_what_it_leaves.py`.
 
 Usage:
     uv run tests/regression/verify_cleanup_closes_every_account.py
@@ -284,12 +284,10 @@ def check_d_failures_stay_local() -> bool:
     return ok
 
 
-def _stored(
-    mint: Pubkey, path: Path, exit_strategy: str = "tp_sl", *, marry: bool = False
-) -> PositionManager:
-    """A position manager whose positions file holds one open position, `mint`."""
+def _stored(mint: Pubkey, path: Path) -> PositionManager:
+    """A tp_sl position manager whose positions file holds one position, `mint`."""
     manager = object.__new__(PositionManager)
-    manager.exit_strategy, manager.marry_mode = exit_strategy, marry
+    manager.exit_strategy, manager.marry_mode = "tp_sl", False
     manager.store = PositionStore(path)
     manager.store.add(
         TokenInfo(
@@ -338,35 +336,6 @@ def check_e_kept_positions_left_alone() -> bool:
             f"    kept coin touched: {kept in client.touched}; closed "
             f"{len(client.closed)} of the {len(expected)} sold"
         )
-    return ok
-
-
-def check_g_held_coins_never_burned() -> bool:
-    """G: manual and marry_mode keep what they buy, force burn or not."""
-    ok = True
-    for label, strategy, marry in (
-        ("manual", "manual", False),
-        ("marry_mode", "tp_sl", True),
-    ):
-        mints = _mints(3)
-        emptied = mints[0]  # sold by hand during the session
-        events: list = []
-        client = _Client(events, {m: 1000 for m in mints if m != emptied}, set())
-        trader = _burning_trader(client, mints)
-        with tempfile.TemporaryDirectory() as tmp:
-            # The positions file holds none of them: these exits never write it.
-            trader.positions = _stored(
-                Keypair().pubkey(), Path(tmp) / "positions.json", strategy, marry=marry
-            )
-            _run(trader._cleanup_resources, events)  # noqa: SLF001
-        held = [m for m in mints if m != emptied]
-        if any(m in client.touched for m in held) or client.closed != [emptied]:
-            ok = False
-            print(
-                f"    {label}: held coins touched "
-                f"{sum(m in client.touched for m in held)}/{len(held)}; closed "
-                f"{len(client.closed)}, expected only the empty account"
-            )
     return ok
 
 
@@ -434,10 +403,6 @@ def main() -> int:
         (
             "F: a close failing before any RPC call leaves none running",
             check_f_failed_derivation_stays_local,
-        ),
-        (
-            "G: manual and marry_mode coins are never burned",
-            check_g_held_coins_never_burned,
         ),
     ]
     failed = 0

@@ -34,14 +34,12 @@ Offline machine checks, no network and no funds moved:
      carrying a successful create_v2.
   3. The pump.fun event parser reads it into a TokenInfo — mint, creator and
      state_from_event, so extreme_fast_mode keeps its zero-RPC contract.
-  4. The block listener returns that TokenInfo for the fixture, which is the
-     regression that matters: it must not depend on the envelope decoding.
-  5. The listener still reads a pre-v1 create, so nothing regressed for the
-     coins that already worked.
-  6. With the envelope replaced by bytes solders cannot read, the v1 create is
-     still detected — which is what makes the log route load-bearing rather
-     than decorative.
-  7. The installed solders reads the v1 envelope. Detection does not route on
+  4. The block listener still reads a pre-v1 create, so nothing regressed for
+     the coins that already worked.
+  5. With the envelope replaced by bytes solders cannot read, the block
+     listener still detects the v1 create — which is what makes the log route
+     load-bearing rather than decorative.
+  6. The installed solders reads the v1 envelope. Detection does not route on
      it, but pump.fun's block parser decodes it when the logs carry no
      CreateEvent, LaunchLab's block parser decodes it for every launch, and
      the cookbook decoders open it; solders before 0.29 raises on it.
@@ -49,16 +47,16 @@ Offline machine checks, no network and no funds moved:
 The geyser route decodes protobuf rather than transaction bytes, so it goes
 blind differently and is pinned on its own frame:
 
-  8. The committed geyser frame really is a v1 create_v2. Over geyser there is
+  7. The committed geyser frame really is a v1 create_v2. Over geyser there is
      no version number, so `Message.config` is the test; it exists only in the
      stubs from yellowstone-grpc-proto 13.0.0-rc4, so a rollback fails here.
-  9. The pump.fun parser reads that frame into a usable TokenInfo. A missing
+  8. The pump.fun parser reads that frame into a usable TokenInfo. A missing
      proto field is skipped rather than raised on, so a stale proto degrades in
      silence — which is why it is pinned.
- 10. With the logs stripped from the frame, the instruction decode still finds
+  9. With the logs stripped from the frame, the instruction decode still finds
      the coin, and still leaves state_from_event False: `args.creator` is
      user-supplied, so the curve must be read.
- 11. The inline v1 budget is readable as a known field. A v1 coin carries no
+ 10. The inline v1 budget is readable as a known field. A v1 coin carries no
      ComputeBudget instructions at all, so anything reading a budget from the
      instruction list reads nothing for it.
 
@@ -209,19 +207,6 @@ def check_parser_reads_the_v1_create() -> bool:
         return False
     if token_info.mint is None or token_info.creator is None:
         print("     parsed TokenInfo is missing mint or creator")
-        return False
-    return True
-
-
-def check_listener_detects_the_v1_create() -> bool:
-    """The block listener hands the v1 create to the parser and gets a coin."""
-    listener = UniversalBlockListener("wss://offline.invalid", [Platform.PUMP_FUN])
-    result = _load(V1_FIXTURE)
-    tokens = listener._process_block_transactions(  # noqa: SLF001
-        [_as_block_transaction(result)]
-    )
-    if not tokens:
-        print("     block listener returned None for a v1 create_v2")
         return False
     return True
 
@@ -431,7 +416,6 @@ def main() -> int:
         ("every call site accepts v1", check_every_call_site_accepts_v1),
         ("fixture is a successful v1 create_v2", check_fixture_is_a_v1_create),
         ("event parser reads the v1 create", check_parser_reads_the_v1_create),
-        ("block listener detects the v1 create", check_listener_detects_the_v1_create),
         (
             "block listener still detects a pre-v1 create",
             check_listener_still_detects_a_pre_v1_create,

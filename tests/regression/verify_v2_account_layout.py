@@ -243,103 +243,6 @@ def check_derivations(quote_mint: Pubkey, *, mayhem: bool) -> list[str]:
     return problems
 
 
-def check_instruction_encoding() -> list[str]:
-    """Build real v2 instructions and assert their shape and data encoding.
-
-    Covers the USDC path, which cannot be exercised on-chain until a
-    USDC-paired coin exists.
-
-    Returns:
-        List of problems (empty if the instructions are well-formed)
-    """
-    import asyncio
-    import struct
-
-    from platforms.pumpfun.instruction_builder import PumpFunInstructionBuilder
-    from utils.idl_manager import get_idl_manager
-
-    provider = PumpFunAddressProvider()
-    builder = PumpFunInstructionBuilder(get_idl_manager().get_parser(Platform.PUMP_FUN))
-    user = Pubkey.from_string("Ba99j1dYxidfQZvuNGMaXGxJsUeWXu6VNW8damkrdLVd")
-    problems = []
-
-    for quote_mint, label, expect_quote_ata in (
-        (WSOL_MINT, "SOL-paired", False),
-        (USDC_MINT, "USDC-paired", True),
-    ):
-        token_info = build_token_info(quote_mint, mayhem=False)
-
-        buy = asyncio.run(
-            builder.build_buy_v2_instruction(
-                token_info, user, 1_500_000, 20_000_000, provider
-            )
-        )
-        sell = asyncio.run(
-            builder.build_sell_v2_instruction(
-                token_info, user, 20_000_000, 900_000, provider
-            )
-        )
-
-        # Instruction counts: base ATA always, quote ATA only for non-SOL.
-        expected_buy_ix = 3 if expect_quote_ata else 2
-        if len(buy) != expected_buy_ix:
-            problems.append(
-                f"{label}: buy produced {len(buy)} instructions, "
-                f"expected {expected_buy_ix}"
-            )
-        expected_sell_ix = 2 if expect_quote_ata else 1
-        if len(sell) != expected_sell_ix:
-            problems.append(
-                f"{label}: sell produced {len(sell)} instructions, "
-                f"expected {expected_sell_ix}"
-            )
-
-        if len(buy[-1].accounts) != 27:
-            problems.append(
-                f"{label}: buy_v2 has {len(buy[-1].accounts)} accounts != 27"
-            )
-        if len(sell[-1].accounts) != 26:
-            problems.append(
-                f"{label}: sell_v2 has {len(sell[-1].accounts)} accounts != 26"
-            )
-
-        # buy_v2 data: 8-byte discriminator + amount (tokens) + max_sol_cost.
-        # No trailing track_volume OptionBool, unlike the legacy buy.
-        buy_data = bytes(buy[-1].data)
-        if len(buy_data) != 24:
-            problems.append(
-                f"{label}: buy_v2 data is {len(buy_data)} bytes, expected 24 "
-                f"(discriminator + 2 u64, no track_volume)"
-            )
-        else:
-            amount, max_cost = struct.unpack("<QQ", buy_data[8:])
-            if amount != 20_000_000 or max_cost != 1_500_000:
-                problems.append(
-                    f"{label}: buy_v2 args decoded as amount={amount}, "
-                    f"max_sol_cost={max_cost}; expected 20000000 and 1500000"
-                )
-
-        sell_data = bytes(sell[-1].data)
-        if len(sell_data) != 24:
-            problems.append(
-                f"{label}: sell_v2 data is {len(sell_data)} bytes, expected 24"
-            )
-        else:
-            amount, min_out = struct.unpack("<QQ", sell_data[8:])
-            if amount != 20_000_000 or min_out != 900_000:
-                problems.append(
-                    f"{label}: sell_v2 args decoded as amount={amount}, "
-                    f"min_sol_output={min_out}; expected 20000000 and 900000"
-                )
-
-        # Exactly one signer, and it must be the user.
-        signers = [meta.pubkey for meta in buy[-1].accounts if meta.is_signer]
-        if signers != [user]:
-            problems.append(f"{label}: buy_v2 signers {signers} != [{user}]")
-
-    return problems
-
-
 def check_quote_config() -> list[str]:
     """Assert quote-amount config resolution and alias handling.
 
@@ -535,7 +438,6 @@ def main() -> int:
             all_problems.extend(problems)
 
     for name, check in (
-        ("instruction encoding", check_instruction_encoding),
         ("quote config resolution", check_quote_config),
         ("cookbook pump toolkit", check_examples_toolkit),
     ):

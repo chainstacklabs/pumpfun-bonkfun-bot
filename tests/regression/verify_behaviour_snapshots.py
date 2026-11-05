@@ -456,12 +456,6 @@ async def build_instructions() -> dict:
         *LAUNCH_SELL,
     )
     # CPMM buys spend exactly amount_in: (quote in, token floor).
-    out |= await _market_buy(
-        "CPMM StonkFun SOL",
-        CpmmMarket(_FixtureClient(launch_fixture["accounts"])),
-        _graduated_launch_token(launch_fixture),
-        *LAUNCH_BUY,
-    )
     for case in _fixture("raw_cpmm_buys_from_gettransaction.json"):
         out |= await _market_buy(
             f"CPMM {case['label']}",

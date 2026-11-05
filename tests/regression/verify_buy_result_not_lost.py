@@ -28,10 +28,10 @@ scripted `getTransaction` responses:
   3. `verify_transaction_succeeded` is True for a tx that lands after a lag.
   4. A reverted transaction is still False, however many times it is read.
   5. A confirmed buy whose amounts never parse is reported successful, with the
-     token amount taken from the wallet balance actually held, not the expected
-     amount, so the sell has a real figure.
-  6. A balance that predates the buy is capped at what this buy asked for, so
-     the exit cannot liquidate holdings this trade never created.
+     token amount, whole and raw, taken from the wallet balance actually held,
+     not the expected amount, so the sell has a real figure.
+  6. A balance that predates the buy is capped, whole and raw, at what this buy
+     asked for, so the exit cannot liquidate holdings this trade never created.
   7. A buy whose transaction genuinely failed is still reported unsuccessful.
   8. A confirmed buy whose quote destination is unknown (a LaunchLab coin
      with no quote vault recorded) is still a buy, read back without it.
@@ -283,9 +283,11 @@ async def check_fallback_amount_is_the_balance_held() -> bool:
     result = await _run_buy(client)
     held = TOKENS_RECEIVED_RAW / 10**TOKEN_DECIMALS
     return _check(
-        "TradeResult.amount",
-        result.success and abs(result.amount - held) < AMOUNT_TOLERANCE,
-        f"{result.amount} tokens (wallet holds {held}, "
+        "TradeResult.amount and amount_raw",
+        result.success
+        and abs(result.amount - held) < AMOUNT_TOLERANCE
+        and result.amount_raw == TOKENS_RECEIVED_RAW,
+        f"{result.amount} tokens, {result.amount_raw} raw (wallet holds {held}, "
         f"extreme_fast_mode expected {EXPECTED_TOKENS}), "
         f"{client.balance_reads} balance read(s)",
     )
@@ -298,10 +300,14 @@ async def check_fallback_never_exceeds_what_was_bought() -> bool:
     )
     result = await _run_buy(client)
     inflated = PRIOR_HOLDING_RAW / 10**TOKEN_DECIMALS
+    asked_raw = int(EXPECTED_TOKENS * 10**TOKEN_DECIMALS)
     return _check(
-        "TradeResult.amount",
-        result.success and abs(result.amount - EXPECTED_TOKENS) < AMOUNT_TOLERANCE,
-        f"{result.amount} tokens, not the full {inflated} on the books — "
+        "TradeResult.amount and amount_raw",
+        result.success
+        and abs(result.amount - EXPECTED_TOKENS) < AMOUNT_TOLERANCE
+        and result.amount_raw == asked_raw,
+        f"{result.amount} tokens, {result.amount_raw} raw, not the full "
+        f"{inflated} on the books — "
         f"the exit cannot sell a position this trade never opened",
     )
 
