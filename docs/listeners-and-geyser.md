@@ -64,10 +64,11 @@ other four to show which coins it never reports.
 - Outcomes are unknown at detection: a create that goes on to revert is delivered
   exactly like one that lands.
 - The same create can come again in another transaction. Every listener logs a
-  coin once, in one INFO line naming the mint, and hands it on once per mint
-  (`BaseTokenListener._deliver`), counted after the name and creator filters so
-  an attempt they refused does not hide a later one; the parsers' own detail is
-  at DEBUG.
+  coin once, in one INFO line naming the mint, written before the name and
+  creator filters so a refused coin is still named. It hands a coin on once per
+  mint (`BaseTokenListener._deliver`); that hand-off is counted after the
+  filters, so an attempt they refused does not hide a later one. The parsers'
+  own detail is at DEBUG.
 - **A coin created through a router is invisible on it.** The create arrives as a
   CPI, and inner instructions are produced *by* execution, so a pre-execution
   stream never carries them — present on the stream and undetectable, not
