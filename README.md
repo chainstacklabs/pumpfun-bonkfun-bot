@@ -58,7 +58,7 @@ Fill in `.env`:
 | `SOLANA_NODE_RPC_ENDPOINT` | HTTPS RPC endpoint |
 | `SOLANA_NODE_WSS_ENDPOINT` | WebSocket endpoint (for `logs` / `blocks` listeners) |
 | `SOLANA_PRIVATE_KEY` | Base58 private key of the trading wallet |
-| `KEYSTORE_PASSWORD` | Password of the [encrypted keystore](#encrypted-keystore), when the bot trades from one instead; `PUMPFUN_PASSWORD` is read when it is unset |
+| `KEYSTORE_PASSWORD` | Password of the [encrypted keystore](#encrypted-keystore), when the bot trades from one instead; the bot also tries `PUMPFUN_PASSWORD`, the variable pumpfun-cli reads |
 | `GEYSER_ENDPOINT`, `GEYSER_API_TOKEN`, `GEYSER_AUTH_TYPE` | For the `geyser` and `shreds` listeners (same endpoint, different RPC) |
 
 Public RPC nodes will not work for this workload — see [throughput](#throughput-and-rate-limits) below.
@@ -249,17 +249,23 @@ sits on disk in clear. `pump_bot_wallet` makes one:
 pump_bot_wallet create bots/wallet.enc     # a new keypair
 pump_bot_wallet import bots/wallet.enc     # a key you have: asks for it, hidden
 pump_bot_wallet import bots/wallet.enc --keypair-file ~/.config/solana/id.json
-pump_bot_wallet import bots/wallet.enc --from-env SOLANA_PRIVATE_KEY
 pump_bot_wallet show bots/wallet.enc       # the public key, after unlocking
 ```
 
-Each prints only the wallet's public key. `import` takes the key as base58 or as
-a Solana CLI keypair file, never on the command line; `--from-env` names a
-variable exported in your shell (the command does not read `.env`). The
-password comes from `KEYSTORE_PASSWORD`, else `PUMPFUN_PASSWORD`, else a hidden
-prompt that asks twice. The file is written readable only by you, and an
-existing one is replaced only with `--force`. Back up the file and the password:
-losing either loses the wallet.
+Each prints only the wallet's public key; notes, such as which variable gave
+the password, go to stderr. A relative path is taken from the folder you run
+the command in. `import` takes the key as base58 or as a Solana CLI keypair
+file, never on the command line: an argument that looks like a key or seed is
+refused. `--from-env VAR` reads the key from a variable exported in your shell
+instead (the command does not read `.env`); the hidden prompt keeps the key out
+of your shell's environment and history. An existing file is replaced only with
+`--force`, and the refusal names the key it holds. The file is written readable
+only by you. Back up the file and the password: losing either loses the wallet.
+
+The password comes from `KEYSTORE_PASSWORD`, else `PUMPFUN_PASSWORD`, else a
+hidden prompt that asks twice. `create` and `import` refuse the two variables
+set to different values, since a new file has one password, and warn about a
+password shorter than 8 characters.
 
 Then replace the bot config's `private_key` line with the file's path:
 
@@ -267,17 +273,21 @@ Then replace the bot config's `private_key` line with the file's path:
 keystore: "./wallet.enc"
 ```
 
-and put the password in the bot's `env_file` as `KEYSTORE_PASSWORD`.
-`PUMPFUN_PASSWORD` is read when it is unset; set both and they must match. A
-relative path is looked up beside the bot config first, then in the folder you
-run the bot from, and `~` expands to your home folder. A config may set
-`private_key` or `keystore`, not both. The bot unlocks the file at startup; a
-wrong or missing password, two password variables that differ, or a file that
-is not a keystore stops that bot before it trades, with a log line saying
-which.
+and put the password in the bot's `env_file` as `KEYSTORE_PASSWORD`. The bot
+tries `KEYSTORE_PASSWORD` first and, when it is unset or does not unlock the
+file, `PUMPFUN_PASSWORD`. Every bot's `env_file` is loaded into one environment,
+so with several bots either variable may hold another bot's password; trying
+both lets each bot find its own. `pump_bot_wallet show` tries them in the same
+order. A relative path is looked up beside the bot config first, then in the
+folder you run the bot from, and `~` expands to your home folder. A config may
+set `private_key` or `keystore`, not both. The bot unlocks the file at startup;
+a missing password, one that neither variable gets right, or a file that is
+not a keystore stops that bot before it trades, with a log line saying which.
 
 pumpfun-cli and pumpclaw read and write the same file, so one wallet can serve
-all three, for example with `keystore: "~/.config/pumpfun-cli/wallet.enc"`.
+all three, for example with `keystore: "~/.config/pumpfun-cli/wallet.enc"`. The
+CLI reads only `PUMPFUN_PASSWORD`, so for a shared wallet set that variable, or
+both variables to the same value.
 
 ### Non-SOL quote assets
 

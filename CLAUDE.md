@@ -189,7 +189,7 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
 - Bot YAML supports `${VAR}` interpolation from the file named by `env_file`;
   a `true` or `false` value becomes a bool, anything else stays a string. The
   wallet is `private_key` or `keystore`, never both; `pump_bot_wallet` writes a
-  keystore (`core/keystore.py`), `KEYSTORE_PASSWORD` else `PUMPFUN_PASSWORD` opens it.
+  keystore (`core/keystore.py`); the bot tries `KEYSTORE_PASSWORD`, then `PUMPFUN_PASSWORD`.
 - `src/config_loader.py` (package root, not under `core/`) validates the
   platform/listener pairing before startup: pump.fun supports `logs`, `blocks`,
   `geyser`, `shreds`; the LaunchLab platforms support `blocks`, `geyser` and
