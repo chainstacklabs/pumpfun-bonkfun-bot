@@ -127,15 +127,16 @@ class UniversalBlockListener(BaseTokenListener):
 
                     try:
                         while True:
-                            token_info = await self._wait_for_token_creation(websocket)
-                            if not token_info:
-                                continue
-                            await self._deliver(
-                                token_info,
-                                token_callback,
-                                match_string,
-                                creator_address,
-                            )
+                            # A block can hold several creates; each is a coin.
+                            for token_info in await self._wait_for_token_creation(
+                                websocket
+                            ):
+                                await self._deliver(
+                                    token_info,
+                                    token_callback,
+                                    match_string,
+                                    creator_address,
+                                )
 
                     except websockets.exceptions.ConnectionClosed:
                         logger.warning("WebSocket connection closed. Reconnecting...")
@@ -250,20 +251,21 @@ class UniversalBlockListener(BaseTokenListener):
 
     async def _wait_for_token_creation(
         self, websocket: websockets.WebSocketServerProtocol
-    ) -> TokenInfo | None:
-        """Wait for token creation event from any platform.
+    ) -> list[TokenInfo]:
+        """Wait for the next block and read the coins created in it.
 
         Args:
             websocket: Active WebSocket connection
 
         Returns:
-            TokenInfo if a token creation is found, None otherwise
+            Every coin the block's successful transactions created, in block
+            order; empty when the frame carries none
         """
         try:
             response = await asyncio.wait_for(websocket.recv(), timeout=30)
             transactions = self._transactions_from_frame(json.loads(response))
             if transactions is None:
-                return None
+                return []
 
             if self.pool_callback is not None:
                 await self._emit_pools(self._pools_from_block(transactions))
@@ -291,17 +293,18 @@ class UniversalBlockListener(BaseTokenListener):
             logger.exception("Error reading from the WebSocket; reconnecting")
             raise
 
-        return None
+        return []
 
-    def _process_block_transactions(self, transactions: list) -> TokenInfo | None:
+    def _process_block_transactions(self, transactions: list) -> list[TokenInfo]:
         """Process all transactions in a block looking for token creations.
 
         Args:
             transactions: List of transaction data from block
 
         Returns:
-            TokenInfo if a token creation is found, None otherwise
+            One TokenInfo per create found, in block order
         """
+        tokens = []
         for tx in transactions:
             if not isinstance(tx, dict):
                 continue
@@ -323,9 +326,9 @@ class UniversalBlockListener(BaseTokenListener):
             # exercise, done by cookbook/pumpfun/decode/.
             token_info = self._parse_from_logs(tx)
             if token_info:
-                return token_info
+                tokens.append(token_info)
 
-        return None
+        return tokens
 
     def _parse_from_logs(self, tx: dict) -> TokenInfo | None:
         """Dispatch one transaction to its platform parser using its logs.
@@ -362,8 +365,9 @@ class UniversalBlockListener(BaseTokenListener):
     def _pools_from_block(self, transactions: list) -> list[PoolReady]:
         """Pools that the block's successful migrations created.
 
-        Unlike token creations, every transaction in the block is read: a
-        block can hold more than one migration.
+        Every transaction in the block is read, as for token creations: a
+        block can hold more than one migration. A parser that fails on one
+        transaction is logged and skipped.
         """
         pools = []
         for tx in transactions:
@@ -378,7 +382,12 @@ class UniversalBlockListener(BaseTokenListener):
             found = []
             for program_id, _platform, parser in self.program_id_to_parser:
                 if any(program_id in line for line in logs):
-                    found += parser.parse_pools_ready_from_block_transaction(tx)
+                    # One transaction a parser fails on costs only its own
+                    # pools, not the block or the connection.
+                    try:
+                        found += parser.parse_pools_ready_from_block_transaction(tx)
+                    except Exception:
+                        logger.exception("Error reading a migration from a block")
             if found:
                 signature = _signature(tx)
                 pools += [replace(pool, signature=signature) for pool in found]
