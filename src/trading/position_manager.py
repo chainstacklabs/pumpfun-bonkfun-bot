@@ -356,8 +356,10 @@ class PositionManager:
     async def _past_landing(self, stored: StoredPosition) -> tuple[bool, int | None]:
         """Whether the buy can no longer land, and the slot that was seen at.
 
-        The slot is None when the expiry came from the clock (no block height
-        recorded, or none readable).
+        A recorded block height decides: when the height cannot be read, the
+        buy is taken as not expired yet and asked about again next time. The
+        clock decides only for a record with no block height; the slot is then
+        None.
         """
         last_valid = stored.pending.last_valid_block_height if stored.pending else None
         if last_valid is not None:
@@ -365,8 +367,8 @@ class PositionManager:
                 height, slot = await self.solana_client.get_block_height_and_slot()
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"Could not read the block height ({e})")
-            else:
-                return height > last_valid, slot
+                return False, None
+            return height > last_valid, slot
         held_for = (_utc_now() - stored.entry_time).total_seconds()
         return held_for > self._PENDING_EXPIRY, None
 
