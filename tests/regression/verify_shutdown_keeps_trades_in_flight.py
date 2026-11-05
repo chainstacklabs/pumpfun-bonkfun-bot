@@ -257,10 +257,6 @@ class _Client:
             await self.confirm_gate.wait()
         return self.status
 
-    async def confirm_transaction(self, *args: object, **kwargs: object) -> bool:
-        status = await self.confirm_transaction_detailed(*args, **kwargs)
-        return status is ConfirmationStatus.SUCCESS
-
     async def get_signature_outcome(
         self, signature: object, *, search_history: bool = True, **_kwargs: object
     ) -> tuple[object, int | None]:
@@ -285,9 +281,6 @@ class _Client:
         return _deltas(
             *self.details.get(str(signature), (RECEIVED_RAW, SPENT_LAMPORTS))
         )
-
-    async def get_token_account_balance(self, *_args: object) -> int:
-        return RECEIVED_RAW
 
     def hold(self, token: TokenInfo, raw: int, *, fresh: bool = False) -> None:
         data = bytes(token.mint) + bytes(WALLET.pubkey) + struct.pack("<Q", raw)

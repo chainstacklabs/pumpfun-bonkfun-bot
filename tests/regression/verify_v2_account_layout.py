@@ -252,7 +252,6 @@ def check_instruction_encoding() -> list[str]:
     import asyncio
     import struct
 
-    from interfaces.core import Platform as _Platform  # noqa: F401
     from platforms.pumpfun.instruction_builder import PumpFunInstructionBuilder
     from utils.idl_manager import get_idl_manager
 

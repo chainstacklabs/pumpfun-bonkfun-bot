@@ -319,9 +319,6 @@ class _StubClient:
     ) -> str:
         return "STUB_SIGNATURE"
 
-    async def confirm_transaction(self, *_args: object, **_kwargs: object) -> bool:
-        return False
-
     async def confirm_transaction_detailed(self, *_args: object, **_kwargs: object):
         return platform_aware.ConfirmationStatus.REVERTED
 

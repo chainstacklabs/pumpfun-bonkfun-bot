@@ -238,7 +238,7 @@ async def check_endpoint_logging_hides_userinfo() -> None:
     """
     offenders = []
     for path in sorted((PROJECT_ROOT / "cookbook").rglob("*.py")):
-        if "__pycache__" in path.parts or path.name == Path(__file__).name:
+        if "__pycache__" in path.parts:
             continue
         for n, line in enumerate(path.read_text().splitlines(), 1):
             if "urlsplit" in line and ".netloc" in line:

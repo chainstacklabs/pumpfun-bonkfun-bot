@@ -424,9 +424,6 @@ class _StubClient:
         self.sent.append((instructions, kwargs["compute_unit_limit"]))
         return "STUB_SIGNATURE"
 
-    async def confirm_transaction(self, *_a: object, **_k: object) -> bool:
-        return True
-
     async def confirm_transaction_detailed(
         self, *_a: object, **_k: object
     ) -> ConfirmationStatus:
@@ -442,9 +439,6 @@ class _StubClient:
     ) -> TradeDeltas:
         self.destination = destination
         return _deltas(1_000_000_000, None)
-
-    async def get_token_account_balance(self, *_a: object, **_k: object) -> int:
-        return 0
 
 
 class _CurveBuilder:

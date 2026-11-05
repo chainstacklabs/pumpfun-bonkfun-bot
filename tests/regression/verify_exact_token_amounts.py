@@ -105,9 +105,6 @@ class _Client:
         self.sent.append(instructions)
         return "STUB_SIGNATURE"
 
-    async def confirm_transaction(self, *_a, **_k) -> bool:
-        return True
-
     async def confirm_transaction_detailed(self, *_a, **_k):
         return ConfirmationStatus.SUCCESS
 
@@ -116,9 +113,6 @@ class _Client:
 
     async def get_token_account_balance(self, _ata) -> int:
         return self.balance_raw
-
-    async def get_sell_transaction_details(self, *_a, **_k):
-        return None, None
 
 
 class _Curve:

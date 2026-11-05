@@ -146,7 +146,6 @@ def _make_trader(
     trader.cleanup_mode = "disabled"  # keeps handle_cleanup_after_sell a no-op
     trader.cleanup_with_priority_fee = False
     trader.cleanup_force_close_with_burn = False
-    trader.cleanups = []
     # Keep a verification run from writing to ./trades.
     trade_log.log_trade = lambda *_args, **_kwargs: None
     return trader

@@ -212,9 +212,6 @@ class _Venue:
     def get_sell_compute_unit_limit(self, *_a: object) -> int:
         return 100_000
 
-    def derive_pool_address(self, mint: Pubkey) -> Pubkey:
-        return mint
-
 
 def _wire(venue: _Venue) -> PlatformImplementations:
     implementations = PlatformImplementations(

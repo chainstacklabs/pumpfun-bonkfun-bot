@@ -77,7 +77,6 @@ from core.pubkeys import (  # noqa: E402
     USDC_MINT,
     WSOL_MINT,
     SystemAddresses,
-    resolve_quote_token_program,
 )
 from core.trade_deltas import TradeDeltas  # noqa: E402
 from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E402
@@ -157,17 +156,6 @@ class _FixtureClient:
     ) -> list:
         self.calls.append("get_multiple_accounts")
         return [self.accounts.get(a) for a in addresses]
-
-
-def _resolve_quotes() -> None:
-    """Seed the quote decimals the pools are priced in, from fixed mint data."""
-    for mint, decimals in ((WSOL_MINT, 9), (USDC_MINT, 6)):
-        data = bytes(44) + bytes([decimals]) + bytes(37)
-
-        async def read(_address: Pubkey, data: bytes = data) -> SimpleNamespace:
-            return SimpleNamespace(data=data, owner=SystemAddresses.TOKEN_PROGRAM)
-
-        asyncio.run(resolve_quote_token_program(mint, read))
 
 
 def _token(case: dict) -> TokenInfo:
@@ -464,9 +452,6 @@ class _StubClient:
         self.sent.append((instructions, kwargs["compute_unit_limit"]))
         return "STUB_SIGNATURE"
 
-    async def confirm_transaction(self, *_a: object, **_k: object) -> bool:
-        return True
-
     async def confirm_transaction_detailed(
         self, *_a: object, **_k: object
     ) -> ConfirmationStatus:
@@ -482,9 +467,6 @@ class _StubClient:
     ) -> TradeDeltas:
         self.destination = destination
         return _deltas(1_000_000_000, None)
-
-    async def get_token_account_balance(self, *_a: object, **_k: object) -> int:
-        return 0
 
 
 class _Curve:
@@ -527,10 +509,6 @@ class _CurveBuilder:
 
     def get_buy_compute_unit_limit(self, _override: int | None = None) -> int:
         return 180_000
-
-
-async def _no_fee(_accounts: list) -> None:
-    return None
 
 
 def _buy(
@@ -727,7 +705,6 @@ def _global_config_change(
 
 def main() -> int:
     """Run every check and report."""
-    _resolve_quotes()
     checks = [
         ("A: buy accounts match real buys", check_a_accounts_match_chain),
         ("B: data is buy_exact_quote_in", check_b_data_is_buy_exact_quote_in),

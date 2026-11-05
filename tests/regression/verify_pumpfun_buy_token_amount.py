@@ -81,9 +81,6 @@ class _Client:
         self.sent.append(instructions)
         return "STUB_SIGNATURE"
 
-    async def confirm_transaction(self, *_a, **_k) -> bool:
-        return False
-
     async def confirm_transaction_detailed(
         self, *_a: object, **_k: object
     ) -> ConfirmationStatus:

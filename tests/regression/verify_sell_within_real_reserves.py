@@ -133,13 +133,6 @@ class _Client:
     ) -> SimpleNamespace | None:
         return self._account(key)
 
-    async def get_multiple_accounts(
-        self,
-        keys: list[Pubkey],
-        commitment: str | None = None,  # noqa: ARG002
-    ) -> list[SimpleNamespace | None]:
-        return [self._account(k) for k in keys]
-
     async def build_and_send_transaction(
         self, instructions: list, *_args: object, **_kwargs: object
     ) -> str:

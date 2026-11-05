@@ -425,9 +425,6 @@ class _Chain:
     async def get_trade_deltas(self, *_a: object, **_k: object) -> TradeDeltas | None:
         return _deltas(*self.buy_details)
 
-    async def get_health(self) -> str:
-        return "ok"
-
     async def close(self) -> None:
         return None
 

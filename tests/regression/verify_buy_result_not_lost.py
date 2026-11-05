@@ -28,12 +28,12 @@ scripted `getTransaction` responses:
   3. `verify_transaction_succeeded` is True for a tx that lands after a lag.
   4. A reverted transaction is still False, however many times it is read.
   5. A confirmed buy whose amounts never parse is reported successful, with the
-     token amount taken from the wallet balance so the sell has a real figure.
-  6. That fallback amount is the balance actually held, not the expected amount.
-  7. A balance that predates the buy is capped at what this buy asked for, so
+     token amount taken from the wallet balance actually held, not the expected
+     amount, so the sell has a real figure.
+  6. A balance that predates the buy is capped at what this buy asked for, so
      the exit cannot liquidate holdings this trade never created.
-  8. A buy whose transaction genuinely failed is still reported unsuccessful.
-  9. A confirmed buy whose quote destination is unknown (a LaunchLab coin
+  7. A buy whose transaction genuinely failed is still reported unsuccessful.
+  8. A confirmed buy whose quote destination is unknown (a LaunchLab coin
      with no quote vault recorded) is still a buy, read back without it.
 
 Usage:
@@ -152,9 +152,6 @@ class StubBuyClient:
         self, *_args: object, **_kwargs: object
     ) -> str:
         return SIGNATURE
-
-    async def confirm_transaction(self, _signature: object) -> bool:
-        return self.confirmed
 
     async def confirm_transaction_detailed(
         self, _signature: object, **_kwargs: object
@@ -280,19 +277,8 @@ async def check_revert_still_fails() -> bool:
     )
 
 
-async def check_unparseable_buy_is_not_lost() -> bool:
-    print("\n5. A confirmed buy whose amounts never parse is still a buy")
-    client = StubBuyClient(confirmed=True, details=(None, None))
-    result = await _run_buy(client)
-    return _check(
-        "TradeResult.success",
-        bool(result.success),
-        f"{result.success} (error_message={result.error_message!r})",
-    )
-
-
 async def check_fallback_amount_is_the_balance_held() -> bool:
-    print("\n6. The fallback sells the balance actually held, not the expected amount")
+    print("\n5. A confirmed buy whose amounts never parse sells the balance held")
     client = StubBuyClient(confirmed=True, details=(None, None))
     result = await _run_buy(client)
     held = TOKENS_RECEIVED_RAW / 10**TOKEN_DECIMALS
@@ -306,7 +292,7 @@ async def check_fallback_amount_is_the_balance_held() -> bool:
 
 
 async def check_fallback_never_exceeds_what_was_bought() -> bool:
-    print("\n7. A balance predating the buy is capped at what this buy asked for")
+    print("\n6. A balance predating the buy is capped at what this buy asked for")
     client = StubBuyClient(
         confirmed=True, details=(None, None), balance_raw=PRIOR_HOLDING_RAW
     )
@@ -321,7 +307,7 @@ async def check_fallback_never_exceeds_what_was_bought() -> bool:
 
 
 async def check_failed_buy_still_fails() -> bool:
-    print("\n8. A buy whose transaction did not succeed is still a failure")
+    print("\n7. A buy whose transaction did not succeed is still a failure")
     client = StubBuyClient(confirmed=False, details=(None, None))
     result = await _run_buy(client)
     return _check(
@@ -332,7 +318,7 @@ async def check_failed_buy_still_fails() -> bool:
 
 
 async def check_unknown_quote_destination_is_not_lost() -> bool:
-    print("\n9. A confirmed buy with no known quote destination is still a buy")
+    print("\n8. A confirmed buy with no known quote destination is still a buy")
     client = StubBuyClient(confirmed=True, details=(TOKENS_RECEIVED_RAW, None))
     token_info = _make_token_info()
     token_info.platform = Platform.LAUNCHLAB
@@ -356,7 +342,6 @@ async def main() -> None:
         await check_retry_is_bounded(),
         await check_verify_succeeds_after_lag(),
         await check_revert_still_fails(),
-        await check_unparseable_buy_is_not_lost(),
         await check_fallback_amount_is_the_balance_held(),
         await check_fallback_never_exceeds_what_was_bought(),
         await check_failed_buy_still_fails(),

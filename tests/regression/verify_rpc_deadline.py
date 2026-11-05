@@ -26,12 +26,14 @@ against a stub session on a virtual clock, so a 30s backoff costs no real time:
   5. A deadline already spent returns without sending anything.
   6. A successful response is unaffected by the deadline.
   7. _get_transaction_result hands each lookup only the budget that is left.
+  8. post_rpc's defaults are the ones the checks above assume.
 
 Usage:
     uv run tests/regression/verify_rpc_deadline.py
 """
 
 import asyncio
+import inspect
 import sys
 from itertools import pairwise
 from pathlib import Path
@@ -44,16 +46,20 @@ from core.client import SolanaClient  # noqa: E402
 
 BODY = {"jsonrpc": "2.0", "id": 1, "method": "getTransaction", "params": []}
 
-# post_rpc's own defaults, restated so a change to them fails a check here
+# post_rpc's own defaults, restated so a change to them fails check 8 here
 # rather than silently weakening one.
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_MAX_429_RETRIES = 10
 
-# 1 + 2 + 4s of backoff sits well inside this, so a deadline this size must not
-# change the unbounded outcome; 2.5s cuts the schedule after the first retry.
-GENEROUS_DEADLINE = 120.0
+# Cuts the 1 + 2 + 4s backoff schedule after the first retry.
 TIGHT_DEADLINE = 2.5
 ATTEMPTS_BEFORE_TIGHT_DEADLINE = 2
+
+EXPECTED_DEFAULTS = {
+    "max_retries": DEFAULT_MAX_RETRIES,
+    "max_429_retries": DEFAULT_MAX_429_RETRIES,
+    "deadline_seconds": None,
+}
 
 HUGE_RETRY_AFTER = "600"  # a provider asking for ten minutes
 TX_BUDGET = 5.0
@@ -131,18 +137,10 @@ class StubSession:
             TimeoutError: When the script says this attempt times out
         """
         self.requests += 1
-        outcome = self.outcomes.pop(0) if self.outcomes else self.outcomes_default()
+        outcome = self.outcomes.pop(0)
         if outcome == "timeout":
             raise TimeoutError
         return outcome
-
-    def outcomes_default(self) -> str:
-        """Keep timing out once the script runs dry.
-
-        Returns:
-            The repeating outcome
-        """
-        return "timeout"
 
 
 def _make_client(session: StubSession) -> SolanaClient:
@@ -353,6 +351,21 @@ async def check_tx_result_passes_remaining_budget() -> bool:
     )
 
 
+async def check_post_rpc_defaults() -> bool:
+    """post_rpc's defaults still match the constants the checks are built on.
+
+    Returns:
+        Whether the check passed
+    """
+    params = inspect.signature(SolanaClient.post_rpc).parameters
+    found = {name: params[name].default for name in EXPECTED_DEFAULTS}
+    return _check(
+        "post_rpc defaults are the ones these checks assume",
+        found == EXPECTED_DEFAULTS,
+        f"found {found}, expected {EXPECTED_DEFAULTS}",
+    )
+
+
 async def main() -> None:
     """Run every check and exit non-zero if any failed."""
     print("=" * 72)
@@ -367,6 +380,7 @@ async def main() -> None:
         await check_spent_deadline_sends_nothing(),
         await check_success_is_unaffected(),
         await check_tx_result_passes_remaining_budget(),
+        await check_post_rpc_defaults(),
     ]
 
     print("\n" + "=" * 72)

@@ -139,7 +139,6 @@ LAUNCHLAB_TXS = (
     HERE / "recorded_letsbonk_launches_from_gettransaction.json",
 )
 LAUNCHLAB_STREAMS = HERE / "raw_launchlab_creates_from_deshred.json"
-LAUNCHLAB_PLATFORMS = (Platform.LAUNCHLAB, Platform.LETS_BONK, Platform.STONK_FUN)
 # Buy 3BP2RDMcyNk4s4pZttVUf3jnVvV5BWphMv2eeuHeBMYgWijgxtyRJeUKFKci3EqCfWPgB8njjccSAZmgDw4PMN6R,
 # a pump.fun buy_v2 that landed and reverted on slippage, as `getTransaction`
 # returns it, and its `meta.err`.
@@ -713,11 +712,8 @@ class _Curve:
     def get_sell_compute_unit_limit(self, *_a: object) -> int:
         return 100_000
 
-    def derive_pool_address(self, mint: Pubkey) -> Pubkey:
-        return mint
 
-
-def _pool(market_cls: type, price: float):  # noqa: ANN202, C901 — stub methods
+def _pool(market_cls: type, price: float):  # noqa: ANN202
     """The real pool market class, its chain reads and instructions stubbed."""
 
     class _Pool(market_cls):
@@ -726,9 +722,6 @@ def _pool(market_cls: type, price: float):  # noqa: ANN202, C901 — stub method
 
         async def get_market_state(self, *_a: object) -> dict:
             return {"price_per_token": price, "fee_fraction": 0.0, "pool": "POOL"}
-
-        async def get_price(self, *_a: object) -> float:
-            return price
 
         def quote_destination(self, *_a: object) -> None:
             return None
