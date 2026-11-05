@@ -29,6 +29,9 @@ against a stub seller and a stub client serving scripted confirmations:
  10. A throw after submission is UNCONFIRMED with its signature, not
      SUBMIT_FAILED - only the latter is safe to resend unchecked.
  11. A re-check that itself throws stops, rather than escaping into a retry.
+ 12. The real seller, whose send fails after signing in a way that may still
+     have delivered it, reports UNCONFIRMED with the signature it signed;
+     only `TransactionNotSent` is SUBMIT_FAILED with no signature.
 
 Usage:
     uv run tests/regression/verify_exit_sell_confirmation.py
@@ -39,13 +42,16 @@ import inspect
 import sys
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from solders.pubkey import Pubkey  # noqa: E402
+from solders.signature import Signature  # noqa: E402
 
-from core.client import SolanaClient  # noqa: E402
+from core.client import SolanaClient, TransactionNotSent  # noqa: E402
+from core.pubkeys import WSOL_MINT, SystemAddresses  # noqa: E402
 from interfaces.core import (  # noqa: E402
     ConfirmationStatus,
     Platform,
@@ -53,7 +59,11 @@ from interfaces.core import (  # noqa: E402
     TradeFailureReason,
 )
 from platforms import PlatformImplementations  # noqa: E402
-from trading import trade_log  # noqa: E402
+from platforms.pumpfun.address_provider import PumpFunAddressProvider  # noqa: E402
+from platforms.pumpfun.instruction_builder import (  # noqa: E402
+    PumpFunInstructionBuilder,
+)
+from trading import platform_aware, trade_log  # noqa: E402
 from trading.base import TradeResult  # noqa: E402
 from trading.platform_aware import PlatformAwareSeller  # noqa: E402
 from trading.position import Position  # noqa: E402
@@ -63,6 +73,7 @@ from trading.position_manager import (  # noqa: E402
     _exit_sell_verdict_for,
 )
 from trading.settings import DEFAULT_MAX_EXIT_SELL_ATTEMPTS  # noqa: E402
+from utils.idl_manager import get_idl_manager  # noqa: E402
 
 BUY_PRICE = 1.0e-6
 QUANTITY = 1_000_000.0
@@ -554,6 +565,111 @@ def check_submit_failed_only_before_a_signature() -> bool:
     )
 
 
+class _SendFails:
+    """A client whose send signs the sell, then fails with `error`."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+        self.signature = Signature.new_unique()
+
+    async def build_and_send_transaction(self, *_a: object, **kwargs: object) -> str:
+        on_signed = kwargs.get("on_signed")
+        if on_signed is not None:
+            on_signed(self.signature, 1)
+        raise self.error
+
+
+class _Curve:
+    async def get_pool_state(self, _pool: Pubkey, commitment=None) -> dict:  # noqa: ANN001, ARG002
+        return {
+            "price_per_token": BUY_PRICE,
+            "quote_mint": WSOL_MINT,
+            "creator": str(_make_token_info().creator),
+            "is_mayhem_mode": False,
+            "is_cashback_coin": False,
+        }
+
+
+async def _sell_when_send_fails(error: Exception) -> tuple[TradeResult, str]:
+    provider = PumpFunAddressProvider()
+    implementations = PlatformImplementations(
+        address_provider=provider,
+        instruction_builder=PumpFunInstructionBuilder(
+            get_idl_manager().get_parser(Platform.PUMP_FUN)
+        ),
+        curve_manager=_Curve(),
+        event_parser=None,
+        graduated_market=None,
+    )
+    original = platform_aware.get_platform_implementations
+    platform_aware.get_platform_implementations = lambda _p, _c: implementations
+    owner = _make_token_info().user
+    wallet = SimpleNamespace(
+        pubkey=owner,
+        keypair=None,
+        get_associated_token_address=lambda mint, program: Pubkey.find_program_address(
+            [bytes(owner), bytes(program), bytes(mint)],
+            SystemAddresses.ASSOCIATED_TOKEN_PROGRAM,
+        )[0],
+    )
+
+    async def no_fee(_accounts: list) -> None:
+        return None
+
+    client = _SendFails(error)
+    seller = PlatformAwareSeller(
+        client,
+        wallet,
+        SimpleNamespace(calculate_priority_fee=no_fee),
+        slippage=0.5,
+        max_retries=1,
+    )
+    token_info = _make_token_info()
+    token_info.mint = Pubkey.new_unique()
+    token_info.bonding_curve = provider.derive_pool_address(token_info.mint)
+    token_info.token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
+    token_info.quote_mint = WSOL_MINT
+    try:
+        result = await seller.execute(
+            token_info,
+            token_amount=QUANTITY,
+            token_amount_raw=int(QUANTITY * 10**6),
+            token_price=BUY_PRICE,
+        )
+    finally:
+        platform_aware.get_platform_implementations = original
+    return result, str(client.signature)
+
+
+async def check_ambiguous_send_keeps_its_signature() -> bool:
+    """A send that may have delivered the sell keeps its signature.
+
+    `build_and_send_transaction` raises `TransactionNotSent` only when no
+    attempt can have reached the network; any other error after signing (a
+    read timeout, say) may have delivered it. Reported as SUBMIT_FAILED, the
+    exit would resend without asking the chain.
+
+    Returns:
+        Whether the check passed
+    """
+    maybe, signature = await _sell_when_send_fails(TimeoutError("read timed out"))
+    never, _ = await _sell_when_send_fails(TransactionNotSent("connection refused"))
+    passed = (
+        maybe.failure_reason is TradeFailureReason.UNCONFIRMED
+        and maybe.tx_signature == signature
+        and _exit_sell_verdict_for(maybe.failure_reason) is None
+        and never.failure_reason is TradeFailureReason.SUBMIT_FAILED
+        and never.tx_signature is None
+    )
+    return _check(
+        "a send that may have landed is UNCONFIRMED with the signature it signed",
+        passed,
+        f"maybe sent: {maybe.failure_reason}, signature kept: "
+        f"{maybe.tx_signature == signature}; not sent: {never.failure_reason}, "
+        f"signature: {never.tx_signature}",
+    )
+
+
 async def main() -> None:
     """Run every check and exit non-zero if any failed."""
     print("=" * 72)
@@ -573,6 +689,7 @@ async def main() -> None:
         await check_recheck_failure_stops(),
         check_post_submission_throw_is_unconfirmed(),
         check_submit_failed_only_before_a_signature(),
+        await check_ambiguous_send_keeps_its_signature(),
     ]
 
     print("\n" + "=" * 72)

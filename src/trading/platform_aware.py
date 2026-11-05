@@ -1106,6 +1106,9 @@ class PlatformAwareSeller(Trader):
         # submitted from one whose outcome is unknown. Only the first is safe to
         # resend without checking the chain.
         tx_signature = None
+        # The signature once the sell is signed: a send that fails without
+        # proving nothing went out may still land.
+        signed: list[Signature] = []
 
         try:
             implementations = get_platform_implementations(
@@ -1264,6 +1267,7 @@ class PlatformAwareSeller(Trader):
                 account_data_size_limit=self._get_cu_override(
                     "account_data_size", token_info.platform
                 ),
+                on_signed=lambda signature, _last_valid: signed.append(signature),
             )
 
             revert: list[str] = []
@@ -1301,6 +1305,13 @@ class PlatformAwareSeller(Trader):
 
         except Exception as e:
             logger.exception("Sell operation failed")
+            if (
+                tx_signature is None
+                and signed
+                and not isinstance(e, TransactionNotSent)
+            ):
+                # Only TransactionNotSent proves no attempt reached the network.
+                tx_signature = signed[0]
             if tx_signature is None:
                 # Nothing reached the chain, so there is nothing to resolve and
                 # resending is safe.
