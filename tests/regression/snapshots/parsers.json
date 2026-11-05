@@ -794,7 +794,8 @@
   "PumpSwap market": {
    "price_per_token": 4.7205631033132743e-07,
    "fee_fraction": 0.003,
-   "pool": "B9WYSKaLDWnegupPNG1h99XiiokMUYj6k64Dbqv18qr8"
+   "pool": "B9WYSKaLDWnegupPNG1h99XiiokMUYj6k64Dbqv18qr8",
+   "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
   },
   "PumpSwap pool": {
    "address": "B9WYSKaLDWnegupPNG1h99XiiokMUYj6k64Dbqv18qr8",
@@ -811,7 +812,8 @@
   "CPMM market": {
    "price_per_token": 1.5922285112513127e-06,
    "fee_fraction": 0.0125,
-   "pool": "nEnhtdXrHocxDQnmfTWgaLodJP8jxFbY6958iv28GzV"
+   "pool": "nEnhtdXrHocxDQnmfTWgaLodJP8jxFbY6958iv28GzV",
+   "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
   },
   "CPMM pool": {
    "address": "nEnhtdXrHocxDQnmfTWgaLodJP8jxFbY6958iv28GzV",
@@ -1368,7 +1370,8 @@
    "PumpSwap market": {
     "price_per_token": 1.9198997208223232e-08,
     "fee_fraction": 0.003,
-    "pool": "ATbyCe9Lkse8Kk7Du6ZykM3ZAZgNGniEL785xxcDeAgh"
+    "pool": "ATbyCe9Lkse8Kk7Du6ZykM3ZAZgNGniEL785xxcDeAgh",
+    "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
    },
    "PumpSwap pool": {
     "address": "ATbyCe9Lkse8Kk7Du6ZykM3ZAZgNGniEL785xxcDeAgh",
@@ -1406,7 +1409,8 @@
    "PumpSwap market": {
     "price_per_token": 0.026633063874186406,
     "fee_fraction": 0.003,
-    "pool": "FqVhbysCvxKvTP3C9YXdy63K7AQcVXis7HibJDn8F88r"
+    "pool": "FqVhbysCvxKvTP3C9YXdy63K7AQcVXis7HibJDn8F88r",
+    "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
    },
    "PumpSwap pool": {
     "address": "FqVhbysCvxKvTP3C9YXdy63K7AQcVXis7HibJDn8F88r",
@@ -1444,7 +1448,8 @@
    "PumpSwap market": {
     "price_per_token": 1.5052176528830076e-07,
     "fee_fraction": 0.003,
-    "pool": "5gMKcHPkkddhzNHFVWrrbtBt2jxgjdpbZSnQqepWVotf"
+    "pool": "5gMKcHPkkddhzNHFVWrrbtBt2jxgjdpbZSnQqepWVotf",
+    "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
    },
    "PumpSwap pool": {
     "address": "5gMKcHPkkddhzNHFVWrrbtBt2jxgjdpbZSnQqepWVotf",
@@ -1564,7 +1569,8 @@
    "CPMM market": {
     "price_per_token": 2.7437692754153455e-07,
     "fee_fraction": 0.003,
-    "pool": "9m55XbhUUBQujSaxYZztmjvTupbGK4RppAwzwEtUwQ1h"
+    "pool": "9m55XbhUUBQujSaxYZztmjvTupbGK4RppAwzwEtUwQ1h",
+    "token_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
    },
    "CPMM pool": {
     "address": "9m55XbhUUBQujSaxYZztmjvTupbGK4RppAwzwEtUwQ1h",
@@ -1684,7 +1690,8 @@
    "CPMM market": {
     "price_per_token": 5.527937537264175e-07,
     "fee_fraction": 0.0125,
-    "pool": "DHpFy3CM4cxQmoR14cMA3wA2V5SB9yHfVPiLZCYrfakt"
+    "pool": "DHpFy3CM4cxQmoR14cMA3wA2V5SB9yHfVPiLZCYrfakt",
+    "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
    },
    "CPMM pool": {
     "address": "DHpFy3CM4cxQmoR14cMA3wA2V5SB9yHfVPiLZCYrfakt",
@@ -1804,7 +1811,8 @@
    "CPMM market": {
     "price_per_token": 6.630840627283912e-08,
     "fee_fraction": 0.0125,
-    "pool": "FUqjQxftdS9ic7mTpBWy1JtzQ54sgqaVL7nZ9uvoFn55"
+    "pool": "FUqjQxftdS9ic7mTpBWy1JtzQ54sgqaVL7nZ9uvoFn55",
+    "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
    },
    "CPMM pool": {
     "address": "FUqjQxftdS9ic7mTpBWy1JtzQ54sgqaVL7nZ9uvoFn55",
@@ -1924,7 +1932,8 @@
    "CPMM market": {
     "price_per_token": 1.8407154982833968e-09,
     "fee_fraction": 0.0125,
-    "pool": "gRiZY3skcDmVHgfJkg1vi2TDFV4JaqCboccSxdGmZyo"
+    "pool": "gRiZY3skcDmVHgfJkg1vi2TDFV4JaqCboccSxdGmZyo",
+    "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
    },
    "CPMM pool": {
     "address": "gRiZY3skcDmVHgfJkg1vi2TDFV4JaqCboccSxdGmZyo",
@@ -2600,7 +2609,7 @@
    }
   },
   {
-   "label": "pump.fun, legacy migrate, SOL quote, SPL Token coin",
+   "label": "pump.fun, legacy migrate, SOL quote, Token-2022 coin",
    "token": {
     "name": "ESOL",
     "symbol": "$ESOL",

@@ -15,9 +15,9 @@ finding fewer coins than `logs` or `geyser` over the same window.
 Offline machine checks, no network and no funds moved. A stub websocket replays
 scripted frames into the real `_wait_for_token_creation`:
 
-  1. A null block returns None instead of raising TypeError.
+  1. A null block returns no coin instead of raising TypeError.
   2. Nothing is logged at ERROR while handling it — a skipped slot is routine.
-  3. A block with no `transactions` key still returns None (unchanged).
+  3. A block with no `transactions` key still returns no coin (unchanged).
   4. A well-formed block is still processed, so the guard did not swallow
      real notifications.
 
@@ -132,7 +132,7 @@ async def check_null_block_returns_none() -> bool:
     print("\n1. A null block is skipped, not crashed on")
     result, _ = await _feed(NULL_BLOCK_FRAME)
     return _check(
-        "handler return value", result is None, f"{result!r} (no TypeError raised)"
+        "handler return value", result == [], f"{result!r} (no TypeError raised)"
     )
 
 
@@ -148,11 +148,11 @@ async def check_null_block_is_not_an_error() -> bool:
 
 
 async def check_block_without_transactions_returns_none() -> bool:
-    print("\n3. A block carrying no transactions still returns None")
+    print("\n3. A block carrying no transactions still returns no coin")
     result, records = await _feed(BLOCK_WITHOUT_TRANSACTIONS_FRAME)
     return _check(
         "handler return value",
-        result is None and not records,
+        result == [] and not records,
         f"{result!r}, {len(records)} ERROR record(s)",
     )
 

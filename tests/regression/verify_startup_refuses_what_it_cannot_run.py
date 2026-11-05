@@ -13,11 +13,12 @@ stopped on an error still exited 0.
      any other argument exits 2. Neither loads a config or writes `logs/`.
   B. A config that fails validation logs one line naming the file and the
      cause, no traceback, to the console and to a file in `logs/`; the run
-     exits 1.
+     exits 1. A `name` that is not a non-empty string is refused: it keys the
+     bot's positions file.
   C. With every bot disabled the run logs one line saying how many configs it
      found and that all are disabled, and exits 1. A config whose YAML says
-     `enabled: false` is skipped unread, so one that could not load writes no
-     log.
+     `enabled: false` is skipped before its settings are read, so one whose
+     settings could not load writes no log; its YAML must still parse.
   D. An enabled bot whose `rpc_endpoint` refuses connections logs
      `Bot '<name>' not started: rpc_endpoint is unreachable (connection
      refused)`, no traceback, never starts its trader, names no endpoint and
@@ -26,8 +27,8 @@ stopped on an error still exited 0.
   E. `rpc_endpoint_problem` calls any JSON-RPC envelope an answer whatever
      the HTTP status (a 503 from a node that is behind, a 400), and HTTP 429
      too; HTTP 401 and 403 are `rejected the request`, asked once; anything
-     else is `is unreachable (<cause>)` in a few words: a 5xx or non-JSON body,
-     a timeout, a refused connection, too many redirects, a reply that is not
+     else is `is unreachable (<cause>)` in a few words: a 5xx or non-JSON body
+     (JSON nested too deep to decode included), a timeout, a refused connection, too many redirects, a reply that is not
      HTTP, an invalid host name, a URL that is not http(s). No reason holds
      the URL.
   F. Exit status: `main` exits 0 only when `run_all_bots` reports every bot
@@ -51,6 +52,9 @@ stopped on an error still exited 0.
      ignored, as a shell starts a background job, and when only the main
      process gets it while the bot runs in its own: the trader's shutdown
      line, no `KeyboardInterrupt` traceback, exit 143, nothing left running.
+  K. Bots run one after another in the main process each write to their own
+     file in `logs/`: a bot's file handler is gone once it ends, so the next
+     bot's lines are not in it, and setting up one file twice attaches it once.
 
 Offline: the bot runs against a stand-in JSON-RPC node on 127.0.0.1 and a
 closed local port; no funds move.
@@ -85,6 +89,7 @@ import yaml  # noqa: E402
 from solders.keypair import Keypair  # noqa: E402
 
 import bot_runner  # noqa: E402
+import config_loader  # noqa: E402
 import core.client  # noqa: E402
 from trading import universal_trader  # noqa: E402
 
@@ -134,6 +139,7 @@ class _Node(BaseHTTPRequestHandler):
             "500": (500, "oops"),
             "404gateway": (404, json.dumps({"error": "Not Found"})),
             "html": (200, "<html>not a node</html>"),
+            "deep": (200, "[" * 100_000 + "]" * 100_000),
             "redirect": (307, ""),
         }.get(self.behaviour, (200, "{}"))
         if self.behaviour == "slow":
@@ -271,6 +277,16 @@ def check_b_config_errors_are_one_line(tmp: str) -> bool:
             problems.append(f"{stem}: the line is not in logs/")
         if run.returncode != 1:
             problems.append(f"{stem}: exit {run.returncode}, expected 1")
+    # The name keys the positions file; a bot without one would have none.
+    for name in ("", "  ", None, False, 0, ["x"]):
+        try:
+            config_loader.validate_config({**_config("x", rpc), "name": name})
+        except ValueError as e:
+            if "name must be a non-empty string" not in str(e):
+                problems.append(f"name {name!r}: refused for {e}")
+        else:
+            problems.append(f"name {name!r} was accepted")
+    config_loader.validate_config(_config("named", rpc))
     return _report(problems)
 
 
@@ -397,6 +413,7 @@ def check_e_probe_names_the_cause(_tmp: str) -> bool:
         ("500", "is unreachable (HTTP 500)", 2),
         ("404gateway", "is unreachable (HTTP 404)", 2),
         ("html", "is unreachable (the answer is not JSON-RPC)", 2),
+        ("deep", "is unreachable (the answer is not JSON-RPC)", 2),
         ("redirect", "is unreachable (too many redirects)", None),
         ("garbage", "is unreachable (the answer is not HTTP)", 2),
         ("slow", "is unreachable (no answer within 0.5 s)", None),
@@ -788,6 +805,43 @@ def check_i_trader_error_stop_fails_the_run(tmp: str) -> bool:
     return _report(problems)
 
 
+def check_k_each_bot_logs_to_its_own_file(tmp: str) -> bool:
+    problems = []
+    refused = f"http://127.0.0.1:{_closed_port()}"
+    folder = _folder(
+        tmp, {"first": _config("first", refused), "second": _config("second", refused)}
+    )
+    before = set(logging.getLogger().handlers)
+    for stem in ("first", "second"):
+        _start_in_process(folder, stem)
+    left = set(logging.getLogger().handlers) - before
+    if left:
+        problems.append(f"{len(left)} handler(s) left attached after the bots ended")
+    files = {
+        p.name.split("_")[0]: p.read_text() for p in (folder / "logs").glob("*.log")
+    }
+    if sorted(files) != ["first", "second"]:
+        problems.append(f"log files: {sorted(files)}, expected first and second")
+    elif "Bot 'second'" in files["first"]:
+        problems.append("the second bot's lines are in the first bot's log file")
+    elif "Bot 'first'" not in files["first"]:
+        problems.append("the first bot's own refusal is not in its log file")
+
+    cwd = Path.cwd()
+    os.chdir(folder)
+    try:
+        added = [bot_runner.setup_file_logging("logs/twice.log") for _ in range(2)]
+    finally:
+        os.chdir(cwd)
+    for handler in added:
+        if handler is not None:
+            logging.getLogger().removeHandler(handler)
+            handler.close()
+    if added[0] is None or added[1] is not None:
+        problems.append(f"one file set up twice attached {added}")
+    return _report(problems)
+
+
 def main() -> int:
     """Run every check and report."""
     checks = [
@@ -822,6 +876,7 @@ def main() -> int:
             check_i_trader_error_stop_fails_the_run,
         ),
         ("J: SIGTERM stops like Ctrl+C, exit 143", check_j_sigterm_is_clean),
+        ("K: each bot logs to its own file", check_k_each_bot_logs_to_its_own_file),
     ]
     passed = 0
     with tempfile.TemporaryDirectory() as tmp:

@@ -171,8 +171,8 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
 - An exit sell is **not idempotent**, so "it failed" is not enough to act on.
   `confirm_transaction_detailed` / `verify_transaction_status` return
   `ConfirmationStatus` (`SUCCESS` / `REVERTED` / `UNCONFIRMED`): a `REVERTED`
-  retries, an `UNCONFIRMED` signature is re-checked first. A missing
-  `failure_reason` means "unknown", never "reverted".
+  retries; an `UNCONFIRMED` one is re-checked, resold only past its last valid
+  height unseen. A missing `failure_reason` means "unknown", never "reverted".
 - `SUBMIT_FAILED` means "no transaction ever reached the chain" and nothing else
   — the one reason besides `REVERTED` that retries without asking the chain. A
   post-submission throw reports `UNCONFIRMED` with its signature.

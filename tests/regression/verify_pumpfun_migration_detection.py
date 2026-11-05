@@ -39,7 +39,8 @@ real `listen_for_tokens` loop over scripted frames:
      pools it adds a subscription on Global's withdraw authority, which every
      migration names as account 1 and no buy or sell names.
   D. A pool is reported once per mint across repeated frames, and a callback
-     that raises does not stop the listener reporting the next one.
+     that raises does not stop the listener reporting the next one; nor does
+     a pool parser that raises on one transaction (`logs`, `blocks`).
   G. On `shreds` an earlier attempt for the same mint does not hide the one
      that lands: a migrate that will fail (the same instruction in another
      transaction) and one naming another quote mint and its pool are each
@@ -652,6 +653,34 @@ def check_d_once_per_mint() -> bool:
         _run(kind, _frames(kind, real[:2]), pool_callback=flaky)
         if len(seen) != 2:  # noqa: PLR2004
             problems.append(f"{kind}: {len(seen)} reports after a raising callback")
+
+    # A pool parser failing on one transaction costs that transaction only:
+    # the listener keeps its connection and reports the next migration.
+    for kind, name in (
+        ("logs", "parse_pools_ready_from_logs"),
+        ("blocks", "parse_pools_ready_from_block_transaction"),
+    ):
+        listener = _listener(kind)
+        parser = next(iter(listener.platform_parsers.values()))
+        original, calls = getattr(parser, name), []
+
+        def failing_first(*args, calls: list = calls, original=original):  # noqa: ANN002, ANN001, ANN202
+            calls.append(args)
+            if len(calls) == 1:
+                raise RuntimeError("parser failed")  # noqa: TRY003
+            return original(*args)
+
+        # Shared by every listener: the stand-in comes off before the next run.
+        setattr(parser, name, failing_first)
+        try:
+            _, pools, _ = _run(kind, _frames(kind, real[:2]), listener=listener)
+        finally:
+            delattr(parser, name)
+        if [_triple(p) for p in pools] != [_expected(real[1])]:
+            problems.append(
+                f"{kind}: after a parser failed on one migration, reported "
+                f"{[_triple(p) for p in pools]}"
+            )
     return _report(problems)
 
 

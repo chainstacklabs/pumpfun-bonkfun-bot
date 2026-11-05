@@ -62,6 +62,9 @@ RPC_DELAY = 1.0 / SPEEDUP  # a mainnet RPC round trip, sped up
 SETTLE = 15.0  # the settle wait cleanup has always logged
 LONG_SESSION = 60
 CLOSE_ACCOUNT = bytes([9])
+# SPL Token's Burn and BurnChecked, by instruction index.
+BURNS = (8, 15)
+TOKEN_PROGRAMS = (SystemAddresses.TOKEN_PROGRAM, SystemAddresses.TOKEN_2022_PROGRAM)
 
 _real_sleep = asyncio.sleep
 
@@ -119,7 +122,15 @@ class _Client:
         if account in self.failing:
             raise _SendError
         self.touched.update(m.pubkey for ix in instructions for m in ix.accounts)
+        # As on chain: a burn empties its account, and a close of an account
+        # that still holds tokens fails.
+        for ix in instructions:
+            data = bytes(ix.data)
+            if ix.program_id in TOKEN_PROGRAMS and data and data[0] in BURNS:
+                self.balances[ix.accounts[0].pubkey] = 0
         if bytes(instructions[-1].data) == CLOSE_ACCOUNT:
+            if self.balances.get(account, 0):
+                raise _SendError
             self.closed.append(account)
         return "STUB_SIGNATURE"
 

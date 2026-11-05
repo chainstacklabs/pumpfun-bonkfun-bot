@@ -142,9 +142,13 @@ def _log_file(stem: str) -> str:
     return str(log_dir / f"{stem}_{timestamp}.log")
 
 
-def setup_logging(bot_name: str):
-    """Set up logging to file for a specific bot instance."""
-    setup_file_logging(_log_file(bot_name))
+def setup_logging(bot_name: str) -> logging.Handler | None:
+    """Set up logging to file for a specific bot instance.
+
+    Returns:
+        The bot's file handler, for `start_bot` to remove when the bot ends
+    """
+    return setup_file_logging(_log_file(bot_name))
 
 
 def mask_endpoints(cfg: dict) -> None:
@@ -296,7 +300,19 @@ async def start_bot(config_path: str, positions_file: str | None = None) -> bool
         logger.error(f"Could not load {config_path}: {_one_line(e)}")  # noqa: TRY400
         return False
     mask_endpoints(cfg)
-    setup_logging(cfg["name"])
+    handler = setup_logging(cfg["name"])
+    try:
+        return await _start_loaded(cfg, positions_file)
+    finally:
+        # Bots in the main process run one after another: the next one's lines
+        # go to its own file, not this one's too.
+        if handler is not None:
+            logging.getLogger().removeHandler(handler)
+            handler.close()
+
+
+async def _start_loaded(cfg: dict, positions_file: str | None) -> bool:
+    """`start_bot` once the config has loaded and the bot's log file is set up."""
     print_config_summary(cfg)
 
     try:
@@ -530,7 +546,7 @@ def run_all_bots() -> bool:
             all_ok = False
 
     logging.info(
-        f"Started {len(bot_files) - skipped_bots} bots, skipped {skipped_bots} disabled/invalid bots"
+        f"Launched {len(bot_files) - skipped_bots} bots, skipped {skipped_bots} disabled/invalid bots"
     )
 
     # Wait for all processes to complete

@@ -25,7 +25,8 @@ Offline machine checks, no network and no funds moved:
      constant-product curve only.
   E. Config: `launchlab` pairs with `blocks`, `geyser` and `shreds`, not `logs`;
      `launchlab.platform_configs` is refused on pump.fun, on a preset naming a
-     config outside it, empty or malformed.
+     config outside it, empty or malformed; a `launchlab` section that is not
+     a mapping is refused as a config error on any platform.
   F. The registry keeps one set of implementations per narrowing, so two bots
      in one process listen on their own configs.
   G. The trade log and the token file record the coin's platform config.
@@ -382,6 +383,8 @@ def check_e_config_validation() -> bool:
         ("empty list", _config("launchlab", configs=[]), False),
         ("not a list", _config("launchlab", configs=reward), False),
         ("not an address", _config("launchlab", configs=["not-a-key"]), False),
+        ("section not a mapping", {**_config("launchlab"), "launchlab": "x"}, False),
+        ("section a list", {**_config("pump_fun"), "launchlab": [reward]}, False),
     ]
     problems = [
         f"{label}: validated={not expected}"

@@ -33,6 +33,8 @@ scripted `getTransaction` responses:
   7. A balance that predates the buy is capped at what this buy asked for, so
      the exit cannot liquidate holdings this trade never created.
   8. A buy whose transaction genuinely failed is still reported unsuccessful.
+  9. A confirmed buy whose quote destination is unknown (a LaunchLab coin
+     with no quote vault recorded) is still a buy, read back without it.
 
 Usage:
     uv run tests/regression/verify_buy_result_not_lost.py
@@ -200,7 +202,9 @@ def _async_return(value: object) -> Callable[..., object]:
     return _inner
 
 
-async def _run_buy(client: StubBuyClient) -> TradeResult:
+async def _run_buy(
+    client: StubBuyClient, token_info: TokenInfo | None = None
+) -> TradeResult:
     """Drive the real PlatformAwareBuyer.execute against stubs."""
     wallet = SimpleNamespace(
         pubkey=CURVE,
@@ -219,11 +223,11 @@ async def _run_buy(client: StubBuyClient) -> TradeResult:
         extreme_fast_mode=True,
     )
     original = platform_aware.get_platform_implementations
-    platform_aware.get_platform_implementations = (
-        lambda *_args, **_kwargs: _stub_implementations()
+    platform_aware.get_platform_implementations = lambda *_args, **_kwargs: (
+        _stub_implementations()
     )
     try:
-        return await buyer.execute(_make_token_info())
+        return await buyer.execute(token_info or _make_token_info())
     finally:
         platform_aware.get_platform_implementations = original
 
@@ -327,6 +331,21 @@ async def check_failed_buy_still_fails() -> bool:
     )
 
 
+async def check_unknown_quote_destination_is_not_lost() -> bool:
+    print("\n9. A confirmed buy with no known quote destination is still a buy")
+    client = StubBuyClient(confirmed=True, details=(TOKENS_RECEIVED_RAW, None))
+    token_info = _make_token_info()
+    token_info.platform = Platform.LAUNCHLAB
+    token_info.quote_vault = None
+    result = await _run_buy(client, token_info)
+    return _check(
+        "TradeResult.success",
+        bool(result.success) and result.amount_raw == TOKENS_RECEIVED_RAW,
+        f"{result.success}, {result.amount_raw} raw "
+        f"(error_message={result.error_message!r})",
+    )
+
+
 async def main() -> None:
     print("=" * 72)
     print("Verifying a landed buy is never reported as a failed buy")
@@ -341,6 +360,7 @@ async def main() -> None:
         await check_fallback_amount_is_the_balance_held(),
         await check_fallback_never_exceeds_what_was_bought(),
         await check_failed_buy_still_fails(),
+        await check_unknown_quote_destination_is_not_lost(),
     ]
 
     print("\n" + "=" * 72)

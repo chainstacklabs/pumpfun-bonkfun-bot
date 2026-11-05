@@ -294,12 +294,16 @@ def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
 
 def setup_file_logging(
     filename: str = "pump_trading.log", level: int = logging.INFO
-) -> None:
+) -> logging.FileHandler | None:
     """Set up file logging for all loggers.
 
     Args:
         filename: Log file path
         level: Logging level for file handler
+
+    Returns:
+        The handler added, for the caller to remove when its run ends; None
+        when one already writes to that file
     """
     # A file handler at INFO captures the HTTP clients' request URLs into
     # logs/, where they outlive the terminal. Redact before it is attached.
@@ -307,15 +311,15 @@ def setup_file_logging(
 
     root_logger = logging.getLogger()
 
-    # Check if file handler with same filename already exists
+    # A FileHandler keeps the absolute path, whatever it was given.
+    path = os.path.abspath(filename)  # noqa: PTH100 - what FileHandler stores
     for handler in root_logger.handlers:
-        if (
-            isinstance(handler, logging.FileHandler)
-            and handler.baseFilename == filename
-        ):
-            return  # File handler already added
+        if isinstance(handler, logging.FileHandler) and handler.baseFilename == path:
+            return None
 
-    root_logger.addHandler(file_handler(filename, level))
+    handler = file_handler(filename, level)
+    root_logger.addHandler(handler)
+    return handler
 
 
 def file_handler(filename: str, level: int = logging.INFO) -> logging.FileHandler:

@@ -240,6 +240,7 @@ class CpmmMarket(Market):
             else 0.0,
             "fee_fraction": (trade_fee + creator_fee) / FEE_RATE_DENOMINATOR,
             "pool": pool.address,
+            "token_program": pool.base_program,
         }
 
     async def build_buy_instruction(

@@ -218,10 +218,10 @@ def check_listener_detects_the_v1_create() -> bool:
     """
     listener = UniversalBlockListener("wss://offline.invalid", [Platform.PUMP_FUN])
     result = _load(V1_FIXTURE)
-    token_info = listener._process_block_transactions(  # noqa: SLF001
+    tokens = listener._process_block_transactions(  # noqa: SLF001
         [_as_block_transaction(result)]
     )
-    if token_info is None:
+    if not tokens:
         print("     block listener returned None for a v1 create_v2")
         return False
     return True
@@ -243,8 +243,8 @@ def check_log_route_detects_without_the_envelope() -> bool:
     # Valid base64, not a transaction: the decode raises and the fallback has
     # nothing to offer, so only the logs can answer.
     tx["transaction"] = [base64.b64encode(b"not a transaction").decode(), "base64"]
-    token_info = listener._process_block_transactions([tx])  # noqa: SLF001
-    if token_info is None:
+    tokens = listener._process_block_transactions([tx])  # noqa: SLF001
+    if not tokens:
         print(
             "     a v1 create with unreadable bytes was missed — the logs are not the route"
         )
@@ -276,10 +276,10 @@ def check_listener_still_detects_a_pre_v1_create() -> bool:
     if result.get("version") == 1:
         print("     the legacy/v0 fixture is itself v1; the check proves nothing")
         return False
-    token_info = listener._process_block_transactions(  # noqa: SLF001
+    tokens = listener._process_block_transactions(  # noqa: SLF001
         [_as_block_transaction(result)]
     )
-    if token_info is None:
+    if not tokens:
         print("     block listener returned None for a pre-v1 create")
         return False
     return True

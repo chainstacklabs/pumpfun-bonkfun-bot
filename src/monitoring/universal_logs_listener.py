@@ -256,8 +256,16 @@ class UniversalLogsListener(BaseTokenListener):
         return None
 
     def _pools_from_logs(self, logs: list[str], signature: str) -> list[PoolReady]:
-        """Pools a successful transaction's logs show a migration created."""
+        """Pools a successful transaction's logs show a migration created.
+
+        A parser that fails on one transaction is logged and skipped, as the
+        Geyser listener does: the frame's coin is still read, and the
+        connection is kept.
+        """
         pools = []
         for parser in self.platform_parsers.values():
-            pools += parser.parse_pools_ready_from_logs(logs, signature)
+            try:
+                pools += parser.parse_pools_ready_from_logs(logs, signature)
+            except Exception:
+                logger.exception(f"Error reading a migration from {signature}")
         return pools

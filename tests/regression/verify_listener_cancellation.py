@@ -177,7 +177,7 @@ async def check_read_timeout_is_tolerated() -> bool:
     )
     return _check(
         "handler return value",
-        result is None,
+        result == [],
         f"{result!r} — an idle connection is not dropped",
     )
 
@@ -194,7 +194,7 @@ async def check_bad_json_is_tolerated() -> bool:
     )
     return _check(
         "handler return value",
-        result is None,
+        result == [],
         f"{result!r} — one malformed frame does not drop the connection",
     )
 

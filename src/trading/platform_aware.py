@@ -549,6 +549,12 @@ class PlatformAwareBuyer(Trader):
                         error_message=f"{token_info.symbol} has graduated: {unavailable}",
                     )
                 token_price_sol = pool_state["price_per_token"]
+                # The pool knows the coin's token program; a listener may have
+                # guessed it. The positions file and cleanup must name the
+                # account this buy fills.
+                self._apply_token_program(
+                    token_info, pool_state.get("token_program"), address_provider
+                )
                 logger.info(
                     f"{token_info.symbol} has graduated; buying in {pool_state['pool']}"
                 )
@@ -615,6 +621,10 @@ class PlatformAwareBuyer(Trader):
                 f"(max: {max_quote_amount_raw / quote_unit:.6f} {quote_label})"
             )
 
+            # Where the spend lands, to read it back; None when unknown.
+            quote_destination = self._quote_destination(
+                token_info, venue, address_provider
+            )
             tx_signature = await self._send(
                 token_info,
                 TradeResult(
@@ -631,8 +641,8 @@ class PlatformAwareBuyer(Trader):
                         if exact_in
                         else token_amount_raw
                     ),
-                    quote_destination=self._quote_destination(
-                        token_info, venue, address_provider
+                    quote_destination=(
+                        None if quote_destination is None else str(quote_destination)
                     ),
                     spend_raw=max_quote_amount_raw if exact_in else None,
                     venue=venue.name,
@@ -660,15 +670,12 @@ class PlatformAwareBuyer(Trader):
             if status is ConfirmationStatus.SUCCESS:
                 logger.info(f"Buy transaction confirmed: {tx_signature}")
 
-                sol_destination = venue.quote_destination(
-                    token_info
-                ) or self._get_sol_destination(token_info, address_provider)
                 deltas = await read_deltas(
                     self.client,
                     tx_signature,
                     self.wallet.pubkey,
                     token_info,
-                    venue_account=sol_destination,
+                    venue_account=quote_destination,
                 )
                 # The fill is what the venue took in, protocol fees left out:
                 # exits measure from it. What the wallet paid is in `deltas`.
@@ -846,15 +853,14 @@ class PlatformAwareBuyer(Trader):
         token_info: TokenInfo,
         venue: Market,
         address_provider: AddressProvider,
-    ) -> str | None:
+    ) -> Pubkey | None:
         """Where the buy's spend lands, for reading it back; None if unknown."""
         try:
-            destination = venue.quote_destination(
-                token_info
-            ) or self._get_sol_destination(token_info, address_provider)
+            return venue.quote_destination(token_info) or self._get_sol_destination(
+                token_info, address_provider
+            )
         except NotImplementedError:
             return None
-        return str(destination)
 
     async def _read_token_balance(self, token_info: TokenInfo) -> int | None:
         """Read how many of a coin the wallet actually holds.
@@ -1106,6 +1112,10 @@ class PlatformAwareSeller(Trader):
         # submitted from one whose outcome is unknown. Only the first is safe to
         # resend without checking the chain.
         tx_signature = None
+        # The signature once the sell is signed, and the block height past which
+        # it can no longer land: a send that fails without proving nothing went
+        # out may still land, until then.
+        signed: list[tuple[Signature, int | None]] = []
 
         try:
             implementations = get_platform_implementations(
@@ -1264,6 +1274,9 @@ class PlatformAwareSeller(Trader):
                 account_data_size_limit=self._get_cu_override(
                     "account_data_size", token_info.platform
                 ),
+                on_signed=lambda signature, last_valid: signed.append(
+                    (signature, last_valid)
+                ),
             )
 
             revert: list[str] = []
@@ -1297,10 +1310,18 @@ class PlatformAwareSeller(Trader):
                 error_message=_not_settled("sell", status, tx_signature, revert),
                 failure_reason=_FAILURE_REASON_FOR[status],
                 venue=venue.name,
+                last_valid_block_height=signed[0][1] if signed else None,
             )
 
         except Exception as e:
             logger.exception("Sell operation failed")
+            if (
+                tx_signature is None
+                and signed
+                and not isinstance(e, TransactionNotSent)
+            ):
+                # Only TransactionNotSent proves no attempt reached the network.
+                tx_signature = signed[0][0]
             if tx_signature is None:
                 # Nothing reached the chain, so there is nothing to resolve and
                 # resending is safe.
@@ -1321,6 +1342,7 @@ class PlatformAwareSeller(Trader):
                 error_message=f"Sell outcome unknown for {tx_signature}: {e}",
                 failure_reason=TradeFailureReason.UNCONFIRMED,
                 venue=venue.name,  # chosen before anything was sent
+                last_valid_block_height=signed[0][1] if signed else None,
             )
 
     def _get_cu_override(self, operation: str, platform: Platform) -> int | None:

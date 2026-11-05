@@ -111,6 +111,9 @@ class PositionManager:
     #: Seconds after its send a buy with no recorded block height is taken to
     #: be past landing; a blockhash lives about 60 to 90.
     _PENDING_EXPIRY = 120.0
+    #: Seconds an unresolved exit sell is waited on for its blockhash to expire
+    #: before the exit gives up on it.
+    _SELL_EXPIRY_WAIT = 180.0
     #: Seconds between warnings while a position waits for its first price.
     _PRICE_WARN_EVERY = 60.0
     #: Where positions are kept across restarts; None keeps them in memory only.
@@ -267,6 +270,25 @@ class PositionManager:
         signature = sent.tx_signature
         first = True
         revert: list[str] = []
+        loop = asyncio.get_running_loop()
+        height_warned_at: float | None = None
+
+        def height_unreadable(error: Exception) -> None:
+            # Said at once, then once every `_PRICE_WARN_EVERY` while it lasts.
+            nonlocal height_warned_at
+            line = (
+                f"Could not read the block height to settle the buy of {label} "
+                f"({error}); asking again"
+            )
+            now = loop.time()
+            if height_warned_at is None or now - height_warned_at >= (
+                self._PRICE_WARN_EVERY
+            ):
+                height_warned_at = now
+                logger.warning(line)
+            else:
+                logger.debug(line)
+
         while True:
             # Every balance read below names the slot this decision rests on:
             # a node behind it errors, which keeps the record, rather than
@@ -288,7 +310,7 @@ class PositionManager:
                 )
                 self.store.remove(token_info.mint)
                 return None
-            expired, slot = await self._past_landing(stored)
+            expired, slot = await self._past_landing(stored, height_unreadable)
             if expired:
                 buy = await self._buy_from_balance(
                     token_info, sent, pending, label, slot
@@ -350,20 +372,29 @@ class PositionManager:
             logger.warning(f"Could not look up {signature[:16]}...: {e}")
             return ConfirmationStatus.UNCONFIRMED, None
 
-    async def _past_landing(self, stored: StoredPosition) -> tuple[bool, int | None]:
+    async def _past_landing(
+        self,
+        stored: StoredPosition,
+        on_height_error: Callable[[Exception], None],
+    ) -> tuple[bool, int | None]:
         """Whether the buy can no longer land, and the slot that was seen at.
 
-        The slot is None when the expiry came from the clock (no block height
-        recorded, or none readable).
+        A recorded block height decides: when the height cannot be read, the
+        buy is taken as not expired yet and asked about again next time. The
+        clock decides only for a record with no block height; the slot is then
+        None.
+
+        Args:
+            on_height_error: Told of each failed height read
         """
         last_valid = stored.pending.last_valid_block_height if stored.pending else None
         if last_valid is not None:
             try:
                 height, slot = await self.solana_client.get_block_height_and_slot()
             except Exception as e:  # noqa: BLE001
-                logger.warning(f"Could not read the block height ({e})")
-            else:
-                return height > last_valid, slot
+                on_height_error(e)
+                return False, None
+            return height > last_valid, slot
         held_for = (_utc_now() - stored.entry_time).total_seconds()
         return held_for > self._PENDING_EXPIRY, None
 
@@ -733,14 +764,12 @@ class PositionManager:
                 f"The wallet holds {held} raw of {label}, less than the "
                 f"{bought_raw} bought; the position sells what is held"
             )
-            buy = TradeResult(
-                success=True,
-                platform=buy.platform,
-                tx_signature=buy.tx_signature,
-                amount=held / 10**TOKEN_DECIMALS,
-                amount_raw=held,
-                price=buy.price,
+            # The buy's deltas stay: its cost per token is unchanged. The file
+            # keeps the smaller amount, so a later start never sells more.
+            buy = dataclasses.replace(
+                buy, amount=held / 10**TOKEN_DECIMALS, amount_raw=held
             )
+            self.store.reduce(token_info.mint, buy.amount, held)
         logger.info(
             f"Resuming position in {label}: {buy.amount} tokens bought at "
             f"{buy.price} on {stored.entry_time.isoformat()} UTC"
@@ -1072,7 +1101,7 @@ class PositionManager:
         )
         return ExitSellVerdict.SOLD, 0
 
-    async def _classify_failed_exit_sell(
+    async def _classify_failed_exit_sell(  # noqa: PLR0911 - one return per outcome
         self, token_info: TokenInfo, sell_result: TradeResult
     ) -> ExitSellVerdict:
         """Decide whether another exit sell is safe after one came back failed.
@@ -1084,7 +1113,9 @@ class PositionManager:
         A merely unconfirmed signature is re-checked first: `getTransaction`
         keeps answering long after signature statuses age out of the RPC's recent
         history, so a sell that turns out to have landed is reported as a late
-        success rather than retried.
+        success rather than retried. One still unknown that carries its last
+        valid block height is then waited on until it lands or can no longer
+        land (`_sell_after_expiry`).
 
         Args:
             token_info: Token information, for logging
@@ -1136,12 +1167,89 @@ class PositionManager:
             )
             return ExitSellVerdict.RETRY
 
+        if sell_result.last_valid_block_height is not None:
+            return await self._sell_after_expiry(
+                token_info,
+                signature,
+                sell_result.last_valid_block_height,
+                sell_result.amount_raw,
+            )
         logger.error(
             f"Exit sell {signature[:16]}... is still unconfirmed. Not sending "
             f"another sell: it may already have closed the position. Verify "
             f"this signature before acting on {token_info.symbol}."
         )
         return ExitSellVerdict.STOP
+
+    async def _sell_after_expiry(
+        self,
+        token_info: TokenInfo,
+        signature: str,
+        last_valid: int,
+        asked_raw: int | None,
+    ) -> ExitSellVerdict:
+        """Wait until an unresolved exit sell has landed or can no longer land.
+
+        Each look reads the block height and slot first, then the signature:
+        a sell cannot land once the height is past `last_valid`, so a lookup
+        made after that read sees it if it ever landed. Another sell goes out
+        only when the height is past `last_valid`, no node knows the signature,
+        and the wallet, read at "confirmed" from a node at least at that slot,
+        still holds the `asked_raw` the sell asked for. A smaller balance means
+        it landed after all; a node behind the slot, a signature seen but not
+        confirmed, or a failed read is waited on. Nothing is resent before the
+        expiry. Bounded by `_SELL_EXPIRY_WAIT`.
+
+        Returns:
+            LATE_SUCCESS, RETRY (reverted, or expired unknown with the coin
+            still held), or STOP when still unresolved at the bound
+        """
+        logger.warning(
+            f"Waiting for exit sell {signature[:16]}... of {token_info.symbol} to "
+            f"land or expire (block height {last_valid}) before selling again"
+        )
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._SELL_EXPIRY_WAIT
+        while True:
+            try:
+                height, slot = await self.solana_client.get_block_height_and_slot()
+            except Exception:  # noqa: BLE001
+                height, slot = None, None
+            try:
+                outcome, seen_at = await self.solana_client.get_signature_outcome(
+                    signature, search_history=True, quiet=True
+                )
+            except Exception:  # noqa: BLE001
+                outcome, seen_at = ConfirmationStatus.UNCONFIRMED, None
+            if outcome is ConfirmationStatus.SUCCESS:
+                logger.info(f"Exit sell {signature[:16]}... landed after all")
+                return ExitSellVerdict.LATE_SUCCESS
+            if outcome is ConfirmationStatus.REVERTED:
+                return ExitSellVerdict.RETRY
+            expired = height is not None and height > last_valid
+            if expired and outcome is None and seen_at is None and asked_raw:
+                held = await self._held_raw(token_info, slot)
+                if held is not None and held < asked_raw:
+                    logger.info(
+                        f"Exit sell {signature[:16]}... landed after all: the "
+                        f"wallet holds {held} of the {asked_raw} raw it sold"
+                    )
+                    return ExitSellVerdict.LATE_SUCCESS
+                if held is not None:
+                    logger.info(
+                        f"Exit sell {signature[:16]}... expired without landing; "
+                        f"selling {token_info.symbol} again"
+                    )
+                    return ExitSellVerdict.RETRY
+            if loop.time() >= deadline:
+                logger.error(
+                    f"Exit sell {signature[:16]}... is still unresolved after "
+                    f"{self._SELL_EXPIRY_WAIT:g}s. Not sending another sell: it "
+                    f"may already have closed the position. Verify this "
+                    f"signature before acting on {token_info.symbol}."
+                )
+                return ExitSellVerdict.STOP
+            await asyncio.sleep(self._PENDING_RECHECK)
 
     async def _read_price(self, token_info: TokenInfo) -> float:
         """The coin's price where it trades now: its curve, or after graduation its AMM pool.

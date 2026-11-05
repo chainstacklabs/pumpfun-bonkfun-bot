@@ -205,6 +205,11 @@ def validate_config(config: dict) -> None:
         if field == "private_key" and "keystore" in config:
             continue  # the keystore stands in for it, checked below
         get_nested_value(config, field)
+    # The name keys the bot's positions file: without one the bot would keep
+    # its open positions in memory only, and shutdown cleanup could burn them.
+    if not isinstance(config["name"], str) or not config["name"].strip():
+        msg = "name must be a non-empty string"
+        raise ValueError(msg)
     validate_wallet_config(config)
 
     # Validate config rules
@@ -372,9 +377,11 @@ def validate_platform_config(config: dict, platform: Platform) -> None:
             raise
 
     # launchlab.platform_configs: LaunchLab platforms only, each a valid address
-    resolve_platform_configs(
-        platform, (config.get("launchlab") or {}).get("platform_configs")
-    )
+    launchlab = config.get("launchlab") or {}
+    if not isinstance(launchlab, dict):
+        msg = "launchlab must be a mapping, such as platform_configs: [...]"
+        raise ValueError(msg)  # noqa: TRY004 - config errors are ValueError here
+    resolve_platform_configs(platform, launchlab.get("platform_configs"))
 
 
 def get_platform_from_config(config: dict) -> Platform:

@@ -289,7 +289,7 @@ def _is_json_rpc(body: bytes) -> bool:
     """
     try:
         answer = json.loads(body)
-    except ValueError:
+    except (ValueError, RecursionError):  # nested too deep for the decoder
         return False
     return isinstance(answer, dict) and "jsonrpc" in answer
 

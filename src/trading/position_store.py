@@ -70,9 +70,10 @@ def _check_buy(buy: dict) -> None:
     """Raise TypeError unless the stored buy's amounts are usable numbers.
 
     `amount` is a finite number, `price` one or null (the fill was never read:
-    the position takes the first price it reads), `amount_raw` a whole number of
-    raw units or null. A hand-edited `"1.0"` would otherwise fail later, outside
-    the per-record guard, and stop the bot on every start.
+    the position takes the first price it reads, as it does for a price of zero
+    or below), `amount_raw` a whole number of raw units or null. A hand-edited
+    `"1.0"` would otherwise fail later, outside the per-record guard, and stop
+    the bot on every start.
     """
 
     def real(value: object) -> bool:
@@ -114,6 +115,11 @@ def _whole(value: object) -> bool:
     return value is None or (isinstance(value, int) and not isinstance(value, bool))
 
 
+def _count(value: object) -> bool:
+    """A whole number that is not negative, or None."""
+    return _whole(value) and (value is None or value >= 0)
+
+
 def _pending_of(record: dict) -> PendingBuy | None:
     """The record's unresolved buy, None for a landed one; TypeError if malformed."""
     pending = record.get("pending")
@@ -132,9 +138,9 @@ def _pending_of(record: dict) -> PendingBuy | None:
     )
     destination = found.quote_destination
     if not (
-        _whole(found.max_amount_raw)
-        and _whole(found.spend_raw)
-        and _whole(found.last_valid_block_height)
+        _count(found.max_amount_raw)
+        and _count(found.spend_raw)
+        and _count(found.last_valid_block_height)
         and (destination is None or isinstance(destination, str))
     ):
         raise TypeError
@@ -211,7 +217,8 @@ def _decode(mint: str, record: dict) -> StoredPosition:
             tx_signature=buy.get("tx_signature"),
             amount=buy["amount"],
             amount_raw=buy.get("amount_raw"),
-            price=buy["price"],
+            # A price of zero would divide every PnL by zero: unread instead.
+            price=buy["price"] if buy["price"] is None or buy["price"] > 0 else None,
             deltas=_deltas_of(buy),
         ),
         entry_time=datetime.fromisoformat(record["entry_time"]),
@@ -227,7 +234,8 @@ class PositionStore:
         self.path = Path(path)
         # Records by mint, as written; one that does not decode is kept as is.
         self._records: dict[str, dict] = {}
-        # Records with no usable mint to key them by, kept as written.
+        # Records with no usable mint to key them by, or a mint an earlier one
+        # holds: kept as written, not monitored.
         self._unkeyed: list = []
         # False once an unreadable file could not be moved aside: writing
         # would replace it, and the positions in it with it.
@@ -249,8 +257,9 @@ class PositionStore:
         `<name>.unreadable.1`, `.2`, ... so no earlier one is overwritten) and
         logged, so the next write cannot overwrite what it held. If it cannot be
         moved either, this store writes nothing this run. A record that does not
-        decode, has no usable `mint`, or whose `mint` is not its coin's, is
-        logged and kept in the file, but not returned.
+        decode, has no usable `mint` (a string), names a mint an earlier record
+        already holds, or whose `mint` is not its coin's, is logged and kept in
+        the file, but not returned.
         """
         self._records = {}
         self._unkeyed = []
@@ -263,13 +272,25 @@ class PositionStore:
             return []
         for record in records:
             try:
-                self._records[record["mint"]] = record
+                mint = record["mint"]
+                if not isinstance(mint, str):
+                    raise TypeError  # noqa: TRY301
             except (KeyError, TypeError):
                 self._unkeyed.append(record)
                 logger.exception(
                     f"A position in {self.path} has no usable mint; "
                     f"left in the file, not monitored: {record!r}"
                 )
+                continue
+            if mint in self._records:
+                # The first keeps the mint, so the choice survives every write.
+                self._unkeyed.append(record)
+                logger.error(
+                    f"A second position for {mint} in {self.path}; left in the "
+                    f"file, not monitored: {record!r}"
+                )
+                continue
+            self._records[mint] = record
 
         positions = []
         for mint, record in self._records.items():

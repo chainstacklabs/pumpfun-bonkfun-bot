@@ -27,7 +27,8 @@ Offline machine checks, no network and no funds moved:
   E. The buyer buys a graduated coin in the pool: the configured spend unpadded,
      a token floor net of the pool fee and slippage, the pool's priority-fee
      accounts and compute limit, and the spend read back at the pool's quote
-     account. A curve that has not graduated is still bought on the curve. A pool
+     account; a token program the listener guessed gives way to the pool's. A
+     curve that has not graduated is still bought on the curve. A pool
      not readable yet sends nothing, and `extreme_fast_mode` skips a graduated
      coin rather than sending a curve buy.
   F. Every buy and sell fits one transaction, cashback pools included, with all
@@ -37,7 +38,10 @@ Offline machine checks, no network and no funds moved:
   G. The pool's coin creator and cashback flag are read again for every trade:
      after fee sharing moves the coin creator, the next buy and sell on the
      same market name the new creator's vault, and a pool turned cashback adds
-     its accounts.
+     its accounts. GlobalConfig is read with the pool in the same call: after
+     its fee and buyback recipients and its LP fee change, the next trade names
+     recipients from the new sets and prices with the new fee, and a build of a
+     known pool makes that one read and no other.
 
 Usage:
     uv run tests/regression/verify_pumpswap_buy.py
@@ -46,6 +50,7 @@ Usage:
 import asyncio
 import base64
 import json
+import struct
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -79,10 +84,12 @@ from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E40
 from platforms import PlatformImplementations  # noqa: E402
 from platforms.pumpfun.pumpswap_market import (  # noqa: E402
     _CONFIG_BUYBACK_RECIPIENTS_OFFSET,
+    _CONFIG_LP_FEE_OFFSET,
     _CONFIG_PROTOCOL_RECIPIENTS_OFFSET,
     _CONFIG_RESERVED_RECIPIENT_OFFSET,
     _POOL_CASHBACK_OFFSET,
     _POOL_COIN_CREATOR_OFFSET,
+    GLOBAL_CONFIG,
     PUMP_AMM_PROGRAM,
     PUMP_FEE_PROGRAM,
     PumpSwapMarket,
@@ -131,12 +138,14 @@ class _FixtureClient:
             )
             for k, v in accounts.items()
         }
+        self.calls: list[str] = []
 
     async def get_account_info(
         self,
         address: Pubkey,
         commitment: str | None = None,  # noqa: ARG002
     ) -> SimpleNamespace:
+        self.calls.append("get_account_info")
         if address not in self.accounts:
             raise ValueError(f"Account {address} not found")  # noqa: TRY003
         return self.accounts[address]
@@ -146,6 +155,7 @@ class _FixtureClient:
         addresses: list,
         commitment: str | None = None,  # noqa: ARG002
     ) -> list:
+        self.calls.append("get_multiple_accounts")
         return [self.accounts.get(a) for a in addresses]
 
 
@@ -250,6 +260,26 @@ def check_a_accounts_match_chain() -> bool:
             problems.append("mayhem pool not paying the reserved recipient")
         if ours[-2] not in buyback or chain[-2] not in buyback:
             problems.append("buyback recipient not from GlobalConfig")
+        # The recipients' quote accounts, left out of the comparison below
+        # because the recipients are random picks, are each one's own ATA, under
+        # the quote program the real buy used.
+        quote = Pubkey.from_string(case["quote_mint"])
+
+        def ata(owner: str, program: Pubkey, quote: Pubkey = quote) -> str:
+            return str(
+                get_associated_token_address(Pubkey.from_string(owner), quote, program)
+            )
+
+        programs = [
+            p
+            for p in (SystemAddresses.TOKEN_PROGRAM, SystemAddresses.TOKEN_2022_PROGRAM)
+            if ata(chain[9], p) == chain[10]
+        ]
+        if not programs or (
+            ours[10] != ata(ours[9], programs[0])
+            or ours[-1] != ata(ours[-2], programs[0])
+        ):
+            problems.append("a recipient's quote account is not its ATA")
         variable = {5, 6, 9, 10, len(chain) - 2, len(chain) - 1}
         differs = [
             i
@@ -330,6 +360,7 @@ def check_c_cashback_and_pool_v2() -> bool:
         "sell cashback": tail("sell", cashback)
         == [accumulator_ata, accumulator, pool_v2],
         "buy not canonical": tail("buy", not_canonical) == [],
+        "sell not canonical": tail("sell", not_canonical) == [],
     }
     lengths = {
         side: len(_swap(_build(case, USER, side=side)).accounts)
@@ -503,7 +534,11 @@ async def _no_fee(_accounts: list) -> None:
 
 
 def _buy(
-    *, graduated: bool, market: PumpSwapMarket | None, extreme_fast: bool = False
+    *,
+    graduated: bool,
+    market: PumpSwapMarket | None,
+    extreme_fast: bool = False,
+    token: TokenInfo | None = None,
 ) -> tuple[object, _StubClient, _CurveBuilder, list]:
     client = _StubClient()
     builder = _CurveBuilder()
@@ -535,7 +570,7 @@ def _buy(
         extreme_fast_mode=extreme_fast,
         extreme_fast_token_amount=1_000,
     )
-    result = asyncio.run(buyer.execute(_token(CASES["sol"])))
+    result = asyncio.run(buyer.execute(token or _token(CASES["sol"])))
     return result, client, builder, fee_accounts
 
 
@@ -566,6 +601,17 @@ def check_e_buyer_routes_to_pool() -> bool:
     _, curve_client, curve_builder, _ = _buy(graduated=False, market=market)
     on_curve = curve_builder.calls == 1 and curve_client.sent[0][0] == ["curve-buy"]
 
+    # A listener's guess of the token program gives way to the pool's, so the
+    # positions file and cleanup name the account the buy used.
+    guessed = _token(case)
+    guessed.token_program_id = next(
+        p
+        for p in (SystemAddresses.TOKEN_PROGRAM, SystemAddresses.TOKEN_2022_PROGRAM)
+        if p != pool.base_program
+    )
+    _buy(graduated=True, market=market, token=guessed)
+    program = guessed.token_program_id == pool.base_program
+
     not_ready = PumpSwapMarket(
         _FixtureClient({k: v for k, v in case["accounts"].items() if k != case["pool"]})
     )
@@ -586,13 +632,14 @@ def check_e_buyer_routes_to_pool() -> bool:
         and fast_builder.calls == 0
         and "graduated" in (fast_result.error_message or "")
     )
-    if not (routed and on_curve and held and fast):
+    if not (routed and on_curve and held and fast and program):
         print(
             f"    routed={routed} on_curve={on_curve} held={held} fast={fast} "
+            f"program={program} "
             f"floor={int.from_bytes(data[16:24], 'little') if data else None} "
             f"expected {expected_floor} destination={client.destination}"
         )
-    return routed and on_curve and held and fast
+    return routed and on_curve and held and fast and program
 
 
 def check_g_pool_reread_every_trade() -> bool:
@@ -640,9 +687,42 @@ def check_g_pool_reread_every_trade() -> bool:
             vault(new_creator) in accounts and vault(old_creator) not in accounts
         )
         results[f"{side}, cashback"] = accumulator_ata in accounts
+    _global_config_change(client, market, token, results)
     if not all(results.values()):
         print(f"    {results}")
     return all(results.values())
+
+
+def _global_config_change(
+    client: _FixtureClient, market: PumpSwapMarket, token: TokenInfo, results: dict
+) -> None:
+    """New recipients and a new LP fee in GlobalConfig reach the next trade."""
+    before = asyncio.run(market.get_market_state(token))["fee_fraction"]
+    config = bytearray(client.accounts[GLOBAL_CONFIG].data)
+    fees = [Pubkey.new_unique() for _ in range(8)]
+    buybacks = [Pubkey.new_unique() for _ in range(8)]
+    for offset, keys in (
+        (_CONFIG_PROTOCOL_RECIPIENTS_OFFSET, fees),
+        (_CONFIG_BUYBACK_RECIPIENTS_OFFSET, buybacks),
+    ):
+        config[offset : offset + 32 * len(keys)] = b"".join(bytes(k) for k in keys)
+    lp_fee = struct.unpack_from("<Q", config, _CONFIG_LP_FEE_OFFSET)[0]
+    struct.pack_into("<Q", config, _CONFIG_LP_FEE_OFFSET, lp_fee + 100)
+    client.accounts[GLOBAL_CONFIG] = SimpleNamespace(
+        data=bytes(config), owner=client.accounts[GLOBAL_CONFIG].owner
+    )
+    for side in ("buy", "sell"):
+        build = getattr(market, f"build_{side}_instruction")
+        client.calls = []
+        swap = _swap(asyncio.run(build(token, USER, AMOUNT_IN, MIN_OUT)))
+        accounts = [m.pubkey for m in swap.accounts]
+        results[f"{side}, new recipients"] = (
+            accounts[9] in fees and accounts[-2] in buybacks
+        )
+        # The pool and GlobalConfig in one round trip, nothing else.
+        results[f"{side}, one read"] = client.calls == ["get_multiple_accounts"]
+    after = asyncio.run(market.get_market_state(token))["fee_fraction"]
+    results["new LP fee"] = abs(after - before - 100 / 10_000) < 1e-12  # noqa: PLR2004
 
 
 def main() -> int:

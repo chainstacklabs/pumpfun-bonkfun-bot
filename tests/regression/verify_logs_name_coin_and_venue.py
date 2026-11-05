@@ -17,6 +17,7 @@ What a trader reading the log could not tell:
   reverted.
 - The shutdown line said pending buys are resolved from the wallet's balance;
   they are settled by signature.
+- The blocks listener reported only the first create in a block.
 - The README and the shipped YAML left out `launchlab`, `shreds` and
   `timing.token_wait_timeout`.
 
@@ -43,7 +44,7 @@ Offline machine checks, no network and no funds moved:
   C. A coin is reported once per mint: every frame delivered again, and the
      same create in a transaction with another signature, gives no second line
      and no second callback, on every listener, while every coin with its own
-     mint is still reported.
+     mint is still reported, also when one block holds several creates.
   D. The real buyer and seller on a bonding curve, in PumpSwap and in Raydium
      CPMM name the venue in their log lines (the tp_sl exit line included),
      results and the pending-buy record;
@@ -554,7 +555,10 @@ def check_b_no_other_info_line_per_coin() -> bool:
 
 
 def check_c_a_coin_is_reported_once() -> bool:
-    """C: a frame delivered again reports nothing more; other coins still report."""
+    """C: a frame delivered again reports nothing more; other coins still report.
+
+    A block holding several creates reports each of them.
+    """
     bad = []
     coins: dict[Platform, set[str]] = {}
     for platform, kind in _streams():
@@ -575,6 +579,20 @@ def check_c_a_coin_is_reported_once() -> bool:
                 f"{where}: frames delivered again and re-signed reported "
                 f"{len(again)} coins, once {len(mints)}"
             )
+        if kind == "blocks":
+            # One block holding every create: each is a coin of its own.
+            block = json.loads(json.dumps(frames[0]))
+            block["params"]["result"]["value"]["block"]["transactions"] = [
+                tx
+                for frame in frames
+                for tx in frame["params"]["result"]["value"]["block"]["transactions"]
+            ]
+            together = [str(t.mint) for t in _play(platform, kind, [block]).tokens]
+            if together != mints:
+                bad.append(
+                    f"{where}: one block holding {len(mints)} creates reported "
+                    f"{len(together)} coin(s)"
+                )
         for mint in set(mints):
             lines = [
                 r
@@ -1315,8 +1333,13 @@ def _attempts(kind: str, tokens: list[TokenInfo], **filters: str) -> SimpleNames
     async def decode_async(*_a: object) -> TokenInfo:
         return decode()
 
+    async def decode_block(*_a: object) -> list[TokenInfo]:
+        return [decode()]
+
     if kind in ("logs", "blocks"):
-        listener._wait_for_token_creation = decode_async
+        listener._wait_for_token_creation = (
+            decode_block if kind == "blocks" else decode_async
+        )
     else:
         listener._process_update = decode if kind == "shreds" else decode_async
     update = (

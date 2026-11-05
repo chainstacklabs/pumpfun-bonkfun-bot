@@ -34,6 +34,9 @@ class TradeResult:
     #: Where it traded (`Market.name`): the bonding curve or the AMM pool the
     #: coin graduated to. None when no venue was chosen.
     venue: str | None = None
+    #: For a trade whose outcome is unknown: the block height past which its
+    #: transaction can no longer land. None when the signer did not report it.
+    last_valid_block_height: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/serialization.
