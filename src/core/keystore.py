@@ -2,8 +2,10 @@
 
 A bot config names the file with `keystore:` instead of giving `private_key`,
 and `pump_bot_wallet` creates one, imports a key into one or shows its public
-key. The password comes from `KEYSTORE_PASSWORD`, or from `PUMPFUN_PASSWORD`
-when that is unset.
+key. A bot unlocks the file with `KEYSTORE_PASSWORD` and, when that is unset
+or wrong, with `PUMPFUN_PASSWORD`: bots run in one process share one
+environment, so each variable may hold another bot's password. Writing a new
+file takes one password, so there two different values are refused.
 
 The file is JSON, version 1:
 
@@ -52,6 +54,10 @@ _SCRYPT_P = 1
 # rather than allowed to exhaust RAM or hold up the start.
 _MAX_SCRYPT_MEMORY = 1 << 30
 _KEYPAIR_LENGTH = 64
+_NEEDS_PASSWORD = (
+    f"needs its password: set {PASSWORD_ENV_VAR} (or {FALLBACK_PASSWORD_ENV_VAR}) "
+    "in the bot's env_file or the environment"
+)
 _NOT_A_PRIVATE_KEY = (
     "not a Solana private key: expected base58 of 64 bytes or a JSON array of "
     "64 numbers"
@@ -66,6 +72,10 @@ class KeystoreError(ValueError):
 
     def __init__(self, path: Path, reason: str) -> None:
         super().__init__(f"keystore {path} {reason}")
+
+
+class WrongPasswordError(KeystoreError):
+    """The password did not decrypt the keystore."""
 
 
 def resolve_keystore_path(value: str, config_dir: Path) -> Path:
@@ -87,9 +97,10 @@ def resolve_keystore_path(value: str, config_dir: Path) -> Path:
 
 
 def password_from_env(path: Path) -> tuple[str | None, str]:
-    """Read the keystore password from the environment.
+    """Read the password for a new keystore from the environment.
 
-    An empty variable counts as unset.
+    An empty variable counts as unset. Unlocking uses `unlock_from_env`, which
+    tries both variables instead of refusing two values.
 
     Args:
         path: The keystore, named in the error
@@ -116,6 +127,47 @@ def password_from_env(path: Path) -> tuple[str | None, str]:
     return None, PASSWORD_ENV_VAR
 
 
+def unlock_from_env(path: Path) -> tuple[Keypair, str]:
+    """Decrypt a keystore with `KEYSTORE_PASSWORD`, else `PUMPFUN_PASSWORD`.
+
+    The second variable is tried when the first is unset, empty or wrong.
+
+    Returns:
+        The keypair and the variable whose password unlocked it
+
+    Raises:
+        KeystoreError: Neither variable is set, or as `load_keystore`.
+        WrongPasswordError: No variable's password decrypts the file.
+    """
+    tried: list[str] = []
+    for variable in (PASSWORD_ENV_VAR, FALLBACK_PASSWORD_ENV_VAR):
+        password = os.environ.get(variable)
+        if not password or any(os.environ.get(v) == password for v in tried):
+            continue
+        try:
+            return load_keystore(path, password, variable), variable
+        except WrongPasswordError:
+            tried.append(variable)
+    if not tried:
+        raise KeystoreError(path, _NEEDS_PASSWORD)
+    raise WrongPasswordError(
+        path, f"could not be decrypted: wrong password (from {' and '.join(tried)})"
+    )
+
+
+def keystore_pubkey(path: Path) -> str | None:
+    """The public key a keystore names, read without its password.
+
+    Returns:
+        None when the file cannot be read or names none
+    """
+    try:
+        pubkey = json.loads(Path(path).read_text(encoding="utf-8")).get("pubkey")
+    except (OSError, UnicodeDecodeError, ValueError, AttributeError):
+        return None
+    return pubkey if isinstance(pubkey, str) else None
+
+
 def load_keystore(
     path: Path, password: str | None, source: str = PASSWORD_ENV_VAR
 ) -> Keypair:
@@ -133,11 +185,7 @@ def load_keystore(
             public key.
     """
     if not password:
-        raise KeystoreError(
-            path,
-            f"needs its password: set {PASSWORD_ENV_VAR} (or "
-            f"{FALLBACK_PASSWORD_ENV_VAR}) in the bot's env_file or the environment",
-        )
+        raise KeystoreError(path, _NEEDS_PASSWORD)
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -156,7 +204,7 @@ def load_keystore(
     try:
         secret = AESGCM(key).decrypt(nonce, ciphertext, None)
     except InvalidTag:
-        raise KeystoreError(
+        raise WrongPasswordError(
             path, f"could not be decrypted: wrong password (from {source})"
         ) from None
 
@@ -189,7 +237,8 @@ def write_keystore(
     """Encrypt a keypair into a new keystore file, readable only by its owner.
 
     The file appears whole or not at all: it is written beside its final name,
-    mode 600, then renamed. A missing folder is created, the last one mode 700.
+    mode 600, then linked to it (renamed over it with `overwrite`). A missing
+    folder is created, the last one mode 700.
 
     Args:
         password: Must be non-empty
@@ -237,12 +286,34 @@ def write_keystore(
                 f.write(text)
                 f.flush()
                 os.fsync(f.fileno())
-            Path(temp).replace(path)
-        except BaseException:
+            if overwrite:
+                Path(temp).replace(path)
+            else:
+                _link_new(Path(temp), path)
+        finally:
             Path(temp).unlink(missing_ok=True)
-            raise
+    except FileExistsError:
+        raise KeystoreError(path, "already exists") from None
     except OSError as e:
         raise KeystoreError(path, f"could not be written: {e}") from None
+
+
+def _link_new(temp: Path, path: Path) -> None:
+    """Give `temp` the name `path` only if nothing has that name yet.
+
+    Raises:
+        FileExistsError: `path` exists.
+    """
+    try:
+        # Fails if path exists, with no window between the check and the write.
+        os.link(temp, path)
+    except FileExistsError:
+        raise
+    except OSError:
+        # A filesystem without hard links: check, then rename.
+        if path.exists():
+            raise FileExistsError(path) from None
+        temp.replace(path)
 
 
 def keypair_from_secret(text: str) -> Keypair:
@@ -271,7 +342,8 @@ def _secret_bytes(text: str) -> bytes | None:
                 return None
             return bytes(values)  # ValueError outside 0..255
         return base58.b58decode(text)
-    except ValueError:
+    except (ValueError, RecursionError):
+        # RecursionError: JSON nested deeper than the parser's stack.
         return None
 
 
