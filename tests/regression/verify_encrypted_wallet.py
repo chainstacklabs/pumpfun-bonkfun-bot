@@ -1,7 +1,7 @@
 """Verify the bot's encrypted keystore: reading, writing and `pump_bot_wallet`.
 
 A bot config can name a keystore with `keystore:` instead of giving a raw
-`private_key`; the password comes from `KEYSTORE_PASSWORD`, else
+`private_key`; the password comes from `KEYSTORE_PASSWORD`, then
 `PUMPFUN_PASSWORD`. pumpfun-cli reads and writes the same file, so these checks
 hold both directions to its format and keep a bad password from starting a bot:
 
@@ -23,22 +23,34 @@ hold both directions to its format and keep a bad password from starting a bot:
      A `private_key` config never touches the keystore code.
   E. The decrypted key and the password, from either variable, are masked in
      later log lines.
-  F. `KEYSTORE_PASSWORD` wins, `PUMPFUN_PASSWORD` is read when it is unset or
-     empty, and both set to different values is refused in one line naming
-     both variables and neither value. `start_bot` trades from an `env_file`
-     naming only `PUMPFUN_PASSWORD`, and logs no password when it refuses.
+  F. Unlocking tries `KEYSTORE_PASSWORD`, then `PUMPFUN_PASSWORD`: `start_bot`
+     trades when either holds the right password, including the old variable
+     alone and the old one exported in the shell beside a different new one
+     in `env_file`; with both wrong it logs one error naming both variables
+     and neither value. Two keystore bots in one `run_all_bots`, one
+     `env_file` per variable, both unlock. For a new file `password_from_env`
+     takes the new variable first, the old one when it is unset or empty, and
+     refuses two different values in one line naming both and neither value.
   G. `write_keystore` writes a file that unlocks to its keypair, mode 600 in a
      new mode-700 folder, with the fixture's fields, field order, scrypt
      settings, lengths and layout, so pumpfun-cli reads it; nothing secret in
      clear, no overwrite unless asked, no empty password, no temporary file
-     left behind.
+     left behind. An existing file is refused before scrypt runs, and one that
+     appears between that check and the write is not overwritten, with hard
+     links and without them.
   H. `pump_bot_wallet` (the pyproject console script, run as a subprocess):
-     `create`, `import` from `--from-env`, `--keypair-file` and the prompt, and
-     `show` print only the public key and write mode-600 files; the password
-     is asked twice and a mismatch writes nothing; an existing file needs
-     `--force`; differing password variables are refused; a private key given
-     on the command line, in any position, is refused without being echoed;
-     neither key nor password reaches stdout, stderr or the file.
+     `create`, `import` from `--from-env`, `--keypair-file` and the prompt,
+     and `show` print only the public key on stdout and write mode-600 files.
+     stderr names the variable a password came from, warns on a password under
+     8 characters, and names the key of a file it refuses to overwrite or
+     replaces with `--force`. `show` tries both variables; `create` refuses two
+     different ones. The prompt asks twice and a mismatch writes nothing. Key
+     material on the command line (base58 or hex key or seed, a mistyped key,
+     JSON whole or split by the shell, quoted, with a trailing comma, as the
+     path, after `--from-env` or `--keypair-file`, `--opt=value`) is refused;
+     it and a value typed into an unknown option or command never reach stdout
+     or stderr, and no file is written. A keypair file over 4 KB, or a key
+     nested too deep for the JSON parser, gets a one-line refusal.
 
 Offline: the trader is a recorder and the node always answers; config loading
 and `start_bot` are real.
@@ -70,6 +82,7 @@ from cryptography.hazmat.primitives.kdf.scrypt import Scrypt  # noqa: E402
 from solders.keypair import Keypair  # noqa: E402
 
 import bot_runner  # noqa: E402
+import core.keystore as keystore_module  # noqa: E402
 from config_loader import load_bot_config, validate_config  # noqa: E402
 from core.keystore import (  # noqa: E402
     FALLBACK_PASSWORD_ENV_VAR,
@@ -392,9 +405,16 @@ class _Capture(logging.Handler):
         self.records.append(record)
 
 
-def _start(folder: Path, config: dict, env: str) -> tuple[list, list]:
-    """Run the real start_bot on one config; return trader settings and records."""
+def _start(
+    folder: Path, config: dict, env: str, shell: dict[str, str] | None = None
+) -> tuple[list, list]:
+    """Run the real start_bot on one config; return trader settings and records.
+
+    `shell` is set in the environment first, as variables exported before the
+    bot starts.
+    """
     _clear_passwords()
+    os.environ.update(shell or {})
     (folder / "bot.env").write_text(env)
     path = folder / "bot.yaml"
     path.write_text(yaml.safe_dump({**config, "env_file": "bot.env"}))
@@ -447,18 +467,18 @@ def _refused_start_problems(folder: Path, config: dict) -> list[str]:
 
 def _private_key_start_problems(folder: Path, base: dict) -> list[str]:
     raw = base58.b58encode(bytes(Keypair())).decode()
-    original = bot_runner.keystore_private_key
+    original = bot_runner.unlock_from_env
 
     def reached(*_a: object, **_k: object) -> str:
         raise _KeystoreReached
 
-    bot_runner.keystore_private_key = reached
+    bot_runner.unlock_from_env = reached
     try:
         built, _ = _start(folder, {**base, "private_key": raw}, "")
     except _KeystoreReached:
         return ["private_key config: the keystore code was reached"]
     finally:
-        bot_runner.keystore_private_key = original
+        bot_runner.unlock_from_env = original
     if len(built) != 1 or built[0].private_key != raw:
         return ["private_key config: the trader did not get the raw key"]
     return []
@@ -563,21 +583,48 @@ def _precedence_problems() -> list[str]:
     return problems
 
 
-def _start_password_problems(folder: Path, config: dict) -> list[str]:
+def _unlocked_start_problems(folder: Path, config: dict) -> list[str]:
+    """Starts that must unlock: either variable may hold the right password."""
     problems = []
-    # Existing setups name only the old variable.
-    built, records = _start(
-        folder, config, f"{FALLBACK_PASSWORD_ENV_VAR}={FIXTURE_PASSWORD}\n"
-    )
-    if len(built) != 1 or built[0].private_key != FIXTURE_KEY:
-        problems.append("old variable alone: the bot did not trade from the keystore")
-    for label, env, needles, secrets in (
+    for label, env, shell in (
+        # Existing setups name only the old variable.
+        ("old variable alone", f"{FALLBACK_PASSWORD_ENV_VAR}={FIXTURE_PASSWORD}\n", {}),
         (
-            "variables differ",
+            "new right, old wrong",
             f"{PASSWORD_ENV_VAR}={FIXTURE_PASSWORD}\n"
             f"{FALLBACK_PASSWORD_ENV_VAR}=not-it-either\n",
-            [PASSWORD_ENV_VAR, FALLBACK_PASSWORD_ENV_VAR, "differ"],
-            [FIXTURE_PASSWORD, "not-it-either"],
+            {},
+        ),
+        (
+            "new wrong, old right",
+            f"{PASSWORD_ENV_VAR}=not-it-either\n"
+            f"{FALLBACK_PASSWORD_ENV_VAR}={FIXTURE_PASSWORD}\n",
+            {},
+        ),
+        (
+            "old variable set in the shell, new one in env_file",
+            f"{PASSWORD_ENV_VAR}={FIXTURE_PASSWORD}\n",
+            {FALLBACK_PASSWORD_ENV_VAR: "shell-other-pass"},
+        ),
+    ):
+        built, records = _start(folder, config, env, shell)
+        if len(built) != 1 or built[0].private_key != FIXTURE_KEY:
+            problems.append(f"{label}: the bot did not trade from the keystore")
+        logged = "\n".join(r.getMessage() for r in records)
+        for x in (FIXTURE_PASSWORD, "not-it-either", "shell-other-pass"):
+            if x in logged:
+                problems.append(f"{label}: a password was logged")
+    return problems
+
+
+def _start_password_problems(folder: Path, config: dict) -> list[str]:
+    problems = _unlocked_start_problems(folder, config)
+    for label, env, needles, secrets in (
+        (
+            "both variables wrong",
+            f"{PASSWORD_ENV_VAR}=not-it\n{FALLBACK_PASSWORD_ENV_VAR}=not-it-either\n",
+            ["wrong password", PASSWORD_ENV_VAR, FALLBACK_PASSWORD_ENV_VAR],
+            ["not-it", "not-it-either"],
         ),
         (
             "old variable wrong",
@@ -606,6 +653,48 @@ def _start_password_problems(folder: Path, config: dict) -> list[str]:
     return problems
 
 
+def _two_bots_problems(folder: Path, base: dict) -> list[str]:
+    """Two keystore bots in one run, each env_file naming a different variable.
+
+    Every config's env_file loads into one environment before any bot starts,
+    so each bot sees the other's variable as well as its own.
+    """
+    other = Keypair()
+    write_keystore(folder / "other.enc", other, "other-bot-pass")
+    bots = folder / "bots"
+    bots.mkdir()
+    config = {k: v for k, v in base.items() if k != "private_key"}
+    for name, keystore, env in (
+        ("a-old", str(FIXTURE), f"{FALLBACK_PASSWORD_ENV_VAR}={FIXTURE_PASSWORD}\n"),
+        ("b-new", str(folder / "other.enc"), f"{PASSWORD_ENV_VAR}=other-bot-pass\n"),
+    ):
+        (bots / f"{name}.env").write_text(env)
+        bot = {
+            **config,
+            "name": name,
+            "enabled": True,
+            # In this process, where the stand-in trader records what it got.
+            "separate_process": False,
+            "keystore": keystore,
+            "env_file": f"{name}.env",
+        }
+        (bots / f"{name}.yaml").write_text(yaml.safe_dump(bot))
+    _clear_passwords()
+    _Trader.built = []
+    previous = Path.cwd()
+    os.chdir(folder)
+    try:
+        ok = bot_runner.run_all_bots()
+    finally:
+        os.chdir(previous)
+        _clear_passwords()
+    keys = sorted(t.private_key for t in _Trader.built)
+    want = sorted([FIXTURE_KEY, base58.b58encode(bytes(other)).decode()])
+    if not ok or keys != want:
+        return [f"two bots, one variable each: run ok={ok}, {len(keys)} unlocked"]
+    return []
+
+
 def check_f_password_variables() -> bool:
     problems = _precedence_problems()
     base = _logs_config()
@@ -614,6 +703,8 @@ def check_f_password_variables() -> bool:
     config["keystore"] = str(FIXTURE)
     with tempfile.TemporaryDirectory() as tmp:
         problems += _start_password_problems(Path(tmp), config)
+    with tempfile.TemporaryDirectory() as tmp:
+        problems += _two_bots_problems(Path(tmp), base)
     return _report(problems)
 
 
@@ -678,6 +769,7 @@ def check_g_written_keystore() -> bool:
                 problems.append(f"overwrite refusal: {e}")
         if path.read_bytes() != before:
             problems.append("a refused overwrite changed the file")
+        problems += _refused_before_scrypt(path, other)
         write_keystore(path, other, "write-pass", overwrite=True)
         if bytes(load_keystore(path, "write-pass")) != bytes(other):
             problems.append("overwrite=True did not replace the keystore")
@@ -689,7 +781,79 @@ def check_g_written_keystore() -> bool:
         left = sorted(p.name for p in folder.iterdir())
         if left != ["wallet.enc"]:
             problems.append(f"folder holds {left}")
+    with tempfile.TemporaryDirectory() as tmp:
+        problems += _race_problems(Path(tmp))
     return _report(problems)
+
+
+def _refused_before_scrypt(path: Path, keypair: Keypair) -> list[str]:
+    """An existing file is refused before the costly key derivation runs."""
+    real_derive = keystore_module._derive  # noqa: SLF001 - the step to time
+
+    def derive_reached(*_a: object) -> bytes:
+        raise _KeystoreReached
+
+    keystore_module._derive = derive_reached  # noqa: SLF001
+    try:
+        write_keystore(path, keypair, "write-pass")
+    except KeystoreError:
+        return []
+    except _KeystoreReached:
+        return ["an existing file was refused only after scrypt ran"]
+    finally:
+        keystore_module._derive = real_derive  # noqa: SLF001
+    return ["an existing keystore was overwritten"]
+
+
+def _refused_write(path: Path, keypair: Keypair) -> str | None:
+    """The refusal of a no-overwrite write, or None when it wrote."""
+    try:
+        write_keystore(path, keypair, "write-pass")
+    except KeystoreError as e:
+        return str(e)
+    return None
+
+
+def _race_problems(folder: Path) -> list[str]:
+    """A file that appears after the existence check is still not overwritten.
+
+    The file is made just before the temporary file is written, the window a
+    check-then-rename leaves open; then again with hard links unavailable.
+    """
+    problems = []
+    real_mkstemp, real_link = keystore_module.tempfile.mkstemp, keystore_module.os.link
+
+    def mkstemp_then_appear(*args: object, **kwargs: object) -> tuple:
+        target.write_text("someone else's file")
+        return real_mkstemp(*args, **kwargs)
+
+    def no_hard_links(*_a: object) -> None:
+        raise PermissionError
+
+    for label, link in (("hard links", real_link), ("no hard links", no_hard_links)):
+        target = folder / f"{label.replace(' ', '-')}.enc"
+        keystore_module.tempfile.mkstemp = mkstemp_then_appear
+        keystore_module.os.link = link
+        try:
+            refusal = _refused_write(target, Keypair())
+        finally:
+            keystore_module.tempfile.mkstemp = real_mkstemp
+            keystore_module.os.link = real_link
+        if refusal is None or "already exists" not in refusal:
+            problems.append(f"{label}: a file made mid-write was overwritten")
+        if target.read_text() != "someone else's file":
+            problems.append(f"{label}: the other file changed")
+        keystore_module.os.link = link
+        try:
+            fresh = folder / f"fresh-{label.replace(' ', '-')}.enc"
+            if (refusal := _refused_write(fresh, Keypair())) is not None:
+                problems.append(f"{label}: a new file was refused: {refusal}")
+        finally:
+            keystore_module.os.link = real_link
+    left = sorted(p.name for p in folder.iterdir() if p.name.startswith("."))
+    if left:
+        problems.append(f"temporary files left: {left}")
+    return problems
 
 
 def _wallet_command(
@@ -742,21 +906,25 @@ def _wallet_problems(
     return problems
 
 
-def _wallet_write_problems(folder: Path) -> list[str]:
+def _create_problems(folder: Path, env: dict[str, str]) -> list[str]:
+    """create, create over a file, create --force: what each prints."""
     problems = []
-    password = WALLET_PASSWORD
-    env = {PASSWORD_ENV_VAR: password}
+    password = env[PASSWORD_ENV_VAR]
     created = folder / "created.enc"
     code, out, err = run = _wallet_command(folder, ["create", str(created)], env)
     pubkey = out.strip()
     problems += _wallet_problems("create", run, pubkey, [password], created)
     if code == 0 and str(load_keystore(created, password).pubkey()) != pubkey:
         problems.append("create: printed key is not the stored one")
+    if f"password from {PASSWORD_ENV_VAR}" not in err or "warning" in err:
+        problems.append(f"create: stderr {err!r} does not name the variable alone")
     before = created.read_bytes() if created.exists() else b""
     code, out, err = _wallet_command(folder, ["create", str(created)], env)
     if code == 0 or "--force" not in err or created.read_bytes() != before:
         problems.append(f"create over a file without --force: exit {code}, {err!r}")
-    code, out, _ = run = _wallet_command(
+    if pubkey not in err:
+        problems.append("create over a file: the refusal does not name its key")
+    code, out, err = run = _wallet_command(
         folder, ["create", str(created), "--force"], env
     )
     problems += _wallet_problems(
@@ -764,23 +932,60 @@ def _wallet_write_problems(folder: Path) -> list[str]:
     )
     if created.read_bytes() == before:
         problems.append("create --force left the file as it was")
+    if pubkey not in err:
+        problems.append("create --force: does not name the key it replaced")
+    return problems
 
-    code, out, err = _wallet_command(folder, ["show", str(created)], env)
-    if code != 0 or out != f"{load_keystore(created, password).pubkey()}\n":
-        problems.append(f"show: exit {code}, stdout {out!r}")
+
+def _password_variable_problems(folder: Path, env: dict[str, str]) -> list[str]:
+    """show tries both variables; create refuses two different values."""
+    problems = []
+    password = env[PASSWORD_ENV_VAR]
+    created = folder / "created.enc"
+    want = f"{load_keystore(created, password).pubkey()}\n"
+    for label, variables, used in (
+        ("show", env, PASSWORD_ENV_VAR),
+        ("show, old variable", {FALLBACK_PASSWORD_ENV_VAR: password}, None),
+        (
+            "show, both alike",
+            {**env, FALLBACK_PASSWORD_ENV_VAR: password},
+            PASSWORD_ENV_VAR,
+        ),
+        ("show, old one wrong", {**env, FALLBACK_PASSWORD_ENV_VAR: "other-pass"}, None),
+        (
+            "show, new one wrong",
+            {PASSWORD_ENV_VAR: "other-pass", FALLBACK_PASSWORD_ENV_VAR: password},
+            FALLBACK_PASSWORD_ENV_VAR,
+        ),
+    ):
+        code, out, err = _wallet_command(folder, ["show", str(created)], variables)
+        if code != 0 or out != want:
+            problems.append(f"{label}: exit {code}, stdout {out!r}")
+        if used and f"password from {used}" not in err:
+            problems.append(f"{label}: stderr {err!r} does not name {used}")
+        if password in out + err or "other-pass" in out + err:
+            problems.append(f"{label}: printed a password")
+    conflict = folder / "conflict.enc"
     code, out, err = _wallet_command(
-        folder, ["show", str(created)], {FALLBACK_PASSWORD_ENV_VAR: password}
+        folder,
+        ["create", str(conflict)],
+        {**env, FALLBACK_PASSWORD_ENV_VAR: "other-pass"},
     )
-    if code != 0:
-        problems.append(f"show with the old variable: exit {code}")
-    code, out, err = _wallet_command(
-        folder, ["show", str(created)], {**env, FALLBACK_PASSWORD_ENV_VAR: "other-pass"}
-    )
-    if code == 0 or FALLBACK_PASSWORD_ENV_VAR not in err or PASSWORD_ENV_VAR not in err:
-        problems.append(f"show with differing variables: exit {code}, {err!r}")
+    if code == 0 or conflict.exists() or FALLBACK_PASSWORD_ENV_VAR not in err:
+        problems.append(f"create, variables differ: exit {code}, {err!r}")
     if password in out + err or "other-pass" in out + err:
-        problems.append("show with differing variables printed a password")
+        problems.append("create, variables differ: printed a password")
+    short = folder / "short.enc"
+    code, _, err = _wallet_command(
+        folder, ["create", str(short)], {PASSWORD_ENV_VAR: "seven77"}
+    )
+    if code != 0 or "shorter than 8" not in err or "seven77" in err:
+        problems.append(f"create, 7-character password: exit {code}, {err!r}")
+    return problems
 
+
+def _prompt_problems(folder: Path) -> list[str]:
+    problems = []
     prompted = folder / "prompted.enc"
     code, out, err = run = _wallet_command(
         folder, ["create", str(prompted)], {}, "typed-pass\ntyped-pass\n"
@@ -797,6 +1002,13 @@ def _wallet_write_problems(folder: Path) -> list[str]:
     if code == 0 or mismatch.exists() or "one-pass" in err or "two-pass" in err:
         problems.append(f"create, passwords differ: exit {code}, {err!r}")
     return problems
+
+
+def _wallet_write_problems(folder: Path) -> list[str]:
+    env = {PASSWORD_ENV_VAR: WALLET_PASSWORD}
+    problems = _create_problems(folder, env)
+    problems += _password_variable_problems(folder, env)
+    return problems + _prompt_problems(folder)
 
 
 def _wallet_import_problems(folder: Path) -> list[str]:
@@ -835,27 +1047,96 @@ def _wallet_import_problems(folder: Path) -> list[str]:
         if run[0] == 0 and bytes(load_keystore(path, password)) != bytes(keypair):
             problems.append(f"{label}: the stored key is not the one imported")
 
-    refused = folder / "refused.enc"
-    compact = json.dumps(list(bytes(keypair)), separators=(",", ":"))
-    for args in (
-        ["import", str(refused), key],
-        ["import", key],
-        ["import", str(refused), "--from-env", key],
-        ["import", str(refused), f"--from-env={key}"],
-        ["import", str(refused), compact],
-        ["create", key],
-    ):
-        code, out, err = _wallet_command(folder, args, {PASSWORD_ENV_VAR: password})
-        shape = " ".join(
-            "<key>" if key in a or compact in a else a.split("/")[-1] for a in args
+    return problems + _argv_problems(folder, keypair)
+
+
+def _key_forms(keypair: Keypair) -> dict[str, str]:
+    """Key material as someone might paste it, by name."""
+    raw = bytes(keypair)
+    key = base58.b58encode(raw).decode()
+    return {
+        "base58 key": key,
+        "hex key": raw.hex(),
+        "base58 seed": base58.b58encode(raw[:32]).decode(),
+        "hex seed": raw[:32].hex(),
+        "mistyped key": "0" + key[1:],
+        "JSON key": json.dumps(list(raw), separators=(",", ":")),
+    }
+
+
+def _argv_problems(folder: Path, keypair: Keypair) -> list[str]:
+    """Key material on the command line is refused, unechoed, with no file."""
+    problems = []
+    forms = _key_forms(keypair)
+    key, path = forms["base58 key"], str(folder / "refused.enc")
+    cases = [
+        (f"import <path> <{name}>", ["import", path, value])
+        for name, value in forms.items()
+    ]
+    cases += [
+        ("import <key>", ["import", key]),
+        ("create <base58 seed>", ["create", forms["base58 seed"]]),
+        ("create <hex seed>", ["create", forms["hex seed"]]),
+        ("--from-env <key>", ["import", path, "--from-env", key]),
+        ("--from-env=<key>", ["import", path, f"--from-env={key}"]),
+        ("--keypair-file <key>", ["import", path, "--keypair-file", key]),
+        ("quoted key", ["import", path, f'"{key}"']),
+        ("key with a trailing comma", ["import", path, f"{key},"]),
+        (
+            "JSON split by the shell",
+            ["import", path, *json.dumps(list(bytes(keypair))).split()],
+        ),
+    ]
+    secrets = [*forms.values(), "hunter2-typed"]
+    # Usage errors: what was typed is not repeated either.
+    usage = [
+        ("unknown option", ["import", path, "--bogus", "hunter2-typed"]),
+        ("unknown command", ["hunter2-typed", path]),
+    ]
+    before = sorted(p.name for p in folder.iterdir())
+    for label, args in cases + usage:
+        code, out, err = _wallet_command(
+            folder, args, {PASSWORD_ENV_VAR: WALLET_PASSWORD}
         )
-        if code == 0 or refused.exists():
-            problems.append(f"key on the command line accepted: {shape}")
-        if key in out + err or compact in out + err:
-            problems.append(f"key on the command line echoed back: {shape}")
-    named = [p for p in folder.iterdir() if key in p.name or compact in p.name]
-    if named:
-        problems.append("a file was written under a name holding the key")
+        if code == 0:
+            problems.append(f"{label}: accepted")
+        if (label, args) in cases and "looks like a private key" not in err:
+            problems.append(f"{label}: not refused as key material: {err[-120:]!r}")
+        if any(x in out + err for x in secrets):
+            problems.append(f"{label}: echoed back")
+        if "Traceback" in err:
+            problems.append(f"{label}: traceback")
+    if sorted(p.name for p in folder.iterdir()) != before:
+        problems.append("a refused command wrote a file")
+    return problems + _keypair_file_problems(folder)
+
+
+def _keypair_file_problems(folder: Path) -> list[str]:
+    """Oversized or too deeply nested key input gets the one-line refusal.
+
+    The nesting goes through `--from-env`: the 4 KB file cap stops a file
+    before JSON nesting can exhaust the parser's stack.
+    """
+    problems = []
+    source = folder / "bad-keypair.json"
+    source.write_text(json.dumps(list(bytes(Keypair()))) + " " * 4096)  # padded
+    target = folder / "bad.enc"
+    for label, args, env in (
+        ("keypair file over 4 KB", ["--keypair-file", str(source)], {}),
+        (
+            "key nested too deep",
+            ["--from-env", "VERIFY_WALLET_KEY"],
+            {"VERIFY_WALLET_KEY": "[" * 100_000},
+        ),
+    ):
+        code, out, err = _wallet_command(
+            folder,
+            ["import", str(target), *args],
+            {PASSWORD_ENV_VAR: WALLET_PASSWORD, **env},
+        )
+        lines = err.strip().splitlines()
+        if code != 1 or target.exists() or len(lines) != 1 or out:
+            problems.append(f"{label}: exit {code}, {err[-200:]!r}")
     return problems
 
 
