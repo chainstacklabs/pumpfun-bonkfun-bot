@@ -187,6 +187,8 @@ class Realised:
     #: The tasks reporting its sales (`PositionManager._after_sale`), so the
     #: last one totals them in order.
     reports: list["asyncio.Task"] = field(default_factory=list)
+    #: Sales that could not be priced, so the total leaves them out.
+    missing: int = 0
 
     def add(self, sale: SalePnl) -> None:
         self.pnl += sale.pnl
@@ -197,15 +199,20 @@ class Realised:
 
     def suffix(self, quote_label: str) -> str:
         """What to add to the last sale's line; empty for a single sale."""
-        if self.sales <= 1:
+        if self.sales + self.missing <= 1:
             return ""
         estimate = "" if self.from_chain else ", an estimate"
+        if self.missing:
+            estimate += (
+                f", incomplete: {self.missing} of {self.sales + self.missing} "
+                f"sales could not be priced"
+            )
         sol = (
             ""
             if self.sol_quote
             else f", network fees and other SOL costs {self.sol_costs:.6f} SOL on top"
         )
         return (
-            f"; the whole position over {self.sales} sales: "
+            f"; the whole position over {self.sales + self.missing} sales: "
             f"{self.pnl:.6f} {quote_label}{sol}{estimate}"
         )

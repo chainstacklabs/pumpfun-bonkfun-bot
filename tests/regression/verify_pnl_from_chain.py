@@ -49,6 +49,8 @@ the read is the same for every venue and the transactions are not:
      waits for the read and the row.
   K. A report that fails (the trade log raising) leaves the sale settled, is
      logged, and the account is still closed after it.
+  L. In a sale made in two parts, a part that cannot be priced is still
+     waited for in order, and the whole position's total says it is incomplete.
 
 Usage:
     uv run tests/regression/verify_pnl_from_chain.py
@@ -391,6 +393,7 @@ def _round_trip(  # noqa: PLR0913
     caps: list[int] | None = None,
     exit_price: float | None = None,
     late: set[str] | None = None,
+    slow: set[str] | None = None,
 ) -> SimpleNamespace:
     """Buy through the real buyer and trader, then exit through the real manager.
 
@@ -403,6 +406,12 @@ def _round_trip(  # noqa: PLR0913
     buy_trade = _trade(buy_prefix)
     sells = [_trade(p)["signature"] for p in sell_prefixes]
     chain = _Chain([buy_trade["signature"], *sells], unreadable, late)
+
+    async def on_read(signature: str) -> None:
+        if signature in (slow or ()):
+            await asyncio.sleep(0.3)
+
+    chain.on_read = on_read
     token = _token(buy_trade)
     quote = Pubkey.from_string(buy_trade["quote_mint"])
 
@@ -447,8 +456,11 @@ def _unpaid_not_read() -> list[str]:
     The curve owns a token account in FLOAT's buy but paid for nothing.
     """
     trade = _trade("yw6xTRd2")
+    reader = getattr(_Chain([]), "get_trade_deltas", None)
+    if reader is None:
+        return ["the client reads no trade from the chain"]
     other = asyncio.run(
-        _Chain([]).get_trade_deltas(
+        reader(
             trade["signature"],
             Pubkey.from_string(trade["venue_account"]),
             Pubkey.from_string(trade["mint"]),
@@ -670,6 +682,47 @@ def check_j_settled_then_read() -> bool:
     return _report("J", bad)
 
 
+def check_l_parts_totalled_in_order() -> bool:
+    """L: a part that cannot be priced is waited for in order and named in the total."""
+    sells = ["3bsnEFMJ", "2wj1Gwjb"]
+    first, last = (_trade(p)["signature"] for p in sells)
+    real = position_manager.sale_pnl
+    bad = []
+    for broken, slow, case in (
+        (first, None, "first part"),
+        (last, {first}, "last part"),
+    ):
+
+        def pricing(
+            cost: object, sale: TradeResult, *args: object, broken: str = broken
+        ) -> object:
+            if sale.tx_signature == broken:
+                raise RuntimeError
+            return real(cost, sale, *args)
+
+        position_manager.sale_pnl = pricing
+        try:
+            run = _round_trip(
+                "61qHTKt6", sells, "tp_sl", caps=[10_535_472_671_801], slow=slow
+            )
+        finally:
+            position_manager.sale_pnl = real
+        final = _final(run.lines)
+        if "incomplete: 1 of 2 sales could not be priced" not in final:
+            bad.append(f"{case} unpriced: final line {final!r}")
+        if case == "last part":
+            part = next(
+                (i for i, x in enumerate(run.lines) if x.startswith("PnL on the part")),
+                None,
+            )
+            end = run.lines.index(final) if final in run.lines else -1
+            if part is None or part > end:
+                bad.append(
+                    f"{case} unpriced: the total did not wait for the first part"
+                )
+    return _report("L", bad)
+
+
 def check_k_report_failure_keeps_settlement() -> bool:
     """K: a failing report leaves the sale settled and still closes the account."""
     buy_trade = _trade("yw6xTRd2")
@@ -781,6 +834,36 @@ def check_e_rent_apart() -> bool:
     return _report("E", bad)
 
 
+def _unknown_decimals_named() -> list[str]:
+    """A sale read but in a quote whose decimals are unknown says so."""
+    try:
+        from trading.pnl import CostBasis, pnl_text, sale_pnl  # noqa: PLC0415
+    except ImportError:
+        return ["no PnL from the chain, so no estimate names its cause"]
+    sale = _trade("37hc3CBz")
+    reader = getattr(_Chain([sale["signature"]]), "get_trade_deltas", None)
+    if reader is None:
+        return ["the client reads no trade from the chain"]
+    deltas = asyncio.run(
+        reader(
+            sale["signature"],
+            Pubkey.from_string(sale["wallet"]),
+            Pubkey.from_string(sale["mint"]),
+            Pubkey.from_string(sale["quote_mint"]),
+        )
+    )
+    pnl = sale_pnl(
+        CostBasis(1e-8, from_chain=True),
+        TradeResult(success=True, amount=1.0, price=1e-8, deltas=deltas),
+        Pubkey.new_unique(),
+        1e-8,
+    )
+    text = pnl_text("Final PnL", pnl, "X")
+    if "decimals are unknown" not in text or "could not be read" in text:
+        return [f"unknown decimals: {text!r}"]
+    return []
+
+
 def check_f_estimates() -> bool:
     """F: an unread sale or buy says its PnL is an estimate."""
     bad: list[str] = []
@@ -805,29 +888,7 @@ def check_f_estimates() -> bool:
     final = _final(run.lines)
     if "an estimate" not in final:
         bad.append(f"unread buy: {final!r}")
-    # A sale read but in a quote whose decimals are unknown says so.
-    from trading.pnl import CostBasis, pnl_text, sale_pnl  # noqa: PLC0415
-
-    sale = _trade("37hc3CBz")
-    chain = _Chain([sale["signature"]])
-    deltas = asyncio.run(
-        chain.get_trade_deltas(
-            sale["signature"],
-            Pubkey.from_string(sale["wallet"]),
-            Pubkey.from_string(sale["mint"]),
-            Pubkey.from_string(sale["quote_mint"]),
-        )
-    )
-    unknown = Pubkey.new_unique()
-    pnl = sale_pnl(
-        CostBasis(1e-8, from_chain=True),
-        TradeResult(success=True, amount=1.0, price=1e-8, deltas=deltas),
-        unknown,
-        1e-8,
-    )
-    text = pnl_text("Final PnL", pnl, "X")
-    if "decimals are unknown" not in text or "could not be read" in text:
-        bad.append(f"unknown decimals: {text!r}")
+    bad += _unknown_decimals_named()
     return _report("F", bad)
 
 
@@ -865,9 +926,12 @@ def check_h_restart_keeps_cost() -> bool:
         # A record whose stored amounts are malformed is refused, not resumed.
         path = Path(tmp) / "positions.json"
         data = json.loads(path.read_text())
-        data["positions"][0]["buy"]["deltas"]["tokens_raw"] = None
-        path.write_text(json.dumps(data))
-        malformed = PositionStore(path).load()
+        stored = data["positions"][0]["buy"].get("deltas")
+        malformed = None
+        if stored is not None:
+            stored["tokens_raw"] = None
+            path.write_text(json.dumps(data))
+            malformed = PositionStore(path).load()
     kept = loaded[0].buy_result if loaded else None
     bad = []
     if kept is None or getattr(kept, "deltas", None) != getattr(buy, "deltas", 0):
@@ -907,6 +971,10 @@ def main() -> int:
         (
             "K: a failing report keeps the sale settled and closes the account",
             check_k_report_failure_keeps_settlement,
+        ),
+        (
+            "L: an unpriced part is totalled in order and named",
+            check_l_parts_totalled_in_order,
         ),
     ]
     failed = 0

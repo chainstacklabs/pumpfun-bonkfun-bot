@@ -32,7 +32,7 @@ from solders.signature import Signature
 from solders.transaction import VersionedTransaction
 
 from core.rpc_rate_limiter import TokenBucketRateLimiter
-from core.trade_deltas import TradeDeltas, read_trade_deltas
+from core.trade_deltas import TradeDeltas, paid_by, read_trade_deltas
 from interfaces.core import ConfirmationStatus, Platform
 from utils.idl_manager import get_idl_parser
 from utils.logger import get_logger
@@ -944,8 +944,8 @@ class SolanaClient:
 
         Returns:
             The deltas; None when the transaction cannot be read within
-            `TX_RESULT_RETRY_BUDGET`, reverted, or shows no token account of the
-            wallet's holding the coin
+            `TX_RESULT_RETRY_BUDGET`, reverted, was not paid for by `wallet`,
+            or shows no token account of the wallet's holding the coin
         """
         # Normalized up front: the log lines below slice it, which a Signature
         # does not support.
@@ -959,6 +959,12 @@ class SolanaClient:
             logger.error(
                 f"Transaction {signature[:16]}... failed with error: {tx_err}"
                 + (f" ({detail})" if detail else "")
+            )
+            return None
+        if not paid_by(result, wallet):
+            logger.warning(
+                f"Transaction {signature[:16]}... was not paid for by {wallet}; "
+                f"its amounts are not read"
             )
             return None
         deltas = read_trade_deltas(result, wallet, mint, quote_mint, venue_account)

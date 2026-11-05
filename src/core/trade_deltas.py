@@ -62,6 +62,12 @@ def _amount(balance: dict | None) -> int:
     return int(balance.get("uiTokenAmount", {}).get("amount", 0))
 
 
+def paid_by(result: dict, wallet: Pubkey) -> bool:
+    """Whether `wallet` paid for the transaction: it is the first account."""
+    keys = _account_keys(result)
+    return bool(keys) and keys[0] == str(wallet)
+
+
 def _lamports(balances: list, index: int) -> int:
     return balances[index] if index < len(balances) else 0
 

@@ -568,11 +568,18 @@ class PositionManager:
         closes = {t for t in tasks & self._closes if not t.done()}
         for task in closes:
             task.cancel()
-        if closes:
+        reports = sum(t.get_name().startswith("report-") for t in closes)
+        if len(closes) > reports:
             logger.warning(
-                f"{len(closes)} token account close(s) did not finish within "
-                f"{self._STOP_BUDGET}s; reclaim the rent with "
+                f"{len(closes) - reports} token account close(s) did not finish "
+                f"within {self._STOP_BUDGET}s; reclaim the rent with "
                 f"tools/cleanup_accounts.py <MINT>"
+            )
+        if reports:
+            logger.warning(
+                f"{reports} sale report(s) did not finish within "
+                f"{self._STOP_BUDGET}s; their trades.log rows and PnL lines are "
+                f"missing"
             )
         positions = sum(not t.done() for t in tasks - closes)
         if positions:
@@ -717,9 +724,17 @@ class PositionManager:
             return
         self._start_close(self._close_cleared_account(token_info), token_info)
 
-    def _start_close(self, close: Coroutine, token_info: TokenInfo) -> asyncio.Task:
-        """Run an account close, or a sale's report, in its own task in `_closes`."""
-        task = asyncio.create_task(close, name=f"close-{token_info.mint}")
+    def _start_close(
+        self, close: Coroutine, token_info: TokenInfo, *, closes: bool = True
+    ) -> asyncio.Task:
+        """Run an account close, or a sale's report, in its own task in `_closes`.
+
+        Args:
+            closes: The task closes an account; False for a sale's report that
+                only reads it back
+        """
+        kind = "close" if closes else "report"
+        task = asyncio.create_task(close, name=f"{kind}-{token_info.mint}")
         self._closes |= {task}
         task.add_done_callback(self._closed)
         return task
@@ -1423,6 +1438,7 @@ class PositionManager:
                 last=last,
             ),
             token_info,
+            closes=last and self.cleanup_mode == "after_sell",
         )
         realised.reports.append(task)
 
@@ -1438,30 +1454,42 @@ class PositionManager:
         earlier: list[asyncio.Task],
         last: bool,
     ) -> None:
+        quote_mint = normalize_quote_mint(token_info.quote_mint)
+        pnl = None
         try:
             sale = await self._read_sale(token_info, sell_result, price, *asked)
-            quote_mint = normalize_quote_mint(token_info.quote_mint)
             pnl = sale_pnl(cost, sale, quote_mint, price)
-            if earlier:
-                await asyncio.gather(*earlier, return_exceptions=True)
-            realised.add(pnl)
-            trade_log.log_trade(
-                "sell",
-                token_info,
-                sale.price,
-                sale.amount,
-                sale.tx_signature,
-                deltas=sale.deltas,
-                pnl=pnl,
+        except Exception:
+            logger.exception(
+                f"Could not price the sale of {token_info.symbol}; it is settled"
             )
+        # Whatever happened above, the parts are totalled in order.
+        if earlier:
+            await asyncio.gather(*earlier, return_exceptions=True)
+        if pnl is None:
+            realised.missing += 1
+        else:
+            realised.add(pnl)
+        try:
             quote_label = quote_symbol(quote_mint)
-            if last:
-                logger.info(
-                    pnl_text("Final PnL", pnl, quote_label)
-                    + realised.suffix(quote_label)
+            if pnl is not None:
+                trade_log.log_trade(
+                    "sell",
+                    token_info,
+                    sale.price,
+                    sale.amount,
+                    sale.tx_signature,
+                    deltas=sale.deltas,
+                    pnl=pnl,
                 )
-            else:
-                logger.info(pnl_text("PnL on the part sold", pnl, quote_label))
+                label = "Final PnL" if last else "PnL on the part sold"
+                total = realised.suffix(quote_label) if last else ""
+                logger.info(pnl_text(label, pnl, quote_label) + total)
+            elif last:
+                logger.info(
+                    f"Final PnL: unknown, this sale could not be priced"
+                    f"{realised.suffix(quote_label)}"
+                )
         except Exception:
             logger.exception(
                 f"Could not report the sale of {token_info.symbol}; it is settled"

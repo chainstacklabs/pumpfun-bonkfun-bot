@@ -442,7 +442,16 @@ def _manager(
     manager.cleanup_with_priority_fee = False
     manager.cleanup_force_close_with_burn = True
     manager._graduated_mints = set()  # noqa: SLF001
+    manager._open = set()  # noqa: SLF001
     return manager
+
+
+async def _exit_and_wait(
+    manager: PositionManager, token_info: TokenInfo, buy: TradeResult
+) -> None:
+    """Hold the position to its exit, then wait for its sales' reports and close."""
+    await manager.manage(token_info, buy)
+    await manager.wait_all()
 
 
 def _exit_run(
@@ -510,7 +519,7 @@ def _exit_run(
 
         position_manager.Position.create_from_buy_result = _keep
         try:
-            asyncio.run(asyncio.wait_for(manager.manage(token_info, buy), 30))
+            asyncio.run(asyncio.wait_for(_exit_and_wait(manager, token_info, buy), 30))
         finally:
             position_manager.Position.create_from_buy_result = create
             log.removeHandler(logs)
