@@ -410,8 +410,8 @@ class SolanaClient:
             pubkey: Public key of the account
             commitment: Optional commitment override (e.g., "processed" for
                 fresh state right after a geyser event). None is solana-py's
-                default, "finalized", which runs some seconds behind
-                "confirmed": an account a buy just created reads as missing.
+                default, "finalized", which can lag "confirmed": an account a
+                buy just created can read as missing.
             min_context_slot: Refuse an answer from a node that has not reached
                 this slot: it raises instead of reporting an account it has not
                 seen yet as missing. Reads at "confirmed" unless `commitment`.
@@ -483,7 +483,7 @@ class SolanaClient:
         Args:
             pubkeys: Public keys of the accounts
             commitment: Optional commitment override. None is solana-py's
-                default, "finalized", which runs behind "confirmed".
+                default, "finalized", which can lag "confirmed".
 
         Returns:
             One entry per pubkey, in order -- a solders `Account` or None.
@@ -501,9 +501,10 @@ class SolanaClient:
     ) -> int:
         """Get token balance for an account.
 
-        Defaults to "confirmed" rather than solana-py's "finalized", which lags
-        it: the finalized balance right after a sell is the pre-sell amount, and
-        cleanup then builds a burn for tokens the account no longer holds.
+        Defaults to "confirmed" rather than solana-py's "finalized", which can
+        lag it: a finalized balance read right after a sell can still be the
+        pre-sell amount, and cleanup then builds a burn for tokens the account no
+        longer holds.
 
         Args:
             commitment: Commitment level for the balance read

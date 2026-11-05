@@ -928,11 +928,13 @@ def check_g_curve_read_lags_stream() -> bool:  # noqa: C901, PLR0912, PLR0915
                 problems.append(f"{label}: readable on the 4th read: {got}")
             mint = coin["pool_ready"]["mint"]
             no_mint = {k: v for k, v in coin["accounts"].items() if k != mint}
+            # A mint missing through the wait is a node behind the stream too
+            # (verify_migration_sees_fast_graduations covers it).
             if not (
                 isinstance(r := _resolve(coin, no_mint), PoolNotTradable)
-                and not r.not_yet_visible
+                and r.not_yet_visible
             ):
-                problems.append(f"{label}: a missing mint counted as not yet visible")
+                problems.append(f"{label}: a missing mint used the mint up: {r!r}")
 
         # Intake: a curve that never showed completed leaves the mint open for a
         # later executed report; a refusal for another reason uses it up.

@@ -213,7 +213,9 @@ class TokenIntake:
 
                 if token_age > self.max_token_age:
                     logger.info(
-                        f"Skipping token {token_info.symbol} - too old ({token_age:.1f}s > {self.max_token_age}s)"
+                        f"Skipping token {token_info.symbol} - too old "
+                        f"({token_age:.1f}s since detected > max_token_age "
+                        f"{self.max_token_age}s)"
                     )
                     continue
 
@@ -313,7 +315,8 @@ class TokenIntake:
                 if age > self.max_token_age:
                     logger.info(
                         f"Skipping migrated coin {pool.mint} - too old "
-                        f"({age:.1f}s > {self.max_token_age}s)"
+                        f"({age:.1f}s since its migration was detected > "
+                        f"max_token_age {self.max_token_age}s)"
                     )
                     continue
                 token_info = await self._prepare_pool(pool)
@@ -379,7 +382,8 @@ class TokenIntake:
                 if age > self.max_token_age:
                     logger.info(
                         f"Skipping migrated coin {pool.mint} - too old "
-                        f"({age:.1f}s > {self.max_token_age}s)"
+                        f"({age:.1f}s since its migration was detected > "
+                        f"max_token_age {self.max_token_age}s)"
                     )
                     continue
                 token_info = await self._prepare_pool(pool)
