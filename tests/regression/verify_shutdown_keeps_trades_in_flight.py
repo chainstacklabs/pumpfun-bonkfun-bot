@@ -73,7 +73,8 @@ Two trades were cut short by Ctrl+C:
   Q. A node behind the slot a decision rests on (the slot the buy landed in,
      or the one its expiry was seen at) keeps the record pending; it never
      clears it on its "not found". A record with a block height whose height
-     cannot be read stays pending too: the clock does not stand in for it.
+     cannot be read stays pending too: the clock does not stand in for it, and
+     the warning names the coin, at once and then once a minute.
 
 Offline: the RPC client, the seller and the account close are stubs; the
 trader, intake, buyer, position manager and store are the real ones. Runs in a
@@ -1141,23 +1142,38 @@ async def _check_q(tmp: Path) -> list[str]:
 
 
 async def _check_q_height_unreadable(tmp: Path) -> list[str]:
-    """A stored height that cannot be read is retried, not replaced by the clock."""
-    token = _token("NOHEIGHT")
-    path = tmp / "q-height.json"
-    _store_pending(PositionStore(path), token, sent_ago=600)  # clock: long gone
-    client = _Client()
-    client.height_error = RuntimeError("getEpochInfo failed")
-    client.hold(token, RECEIVED_RAW)  # the clock path would hold it off this
-    manager = _manager(path, client)
-    held = _holding(manager)
-    with _patched(position_manager, "resolve_quote_token_program", _resolve_quote):
-        await manager.resume()
-        await asyncio.sleep(1.0)  # well over the recheck interval
-        await manager.stop()
-    record = _records(path).get("NOHEIGHT", {})
-    if not isinstance(record.get("pending"), dict) or "NOHEIGHT" in held:
-        return [f"NOHEIGHT: settled without a block height: {record}"]
-    return []
+    """A stored height that cannot be read is retried, not replaced by the clock.
+
+    Its warning names the coin, once, then once every `_PRICE_WARN_EVERY`.
+    """
+    problems = []
+    warning = "Could not read the block height to settle the buy of NOHEIGHT"
+    for every, least, most in ((60.0, 1, 1), (0.2, 3, 7)):
+        token = _token("NOHEIGHT")
+        path = tmp / f"q-height-{every}.json"
+        _store_pending(PositionStore(path), token, sent_ago=600)  # clock: long gone
+        client = _Client()
+        client.height_error = RuntimeError("getEpochInfo failed")
+        client.hold(token, RECEIVED_RAW)  # the clock path would hold it off this
+        manager = _manager(path, client)
+        manager._PRICE_WARN_EVERY = every  # noqa: SLF001
+        held = _holding(manager)
+        with (
+            _patched(position_manager, "resolve_quote_token_program", _resolve_quote),
+            _logged() as logs,
+        ):
+            await manager.resume()
+            await asyncio.sleep(1.0)  # about a hundred failed height reads
+            await manager.stop()
+        record = _records(path).get("NOHEIGHT", {})
+        if not isinstance(record.get("pending"), dict) or "NOHEIGHT" in held:
+            problems.append(f"NOHEIGHT: settled without a block height: {record}")
+        if not least <= logs.count(warning) <= most:
+            problems.append(
+                f"NOHEIGHT, a warning every {every:g}s: {logs.count(warning)} "
+                f"warnings naming the coin in 1s"
+            )
+    return problems
 
 
 def check_q_lagging_node_keeps_the_record(tmp: Path) -> bool:

@@ -270,6 +270,25 @@ class PositionManager:
         signature = sent.tx_signature
         first = True
         revert: list[str] = []
+        loop = asyncio.get_running_loop()
+        height_warned_at: float | None = None
+
+        def height_unreadable(error: Exception) -> None:
+            # Said at once, then once every `_PRICE_WARN_EVERY` while it lasts.
+            nonlocal height_warned_at
+            line = (
+                f"Could not read the block height to settle the buy of {label} "
+                f"({error}); asking again"
+            )
+            now = loop.time()
+            if height_warned_at is None or now - height_warned_at >= (
+                self._PRICE_WARN_EVERY
+            ):
+                height_warned_at = now
+                logger.warning(line)
+            else:
+                logger.debug(line)
+
         while True:
             # Every balance read below names the slot this decision rests on:
             # a node behind it errors, which keeps the record, rather than
@@ -291,7 +310,7 @@ class PositionManager:
                 )
                 self.store.remove(token_info.mint)
                 return None
-            expired, slot = await self._past_landing(stored)
+            expired, slot = await self._past_landing(stored, height_unreadable)
             if expired:
                 buy = await self._buy_from_balance(
                     token_info, sent, pending, label, slot
@@ -353,20 +372,27 @@ class PositionManager:
             logger.warning(f"Could not look up {signature[:16]}...: {e}")
             return ConfirmationStatus.UNCONFIRMED, None
 
-    async def _past_landing(self, stored: StoredPosition) -> tuple[bool, int | None]:
+    async def _past_landing(
+        self,
+        stored: StoredPosition,
+        on_height_error: Callable[[Exception], None],
+    ) -> tuple[bool, int | None]:
         """Whether the buy can no longer land, and the slot that was seen at.
 
         A recorded block height decides: when the height cannot be read, the
         buy is taken as not expired yet and asked about again next time. The
         clock decides only for a record with no block height; the slot is then
         None.
+
+        Args:
+            on_height_error: Told of each failed height read
         """
         last_valid = stored.pending.last_valid_block_height if stored.pending else None
         if last_valid is not None:
             try:
                 height, slot = await self.solana_client.get_block_height_and_slot()
             except Exception as e:  # noqa: BLE001
-                logger.warning(f"Could not read the block height ({e})")
+                on_height_error(e)
                 return False, None
             return height > last_valid, slot
         held_for = (_utc_now() - stored.entry_time).total_seconds()
