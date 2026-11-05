@@ -183,6 +183,7 @@ class _Venue:
     """Stub instructions and a curve priced at `price`; the read is the real one."""
 
     spends_exact_amount_in = False
+    program_id = None
 
     def __init__(self, quote_mint: Pubkey, price: float) -> None:
         self.quote_mint, self.price = quote_mint, price

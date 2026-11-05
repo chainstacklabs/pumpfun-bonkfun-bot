@@ -517,6 +517,7 @@ def _buy(
             address_provider=SimpleNamespace(
                 derive_pool_address=lambda _mint: Pubkey.new_unique(),
                 derive_creator_vault=lambda _c: Pubkey.new_unique(),
+                program_id=None,
             ),
             instruction_builder=builder,
             curve_manager=_Curve(graduated=graduated),

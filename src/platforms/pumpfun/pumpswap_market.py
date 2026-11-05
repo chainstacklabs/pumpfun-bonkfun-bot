@@ -132,6 +132,11 @@ class PumpSwapMarket(Market):
         self._pools: dict[Pubkey, PumpSwapPool] = {}
 
     @property
+    def program_id(self) -> Pubkey:
+        """PumpSwap (pump-amm)."""
+        return PUMP_AMM_PROGRAM
+
+    @property
     def spends_exact_amount_in(self) -> bool:
         """A buy is `buy_exact_quote_in`: it spends all of `amount_in`."""
         return True

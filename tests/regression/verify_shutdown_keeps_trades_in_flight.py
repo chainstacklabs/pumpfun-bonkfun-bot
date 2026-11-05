@@ -145,6 +145,7 @@ def _implementations() -> PlatformImplementations:
         address_provider=SimpleNamespace(
             derive_pool_address=lambda _mint: CURVE,
             derive_creator_vault=lambda _creator: CURVE,
+            program_id=None,
         ),
         instruction_builder=SimpleNamespace(
             build_buy_instruction=_empty,
@@ -722,7 +723,9 @@ def _manager(path: Path, client: _Client, **settings: object) -> PositionManager
         solana_client=client,
         wallet=WALLET,
         priority_fee_manager=None,
-        platform_implementations=SimpleNamespace(),
+        platform_implementations=SimpleNamespace(
+            curve_market=None, graduated_market=None
+        ),
         store=PositionStore(path),
     )
     manager._PENDING_RECHECK = 0.01  # noqa: SLF001

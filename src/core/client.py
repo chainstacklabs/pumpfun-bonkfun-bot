@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import random
+import re
 import socket
 import struct
 from collections.abc import Callable
@@ -33,8 +34,8 @@ from solders.transaction import VersionedTransaction
 
 from core.rpc_rate_limiter import TokenBucketRateLimiter
 from core.trade_deltas import TradeDeltas, paid_by, read_trade_deltas
-from interfaces.core import ConfirmationStatus, Platform
-from utils.idl_manager import get_idl_parser
+from interfaces.core import ConfirmationStatus
+from utils.idl_manager import describe_program_error
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -47,6 +48,14 @@ HTTP_FORBIDDEN = 403
 # Length of the `[instruction_index, error_detail]` pair inside
 # `{"InstructionError": [...]}` -- fixed by the RPC's `meta.err` shape.
 INSTRUCTION_ERROR_PAIR_LEN = 2
+
+# The line the runtime logs for the program whose error ended the transaction;
+# a CPI's failure comes before its caller's.
+_PROGRAM_FAILED = re.compile(r"^Program (\w+) failed: ")
+
+# How long a revert seen in a signature status waits for its transaction, read
+# only to name the error; past it the error is named, hedged, from the venue.
+REVERT_NAME_BUDGET = 2.5
 
 # How long getTransaction keeps retrying a signature the node has not caught up
 # to yet, and the pause between attempts. A null result means "I cannot see this
@@ -146,26 +155,8 @@ def set_loaded_accounts_data_size_limit(bytes_limit: int) -> Instruction:
     return Instruction(COMPUTE_BUDGET_PROGRAM, data, [])
 
 
-def _describe_program_error(err: object) -> str | None:
-    """Best-effort human name for an Anchor `Custom(N)` error in `meta.err`.
-
-    Digs `{"InstructionError": [idx, {"Custom": n}]}` out of `meta.err` and looks
-    the code up in pump.fun's IDL error table. `SolanaClient` is shared across
-    platforms and carries no record of which program a transaction invoked, so
-    only pump.fun's table (`idl/pump_fun_idl.json`) is ever checked. A revert on
-    another program is described against the wrong table if its numeric code is
-    also defined there, and left unnamed otherwise. An unrecognized shape returns
-    None, never raises.
-
-    Args:
-        err: The raw `meta.err` value from a `getTransaction` response.
-
-    Returns:
-        A description like "pump.fun IDL: 6062 BuybackFeeRecipientMissing", or
-        None. The "pump.fun IDL:" prefix must stay in the rendered string: a
-        reader of a log line needs to know the name is pump.fun's interpretation,
-        not a fact about whichever program actually reverted.
-    """
+def _custom_code(err: object) -> int | None:
+    """The N of `{"InstructionError": [idx, {"Custom": N}]}`; None for any other shape."""
     if not isinstance(err, dict):
         return None
     instruction_error = err.get("InstructionError")
@@ -178,17 +169,62 @@ def _describe_program_error(err: object) -> str | None:
     if not isinstance(detail, dict):
         return None
     code = detail.get("Custom")
-    if not isinstance(code, int):
-        return None
-    description = get_idl_parser(Platform.PUMP_FUN).describe_error_code(code)
-    if description is None:
-        return None
-    return f"pump.fun IDL: {description}"
+    return code if isinstance(code, int) else None
 
 
-def _revert_text(err: object) -> str:
-    """A transaction's `err` as logged, with pump.fun's name for its code when known."""
-    detail = _describe_program_error(err)
+def _failing_program(result: dict) -> str | None:
+    """The program that raised a reverted transaction's error, from its `getTransaction` result.
+
+    `meta.err` names the top-level instruction, but an error raised by a program
+    it called reaches it unchanged at that index. The runtime logs
+    `Program <id> failed:` for the program that raised it first, then for each
+    caller, so the first such line names it.
+
+    Returns:
+        The program's base58 id; None without logs, or with logs truncated
+        before that line.
+    """
+    for line in (result.get("meta") or {}).get("logMessages") or []:
+        failed = _PROGRAM_FAILED.match(line) if isinstance(line, str) else None
+        if failed:
+            return failed.group(1)
+    return None
+
+
+def _name_error(
+    err: object, transaction: dict | None, venue: Pubkey | None
+) -> str | None:
+    code = _custom_code(err)
+    if code is None:
+        return None
+    raiser = _failing_program(transaction) if transaction is not None else None
+    if raiser is not None:
+        return describe_program_error(raiser, code)
+    return describe_program_error(venue, code, hedged=True)
+
+
+def _revert_text(
+    err: object, *, transaction: dict | None = None, venue: Pubkey | None = None
+) -> str:
+    """A transaction's `err` as logged, its Anchor code named when that can be told.
+
+    Codes from 6000 up mean something different in each program, so a code is
+    named only from the table of a program that may have raised it, and the
+    name says whose table it is: "(PumpSwap IDL: 6004 ExceededSlippage)".
+    Naming never raises; a failure leaves the code unnamed.
+
+    Args:
+        transaction: Its `getTransaction` result: names the code from the
+            program its logs show raising it
+        venue: The program the trade was sent to, used when the transaction
+            does not say: the name is hedged, "(PumpSwap IDL, if PumpSwap
+            raised it: ...)", since a program it called may have raised it
+    """
+    try:
+        detail = _name_error(err, transaction, venue)
+    except Exception as e:  # noqa: BLE001 - the revert is reported either way
+        logger.warning(f"Could not name the error {err}: {e!r}")
+        detail = None
     return f"{err}" + (f" ({detail})" if detail else "")
 
 
@@ -714,6 +750,7 @@ class SolanaClient:
         quiet: bool = False,
         on_error: Callable[[Exception], None] | None = None,
         on_revert: Callable[[str], None] | None = None,
+        program: Pubkey | None = None,
     ) -> ConfirmationStatus:
         """Confirm a transaction, distinguishing a revert from an unknown.
 
@@ -729,6 +766,8 @@ class SolanaClient:
             quiet: As in :meth:`confirm_transaction`
             on_error: As in :meth:`confirm_transaction`
             on_revert: As in :meth:`verify_transaction_status`
+            program: As in :meth:`get_signature_outcome`, for a revert the
+                status that ended the wait shows
 
         Returns:
             SUCCESS, REVERTED, or UNCONFIRMED
@@ -769,7 +808,8 @@ class SolanaClient:
         # node that cannot serve the transaction yet cannot make a revert unknown.
         err = _confirmed_error(response)
         if err:
-            self._report_revert(str(signature), err, on_revert)
+            error = await self._name_status_revert(str(signature), err, program)
+            self._report_revert(str(signature), error, on_revert)
             return ConfirmationStatus.REVERTED
         return await self.verify_transaction_status(signature, on_revert=on_revert)
 
@@ -780,6 +820,7 @@ class SolanaClient:
         search_history: bool = True,
         quiet: bool = False,
         on_revert: Callable[[str], None] | None = None,
+        program: Pubkey | None = None,
     ) -> tuple[ConfirmationStatus | None, int | None]:
         """What the cluster knows of a signature, and the slot it landed in.
 
@@ -788,6 +829,10 @@ class SolanaClient:
                 only holds the last few minutes; slower, so ask once
             quiet: Log nothing when the answer cannot be read
             on_revert: Called with the error when the status is REVERTED
+            program: The program the trade was sent to. A revert's
+                transaction is read to name its code; when it cannot be read
+                within `REVERT_NAME_BUDGET`, the code is named, hedged, from
+                this program's IDL. None leaves it unnamed then.
 
         Returns:
             The status: SUCCESS or REVERTED once confirmed; UNCONFIRMED when it
@@ -819,7 +864,11 @@ class SolanaClient:
             return ConfirmationStatus.UNCONFIRMED, slot
         if status.get("err"):
             if on_revert is not None:
-                on_revert(_revert_text(status["err"]))
+                on_revert(
+                    await self._name_status_revert(
+                        str(signature), status["err"], program
+                    )
+                )
             return ConfirmationStatus.REVERTED, slot
         return ConfirmationStatus.SUCCESS, slot
 
@@ -925,17 +974,38 @@ class SolanaClient:
 
         tx_err = result.get("meta", {}).get("err")
         if tx_err:
-            self._report_revert(signature, tx_err, on_revert)
+            error = _revert_text(tx_err, transaction=result)
+            self._report_revert(signature, error, on_revert)
             return ConfirmationStatus.REVERTED
 
         return ConfirmationStatus.SUCCESS
 
+    async def _name_status_revert(
+        self, signature: str, err: object, venue: Pubkey | None
+    ) -> str:
+        """A status's revert as `_revert_text` renders it, its transaction read to name it.
+
+        Read once, bounded by `REVERT_NAME_BUDGET`, and only for an Anchor code:
+        a node that cannot serve the transaction yet holds the caller up no
+        longer than that, and the code is then named, hedged, from `venue`.
+        """
+        transaction = None
+        if _custom_code(err) is not None:
+            try:
+                transaction = await self._get_transaction_result(
+                    signature, budget_seconds=REVERT_NAME_BUDGET
+                )
+            except Exception as e:  # noqa: BLE001 - the revert stands without a name
+                logger.warning(
+                    f"Could not read {signature[:16]}... to name its error: {e!r}"
+                )
+        return _revert_text(err, transaction=transaction, venue=venue)
+
     @staticmethod
     def _report_revert(
-        signature: str, err: object, on_revert: Callable[[str], None] | None
+        signature: str, error: str, on_revert: Callable[[str], None] | None
     ) -> None:
-        """Hand a revert's error to `on_revert`, or log it when there is none."""
-        error = _revert_text(err)
+        """Hand a revert's error, as `_revert_text` renders it, to `on_revert`, or log it."""
         if on_revert is not None:
             on_revert(error)
         else:
@@ -1003,10 +1073,9 @@ class SolanaClient:
             return None
         tx_err = result.get("meta", {}).get("err")
         if tx_err:
-            detail = _describe_program_error(tx_err)
             logger.error(
-                f"Transaction {signature[:16]}... failed with error: {tx_err}"
-                + (f" ({detail})" if detail else "")
+                f"Transaction {signature[:16]}... failed with error: "
+                f"{_revert_text(tx_err, transaction=result)}"
             )
             return None
         if not paid_by(result, wallet):

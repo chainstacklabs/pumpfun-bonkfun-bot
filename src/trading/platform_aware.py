@@ -654,7 +654,7 @@ class PlatformAwareBuyer(Trader):
 
             revert: list[str] = []
             status = await self.client.confirm_transaction_detailed(
-                tx_signature, on_revert=revert.append
+                tx_signature, on_revert=revert.append, program=venue.program_id
             )
 
             if status is ConfirmationStatus.SUCCESS:
@@ -1268,7 +1268,7 @@ class PlatformAwareSeller(Trader):
 
             revert: list[str] = []
             status = await self.client.confirm_transaction_detailed(
-                tx_signature, on_revert=revert.append
+                tx_signature, on_revert=revert.append, program=venue.program_id
             )
 
             if status is ConfirmationStatus.SUCCESS:

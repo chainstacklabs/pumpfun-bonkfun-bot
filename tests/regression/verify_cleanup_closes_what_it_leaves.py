@@ -878,7 +878,9 @@ def _resume_cleared(  # noqa: PLR0913
             solana_client=chain,
             wallet=WALLET,
             priority_fee_manager=_fees(),
-            platform_implementations=SimpleNamespace(),
+            platform_implementations=SimpleNamespace(
+                curve_market=None, graduated_market=None
+            ),
             store=store,
         )
 
@@ -949,7 +951,9 @@ async def _slot_free_while_closing() -> list[str]:
         solana_client=_Chain(),
         wallet=WALLET,
         priority_fee_manager=_fees(),
-        platform_implementations=SimpleNamespace(),
+        platform_implementations=SimpleNamespace(
+            curve_market=None, graduated_market=None
+        ),
     )
     token = _token()
     original = position_manager.handle_cleanup_after_sell
