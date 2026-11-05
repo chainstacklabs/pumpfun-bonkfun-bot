@@ -77,7 +77,7 @@ Each YAML file in `bots/` is one bot instance. They ship with commented defaults
 
 Set `platform` to `"pump_fun"`, `"launchlab"`, `"lets_bonk"` or `"stonk_fun"`. pump.fun supports all four listeners; the LaunchLab platforms support `blocks`, `geyser` and `shreds` but **not** `logs`. The bot validates the pairing at startup and refuses to run an invalid one.
 
-Set `enabled: false` to keep a config around without running it; such a file is skipped unread, so it need not be valid. Every bot with `enabled: true` starts when you run the bot.
+Set `enabled: false` to keep a config around without running it; such a file is skipped before its settings are read, so unset `${VAR}` values and invalid settings in it do not stop the run, but its YAML must still parse. Every bot with `enabled: true` starts when you run the bot.
 
 ### 5. Run
 

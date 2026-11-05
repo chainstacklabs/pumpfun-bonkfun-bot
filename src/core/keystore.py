@@ -9,7 +9,6 @@ salt and cost settings are stored beside it. A bot config names that file with
 """
 
 import base64
-import binascii
 import json
 import os
 from pathlib import Path
@@ -151,7 +150,8 @@ def _parse(data: object, path: Path) -> tuple[bytes, int, int, int, bytes, bytes
             raise not_a_wallet
         salt = base64.b64decode(kdf["salt"], validate=True)
         raw = base64.b64decode(data["encrypted_key"], validate=True)
-    except (KeyError, TypeError, binascii.Error):
+    except (KeyError, TypeError, ValueError):
+        # ValueError: base64 that is not valid (binascii.Error), or not ASCII.
         raise not_a_wallet from None
     if 128 * n * r > _MAX_SCRYPT_MEMORY:
         raise KeystoreError(path, "asks for more scrypt memory than a wallet needs")

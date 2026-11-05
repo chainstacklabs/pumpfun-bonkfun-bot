@@ -212,6 +212,14 @@ def check_b_refusals_name_the_cause() -> bool:
                 ["not a pumpfun-cli wallet"],
             ),
             (
+                "non-ASCII base64",
+                write(
+                    "u64.enc", _keystore(keypair, "secret-pass", encrypted_key="ñ@@@")
+                ),
+                "secret-pass",
+                ["not a pumpfun-cli wallet"],
+            ),
+            (
                 "a list, not an object",
                 write("list.enc", [1, 2, 3]),
                 "secret-pass",
