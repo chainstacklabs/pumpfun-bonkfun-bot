@@ -58,7 +58,7 @@ Fill in `.env`:
 | `SOLANA_NODE_RPC_ENDPOINT` | HTTPS RPC endpoint |
 | `SOLANA_NODE_WSS_ENDPOINT` | WebSocket endpoint (for `logs` / `blocks` listeners) |
 | `SOLANA_PRIVATE_KEY` | Base58 private key of the trading wallet |
-| `PUMPFUN_PASSWORD` | Password of the pumpfun-cli wallet file, when the bot trades from it instead (see [encrypted wallet](#encrypted-wallet)) |
+| `KEYSTORE_PASSWORD` | Password of the [encrypted keystore](#encrypted-keystore), when the bot trades from one instead; `PUMPFUN_PASSWORD` is read when it is unset |
 | `GEYSER_ENDPOINT`, `GEYSER_API_TOKEN`, `GEYSER_AUTH_TYPE` | For the `geyser` and `shreds` listeners (same endpoint, different RPC) |
 
 Public RPC nodes will not work for this workload — see [throughput](#throughput-and-rate-limits) below.
@@ -98,7 +98,7 @@ A bot that can't run is not started, with one line saying why: a config that fai
 
 The YAML files are commented inline. The sections that matter most:
 
-- **`private_key`** or **`keystore`** — the trading wallet: a raw key, or the [encrypted wallet](#encrypted-wallet) file pumpfun-cli writes.
+- **`private_key`** or **`keystore`** — the trading wallet: a raw key, or the path of an [encrypted keystore](#encrypted-keystore).
 - **`trade`** — `buy_amount` (in SOL), slippage, `exit_strategy` (`time_based`, `tp_sl`, `manual`), [`entry`](#migration-entry), [`max_open_positions`](#several-positions-at-once) and [`extreme_fast_mode`](#extreme-fast-mode).
 - **`priority_fees`** — fixed or dynamic. Dynamic costs an extra RPC call, which slows the buy.
 - **`filters`** — `listener_type`, `max_token_age` (checked once, when the bot takes a coin up: seconds since it detected the coin, not its age on chain, so a slow listener lets older coins through), name/creator matching, `marry_mode` (buy only, never sell), `yolo_mode` (trade continuously).
@@ -239,23 +239,45 @@ leaves its old file behind; rename the file too. A position bought on another
 No coin in the file is bought again, monitored or not. A file the bot cannot
 read is moved aside to `<name>.json.unreadable`.
 
-### Encrypted wallet
+### Encrypted keystore
 
-Instead of a raw `private_key`, a bot can trade from the encrypted wallet file
-[pumpfun-cli](https://github.com/chainstacklabs/pumpfun-cli) keeps (`pumpfun wallet
-create` or `pumpfun wallet import`), so one wallet serves both. Replace the
-`private_key` line with the file's path:
+Instead of a raw `private_key`, a bot can trade from an encrypted keystore: the
+keypair sealed under a password with scrypt and AES-256-GCM, so the key never
+sits on disk in clear. `pump_bot_wallet` makes one:
 
-```yaml
-keystore: "~/.config/pumpfun-cli/wallet.enc"
+```bash
+pump_bot_wallet create bots/wallet.enc     # a new keypair
+pump_bot_wallet import bots/wallet.enc     # a key you have: asks for it, hidden
+pump_bot_wallet import bots/wallet.enc --keypair-file ~/.config/solana/id.json
+pump_bot_wallet import bots/wallet.enc --from-env SOLANA_PRIVATE_KEY
+pump_bot_wallet show bots/wallet.enc       # the public key, after unlocking
 ```
 
-and put the wallet's password in the bot's `env_file` as `PUMPFUN_PASSWORD`, the
-variable the CLI reads too. `~` expands to your home folder, and a relative path
-is looked up beside the bot config first. A config may set `private_key` or
-`keystore`, not both. The bot unlocks the file at startup; a wrong or missing
-password, or a file that is not a pumpfun-cli wallet, stops that bot before it
-trades, with a log line saying which.
+Each prints only the wallet's public key. `import` takes the key as base58 or as
+a Solana CLI keypair file, never on the command line; `--from-env` names a
+variable exported in your shell (the command does not read `.env`). The
+password comes from `KEYSTORE_PASSWORD`, else `PUMPFUN_PASSWORD`, else a hidden
+prompt that asks twice. The file is written readable only by you, and an
+existing one is replaced only with `--force`. Back up the file and the password:
+losing either loses the wallet.
+
+Then replace the bot config's `private_key` line with the file's path:
+
+```yaml
+keystore: "./wallet.enc"
+```
+
+and put the password in the bot's `env_file` as `KEYSTORE_PASSWORD`.
+`PUMPFUN_PASSWORD` is read when it is unset; set both and they must match. A
+relative path is looked up beside the bot config first, then in the folder you
+run the bot from, and `~` expands to your home folder. A config may set
+`private_key` or `keystore`, not both. The bot unlocks the file at startup; a
+wrong or missing password, two password variables that differ, or a file that
+is not a keystore stops that bot before it trades, with a log line saying
+which.
+
+pumpfun-cli and pumpclaw read and write the same file, so one wallet can serve
+all three, for example with `keystore: "~/.config/pumpfun-cli/wallet.enc"`.
 
 ### Non-SOL quote assets
 
