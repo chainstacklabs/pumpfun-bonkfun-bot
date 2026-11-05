@@ -74,6 +74,7 @@ from core.pubkeys import (  # noqa: E402
     SystemAddresses,
     resolve_quote_token_program,
 )
+from core.trade_deltas import TradeDeltas  # noqa: E402
 from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E402
 from platforms import PlatformImplementations  # noqa: E402
 from platforms.pumpfun.pumpswap_market import (  # noqa: E402
@@ -106,6 +107,18 @@ SPEND = 10_000_000  # the buyer's 0.01 SOL, in lamports
 # What `_build` asks for: raw quote in, raw token floor.
 AMOUNT_IN, MIN_OUT = 1_000_000, 2_000_000
 USER = Pubkey.from_string("7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU")
+
+
+def _deltas(tokens_raw: int | None, spent: int | None) -> TradeDeltas | None:
+    """A buy's transaction as the client reads it: `spent` is the venue's fill."""
+    if tokens_raw is None:
+        return None
+    return TradeDeltas(
+        tokens_raw=tokens_raw,
+        quote_raw=None if spent is None else -spent,
+        network_fee_lamports=0,
+        venue_quote_raw=spent,
+    )
 
 
 class _FixtureClient:
@@ -428,15 +441,16 @@ class _StubClient:
     ) -> ConfirmationStatus:
         return ConfirmationStatus.SUCCESS
 
-    async def get_buy_transaction_details(
+    async def get_trade_deltas(
         self,
         _sig: str,
+        _wallet: Pubkey,
         _mint: Pubkey,
+        _quote_mint: Pubkey,
         destination: Pubkey,
-        quote_mint: Pubkey,  # noqa: ARG002
-    ) -> tuple[int, None]:
+    ) -> TradeDeltas:
         self.destination = destination
-        return 1_000_000_000, None
+        return _deltas(1_000_000_000, None)
 
     async def get_token_account_balance(self, *_a: object, **_k: object) -> int:
         return 0

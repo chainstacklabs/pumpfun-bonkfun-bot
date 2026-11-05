@@ -552,6 +552,7 @@ class UniversalTrader:
             buy_result.price,
             buy_result.amount,
             buy_result.tx_signature,
+            deltas=buy_result.deltas,
         )
         self._track_traded(token_info)
         self.positions.open(token_info, buy_result)

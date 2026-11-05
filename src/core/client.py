@@ -31,8 +31,8 @@ from solders.pubkey import Pubkey
 from solders.signature import Signature
 from solders.transaction import VersionedTransaction
 
-from core.pubkeys import is_sol_paired
 from core.rpc_rate_limiter import TokenBucketRateLimiter
+from core.trade_deltas import TradeDeltas, paid_by, read_trade_deltas
 from interfaces.core import ConfirmationStatus, Platform
 from utils.idl_manager import get_idl_parser
 from utils.logger import get_logger
@@ -927,134 +927,53 @@ class SolanaClient:
 
         return None
 
-    async def get_buy_transaction_details(
+    async def get_trade_deltas(
         self,
         signature: str | Signature,
+        wallet: Pubkey,
         mint: Pubkey,
-        sol_destination: Pubkey,
-        quote_mint: Pubkey | None = None,
-    ) -> tuple[int | None, int | None]:
-        """Get actual tokens received and quote spent from a buy transaction.
-
-        Reads SOL transferred to the pool/curve from preBalances/postBalances and
-        tokens received from the token balance diff. A non-SOL quote asset does
-        not show up in lamport balances, so its spend comes from the quote mint's
-        token balance deltas instead.
+        quote_mint: Pubkey | None,
+        venue_account: Pubkey | str | None = None,
+    ) -> TradeDeltas | None:
+        """What a landed buy or sell did to the wallet, from its transaction.
 
         Args:
-            signature: Transaction signature, base58 string or Signature
-            mint: Token mint address
-            sol_destination: Address where SOL is sent (bonding curve for pump.fun,
-                           quote_vault for letsbonk)
-            quote_mint: Quote mint of the coin. Pass None or wrapped SOL for
-                       SOL-paired coins.
+            quote_mint: The coin's quote asset, raw or normalized
+            venue_account: As in `read_trade_deltas`: where a buy's quote
+                lands, to read its fill
 
         Returns:
-            Tuple of (tokens_received_raw, quote_spent_raw), or (None, None)
+            The deltas; None when the transaction cannot be read within
+            `TX_RESULT_RETRY_BUDGET`, reverted, was not paid for by `wallet`,
+            or shows no token account of the wallet's holding the coin
         """
         # Normalized up front: the log lines below slice it, which a Signature
         # does not support.
         signature = str(signature)
         result = await self._get_transaction_result(signature)
         if not result:
-            return None, None
-
-        meta = result.get("meta", {})
-
-        # Check for transaction execution errors (e.g., MaxLoadedAccountsDataSizeExceeded)
-        tx_err = meta.get("err")
+            return None
+        tx_err = result.get("meta", {}).get("err")
         if tx_err:
             detail = _describe_program_error(tx_err)
             logger.error(
                 f"Transaction {signature[:16]}... failed with error: {tx_err}"
                 + (f" ({detail})" if detail else "")
             )
-            return None, None
-
-        # Get tokens received from pre/post token balance diff
-        # This works for Token2022 where owner might be different
-        tokens_received = self._extract_positive_token_diff(meta, str(mint))
-        if tokens_received is not None:
-            logger.info(f"Tokens received from tx: {tokens_received}")
-
-        # Non-SOL quote assets move as SPL token transfers, so the lamport
-        # deltas below would report only rent/fees. Read the quote spend from
-        # the quote mint's token balance deltas: the positive diff is the
-        # curve's quote vault receiving what the buyer paid.
-        if quote_mint is not None and not is_sol_paired(quote_mint):
-            quote_spent = self._extract_positive_token_diff(meta, str(quote_mint))
-            if quote_spent is None:
-                logger.warning(
-                    f"No positive {quote_mint} balance diff found in tx "
-                    f"{signature[:16]}...; cannot determine quote spent"
-                )
-            else:
-                logger.info(f"Quote spent from tx: {quote_spent} (mint {quote_mint})")
-            return tokens_received, quote_spent
-
-        # Get SOL spent from preBalances/postBalances at sol_destination
-        sol_destination_str = str(sol_destination)
-        sol_spent = None
-        pre_balances = meta.get("preBalances", [])
-        post_balances = meta.get("postBalances", [])
-        account_keys = (
-            result.get("transaction", {}).get("message", {}).get("accountKeys", [])
-        )
-
-        for i, key in enumerate(account_keys):
-            key_str = key if isinstance(key, str) else key.get("pubkey", "")
-            if key_str == sol_destination_str:
-                if i < len(pre_balances) and i < len(post_balances):
-                    sol_spent = post_balances[i] - pre_balances[i]
-                    if sol_spent > 0:
-                        logger.info(f"SOL to pool/curve: {sol_spent} lamports")
-                    else:
-                        logger.warning(
-                            f"SOL destination balance change not positive: {sol_spent}"
-                        )
-                        sol_spent = None
-                break
-
-        return tokens_received, sol_spent
-
-    @staticmethod
-    def _extract_positive_token_diff(meta: dict, mint_str: str) -> int | None:
-        """Find the largest positive token balance change for a mint in a tx.
-
-        Args:
-            meta: Transaction meta containing pre/postTokenBalances
-            mint_str: Mint address to look for
-
-        Returns:
-            Raw positive balance delta, or None if no account gained this mint
-        """
-        pre_by_idx = {
-            b.get("accountIndex"): b for b in meta.get("preTokenBalances", [])
-        }
-        post_by_idx = {
-            b.get("accountIndex"): b for b in meta.get("postTokenBalances", [])
-        }
-
-        best: int | None = None
-        for idx in set(pre_by_idx) | set(post_by_idx):
-            pre = pre_by_idx.get(idx)
-            post = post_by_idx.get(idx)
-
-            if (post or pre).get("mint", "") != mint_str:
-                continue
-
-            pre_amount = (
-                int(pre.get("uiTokenAmount", {}).get("amount", 0)) if pre else 0
+            return None
+        if not paid_by(result, wallet):
+            logger.warning(
+                f"Transaction {signature[:16]}... was not paid for by {wallet}; "
+                f"its amounts are not read"
             )
-            post_amount = (
-                int(post.get("uiTokenAmount", {}).get("amount", 0)) if post else 0
+            return None
+        deltas = read_trade_deltas(result, wallet, mint, quote_mint, venue_account)
+        if deltas is None:
+            logger.warning(
+                f"Transaction {signature[:16]}... shows no token account of "
+                f"{wallet} holding {mint}"
             )
-            diff = post_amount - pre_amount
-
-            if diff > 0 and (best is None or diff > best):
-                best = diff
-
-        return best
+        return deltas
 
     async def _get_transaction_result(
         self,

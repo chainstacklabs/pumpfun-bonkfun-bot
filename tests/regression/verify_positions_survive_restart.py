@@ -351,6 +351,7 @@ async def _check_b(tmp: Path) -> list[str]:
         problems.append("tp_sl: removed before it was sold")
     rig.prices["TP"] = 2.0
     await asyncio.wait_for(task, 2)
+    await rig.pm.wait_all()
     if str(sold.mint) in rig.stored():
         problems.append("tp_sl: still in the file after its sale")
 
@@ -360,6 +361,7 @@ async def _check_b(tmp: Path) -> list[str]:
     if str(timed.mint) not in rig.stored():
         problems.append("time_based: not written when the buy landed")
     await asyncio.wait_for(task, 2)
+    await rig.pm.wait_all()
     if rig.stored() or len(rig.seller.sells) != 1:
         problems.append(f"time_based: {rig.stored()} after {rig.seller.sells}")
 
@@ -368,6 +370,7 @@ async def _check_b(tmp: Path) -> list[str]:
     rig.prices["LATE"] = 2.0
     rig.seller.outcome = "unconfirmed"
     await asyncio.wait_for(rig.pm.open(late, _buy()), 2)
+    await rig.pm.wait_all()
     if rig.stored():
         problems.append("a sell confirmed late left the position in the file")
     return problems

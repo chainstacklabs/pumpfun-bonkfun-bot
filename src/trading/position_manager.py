@@ -35,7 +35,20 @@ from interfaces.core import (
 from platforms import PlatformImplementations
 from trading import trade_log
 from trading.base import PendingBuy, TradeResult
-from trading.platform_aware import PlatformAwareSeller
+from trading.platform_aware import (
+    PlatformAwareSeller,
+    landed_sale,
+    log_deltas,
+    read_deltas,
+)
+from trading.pnl import (
+    CostBasis,
+    Realised,
+    cost_basis,
+    format_price,
+    pnl_text,
+    sale_pnl,
+)
 from trading.position import ExitReason, Position
 from trading.position_store import PositionStore, StoredPosition
 from trading.settings import TraderSettings
@@ -278,7 +291,9 @@ class PositionManager:
         if buy is None:
             return None
         self.store.add(token_info, buy, stored.entry_time, self.wallet.pubkey)
-        trade_log.log_trade("buy", token_info, buy.price, buy.amount, signature)
+        trade_log.log_trade(
+            "buy", token_info, buy.price, buy.amount, signature, deltas=buy.deltas
+        )
         return buy
 
     async def _signature_outcome(
@@ -338,15 +353,22 @@ class PositionManager:
             slot: The slot the buy landed in; balance reads refuse a node behind it
         """
         quote_mint = normalize_quote_mint(token_info.quote_mint)
-        tokens_raw, spent = await self.solana_client.get_buy_transaction_details(
+        deltas = await self.solana_client.get_trade_deltas(
             sent.tx_signature,
+            self.wallet.pubkey,
             token_info.mint,
+            quote_mint,
             pending.quote_destination,
-            quote_mint=quote_mint,
         )
-        if not tokens_raw:
+        if deltas is None or deltas.tokens_raw <= 0:
             return await self._buy_from_balance(token_info, sent, pending, label, slot)
-        spent = spent if spent is not None else pending.spend_raw
+        log_deltas("Buy", token_info, deltas)
+        tokens_raw = deltas.tokens_raw
+        spent = (
+            deltas.venue_quote_raw
+            if deltas.venue_quote_raw is not None
+            else pending.spend_raw
+        )
         price = None
         if spent:
             try:
@@ -385,6 +407,7 @@ class PositionManager:
             amount=amount,
             amount_raw=tokens_raw,
             price=price,
+            deltas=deltas,
         )
 
     async def _buy_from_balance(
@@ -514,9 +537,12 @@ class PositionManager:
                 f"the wallet"
             )
         if closing:
-            logger.info(
-                f"Waiting for {len(closing)} position(s) to close their token account"
+            what = (
+                "close their token account"
+                if self.cleanup_mode == "after_sell"
+                else "read their sale back"
             )
+            logger.info(f"Waiting for {len(closing)} position(s) to {what}")
         for task in held:
             task.cancel()
         loop = asyncio.get_running_loop()
@@ -542,11 +568,18 @@ class PositionManager:
         closes = {t for t in tasks & self._closes if not t.done()}
         for task in closes:
             task.cancel()
-        if closes:
+        reports = sum(t.get_name().startswith("report-") for t in closes)
+        if len(closes) > reports:
             logger.warning(
-                f"{len(closes)} token account close(s) did not finish within "
-                f"{self._STOP_BUDGET}s; reclaim the rent with "
+                f"{len(closes) - reports} token account close(s) did not finish "
+                f"within {self._STOP_BUDGET}s; reclaim the rent with "
                 f"tools/cleanup_accounts.py <MINT>"
+            )
+        if reports:
+            logger.warning(
+                f"{reports} sale report(s) did not finish within "
+                f"{self._STOP_BUDGET}s; their trades.log rows and PnL lines are "
+                f"missing"
             )
         positions = sum(not t.done() for t in tasks - closes)
         if positions:
@@ -691,11 +724,20 @@ class PositionManager:
             return
         self._start_close(self._close_cleared_account(token_info), token_info)
 
-    def _start_close(self, close: Coroutine, token_info: TokenInfo) -> None:
-        """Run an account close in its own task, tracked in `_closes`."""
-        task = asyncio.create_task(close, name=f"close-{token_info.mint}")
+    def _start_close(
+        self, close: Coroutine, token_info: TokenInfo, *, closes: bool = True
+    ) -> asyncio.Task:
+        """Run an account close, or a sale's report, in its own task in `_closes`.
+
+        Args:
+            closes: The task closes an account; False for a sale's report that
+                only reads it back
+        """
+        kind = "close" if closes else "report"
+        task = asyncio.create_task(close, name=f"{kind}-{token_info.mint}")
         self._closes |= {task}
         task.add_done_callback(self._closed)
+        return task
 
     def _closed(self, task: asyncio.Task) -> None:
         self._closes -= {task}
@@ -835,16 +877,21 @@ class PositionManager:
         )
         if entry_time is not None:
             position.entry_time = entry_time
+        position.cost = cost_basis(
+            buy_result, normalize_quote_mint(token_info.quote_mint)
+        ) or CostBasis(entry_price, from_chain=False)
 
         logger.info(f"Created position: {position}")
         quote_label = quote_symbol(normalize_quote_mint(token_info.quote_mint))
         if position.take_profit_price:
             logger.info(
-                f"Take profit target: {position.take_profit_price:.8f} {quote_label}"
+                f"Take profit target: {format_price(position.take_profit_price)} "
+                f"{quote_label}"
             )
         if position.stop_loss_price:
             logger.info(
-                f"Stop loss target: {position.stop_loss_price:.8f} {quote_label}"
+                f"Stop loss target: {format_price(position.stop_loss_price)} "
+                f"{quote_label}"
             )
 
         # Monitor position until exit condition is met
@@ -879,6 +926,10 @@ class PositionManager:
             token_price = await self._first_price(token_info)
         elif entry_time is not None:
             token_price = await self._current_price_or(token_info, token_price)
+        cost = cost_basis(
+            buy_result, normalize_quote_mint(token_info.quote_mint)
+        ) or CostBasis(token_price, from_chain=False)
+        realised = Realised()
 
         # Set once part of it sold: the curve paid out all it had, so later
         # attempts on the rest wait `price_check_interval` for it to refill.
@@ -893,7 +944,13 @@ class PositionManager:
                 token_amount_raw=buy_result.amount_raw,
             )
             verdict, left = await self._settle_time_based_sell(
-                token_info, sell_result, buy_result, attempt
+                token_info,
+                sell_result,
+                buy_result,
+                attempt,
+                cost=cost,
+                price=token_price,
+                realised=realised,
             )
             if verdict in (ExitSellVerdict.SOLD, ExitSellVerdict.STOP):
                 return
@@ -918,32 +975,30 @@ class PositionManager:
             f"and is no longer monitored - tokens are still held."
         )
 
-    async def _settle_time_based_sell(
+    async def _settle_time_based_sell(  # noqa: PLR0913
         self,
         token_info: TokenInfo,
         sell_result: TradeResult,
         held: TradeResult,
         attempt: int,
+        *,
+        cost: CostBasis,
+        price: float,
+        realised: Realised,
     ) -> tuple[ExitSellVerdict, int]:
-        """Act on one time-based exit sell: log it, settle it, clean up once sold.
+        """Act on one time-based exit sell: settle it, then report it and clean up.
 
         Args:
             held: What the sell was asked to sell, as `amount`/`amount_raw`
+            cost: The position's cost basis
+            price: The seller's reference price
+            realised: The position's sales so far; this one is added
 
         Returns:
             The verdict, SOLD once all of it is sold (late or not), and the raw
             tokens left when the verdict is PARTIAL (0 otherwise)
         """
-        if sell_result.success:
-            trade_log.log_trade(
-                "sell",
-                token_info,
-                sell_result.price,
-                sell_result.amount,
-                sell_result.tx_signature,
-            )
-            verdict = ExitSellVerdict.SOLD
-        else:
+        if not sell_result.success:
             logger.error(
                 f"Failed to sell {token_info.symbol} (attempt "
                 f"{attempt}/{self.max_exit_sell_attempts}): "
@@ -959,17 +1014,24 @@ class PositionManager:
             if verdict is not ExitSellVerdict.LATE_SUCCESS:
                 return verdict, 0
             # The sell landed; only its confirmation was late. Settle it like a
-            # first-try success, minus the trade log: the amounts were never
-            # read back.
+            # first-try success.
             logger.info(f"Sell of {token_info.symbol} confirmed late")
 
         left = self._settle_sale(
             token_info, sell_result.amount_raw, held.amount, held.amount_raw
         )
+        self._after_sale(
+            token_info,
+            sell_result,
+            (held.amount, held.amount_raw),
+            cost=cost,
+            price=price,
+            realised=realised,
+            last=not left,
+        )
         if left:
             return ExitSellVerdict.PARTIAL, left
         logger.info(f"Successfully sold {token_info.symbol}")
-        await self._cleanup_after_exit(token_info)
         return ExitSellVerdict.SOLD, 0
 
     async def _classify_failed_exit_sell(
@@ -1098,7 +1160,9 @@ class PositionManager:
         # Kept, so a restart counts from the same baseline.
         if self.store is not None:
             self.store.set_price(token_info.mint, price)
-        logger.info(f"Entry price of {token_info.symbol} taken as {price:.10f}")
+        logger.info(
+            f"Entry price of {token_info.symbol} taken as {format_price(price)}"
+        )
         return price
 
     async def _current_price_or(self, token_info: TokenInfo, fallback: float) -> float:
@@ -1116,14 +1180,14 @@ class PositionManager:
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 f"Could not re-read price for {token_info.symbol} ({e}); "
-                f"retrying against {fallback:.8f}"
+                f"retrying against {format_price(fallback)}"
             )
             return fallback
         if price and price > 0:
             return price
         logger.warning(
             f"Re-read price for {token_info.symbol} was {price}; "
-            f"retrying against {fallback:.8f}"
+            f"retrying against {format_price(fallback)}"
         )
         return fallback
 
@@ -1164,7 +1228,9 @@ class PositionManager:
                         f"Exit condition met for {token_info.symbol}: "
                         f"{exit_reason.value}"
                     )
-                    logger.info(f"Current price: {current_price:.8f} {quote_label}")
+                    logger.info(
+                        f"Current price: {format_price(current_price)} {quote_label}"
+                    )
 
                     # 0.0 satisfies the stop-loss comparison, so the exit can
                     # fire on a price the sell cannot be floored against.
@@ -1175,7 +1241,7 @@ class PositionManager:
                         logger.warning(
                             f"Curve priced {token_info.symbol} at 0; flooring the "
                             f"exit sell at the last real price "
-                            f"{exit_price:.8f} {quote_label}"
+                            f"{format_price(exit_price)} {quote_label}"
                         )
 
                     exit_sell_attempts = await self._run_exit_attempt(
@@ -1195,7 +1261,7 @@ class PositionManager:
                     pnl = position.get_pnl(current_price)
                     logger.debug(
                         f"Position status for {token_info.symbol}: "
-                        f"{current_price:.8f} {quote_label} "
+                        f"{format_price(current_price)} {quote_label} "
                         f"({pnl['price_change_pct']:+.2f}%)"
                     )
 
@@ -1212,7 +1278,7 @@ class PositionManager:
                     logger.warning(
                         f"Max hold time reached for {token_info.symbol} while "
                         f"the price is unreadable - exiting against the last "
-                        f"known price {last_known_price:.8f} {quote_label}"
+                        f"known price {format_price(last_known_price)} {quote_label}"
                     )
                     exit_sell_attempts = await self._run_exit_attempt(
                         token_info,
@@ -1302,57 +1368,172 @@ class PositionManager:
             token_amount_raw=position.quantity_raw,
         )
 
-        quote_label = quote_symbol(normalize_quote_mint(token_info.quote_mint))
-        if sell_result.success:
-            trade_log.log_trade(
-                "sell",
+        if not sell_result.success:
+            logger.error(f"Failed to exit position: {sell_result.error_message}")
+            verdict = await self._classify_failed_exit_sell(token_info, sell_result)
+            if verdict is not ExitSellVerdict.LATE_SUCCESS:
+                if verdict is ExitSellVerdict.STOP:
+                    logger.error(
+                        f"Stopping exit attempts for {token_info.symbol} - the "
+                        f"last sell could not be resolved. Position stays open "
+                        f"and is no longer monitored."
+                    )
+                return verdict
+            # The sell landed, only its confirmation was late.
+            logger.info(f"The exit sell of {token_info.symbol} landed; confirmed late")
+
+        asked = (position.quantity, position.quantity_raw)
+        partial = self._settle_position(token_info, position, sell_result)
+        self._after_sale(
+            token_info,
+            sell_result,
+            asked,
+            cost=position.cost or CostBasis(position.entry_price, from_chain=False),
+            price=price,
+            realised=position.realised,
+            last=not partial,
+        )
+        if partial:
+            return ExitSellVerdict.PARTIAL
+        position.close_position(price, exit_reason)
+        logger.info(
+            f"Successfully exited position: {exit_reason.value} ({token_info.symbol})"
+        )
+        return ExitSellVerdict.SOLD
+
+    def _after_sale(  # noqa: PLR0913
+        self,
+        token_info: TokenInfo,
+        sell_result: TradeResult,
+        asked: tuple[float, int | None],
+        *,
+        cost: CostBasis,
+        price: float,
+        realised: Realised,
+        last: bool,
+    ) -> None:
+        """Report a settled sale, then close the account once all of it is sold.
+
+        Runs in its own task in `_closes`, started once the store is settled:
+        the position's slot is free while the transaction is read, `stop` and
+        `wait_all` wait for it like a close, and nothing it does can undo the
+        settlement. The parts of a position sold in parts report in order.
+
+        Args:
+            asked: Whole and raw tokens the sell was asked to sell
+            price: The seller's reference price
+            last: All of the position is sold: its line is `Final PnL`, with
+                the whole position's total, and the account closes after it
+        """
+        earlier = list(realised.reports)
+        task = self._start_close(
+            self._report_sale(
                 token_info,
-                sell_result.price,
-                sell_result.amount,
-                sell_result.tx_signature,
+                sell_result,
+                asked,
+                cost=cost,
+                price=price,
+                realised=realised,
+                earlier=earlier,
+                last=last,
+            ),
+            token_info,
+            closes=last and self.cleanup_mode == "after_sell",
+        )
+        realised.reports.append(task)
+
+    async def _report_sale(  # noqa: PLR0913
+        self,
+        token_info: TokenInfo,
+        sell_result: TradeResult,
+        asked: tuple[float, int | None],
+        *,
+        cost: CostBasis,
+        price: float,
+        realised: Realised,
+        earlier: list[asyncio.Task],
+        last: bool,
+    ) -> None:
+        quote_mint = normalize_quote_mint(token_info.quote_mint)
+        pnl = None
+        try:
+            sale = await self._read_sale(token_info, sell_result, price, *asked)
+            pnl = sale_pnl(cost, sale, quote_mint, price)
+        except Exception:
+            logger.exception(
+                f"Could not price the sale of {token_info.symbol}; it is settled"
             )
-            if self._settle_position(token_info, position, sell_result):
-                pnl = position.get_pnl(sell_result.price, quantity=sell_result.amount)
-                logger.info(
-                    f"PnL on the part sold: {pnl['price_change_pct']:.2f}% "
-                    f"({pnl['unrealized_pnl_quote']:.6f} {quote_label})"
+        # Whatever happened above, the parts are totalled in order.
+        if earlier:
+            await asyncio.gather(*earlier, return_exceptions=True)
+        if pnl is None:
+            realised.missing += 1
+        else:
+            realised.add(pnl)
+        try:
+            quote_label = quote_symbol(quote_mint)
+            if pnl is not None:
+                trade_log.log_trade(
+                    "sell",
+                    token_info,
+                    sale.price,
+                    sale.amount,
+                    sale.tx_signature,
+                    deltas=sale.deltas,
+                    pnl=pnl,
                 )
-                return ExitSellVerdict.PARTIAL
-            sold = sell_result.amount
-
-            # Close position with actual exit price
-            position.close_position(sell_result.price, exit_reason)
-            logger.info(
-                f"Successfully exited position: {exit_reason.value} "
-                f"({token_info.symbol})"
+                label = "Final PnL" if last else "PnL on the part sold"
+                total = realised.suffix(quote_label) if last else ""
+                logger.info(pnl_text(label, pnl, quote_label) + total)
+            elif last:
+                logger.info(
+                    f"Final PnL: unknown, this sale could not be priced"
+                    f"{realised.suffix(quote_label)}"
+                )
+        except Exception:
+            logger.exception(
+                f"Could not report the sale of {token_info.symbol}; it is settled"
             )
-            # Only what this sell sold: an earlier partial sale logged its own.
-            final_pnl = position.get_pnl(quantity=sold)
-            logger.info(
-                f"Final PnL: {final_pnl['price_change_pct']:.2f}% "
-                f"({final_pnl['unrealized_pnl_quote']:.6f} {quote_label})"
-            )
-            await self._cleanup_after_exit(token_info)
-            return ExitSellVerdict.SOLD
+        if last:
+            await self._close_after_sale(token_info)
 
-        logger.error(f"Failed to exit position: {sell_result.error_message}")
+    async def _read_sale(
+        self,
+        token_info: TokenInfo,
+        sell_result: TradeResult,
+        price: float,
+        quantity: float,
+        quantity_raw: int | None,
+    ) -> TradeResult:
+        """A landed sale, read back from its transaction.
 
-        verdict = await self._classify_failed_exit_sell(token_info, sell_result)
-        if verdict is ExitSellVerdict.LATE_SUCCESS:
-            # The sell landed, only its confirmation was late. Close against the
-            # price it was floored at; the real fill was never read back.
-            if self._settle_position(token_info, position, sell_result):
-                return ExitSellVerdict.PARTIAL
-            position.close_position(price, exit_reason)
-            logger.info(f"Position for {token_info.symbol} closed by a late fill")
-            await self._cleanup_after_exit(token_info)
-        elif verdict is ExitSellVerdict.STOP:
-            logger.error(
-                f"Stopping exit attempts for {token_info.symbol} - the last "
-                f"sell could not be resolved. Position stays open and is no "
-                f"longer monitored."
+        Args:
+            price: The seller's reference price, the sale's price if it can't
+                be read
+            quantity, quantity_raw: What it was asked to sell, for a sale that
+                does not say
+        """
+        try:
+            deltas = await read_deltas(
+                self.solana_client,
+                sell_result.tx_signature,
+                self.wallet.pubkey,
+                token_info,
             )
-        return verdict
+        except Exception as e:
+            logger.warning(f"Could not read back the sale of {token_info.symbol}: {e}")
+            logger.debug("Reading the sale back failed", exc_info=True)
+            deltas = None
+        amount_raw = sell_result.amount_raw
+        if amount_raw is None:
+            amount_raw = (
+                quantity_raw
+                if quantity_raw is not None
+                else int(quantity * 10**TOKEN_DECIMALS)
+            )
+        return landed_sale(
+            token_info, sell_result.tx_signature, amount_raw, price, deltas
+        )
 
     def _settle_position(
         self, token_info: TokenInfo, position: Position, sell_result: TradeResult
@@ -1420,27 +1601,21 @@ class PositionManager:
         if self.store is not None:
             self.store.remove(token_info.mint)
 
-    async def _cleanup_after_exit(self, token_info: TokenInfo) -> None:
-        """Start the configured post-sell cleanup for a closed position.
+    async def _close_after_sale(self, token_info: TokenInfo) -> None:
+        """Run the configured post-sell cleanup for a position all sold.
 
-        The close runs in its own task, so the position's slot is free at once
-        however long a dropped close takes; `stop` and `wait_all` wait for it.
-
-        Args:
-            token_info: Token whose account may now be closable
+        Part of the sale's own task (`_after_sale`), so the position's slot is
+        free however long a dropped close takes.
         """
         if self.cleanup_mode != "after_sell":
             return
-        self._start_close(
-            handle_cleanup_after_sell(
-                self.solana_client,
-                self.wallet,
-                token_info.mint,
-                token_info.token_program_id,
-                self.priority_fee_manager,
-                self.cleanup_mode,
-                self.cleanup_with_priority_fee,
-                self.cleanup_force_close_with_burn,
-            ),
-            token_info,
+        await handle_cleanup_after_sell(
+            self.solana_client,
+            self.wallet,
+            token_info.mint,
+            token_info.token_program_id,
+            self.priority_fee_manager,
+            self.cleanup_mode,
+            self.cleanup_with_priority_fee,
+            self.cleanup_force_close_with_burn,
         )

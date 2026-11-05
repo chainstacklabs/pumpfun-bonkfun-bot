@@ -19,6 +19,7 @@ from pathlib import Path
 
 from solders.pubkey import Pubkey
 
+from core.trade_deltas import TradeDeltas
 from interfaces.core import Platform, TokenInfo
 from trading.base import PendingBuy, TradeResult
 from utils.logger import get_logger
@@ -137,6 +138,21 @@ def _pending_of(record: dict) -> PendingBuy | None:
     return found
 
 
+def _deltas_of(buy: dict) -> TradeDeltas | None:
+    """The buy's transaction deltas, None if not recorded; TypeError if malformed."""
+    deltas = buy.get("deltas")
+    if deltas is None:
+        return None
+    if not isinstance(deltas, dict):
+        raise TypeError
+    found = TradeDeltas(**deltas)
+    nullable = {"quote_raw", "venue_quote_raw"}
+    for name, value in dataclasses.asdict(found).items():
+        if not _whole(value) or (value is None and name not in nullable):
+            raise TypeError
+    return found
+
+
 def _records_in(data: object) -> list:
     """The `positions` list of a parsed file; KeyError or TypeError without one."""
     records = data["positions"]
@@ -193,6 +209,7 @@ def _decode(mint: str, record: dict) -> StoredPosition:
             amount=buy["amount"],
             amount_raw=buy.get("amount_raw"),
             price=buy["price"],
+            deltas=_deltas_of(buy),
         ),
         entry_time=datetime.fromisoformat(record["entry_time"]),
         wallet=_wallet_of(record),
@@ -333,6 +350,9 @@ class PositionStore:
             },
             "token_info": encode_token_info(token_info),
         }
+        if buy_result.deltas is not None:
+            # The buy's cost, so a resumed position's PnL counts from it.
+            record["buy"]["deltas"] = dataclasses.asdict(buy_result.deltas)
         if pending is not None:
             # Only on a pending record, so a landed one is written as before.
             record["pending"] = dataclasses.asdict(pending)

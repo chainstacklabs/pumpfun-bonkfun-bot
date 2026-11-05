@@ -51,6 +51,7 @@ from solders.pubkey import Pubkey  # noqa: E402
 
 from core.client import SolanaClient  # noqa: E402
 from core.pubkeys import TOKEN_DECIMALS, WSOL_MINT  # noqa: E402
+from core.trade_deltas import TradeDeltas  # noqa: E402
 from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E402
 from platforms import PlatformImplementations  # noqa: E402
 from trading import platform_aware  # noqa: E402
@@ -70,6 +71,18 @@ AMOUNT_TOLERANCE = 1e-9  # float round-trip through raw token units
 LANDED_TX = {"meta": {"err": None, "preBalances": [], "postBalances": []}}
 REVERTED_TX = {"meta": {"err": {"InstructionError": [3, {"Custom": 6062}]}}}
 NULL_RESULT = {"jsonrpc": "2.0", "id": 1, "result": None}
+
+
+def _deltas(tokens_raw: int | None, spent: int | None) -> TradeDeltas | None:
+    """A buy's transaction as the client reads it: `spent` is the venue's fill."""
+    if tokens_raw is None:
+        return None
+    return TradeDeltas(
+        tokens_raw=tokens_raw,
+        quote_raw=None if spent is None else -spent,
+        network_fee_lamports=0,
+        venue_quote_raw=spent,
+    )
 
 
 class StubRpc:
@@ -148,10 +161,10 @@ class StubBuyClient:
             return ConfirmationStatus.SUCCESS
         return ConfirmationStatus.REVERTED
 
-    async def get_buy_transaction_details(
+    async def get_trade_deltas(
         self, *_args: object, **_kwargs: object
-    ) -> tuple[int | None, int | None]:
-        return self.details
+    ) -> TradeDeltas | None:
+        return _deltas(*self.details)
 
     async def get_token_account_balance(self, _account: Pubkey) -> int:
         self.balance_reads += 1

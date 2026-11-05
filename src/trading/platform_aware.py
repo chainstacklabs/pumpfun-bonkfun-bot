@@ -20,6 +20,7 @@ from core.pubkeys import (
     quote_symbol,
     quote_units_per_token,
 )
+from core.trade_deltas import TradeDeltas
 from core.wallet import Wallet
 from interfaces.core import (
     AddressProvider,
@@ -36,6 +37,7 @@ from platforms.pumpfun.curve_manager import (
     sell_quote_out,
 )
 from trading.base import PendingBuy, Trader, TradeResult
+from trading.pnl import format_price, lamports_to_sol
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -232,6 +234,108 @@ def _nothing_to_sell(token_info: TokenInfo, *, curve_short: bool) -> TradeResult
             f"for it now; nothing sent"
         ),
         failure_reason=TradeFailureReason.SUBMIT_FAILED,
+    )
+
+
+async def read_deltas(
+    client: SolanaClient,
+    signature: str | Signature,
+    wallet: Pubkey,
+    token_info: TokenInfo,
+    venue_account: Pubkey | str | None = None,
+) -> TradeDeltas | None:
+    """What a landed trade did to the wallet; None when it can't be read.
+
+    Never raises: the trade landed, and failing to read it back must not
+    report it failed.
+    """
+    try:
+        return await client.get_trade_deltas(
+            signature,
+            wallet,
+            token_info.mint,
+            normalize_quote_mint(token_info.quote_mint),
+            venue_account,
+        )
+    except Exception as e:
+        logger.warning(f"Could not read transaction {str(signature)[:16]}...: {e}")
+        logger.debug("Reading the transaction failed", exc_info=True)
+        return None
+
+
+def log_deltas(side: str, token_info: TokenInfo, deltas: TradeDeltas) -> None:
+    """Log what a trade did to the wallet, rent apart from what was traded."""
+    quote_mint = normalize_quote_mint(token_info.quote_mint)
+    label = quote_symbol(quote_mint)
+    try:
+        quote = (
+            f"{abs(deltas.quote_raw) / quote_units_per_token(quote_mint):.9f} {label}"
+            if deltas.quote_raw is not None
+            else f"an unread amount of {label}"
+        )
+    except ValueError:
+        quote = f"{abs(deltas.quote_raw)} raw {label}"
+    text = (
+        f"{side} of {token_info.symbol} from the chain: "
+        f"{abs(deltas.tokens_raw)} raw tokens for {quote} (protocol fees "
+        f"included); network fee {lamports_to_sol(deltas.network_fee_lamports):.9f} SOL"
+    )
+    if deltas.other_lamports:
+        text += (
+            f"; other SOL {lamports_to_sol(deltas.other_lamports):+.9f} (rent or "
+            f"transfers for accounts the wallet does not own)"
+        )
+    if deltas.rent_deposited_lamports:
+        text += (
+            f"; account rent {lamports_to_sol(deltas.rent_deposited_lamports):.9f} "
+            f"SOL put in, back when the account closes"
+        )
+    if deltas.rent_refunded_lamports:
+        text += (
+            f"; account rent {lamports_to_sol(deltas.rent_refunded_lamports):.9f} "
+            f"SOL back"
+        )
+    logger.info(text)
+
+
+def landed_sale(
+    token_info: TokenInfo,
+    signature: str | Signature,
+    amount_raw: int,
+    reference_price: float,
+    deltas: TradeDeltas | None,
+) -> TradeResult:
+    """The result of a sale that landed, priced from its transaction.
+
+    Args:
+        amount_raw: Raw tokens the sale was sent with
+        reference_price: The seller's reference price; the sale's price when
+            the transaction could not be read, which makes it an estimate
+    """
+    price = reference_price
+    quote_mint = normalize_quote_mint(token_info.quote_mint)
+    if deltas is not None and deltas.tokens_raw < 0 and deltas.quote_raw is not None:
+        log_deltas("Sale", token_info, deltas)
+        sold = -deltas.tokens_raw / 10**TOKEN_DECIMALS
+        try:
+            price = deltas.quote_raw / quote_units_per_token(quote_mint) / sold
+        except ValueError:
+            logger.warning(f"Could not price the sale of {token_info.symbol}")
+    else:
+        deltas = None
+        logger.warning(
+            f"The sale of {token_info.symbol} could not be read back; its price "
+            f"is the seller's reference price {format_price(reference_price)}, "
+            f"an estimate"
+        )
+    return TradeResult(
+        success=True,
+        platform=token_info.platform,
+        tx_signature=str(signature),
+        amount=amount_raw / 10**TOKEN_DECIMALS,
+        amount_raw=amount_raw,
+        price=price,
+        deltas=deltas,
     )
 
 
@@ -486,7 +590,7 @@ class PlatformAwareBuyer(Trader):
             )
 
             logger.info(
-                f"Buying {token_amount:.6f} tokens at {token_price_sol:.8f} "
+                f"Buying {token_amount:.6f} tokens at {format_price(token_price_sol)} "
                 f"{quote_label} per token on {token_info.platform.value}"
             )
             logger.info(
@@ -538,12 +642,21 @@ class PlatformAwareBuyer(Trader):
                 sol_destination = venue.quote_destination(
                     token_info
                 ) or self._get_sol_destination(token_info, address_provider)
-                tokens_raw, quote_spent = await self.client.get_buy_transaction_details(
-                    str(tx_signature),
-                    token_info.mint,
-                    sol_destination,
-                    quote_mint=quote_mint,
+                deltas = await read_deltas(
+                    self.client,
+                    tx_signature,
+                    self.wallet.pubkey,
+                    token_info,
+                    venue_account=sol_destination,
                 )
+                # The fill is what the venue took in, protocol fees left out:
+                # exits measure from it. What the wallet paid is in `deltas`.
+                tokens_raw, quote_spent = None, None
+                if deltas is not None and deltas.tokens_raw > 0:
+                    tokens_raw, quote_spent = deltas.tokens_raw, deltas.venue_quote_raw
+                    log_deltas("Buy", token_info, deltas)
+                else:
+                    deltas = None
 
                 # The exact raw count, carried to the sell: converting the float
                 # back can come out a raw unit short and leave dust behind.
@@ -566,11 +679,12 @@ class PlatformAwareBuyer(Trader):
                     if quote_spent is not None and tokens_raw > 0:
                         actual_price = (quote_spent / quote_unit) / actual_amount
                         logger.info(
-                            f"Actual {quote_label} spent: "
-                            f"{quote_spent / quote_unit:.10f} {quote_label}"
+                            f"Fill: {quote_spent / quote_unit:.10f} {quote_label} "
+                            f"into the venue, protocol fees left out"
                         )
                         logger.info(
-                            f"Actual price: {actual_price:.10f} {quote_label}/token"
+                            f"Actual price: {format_price(actual_price)} "
+                            f"{quote_label}/token"
                         )
                         token_price_sol = actual_price
                 else:
@@ -614,6 +728,7 @@ class PlatformAwareBuyer(Trader):
                     amount=token_amount,
                     amount_raw=amount_raw,
                     price=token_price_sol,
+                    deltas=deltas,
                 )
             else:
                 return TradeResult(
@@ -1061,7 +1176,8 @@ class PlatformAwareSeller(Trader):
 
             logger.info(f"Token balance: {token_balance_decimal:.6f}")
             logger.info(
-                f"Reference price per token: {token_price_sol:.8f} {quote_label}"
+                f"Reference price per token: {format_price(token_price_sol)} "
+                f"{quote_label}"
             )
 
             requested = token_balance
@@ -1134,10 +1250,12 @@ class PlatformAwareSeller(Trader):
 
             if status is ConfirmationStatus.SUCCESS:
                 logger.info(f"Sell transaction confirmed: {tx_signature}")
+                # Priced at the reference: the position manager settles the
+                # sale first, then reads it back (`landed_sale`).
                 return TradeResult(
                     success=True,
                     platform=token_info.platform,
-                    tx_signature=tx_signature,
+                    tx_signature=str(tx_signature),
                     amount=token_balance_decimal,
                     amount_raw=token_balance,
                     price=token_price_sol,
