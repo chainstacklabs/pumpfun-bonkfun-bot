@@ -213,7 +213,7 @@ EXPECTED_DEFAULTS = {
     "token_wait_timeout": 120,
     "cleanup_mode": "disabled",
     "cleanup_force_close_with_burn": False,
-    "cleanup_with_priority_fee": False,
+    "cleanup_with_priority_fee": True,
     "match_string": None,
     "bro_address": None,
     "marry_mode": False,

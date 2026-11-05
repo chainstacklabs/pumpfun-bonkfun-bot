@@ -124,14 +124,18 @@ retries:
 
 # Token and account management
 cleanup:
-  # Cleanup mode determines when to manage token accounts. Options:
+  # Cleanup mode determines when to close token accounts. Options:
   # "disabled": no cleanup will occur.
   # "on_fail": only clean up if a buy transaction fails.
-  # "after_sell": clean up after selling.
-  # "post_session": clean up all empty accounts after a trading session ends.
+  # "after_sell": close each coin's account after selling it, and the empty account
+  #   of a position cleared because the wallet no longer holds its coin.
+  # "post_session": when the session ends, close the accounts of the coins it traded,
+  #   then every other empty token account in the wallet (SPL Token and Token-2022),
+  #   except quote-mint accounts (wSOL, USDC, any configured quote) and coins still
+  #   in the positions file.
   mode: "post_session"
-  force_close_with_burn: false # Force burning remaining tokens before closing account
-  with_priority_fee: false # Use priority fees for cleanup transactions
+  force_close_with_burn: false # Burn what is left in a traded coin's account before closing it; never under manual or marry_mode, never in the other empty accounts post_session closes
+  with_priority_fee: true # Send closes with the priority fee above; only false sends them without one. A close not confirmed is sent again, up to 3 times
 
 # Node provider configuration
 node:

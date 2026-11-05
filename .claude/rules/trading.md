@@ -12,9 +12,19 @@ must never race a sell still in flight. `verify_concurrent_positions.py` guards
 the order. A position already sold and closing its account (`after_sell`) is not
 stopped or counted as open: shutdown waits for the close, bounded by
 `_STOP_BUDGET`, then cancels it with a warning. Post-session cleanup skips
-every coin still in the positions file: those are kept for the next start
-(`verify_cleanup_closes_every_account.py`).
+every coin still in the positions file, pending ones included: those are kept
+for the next start (`verify_cleanup_closes_every_account.py`). It then closes
+every other empty token account the wallet owns (SPL Token and Token-2022),
+never a quote mint's (`UniversalTrader._quote_mints`), and burns nothing in them.
 Under `manual` or `marry_mode` it burns nothing and only closes empty accounts.
+A position cleared because the wallet no longer holds its coin closes the empty
+account under `after_sell` (`PositionManager._close_cleared`; `stop` waits for it
+like a sold one) and is left to the sweep under `post_session`. Every close goes
+out with the priority fee unless `cleanup.with_priority_fee` is explicitly false,
+waits until its blockhash expires, and is sent again (at most
+`AccountCleanupManager.CLOSE_ATTEMPTS`) only when the signature lookup shows it
+did not land; each attempt re-reads the account first
+(`verify_cleanup_closes_what_it_leaves.py`).
 
 Each monitored position is in `positions/<bot name>.json` (`PositionStore`) from
 the moment its buy **may have reached the chain** until its **sale**. The buyer's

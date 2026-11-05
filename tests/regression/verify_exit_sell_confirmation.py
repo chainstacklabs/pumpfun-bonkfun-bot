@@ -465,6 +465,7 @@ async def check_confirm_transaction_stays_bool() -> bool:
             _sig: str,
             _commitment: str = "confirmed",
             bound: ConfirmationStatus = status,
+            **_options: object,
         ) -> ConfirmationStatus:
             return bound
 

@@ -538,6 +538,8 @@ class SolanaClient:
         compute_unit_limit: int | None = None,
         account_data_size_limit: int | None = None,
         on_signed: Callable[[Signature, int | None], None] | None = None,
+        *,
+        quiet: bool = False,
     ) -> Signature:
         """Send a transaction with optional priority fee and compute unit limit.
 
@@ -556,6 +558,8 @@ class SolanaClient:
                 mid-send still knows what may have reached the chain. Every retry
                 resends the same transaction. Must not block: it runs on the
                 send path.
+            quiet: Log no traceback when the last attempt fails; the caller
+                reports the failure.
 
         Returns:
             Transaction signature.
@@ -618,9 +622,10 @@ class SolanaClient:
             except Exception as e:
                 maybe_sent = maybe_sent or not _never_sent(e)
                 if attempt == max_retries - 1:
-                    logger.exception(
-                        f"Failed to send transaction after {max_retries} attempts"
-                    )
+                    if not quiet:
+                        logger.exception(
+                            f"Failed to send transaction after {max_retries} attempts"
+                        )
                     if not maybe_sent:
                         raise TransactionNotSent(str(e)) from e
                     raise
@@ -632,7 +637,12 @@ class SolanaClient:
                 await asyncio.sleep(wait_time)
 
     async def confirm_transaction(
-        self, signature: str | Signature, commitment: str = "confirmed"
+        self,
+        signature: str | Signature,
+        commitment: str = "confirmed",
+        *,
+        last_valid_block_height: int | None = None,
+        quiet: bool = False,
     ) -> bool:
         """Wait for transaction confirmation and verify execution success.
 
@@ -648,15 +658,28 @@ class SolanaClient:
         Args:
             signature: Transaction signature, base58 string or Signature
             commitment: Confirmation commitment level
+            last_valid_block_height: Wait until the blockhash the transaction
+                was signed with has expired, rather than a fixed 90 seconds
+            quiet: Log no traceback when the wait ends unconfirmed
 
         Returns:
             Whether transaction was confirmed AND executed successfully
         """
-        status = await self.confirm_transaction_detailed(signature, commitment)
+        status = await self.confirm_transaction_detailed(
+            signature,
+            commitment,
+            last_valid_block_height=last_valid_block_height,
+            quiet=quiet,
+        )
         return status is ConfirmationStatus.SUCCESS
 
     async def confirm_transaction_detailed(
-        self, signature: str | Signature, commitment: str = "confirmed"
+        self,
+        signature: str | Signature,
+        commitment: str = "confirmed",
+        *,
+        last_valid_block_height: int | None = None,
+        quiet: bool = False,
     ) -> ConfirmationStatus:
         """Confirm a transaction, distinguishing a revert from an unknown.
 
@@ -668,6 +691,8 @@ class SolanaClient:
         Args:
             signature: Transaction signature, base58 string or Signature
             commitment: Confirmation commitment level
+            last_valid_block_height: As in :meth:`confirm_transaction`
+            quiet: As in :meth:`confirm_transaction`
 
         Returns:
             SUCCESS, REVERTED, or UNCONFIRMED
@@ -686,10 +711,14 @@ class SolanaClient:
         client = await self.get_client()
         try:
             await client.confirm_transaction(
-                signature, commitment=commitment, sleep_seconds=1
+                signature,
+                commitment=commitment,
+                sleep_seconds=1,
+                last_valid_block_height=last_valid_block_height,
             )
         except Exception:
-            logger.exception(f"Failed to confirm transaction {signature}")
+            if not quiet:
+                logger.exception(f"Failed to confirm transaction {signature}")
             return ConfirmationStatus.UNCONFIRMED
 
         return await self.verify_transaction_status(signature)
@@ -733,6 +762,40 @@ class SolanaClient:
         if status.get("err"):
             return ConfirmationStatus.REVERTED, slot
         return ConfirmationStatus.SUCCESS, slot
+
+    async def get_token_accounts(
+        self, owner: Pubkey, token_program: Pubkey
+    ) -> list[tuple[Pubkey, bytes]]:
+        """Every token account `owner` holds under `token_program`, at "confirmed".
+
+        Returns:
+            Each account's address and raw data
+
+        Raises:
+            RuntimeError: The node did not answer with them
+        """
+        body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTokenAccountsByOwner",
+            "params": [
+                str(owner),
+                {"programId": str(token_program)},
+                {"encoding": "base64", "commitment": "confirmed"},
+            ],
+        }
+        response = await self.post_rpc(body)
+        try:
+            return [
+                (
+                    Pubkey.from_string(entry["pubkey"]),
+                    base64.b64decode(entry["account"]["data"][0]),
+                )
+                for entry in response["result"]["value"]
+            ]
+        except (KeyError, IndexError, TypeError, ValueError):
+            error = (response or {}).get("error", {}).get("message", "no answer")
+            raise RuntimeError(f"getTokenAccountsByOwner: {error}") from None  # noqa: TRY003
 
     async def get_block_height_and_slot(self) -> tuple[int, int]:
         """The cluster's block height and slot at "confirmed", read together.

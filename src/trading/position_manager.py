@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from cleanup.modes import handle_cleanup_after_sell
+from cleanup.modes import handle_cleanup_after_sell, handle_cleanup_cleared
 from core.client import SolanaClient
 from core.priority_fee.manager import PriorityFeeManager
 from core.pubkeys import (
@@ -108,6 +108,9 @@ class PositionManager:
     #: lets them finish rather than stopping them. Rebound, never mutated, so
     #: the class default serves a manager built without `__init__` too.
     _sold: frozenset[asyncio.Task] = frozenset()
+    #: Closes of the empty accounts of positions cleared because the wallet no
+    #: longer holds the coin; shutdown lets them finish like `_sold`.
+    _clearing: frozenset[asyncio.Task] = frozenset()
 
     def __init__(  # noqa: PLR0913
         self,
@@ -367,6 +370,7 @@ class PositionManager:
                 f"longer holds it, so it was sold or moved while the bot was down"
             )
             self.store.remove(token_info.mint)
+            self._close_cleared(token_info)
             return None
         tokens_raw = min(tokens_raw, held)
         amount = tokens_raw / 10**TOKEN_DECIMALS
@@ -415,6 +419,7 @@ class PositionManager:
                 f"buy {sent.tx_signature} never landed"
             )
             self.store.remove(token_info.mint)
+            self._close_cleared(token_info)
             return None
         cap = pending.max_amount_raw
         amount_raw = held if cap is None else min(held, cap)
@@ -488,14 +493,16 @@ class PositionManager:
         Shutdown cleanup closes token accounts, burning what is left with
         `force_close_with_burn`, so it must not start while a position may
         still sell. A position already sold is not stopped: the close of its
-        empty account runs to the end. Runs to the end through a cancellation
+        empty account runs to the end, and so does that of a position cleared
+        because the wallet no longer holds its coin. Runs to the end through a cancellation
         of its caller, bounded by `_STOP_BUDGET`; the coins stay in the wallet.
         """
         self._report_pending()
-        tasks = {t for t in self._open if not t.done()}
+        tasks = {t for t in self._open | self._clearing if not t.done()}
         if not tasks:
             return
-        held, closing = tasks - self._sold, tasks & self._sold
+        closes = self._sold | self._clearing
+        held, closing = tasks - closes, tasks & closes
         if held:
             logger.info(
                 f"Stopping {len(held)} open position(s); their tokens stay in "
@@ -528,7 +535,7 @@ class PositionManager:
         A close still running would race the client closing at shutdown; the
         rent it leaves is reclaimed by `tools/cleanup_accounts.py <MINT>`.
         """
-        closes = {t for t in tasks & self._sold if not t.done()}
+        closes = {t for t in tasks & (self._sold | self._clearing) if not t.done()}
         for task in closes:
             task.cancel()
         if closes:
@@ -638,6 +645,7 @@ class PositionManager:
                 f"so it was sold or moved while the bot was down"
             )
             self.store.remove(token_info.mint)
+            self._close_cleared(token_info)
             return False
         if not await self._quote_resolved(token_info, label):
             return False
@@ -666,6 +674,50 @@ class PositionManager:
         )
         self.open(token_info, buy, entry_time=stored.entry_time)
         return True
+
+    def _close_cleared(self, token_info: TokenInfo) -> None:
+        """Close the account of a cleared position's coin, under `after_sell`.
+
+        The wallet holds none of the coin, so its account is empty, or gone.
+        It closes in its own task, which `stop` lets finish like the close
+        after a sell; nothing is burned. Under `post_session` the sweep at the
+        end of the session closes it with every other empty account.
+        """
+        if self.cleanup_mode != "after_sell":
+            return
+        task = asyncio.create_task(
+            self._close_cleared_account(token_info),
+            name=f"close-{token_info.mint}",
+        )
+        self._clearing |= {task}
+        task.add_done_callback(self._cleared)
+
+    def _cleared(self, task: asyncio.Task) -> None:
+        self._clearing -= {task}
+
+    async def _close_cleared_account(self, token_info: TokenInfo) -> None:
+        try:
+            program = token_info.token_program_id
+            if program is None:
+                program = (
+                    await self.solana_client.get_account_info(
+                        token_info.mint, commitment="confirmed"
+                    )
+                ).owner
+            await handle_cleanup_cleared(
+                self.solana_client,
+                self.wallet,
+                token_info.mint,
+                program,
+                self.priority_fee_manager,
+                self.cleanup_mode,
+                self.cleanup_with_priority_fee,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"Could not close the token account of {token_info.symbol} "
+                f"({token_info.mint}): {e!s}"
+            )
 
     async def _quote_resolved(self, token_info: TokenInfo, label: str) -> bool:
         """Resolve the coin's quote mint; False (logged) when it cannot be."""
