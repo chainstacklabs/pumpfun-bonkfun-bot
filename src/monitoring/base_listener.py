@@ -20,8 +20,18 @@ PoolCallback = Callable[[PoolReady], Awaitable[None]]
 # Migrations already reported, kept so a racing duplicate migration or a
 # redelivered frame reports a pool once.
 _SEEN_POOLS_LIMIT = 10_000
-# Launches already reported, kept so a coin is reported once; see `_new_launch`.
+# Launches already logged or handed on, kept so a coin is reported once.
 _SEEN_LAUNCHES_LIMIT = 10_000
+
+
+def _first(seen: OrderedDict, key: object) -> bool:
+    """Whether `key` is new to `seen`; remembers it, forgetting the oldest past the limit."""
+    if key in seen:
+        return False
+    seen[key] = None
+    if len(seen) > _SEEN_LAUNCHES_LIMIT:
+        seen.popitem(last=False)
+    return True
 
 
 def describe_launch(token_info: TokenInfo, *, pre_execution: bool = False) -> str:
@@ -83,7 +93,9 @@ class BaseTokenListener(ABC):
         # Set by listen_for_tokens; None leaves migrations unparsed.
         self.pool_callback: PoolCallback | None = None
         self._seen_pools: OrderedDict[Pubkey | tuple[Pubkey, str], None] = OrderedDict()
-        self._seen_launches: OrderedDict[Pubkey, None] = OrderedDict()
+        # Launches logged, and launches handed to the callback; see `_deliver`.
+        self._logged_launches: OrderedDict[Pubkey, None] = OrderedDict()
+        self._taken_launches: OrderedDict[Pubkey, None] = OrderedDict()
 
     @abstractmethod
     async def listen_for_tokens(
@@ -135,25 +147,43 @@ class BaseTokenListener(ABC):
                 reraise_if_cancelled()
                 logger.exception(f"Pool callback failed for {pool.mint}")
 
-    def _new_launch(
-        self, token_info: TokenInfo, *, pre_execution: bool = False
-    ) -> bool:
-        """Log a detected coin once; False when its mint was reported already.
+    async def _deliver(
+        self,
+        token_info: TokenInfo,
+        token_callback: Callable[[TokenInfo], Awaitable[None]],
+        match_string: str | None,
+        creator_address: str | None,
+        *,
+        pre_execution: bool = False,
+    ) -> None:
+        """Log a detected coin once and hand it on once, if the filters take it.
 
-        A mint is created once, so a second report is the same coin: a frame
-        delivered again (a `processed` notification from a fork that was
-        dropped, say) or, before execution, another transaction sending the
-        same create. The intake would not buy it again either, so it is not
-        reported to the callback again.
+        A mint is created once, so a later report of one is the same coin: a
+        frame delivered again (a `processed` notification from a fork that
+        was dropped, say) or, before execution, another transaction sending
+        the same create. One the name or creator filter refused is looked at
+        again: a later attempt may carry other metadata.
         """
-        if token_info.mint in self._seen_launches:
-            logger.debug(f"{token_info.mint} reported again; already detected")
-            return False
-        self._seen_launches[token_info.mint] = None
-        if len(self._seen_launches) > _SEEN_LAUNCHES_LIMIT:
-            self._seen_launches.popitem(last=False)
-        logger.info(describe_launch(token_info, pre_execution=pre_execution))
-        return True
+        mint = token_info.mint
+        if _first(self._logged_launches, mint):
+            logger.info(describe_launch(token_info, pre_execution=pre_execution))
+
+        if match_string and not (
+            match_string.lower() in token_info.name.lower()
+            or match_string.lower() in token_info.symbol.lower()
+        ):
+            logger.info(f"Token does not match filter '{match_string}'. Skipping...")
+            return
+        if creator_address and str(token_info.user) != creator_address:
+            logger.info(f"Token not created by {creator_address}. Skipping...")
+            return
+
+        # Assumes the intake never takes a second attempt at a launch; move this
+        # into the intake if it ever does.
+        if not _first(self._taken_launches, mint):
+            logger.debug(f"{mint} reported again; already handed on")
+            return
+        await token_callback(token_info)
 
     def should_process_token(self, token_info: TokenInfo) -> bool:
         """Check if a token should be processed based on platform filter.

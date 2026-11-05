@@ -11,8 +11,12 @@ What a trader reading the log could not tell:
   in `trades.log` said where a trade went.
 - A buy that landed and reverted was reported as `Transaction failed to
   confirm`, with its error on another line.
+- A pending buy found reverted after a restart was cleared without its error,
+  and a revert whose transaction a lagging node could not serve yet was
+  reported as `failed to confirm` although its signature status said it
+  reverted.
 - The shutdown line said pending buys are resolved from the wallet's balance;
-  they are resolved by signature.
+  they are settled by signature.
 - The README and the shipped YAML left out `launchlab`, `shreds` and
   `timing.token_wait_timeout`.
 
@@ -32,26 +36,34 @@ Offline machine checks, no network and no funds moved:
      logs each coin it reports in one INFO line naming the mint, the platform
      and the creator; for pump.fun also the curve, for LaunchLab the platform
      config and the quote.
-  B. That line is the only INFO line naming the coin: the pump.fun parser's
+  B. On every stream, pump.fun's and LaunchLab's alike, no INFO line but that
+     one names the coin and no parser logs at INFO: the pump.fun parser's
      per-coin detail is at DEBUG.
-  C. A coin is reported once: every frame delivered again gives no second line
+  C. A coin is reported once per mint: every frame delivered again, and the
+     same create in a transaction with another signature, gives no second line
      and no second callback, on every listener, while every coin with its own
      mint is still reported.
   D. The real buyer and seller on a bonding curve, in PumpSwap and in Raydium
-     CPMM name the venue in their log lines, results and the pending-buy record;
+     CPMM name the venue in their log lines (the tp_sl exit line included),
+     results and the pending-buy record;
      the trader's buy row, the position manager's sell row and the row of a
      pending buy resolved after a restart carry it as `venue` in `trades.log`,
      with `platform` unchanged.
   E. A buy and a sell that landed and reverted are reported as reverted with the
-     transaction's error, in one line, not as "failed to confirm"; the client's
-     own line says the same; one never confirmed still says it failed to
-     confirm.
-  F. The shutdown line for pending buys says the next start resolves them by
+     transaction's error, in one line, not as "failed to confirm", also when the
+     node cannot serve the transaction yet but the confirmed signature status
+     shows the error (an error at `processed` is not taken); the client's own
+     line says the same; one never confirmed still says it failed to confirm; a
+     pending buy found reverted after a restart is cleared naming its error.
+  F. The shutdown line for pending buys says the next start settles them by
      signature.
   G. The README documents `timing.token_wait_timeout` with the default the
      runner uses and `venue` with each venue's name; each shipped YAML lists
      every platform in its `platform` options and, at `listener_type`, every
      listener its platform supports and no other.
+  H. On every listener, a create the name or creator filter refused does not
+     hide a later attempt at the same mint that passes: that one reaches the
+     callback, a third does not, and the coin's detection line is logged once.
 
 Usage:
     uv run tests/regression/verify_logs_name_coin_and_venue.py
@@ -82,6 +94,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 import base58  # noqa: E402
 import websockets  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
+from solders.rpc.responses import GetSignatureStatusesResp  # noqa: E402
 from solders.signature import Signature  # noqa: E402
 
 from config_loader import PLATFORM_LISTENER_COMPATIBILITY  # noqa: E402
@@ -401,6 +414,30 @@ def _play(platform: Platform, kind: str, frames: list) -> SimpleNamespace:
     return SimpleNamespace(tokens=tokens, records=records)
 
 
+def _resigned(kind: str, frame: object) -> object:
+    """The same create in a transaction with a new signature."""
+    signature = Signature.new_unique()
+    if kind in ("logs", "blocks"):
+        frame = json.loads(json.dumps(frame))
+        if kind == "logs":
+            frame["params"]["result"]["value"]["signature"] = str(signature)
+        else:
+            for tx in frame["params"]["result"]["value"]["block"]["transactions"]:
+                tx["transaction"]["signatures"][0] = str(signature)
+        return frame
+    copy = type(frame)()
+    copy.CopyFrom(frame)
+    info = (
+        copy.deshred_transaction.transaction
+        if kind == "shreds"
+        else copy.transaction.transaction
+    )
+    info.signature = bytes(signature)
+    if info.transaction.signatures:
+        info.transaction.signatures[0] = bytes(signature)
+    return copy
+
+
 def _streams() -> list[tuple[Platform, str]]:
     return [
         (platform, kind)
@@ -480,11 +517,18 @@ def check_b_no_other_info_line_per_coin() -> bool:
             bad.append(
                 f"{where}: {len(parser_info)} INFO lines from the parsers, e.g. {parser_info[0]!r}"
             )
+        if not run.tokens:
+            bad.append(f"{where}: no coin detected, nothing to check")
         for token in run.tokens:
-            naming = [r.getMessage() for r in info if str(token.mint) in r.getMessage()]
-            if len(naming) != 1:
+            others = [
+                r.getMessage()
+                for r in info
+                if str(token.mint) in r.getMessage()
+                and not r.getMessage().startswith("New token detected")
+            ]
+            if others:
                 bad.append(
-                    f"{where}: {len(naming)} INFO lines name {token.mint}: {naming[:3]}"
+                    f"{where}: {len(others)} other INFO lines name {token.mint}: {others[:3]}"
                 )
     return _report("B", bad)
 
@@ -501,11 +545,15 @@ def check_c_a_coin_is_reported_once() -> bool:
         coins.setdefault(platform, set()).update(mints)
         if len(mints) != len(set(mints)):
             bad.append(f"{where}: one play reported a mint twice: {mints}")
-        twice = _play(platform, kind, [f for frame in frames for f in (frame, frame)])
+        repeated = [
+            f for frame in frames for f in (frame, frame, _resigned(kind, frame))
+        ]
+        twice = _play(platform, kind, repeated)
         again = [str(t.mint) for t in twice.tokens]
         if again != mints:
             bad.append(
-                f"{where}: frames delivered twice reported {len(again)} coins, once {len(mints)}"
+                f"{where}: frames delivered again and re-signed reported "
+                f"{len(again)} coins, once {len(mints)}"
             )
         for mint in set(mints):
             lines = [
@@ -516,7 +564,7 @@ def check_c_a_coin_is_reported_once() -> bool:
             ]
             if len(lines) != 1:
                 bad.append(
-                    f"{where}: {len(lines)} detection lines for {mint} delivered twice"
+                    f"{where}: {len(lines)} detection lines for {mint} delivered again"
                 )
     for platform, mints in coins.items():
         if len(mints) < 2:  # noqa: PLR2004
@@ -540,6 +588,8 @@ class _Client(SolanaClient):
         err: `meta.err` of every transaction; None for one that succeeded
         readable: False when no transaction can be read, as for one never seen
         deltas: What each read-back returns, in order
+        status: The signature status that ends the confirmation wait, as
+            `getSignatureStatuses` returns it; None: the wait returns nothing
     """
 
     def __init__(
@@ -548,13 +598,32 @@ class _Client(SolanaClient):
         err: object = None,
         readable: bool = True,
         deltas: list[TradeDeltas] | None = None,
+        status: dict | None = None,
     ) -> None:
         self._rate_limiter = SimpleNamespace(acquire=_nothing)
         self.err, self.readable = err, readable
         self.deltas = list(deltas or [])
+        self.status = status
 
     async def get_client(self) -> SimpleNamespace:
-        return SimpleNamespace(confirm_transaction=_nothing)
+        async def confirm(*_a: object, **_k: object) -> object:
+            if self.status is None:
+                return None
+            return GetSignatureStatusesResp.from_json(
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": {"context": {"slot": 9}, "value": [self.status]},
+                    }
+                )
+            )
+
+        return SimpleNamespace(confirm_transaction=confirm)
+
+    async def post_rpc(self, *_a: object, **_k: object) -> dict:
+        # Only getSignatureStatuses is asked for here.
+        return {"result": {"context": {"slot": 9}, "value": [self.status]}}
 
     async def build_and_send_transaction(self, *_a: object, **_k: object) -> Signature:
         return Signature.new_unique()
@@ -747,7 +816,9 @@ def _trader() -> SimpleNamespace:
     )
 
 
-def _round_trip(platform: Platform, pool_cls: type | None) -> SimpleNamespace:
+def _round_trip(
+    platform: Platform, pool_cls: type | None, strategy: str
+) -> SimpleNamespace:
     """Buy through the real buyer and trader, sell through the real position manager."""
     client = _Client(deltas=[BOUGHT, SOLD])
     token = _token(platform)
@@ -761,6 +832,9 @@ def _round_trip(platform: Platform, pool_cls: type | None) -> SimpleNamespace:
         asyncio.run(UniversalTrader._handle_successful_buy(_trader(), token, buy))
         manager = _manager(_seller(client), client)
         manager.platform_implementations = implementations
+        manager.exit_strategy = strategy
+        if strategy == "tp_sl":
+            manager.max_hold_time = 0.01  # exits at once, on max_hold_time
         with tempfile.TemporaryDirectory() as tmp:
             manager.store = PositionStore(Path(tmp) / "positions.json")
             manager.store.add(token, buy, datetime.now(UTC).replace(tzinfo=None))
@@ -774,7 +848,20 @@ def _round_trip(platform: Platform, pool_cls: type | None) -> SimpleNamespace:
 
     buy, rows, records = _captured(run)
     pending = sent[0][2] if sent else None
-    return SimpleNamespace(buy=buy, rows=rows, lines=records.lines(), pending=pending)
+    return SimpleNamespace(
+        buy=buy,
+        rows=rows,
+        lines=records.lines(),
+        pending=pending,
+        exit_line=EXIT_LINES[strategy],
+    )
+
+
+# The line each exit strategy ends a sale with.
+EXIT_LINES = {
+    "time_based": "Successfully sold",
+    "tp_sl": "Successfully exited position",
+}
 
 
 def _venue_problems(
@@ -789,7 +876,7 @@ def _venue_problems(
         bad.append(
             f"{label}: pending-buy record venue {getattr(run.pending, 'venue', None)!r}"
         )
-    for prefix in ("Buying ", "Selling ", "Successfully bought", "Successfully sold"):
+    for prefix in ("Buying ", "Selling ", "Successfully bought", run.exit_line):
         lines = [x for x in run.lines if x.startswith(prefix)]
         if not any(f"venue: {name}" in x for x in lines):
             bad.append(
@@ -871,8 +958,10 @@ def check_d_trades_name_their_venue() -> bool:
     if names != WANTED_VENUES:
         bad.append(f"venue names: {names}")
     for label, platform, pool_cls in VENUES:
-        run = _round_trip(platform, pool_cls)
-        bad += _venue_problems(label, platform, WANTED_VENUES[label], run)
+        for strategy in EXIT_LINES:
+            run = _round_trip(platform, pool_cls, strategy)
+            where = f"{label} {strategy}"
+            bad += _venue_problems(where, platform, WANTED_VENUES[label], run)
     try:
         bad += _pending_resolved_row()
     except TypeError as e:
@@ -949,12 +1038,92 @@ def _unconfirmed_problems(
     return bad
 
 
+def _status(err: object, level: str) -> dict:
+    return {
+        "slot": 8,
+        "confirmations": None,
+        "err": err,
+        "status": {"Err": err} if err else {"Ok": None},
+        "confirmationStatus": level,
+    }
+
+
+def _lagging_node_problems(
+    label: str, platform: Platform, pool_cls: type | None
+) -> list[str]:
+    """The confirmed status shows the error; the transaction cannot be read yet."""
+    bad = []
+    token = _token(platform)
+    client = _Client(readable=False, status=_status(REVERT_ERR, "confirmed"))
+    (buy, sell), _, _ = _captured(lambda: _buy_and_sell(client, token, pool_cls))
+    for side, result in (("buy", buy), ("sell", sell)):
+        text = result.error_message or ""
+        if result.failure_reason is not TradeFailureReason.REVERTED:
+            bad.append(f"{label} {side}, node behind: reason {result.failure_reason}")
+        if "landed and reverted" not in text or "TooMuchSolRequired" not in text:
+            bad.append(f"{label} {side}, node behind: {text!r}")
+    # An error seen at `processed` may be a fork that is dropped: not final.
+    client = _Client(readable=False, status=_status(REVERT_ERR, "processed"))
+    (buy, _), _, _ = _captured(lambda: _buy_and_sell(client, token, pool_cls))
+    if buy.failure_reason is not TradeFailureReason.UNCONFIRMED:
+        bad.append(
+            f"{label}: an error at processed taken as final: {buy.error_message!r}"
+        )
+    return bad
+
+
+def _pending_revert_line() -> list[str]:
+    """A pending buy whose signature status shows it reverted is cleared naming the error."""
+    token = _token(Platform.PUMP_FUN)
+    client = _Client(status=_status(REVERT_ERR, "confirmed"))
+
+    def run() -> list[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = PositionStore(Path(tmp) / "positions.json")
+            store.add(
+                token,
+                base.TradeResult(
+                    success=False,
+                    platform=token.platform,
+                    tx_signature=str(Signature.new_unique()),
+                    amount=1000.0,
+                    price=PRICE,
+                ),
+                datetime.now(UTC).replace(tzinfo=None),
+                WALLET.pubkey,
+                pending=base.PendingBuy(),
+            )
+            manager = _manager(None, client)
+            manager.store = store
+            try:
+                asyncio.run(
+                    asyncio.wait_for(manager._resolve_buy(store.pending(token.mint)), 5)
+                )
+            except TimeoutError:
+                return ["the reverted pending buy was not settled within 5 s"]
+            if str(token.mint) in store.mints():
+                return ["the reverted pending buy was not cleared"]
+            return []
+
+    bad, _, records = _captured(run)
+    lines = [x for x in records.lines() if "reverted" in x and str(token.mint) in x]
+    if (
+        len(lines) != 1
+        or "6002" not in lines[0]
+        or "TooMuchSolRequired" not in lines[0]
+    ):
+        bad.append(f"pending buy found reverted: {lines}")
+    return bad
+
+
 def check_e_reverted_is_reported_as_reverted() -> bool:
     """E: a landed-and-reverted buy or sell is reported with its error, once."""
     bad = []
     for label, platform, pool_cls in VENUES:
         bad += _reverted_problems(label, platform, pool_cls)
         bad += _unconfirmed_problems(label, platform, pool_cls)
+        bad += _lagging_node_problems(label, platform, pool_cls)
+    bad += _pending_revert_line()
 
     # The client's own line, for a caller that does not take the error itself.
     signature = str(Signature.new_unique())
@@ -975,7 +1144,7 @@ def check_e_reverted_is_reported_as_reverted() -> bool:
 
 
 def check_f_shutdown_says_resolved_by_signature() -> bool:
-    """F: the shutdown line says pending buys are resolved by signature."""
+    """F: the shutdown line says pending buys are settled by signature."""
     token = _token(Platform.PUMP_FUN)
 
     def run() -> None:
@@ -1004,7 +1173,7 @@ def check_f_shutdown_says_resolved_by_signature() -> bool:
     if len(lines) != 1 or str(token.mint) not in lines[0]:
         bad.append(f"shutdown lines: {lines}")
     elif "by its signature" not in lines[0]:
-        bad.append(f"does not say resolved by signature: {lines[0]!r}")
+        bad.append(f"does not say settled by signature: {lines[0]!r}")
     elif "resolves each from the wallet's balance" in lines[0]:
         bad.append(f"still says resolved from the wallet's balance: {lines[0]!r}")
     return _report("F", bad)
@@ -1082,6 +1251,98 @@ def check_g_docs_match_the_code() -> bool:
     return _report("G", bad)
 
 
+# --- H: filters before the once-per-mint mark --------------------------------------
+
+
+def _attempts(kind: str, tokens: list[TokenInfo], **filters: str) -> SimpleNamespace:
+    """Run one listener's real loop, its decode swapped for `tokens` in order."""
+    listener = ListenerFactory.create_listener(
+        listener_type=kind,
+        wss_endpoint="wss://rpc.offline.invalid",
+        geyser_endpoint="geyser.offline.invalid:443",
+        geyser_api_token="unused",  # noqa: S106 — never sent; nothing connects
+        platforms=[Platform.PUMP_FUN],
+    )
+    queue = deque(tokens)
+    taken: list[TokenInfo] = []
+
+    def decode(*_a: object) -> TokenInfo:
+        if not queue:
+            raise _FeedEnd
+        return queue.popleft()
+
+    async def decode_async(*_a: object) -> TokenInfo:
+        return decode()
+
+    if kind in ("logs", "blocks"):
+        listener._wait_for_token_creation = decode_async
+    else:
+        listener._process_update = decode if kind == "shreds" else decode_async
+    update = (
+        geyser_pb2.SubscribeUpdateDeshred()
+        if kind == "shreds"
+        else geyser_pb2.SubscribeUpdate()
+    )
+
+    async def connection():  # noqa: ANN202
+        return _FakeStub([update] * (len(tokens) + 1)), _FakeChannel()
+
+    async def on_token(token: TokenInfo) -> None:
+        taken.append(token)
+
+    listener._create_geyser_connection = connection
+    original_connect = websockets.connect
+    websockets.connect = lambda *_a, **_k: _FakeSocket([])
+
+    async def go() -> None:
+        try:
+            await listener.listen_for_tokens(
+                on_token, filters.get("match"), filters.get("creator")
+            )
+        except _FeedEnd:
+            pass
+
+    try:
+        _, _, records = _captured(lambda: asyncio.run(go()))
+    finally:
+        websockets.connect = original_connect
+    return SimpleNamespace(taken=taken, lines=records.lines())
+
+
+def check_h_a_refused_attempt_does_not_hide_the_next() -> bool:
+    """H: an attempt the filters refused does not hide a later one at the same mint."""
+    bad = []
+    mint, creator = Pubkey.new_unique(), Pubkey.new_unique()
+
+    def attempt(name: str, user: Pubkey) -> TokenInfo:
+        return TokenInfo(
+            name=name, symbol=name[:4], uri="", mint=mint,
+            platform=Platform.PUMP_FUN, user=user, creator=user,
+        )  # fmt: skip
+
+    cases = {
+        "name filter": (
+            [attempt("Other", creator), attempt("Wanted", creator)],
+            {"match": "Wanted"},
+        ),
+        "creator filter": (
+            [attempt("Wanted", Pubkey.new_unique()), attempt("Wanted", creator)],
+            {"creator": str(creator)},
+        ),
+    }
+    for kind in ("logs", "blocks", "geyser", "shreds"):
+        for case, (tokens, filters) in cases.items():
+            third = attempt("Wanted", creator)
+            run = _attempts(kind, [*tokens, third], **filters)
+            if [id(t) for t in run.taken] != [id(tokens[1])]:
+                names = [(t.name, str(t.user)[:4]) for t in run.taken]
+                bad.append(f"{kind}, {case}: handed on {names}, want the second only")
+            detected = [x for x in run.lines if x.startswith("New token detected")]
+            if len(detected) != 1:
+                bad.append(f"{kind}, {case}: {len(detected)} detection lines")
+    return _report("H", bad)
+
+
 CHECKS = (
     check_a_one_line_names_the_coin,
     check_b_no_other_info_line_per_coin,
@@ -1090,6 +1351,7 @@ CHECKS = (
     check_e_reverted_is_reported_as_reverted,
     check_f_shutdown_says_resolved_by_signature,
     check_g_docs_match_the_code,
+    check_h_a_refused_attempt_does_not_hide_the_next,
 )
 
 

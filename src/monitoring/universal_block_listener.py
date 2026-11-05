@@ -130,30 +130,12 @@ class UniversalBlockListener(BaseTokenListener):
                             token_info = await self._wait_for_token_creation(websocket)
                             if not token_info:
                                 continue
-
-                            if not self._new_launch(token_info):
-                                continue
-
-                            # Apply filters
-                            if match_string and not (
-                                match_string.lower() in token_info.name.lower()
-                                or match_string.lower() in token_info.symbol.lower()
-                            ):
-                                logger.info(
-                                    f"Token does not match filter '{match_string}'. Skipping..."
-                                )
-                                continue
-
-                            if (
-                                creator_address
-                                and str(token_info.user) != creator_address
-                            ):
-                                logger.info(
-                                    f"Token not created by {creator_address}. Skipping..."
-                                )
-                                continue
-
-                            await token_callback(token_info)
+                            await self._deliver(
+                                token_info,
+                                token_callback,
+                                match_string,
+                                creator_address,
+                            )
 
                     except websockets.exceptions.ConnectionClosed:
                         logger.warning("WebSocket connection closed. Reconnecting...")

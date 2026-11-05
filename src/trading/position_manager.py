@@ -9,7 +9,7 @@ buy is sent until its sell, and `resume` picks those up again after a restart.
 import asyncio
 import dataclasses
 import struct
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -268,17 +268,23 @@ class PositionManager:
         label = f"{token_info.symbol} ({token_info.mint})"
         signature = sent.tx_signature
         first = True
+        revert: list[str] = []
         while True:
             # Every balance read below names the slot this decision rests on:
             # a node behind it errors, which keeps the record, rather than
             # answering "not found", which would clear it.
-            outcome, slot = await self._signature_outcome(signature, first=first)
+            outcome, slot = await self._signature_outcome(
+                signature, first=first, on_revert=revert.append
+            )
             first = False
             if outcome is ConfirmationStatus.SUCCESS:
                 buy = await self._landed_buy(token_info, sent, pending, label, slot)
                 break
             if outcome is ConfirmationStatus.REVERTED:
-                logger.info(f"The buy of {label} ({signature}) reverted; clearing it")
+                error = f": {revert[-1]}" if revert else ""
+                logger.info(
+                    f"The buy of {label} ({signature}) reverted{error}; clearing it"
+                )
                 self.store.remove(token_info.mint)
                 return None
             expired, slot = await self._past_landing(stored)
@@ -303,7 +309,11 @@ class PositionManager:
         return buy
 
     async def _signature_outcome(
-        self, signature: str | None, *, first: bool
+        self,
+        signature: str | None,
+        *,
+        first: bool,
+        on_revert: Callable[[str], None] | None = None,
     ) -> tuple[ConfirmationStatus | None, int | None]:
         """The signature's status and slot; UNCONFIRMED when the lookup fails.
 
@@ -315,7 +325,7 @@ class PositionManager:
             return None, None
         try:
             return await self.solana_client.get_signature_outcome(
-                signature, search_history=first
+                signature, search_history=first, on_revert=on_revert
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Could not look up {signature[:16]}...: {e}")
@@ -600,8 +610,8 @@ class PositionManager:
             logger.warning(
                 f"{len(pending)} buy(s) sent but not confirmed stay in "
                 f"{self.store.path}: {', '.join(sorted(pending))}. The next start "
-                f"resolves each by its signature, and from the wallet's balance only "
-                f"one that no node knows once its blockhash has expired"
+                f"settles each by its signature; one still unknown once its blockhash "
+                f"has expired is settled by the wallet's balance"
             )
 
     def stored_mints(self) -> set[str]:
@@ -1406,7 +1416,8 @@ class PositionManager:
             return ExitSellVerdict.PARTIAL
         position.close_position(price, exit_reason)
         logger.info(
-            f"Successfully exited position: {exit_reason.value} ({token_info.symbol})"
+            f"Successfully exited position: {exit_reason.value} "
+            f"({token_info.symbol}, venue: {sell_result.venue})"
         )
         return ExitSellVerdict.SOLD
 
