@@ -23,10 +23,12 @@ account under `after_sell` (`PositionManager._close_cleared`, also in `_closes`)
 and is left to the sweep under `post_session`. Every close goes out with the
 priority fee unless `cleanup.with_priority_fee` is false (validated as a bool)
 and a tight compute unit limit. A confirmation wait can end early (a rate limit,
-a timeout), so a close is sent again only when no node knows its signature
-**and** `get_block_height_and_slot` shows the height past its blockhash's last
-valid height; one seen but unconfirmed, or not provably expired, is waited on
-(`MAX_WAIT`, then given up without a resend). At most
+a timeout), so a close is sent again only when `get_block_height_and_slot`
+shows the height past its blockhash's last valid height **and** its signature
+is not known to have landed: no node knows it, or the lookup failed. One seen
+but unconfirmed, or not provably expired, is waited on; every wait, the
+confirmation wait included, ends by `MAX_WAIT`, then the close is given up
+without a resend, and a confirmation error is warned once per close. At most
 `AccountCleanupManager.CLOSE_ATTEMPTS` sends in total; before each resend the
 account is read at `confirmed` with `min_context_slot` set to the slot the
 expiry was seen at, so a close that landed is never sent again

@@ -14,19 +14,23 @@ landed but missed by the wait, reverted, refused by the node):
   A. Closes go out with the bot's priority fee unless `cleanup.with_priority_fee`
      is false: a config that leaves the key out, and every shipped config,
      sends them with it, and anything but true, false or nothing is refused.
-     Each close carries a compute unit limit below the client's default.
+     Each close carries a compute unit limit below the client's default and at
+     least `MIN_CU_LIMIT`, above what the largest close was measured to use.
   B. A close that is not confirmed by the time its blockhash expires is sent
      again, at most three attempts in total, then cleanup gives up with one
      warning line and no traceback. With `quiet`, the client's confirmation
      logs nothing when the wait runs out and one warning on any other error,
      and its send logs no traceback. A close the node refused is sent again;
      one whose send failed after it may have reached the node is logged once
-     and waited on.
+     and waited on. A confirmation wait that ends on the same error pass after
+     pass is warned once per close, the repeats at debug, and the client hands
+     such errors to `on_error` instead of logging them.
   C. A close that landed, or may still land, is never sent again: not when the
      confirmation wait missed it, when it was seen but not yet confirmed, when
      the lookup failed and the account is gone, when it reverted, when the wait
-     ended early before the blockhash expired, or when it never settles (given
-     up with one warning). With finalized reads lagging behind a close that
+     ended early before the blockhash expired, when it never settles (given
+     up with one warning), or when the node's height stops moving and the
+     confirmation wait never returns (bounded by `MAX_WAIT`). With finalized reads lagging behind a close that
      landed, the read before a resend is at confirmed, pinned to the slot the
      expiry was seen at.
   D. A position cleared because the wallet no longer holds its coin (on start,
@@ -100,6 +104,10 @@ CLOSE_ATTEMPTS = 3  # sends of one close before cleanup gives up
 
 LIFETIME = 3  # blocks a close's blockhash stays valid on the stub chain
 DEFAULT_CU_LIMIT = 85_000  # what the client sets when a fee comes without a limit
+# Burn, harvest and close on a transfer-fee Token-2022 account measured 5,557 CU
+# on surfpool; a limit below this floor would leave too little headroom.
+MIN_CU_LIMIT = 10_000
+ERRORS_BEFORE_LANDING = 3  # confirmation waits that end on an error, "erroring"
 
 # No settle wait, short looks at a close in flight: the stub answers at once.
 AccountCleanupManager.SETTLE_SECONDS = 0.0
@@ -171,6 +179,10 @@ class _Chain:
                node knows it yet; it lands during the second wait
       early-unknown  the same, for a close whose blockhash height is unknown
       stuck    no wait, lookup or block height ever settles it
+      frozen   the node's block height stops moving: the confirmation wait
+               never returns
+      erroring the first waits end on an error (a 429), handed to `on_error`;
+               it lands during a later wait
       revert   lands with an error
       refuse   the node refuses it: TransactionNotSent
       ambiguous  the send fails after it reached the node (a read timeout);
@@ -350,6 +362,7 @@ class _Chain:
         *,
         last_valid_block_height: int | None = None,
         quiet: bool = False,
+        on_error: object = None,
     ) -> bool:
         del commitment
         self.confirms.append(
@@ -359,6 +372,14 @@ class _Chain:
         tx["waits"] += 1
         play = tx["play"]
         if play in ("land", "ambiguous"):
+            return True
+        if play == "frozen":
+            await asyncio.Event().wait()  # never set: solana-py has no timeout
+        if play == "erroring":
+            if tx["waits"] <= ERRORS_BEFORE_LANDING:
+                on_error(TimeoutError("429 Too Many Requests"))
+                return False
+            self._land(tx)
             return True
         if play in ("early", "early-unknown") and tx["waits"] > 1:
             self._land(tx)
@@ -407,16 +428,20 @@ def _fees() -> PriorityFeeManager:
 
 
 def _after_sell(chain: _Chain, mint: Pubkey, *, with_fee: bool) -> None:
+    """The after-sell close of `mint`; TimeoutError if it runs past 5 s."""
     asyncio.run(
-        handle_cleanup_after_sell(
-            chain,
-            WALLET,
-            mint,
-            TOKEN_PROGRAM,
-            _fees(),
-            "after_sell",
-            cleanup_with_prior_fee=with_fee,
-            force_burn=False,
+        asyncio.wait_for(
+            handle_cleanup_after_sell(
+                chain,
+                WALLET,
+                mint,
+                TOKEN_PROGRAM,
+                _fees(),
+                "after_sell",
+                cleanup_with_prior_fee=with_fee,
+                force_burn=False,
+            ),
+            5.0,
         )
     )
 
@@ -494,7 +519,9 @@ def check_a_fee_applied() -> list[str]:
         if fees != [expected]:
             problems.append(f"with_priority_fee {with_fee}: sent with fees {fees}")
         limits = [tx["cu"] for tx in chain.sent]
-        if not limits or any(cu is None or cu >= DEFAULT_CU_LIMIT for cu in limits):
+        if not limits or any(
+            cu is None or not MIN_CU_LIMIT <= cu < DEFAULT_CU_LIMIT for cu in limits
+        ):
             problems.append(f"close compute unit limits {limits}, not a tight one")
     return problems
 
@@ -572,6 +599,21 @@ def _client_quiet_problems() -> list[str]:  # noqa: C901 - one branch per case
             f"client: a wait ending on an error confirmed {failed_confirmed}, "
             f"logged {[r.getMessage() for r in failed.records]}, not one warning"
         )
+    handed: list[Exception] = []
+    errors.append(TimeoutError("read timed out"))
+
+    async def confirm_with_hook() -> bool:
+        return await client.confirm_transaction(
+            signature, last_valid_block_height=4242, quiet=True, on_error=handed.append
+        )
+
+    with _Logs() as hooked:
+        asyncio.run(confirm_with_hook())
+    if len(handed) != 1 or hooked.records:
+        problems.append(
+            f"client: on_error got {handed}, client logged "
+            f"{[r.getMessage() for r in hooked.records]}"
+        )
     with _Logs() as sent:
         outcome = asyncio.run(send())
     if outcome != "raised":
@@ -632,6 +674,28 @@ def check_b_dropped_close_retried() -> list[str]:  # noqa: C901 - one branch per
             f"send failed, landed: {len(chain.sent)} sends, open "
             f"{ata in chain.accounts}, warnings {warnings}"
         )
+    # The confirmation wait ends on the same error pass after pass: one
+    # warning for the close, the repeats at debug, and it is not sent again.
+    manager_log = logging.getLogger("cleanup.manager")
+    level = manager_log.level
+    manager_log.setLevel(logging.DEBUG)  # so the repeats can be counted
+    try:
+        chain, logs, ata = _close_one(["erroring", "land"])
+    finally:
+        manager_log.setLevel(level)
+    warnings = logs.at(logging.WARNING)
+    repeats = [m for m in logs.at(logging.DEBUG) if "429" in m]
+    if (
+        len(chain.sent) != 1
+        or ata in chain.accounts
+        or len(warnings) != 1
+        or "429" not in warnings[0]
+        or len(repeats) != ERRORS_BEFORE_LANDING - 1
+    ):
+        problems.append(
+            f"repeated confirmation errors: {len(chain.sent)} sends, open "
+            f"{ata in chain.accounts}, warnings {warnings}, {len(repeats)} at debug"
+        )
     try:
         problems += _client_quiet_problems()
     except Exception as error:  # noqa: BLE001 - what the check reports
@@ -639,7 +703,7 @@ def check_b_dropped_close_retried() -> list[str]:  # noqa: C901 - one branch per
     return problems
 
 
-def check_c_landed_close_not_resent() -> list[str]:  # noqa: C901 - one branch per case
+def check_c_landed_close_not_resent() -> list[str]:  # noqa: C901, PLR0912 - one branch per case
     problems = []
     for plan, label in (
         (["late"], "the wait missed it"),
@@ -679,6 +743,18 @@ def check_c_landed_close_not_resent() -> list[str]:  # noqa: C901 - one branch p
         problems.append(
             f"never settled: sent {len(chain.sent)} times, warnings {warnings}"
         )
+    # The node's height stops moving and the confirmation wait never returns:
+    # bounded by MAX_WAIT, given up with one warning, never re-sent.
+    try:
+        chain, logs, ata = _close_one(["frozen", "land"])
+    except TimeoutError:
+        problems.append("frozen height: the close never returned")
+    else:
+        warnings = logs.at(logging.WARNING)
+        if len(chain.sent) != 1 or len(warnings) != 1:
+            problems.append(
+                f"frozen height: sent {len(chain.sent)} times, warnings {warnings}"
+            )
     # Landed, but no node knows the signature and finalized reads lag: the
     # read before a resend is at confirmed, pinned to the slot of the expiry.
     chain, logs, ata = _close_one(["lag", "land"])

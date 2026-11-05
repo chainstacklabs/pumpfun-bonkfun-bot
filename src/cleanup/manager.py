@@ -271,9 +271,10 @@ class AccountCleanupManager:
     ) -> None:
         """Burn what is left if `burn` and close `account`, until it lands.
 
-        A close is sent again only once it provably can no longer land (the
-        block height is past its blockhash's last valid height) and no node
-        knows it, at most `CLOSE_ATTEMPTS` sends in total. Before each resend
+        A close is sent again only once the block height is past its
+        blockhash's last valid height and its signature is not known to have
+        landed (no node knows it, or the lookup failed), at most
+        `CLOSE_ATTEMPTS` sends in total. Before each resend
         the account is read again at "confirmed", from a node at least at the
         slot the expiry was seen at, so one already closed is left alone.
 
@@ -422,7 +423,7 @@ class AccountCleanupManager:
 
         Returns:
             The outcome: SUCCESS or REVERTED; None when it can be sent again
-            (refused by the node, or expired with no node knowing it);
+            (refused by the node, or expired and not known to have landed);
             UNCONFIRMED when that could not be told within `MAX_WAIT`. Then the
             signature (None when nothing was sent) and the slot the expiry was
             seen at (None when unknown)
@@ -472,9 +473,12 @@ class AccountCleanupManager:
         """Wait until a close landed, reverted, or provably can no longer land.
 
         The confirmation wait can end early (a rate limit, a timeout), so an
-        unconfirmed close counts as gone only when no node knows it and the
-        block height read after it is past `last_valid`. Without a height, it
-        counts as gone `EXPIRY_SECONDS` after it was sent.
+        unconfirmed close counts as gone only when its signature is not known
+        to have landed (no node knows it, or the lookup failed; one seen but
+        unconfirmed is waited on) and the block height read after it is past
+        `last_valid`. Without a height, it counts as gone `EXPIRY_SECONDS` after
+        it was sent. Every wait, the confirmation wait included, ends by
+        `MAX_WAIT`.
 
         Returns:
             SUCCESS, REVERTED, None (gone; with the slot the expiry was seen
@@ -482,22 +486,23 @@ class AccountCleanupManager:
         """
         loop = asyncio.get_running_loop()
         sent_at = loop.time()
+        warned = False
+
+        def on_error(error: Exception) -> None:
+            # Said once per close; the same error every pass goes to debug.
+            nonlocal warned
+            line = f"Could not confirm the close {str(signature)[:16]}...: {error!s}"
+            if warned:
+                logger.debug(line)
+            else:
+                logger.warning(f"{line}; still waiting on it")
+                warned = True
+
         while True:
-            # confirm_transaction is False when the transaction landed but
-            # reverted. Logging success on that would report rent as reclaimed
-            # while the account is still open.
-            if await self.client.confirm_transaction(
-                signature, last_valid_block_height=last_valid, quiet=True
-            ):
+            left = max(self.MAX_WAIT - (loop.time() - sent_at), 0.0)
+            if await self._confirmed(signature, last_valid, left, on_error):
                 return ConfirmationStatus.SUCCESS, None
-            # The whole history is searched: a close that landed late, or was
-            # seen by another node, must not be sent again.
-            try:
-                outcome, seen_at = await self.client.get_signature_outcome(
-                    signature, search_history=True, quiet=True
-                )
-            except Exception:  # noqa: BLE001
-                outcome, seen_at = ConfirmationStatus.UNCONFIRMED, None
+            outcome, seen_at = await self._lookup(signature)
             if outcome in (ConfirmationStatus.SUCCESS, ConfirmationStatus.REVERTED):
                 return outcome, None
             # Seen but not confirmed yet: it may still land, whatever the height.
@@ -508,6 +513,48 @@ class AccountCleanupManager:
             if loop.time() - sent_at >= self.MAX_WAIT:
                 return ConfirmationStatus.UNCONFIRMED, None
             await asyncio.sleep(self.RESEND_DELAY)
+
+    async def _confirmed(
+        self,
+        signature: Signature,
+        last_valid: int | None,
+        seconds: float,
+        on_error: Callable[[Exception], None],
+    ) -> bool:
+        """The confirmation wait, bounded by `seconds`.
+
+        solana-py's wait has no timeout of its own when given a height: a node
+        whose height stops moving would hold it forever. False also when the
+        close landed but reverted; logging success on that would report rent
+        as reclaimed while the account is still open.
+        """
+        try:
+            return await asyncio.wait_for(
+                self.client.confirm_transaction(
+                    signature,
+                    last_valid_block_height=last_valid,
+                    quiet=True,
+                    on_error=on_error,
+                ),
+                seconds,
+            )
+        except TimeoutError:
+            return False
+
+    async def _lookup(
+        self, signature: Signature
+    ) -> tuple[ConfirmationStatus | None, int | None]:
+        """The signature's status and slot, UNCONFIRMED and None when unreadable.
+
+        The whole history is searched: a close that landed late, or was seen
+        by another node, must not be sent again.
+        """
+        try:
+            return await self.client.get_signature_outcome(
+                signature, search_history=True, quiet=True
+            )
+        except Exception:  # noqa: BLE001
+            return ConfirmationStatus.UNCONFIRMED, None
 
     async def _expired(
         self, last_valid: int | None, waited: float

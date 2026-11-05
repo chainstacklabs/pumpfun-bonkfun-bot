@@ -648,6 +648,7 @@ class SolanaClient:
         *,
         last_valid_block_height: int | None = None,
         quiet: bool = False,
+        on_error: Callable[[Exception], None] | None = None,
     ) -> bool:
         """Wait for transaction confirmation and verify execution success.
 
@@ -668,6 +669,8 @@ class SolanaClient:
             quiet: Log nothing when the wait runs out (the blockhash expired,
                 or 90 seconds passed without one), and any other error as one
                 warning line without a traceback
+            on_error: Called with any error other than the wait running out,
+                in place of logging it; the caller decides how often to say so
 
         Returns:
             Whether transaction was confirmed AND executed successfully
@@ -677,6 +680,7 @@ class SolanaClient:
             commitment,
             last_valid_block_height=last_valid_block_height,
             quiet=quiet,
+            on_error=on_error,
         )
         return status is ConfirmationStatus.SUCCESS
 
@@ -687,6 +691,7 @@ class SolanaClient:
         *,
         last_valid_block_height: int | None = None,
         quiet: bool = False,
+        on_error: Callable[[Exception], None] | None = None,
     ) -> ConfirmationStatus:
         """Confirm a transaction, distinguishing a revert from an unknown.
 
@@ -700,6 +705,7 @@ class SolanaClient:
             commitment: Confirmation commitment level
             last_valid_block_height: As in :meth:`confirm_transaction`
             quiet: As in :meth:`confirm_transaction`
+            on_error: As in :meth:`confirm_transaction`
 
         Returns:
             SUCCESS, REVERTED, or UNCONFIRMED
@@ -728,7 +734,9 @@ class SolanaClient:
                 logger.exception(f"Failed to confirm transaction {signature}")
             return ConfirmationStatus.UNCONFIRMED
         except Exception as e:
-            if quiet:
+            if on_error is not None:
+                on_error(e)
+            elif quiet:
                 logger.warning(f"Could not confirm transaction {signature}: {e!s}")
             else:
                 logger.exception(f"Failed to confirm transaction {signature}")
