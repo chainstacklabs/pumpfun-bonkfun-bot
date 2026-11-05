@@ -27,7 +27,8 @@ StonkFun and other launchpads (`raw_launchlab_launches_*`,
 `recorded_letsbonk_launches_from_gettransaction.json`, two letsbonk launches
 as `getTransaction` returns them), each
 played as its stream delivers it through the listener's real loop. The revert
-is buy `3BP2RDMc…` (`meta.err` Custom 6002), as `getTransaction` returns it.
+is buy `3BP2RDMc…` (`meta.err` Custom 6002), as `getTransaction` returns it
+(`recorded_reverts_from_gettransaction.json`).
 
 Offline machine checks, no network and no funds moved:
 
@@ -52,7 +53,8 @@ Offline machine checks, no network and no funds moved:
   E. A buy and a sell that landed and reverted are reported as reverted with the
      transaction's error, in one line, not as "failed to confirm", also when the
      node cannot serve the transaction yet but the confirmed signature status
-     shows the error (an error at `processed` is not taken); the client's own
+     shows the error (an error at `processed` is not taken), its code then named
+     from the IDL of its venue's program (none for CPMM); the client's own
      line says the same; one never confirmed still says it failed to confirm; a
      pending buy found reverted after a restart is cleared naming its error.
   F. The shutdown line for pending buys says the next start settles them by
@@ -112,6 +114,7 @@ from monitoring.listener_factory import ListenerFactory  # noqa: E402
 from platforms import PlatformImplementations  # noqa: E402
 from platforms.curve_market import CurveMarket  # noqa: E402
 from platforms.launchlab.cpmm_market import CpmmMarket  # noqa: E402
+from platforms.pumpfun.address_provider import PumpFunAddresses  # noqa: E402
 from platforms.pumpfun.pumpswap_market import PumpSwapMarket  # noqa: E402
 from trading import base, platform_aware  # noqa: E402
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller  # noqa: E402
@@ -137,8 +140,23 @@ LAUNCHLAB_TXS = (
 LAUNCHLAB_STREAMS = HERE / "raw_launchlab_creates_from_deshred.json"
 LAUNCHLAB_PLATFORMS = (Platform.LAUNCHLAB, Platform.LETS_BONK, Platform.STONK_FUN)
 # Buy 3BP2RDMcyNk4s4pZttVUf3jnVvV5BWphMv2eeuHeBMYgWijgxtyRJeUKFKci3EqCfWPgB8njjccSAZmgDw4PMN6R,
-# a pump.fun buy_v2 that landed and reverted on slippage: its `meta.err`.
-REVERT_ERR = {"InstructionError": [3, {"Custom": 6002}]}
+# a pump.fun buy_v2 that landed and reverted on slippage, as `getTransaction`
+# returns it, and its `meta.err`.
+REVERTED_TX = next(
+    entry["transaction"]
+    for entry in json.loads(
+        (HERE / "recorded_reverts_from_gettransaction.json").read_text()
+    )
+    if entry["signature"].startswith("3BP2RDMc")
+)
+REVERT_ERR = REVERTED_TX["meta"]["err"]
+# What each venue's revert of REVERT_ERR is named when only its signature status
+# is read: from the IDL of the program the trade went to; CPMM has none here.
+STATUS_NAMES = {
+    "curve": "pump.fun IDL: 6002 TooMuchSolRequired",
+    "pumpswap": "PumpSwap IDL: 6002 ZeroQuoteAmount",
+    "cpmm": None,
+}
 TOKEN = 10**6
 # The venue names `trades.log` and the README use, as each market class gives it.
 WANTED_VENUES = {
@@ -629,7 +647,11 @@ class _Client(SolanaClient):
         return Signature.new_unique()
 
     async def _get_transaction_result(self, *_a: object, **_k: object) -> dict | None:
-        return {"meta": {"err": self.err}} if self.readable else None
+        if not self.readable:
+            return None
+        if self.err == REVERT_ERR:
+            return REVERTED_TX
+        return {"meta": {"err": self.err}}
 
     async def get_trade_deltas(self, *_a: object, **_k: object) -> TradeDeltas | None:
         return self.deltas.pop(0) if self.deltas else None
@@ -637,6 +659,9 @@ class _Client(SolanaClient):
 
 class _Curve:
     """The curve's builder, curve manager and address provider, priced at `price`."""
+
+    # The curve venue traded here is pump.fun's.
+    program_id = PumpFunAddresses.PROGRAM
 
     def __init__(self, price: float, *, graduated: bool) -> None:
         self.price, self.graduated = price, graduated
@@ -795,6 +820,14 @@ def _manager(seller: PlatformAwareSeller, client: _Client) -> PositionManager:
     manager.cleanup_force_close_with_burn = False
     manager._graduated_mints = set()
     manager._open = set()
+    curve = _Curve(PRICE, graduated=False)
+    manager.platform_implementations = PlatformImplementations(
+        address_provider=curve,
+        instruction_builder=curve,
+        curve_manager=curve,
+        event_parser=None,
+        graduated_market=_pool(PumpSwapMarket, PRICE),
+    )
     return manager
 
 
@@ -1056,12 +1089,18 @@ def _lagging_node_problems(
     token = _token(platform)
     client = _Client(readable=False, status=_status(REVERT_ERR, "confirmed"))
     (buy, sell), _, _ = _captured(lambda: _buy_and_sell(client, token, pool_cls))
+    name = STATUS_NAMES[label]
     for side, result in (("buy", buy), ("sell", sell)):
         text = result.error_message or ""
         if result.failure_reason is not TradeFailureReason.REVERTED:
             bad.append(f"{label} {side}, node behind: reason {result.failure_reason}")
-        if "landed and reverted" not in text or "TooMuchSolRequired" not in text:
+        if "landed and reverted" not in text or "6002" not in text:
             bad.append(f"{label} {side}, node behind: {text!r}")
+        if (name not in text) if name else ("IDL:" in text):
+            bad.append(
+                f"{label} {side}, node behind: {text!r} is not named "
+                f"{name or 'by no IDL'}, its venue's program"
+            )
     # An error seen at `processed` may be a fork that is dropped: not final.
     client = _Client(readable=False, status=_status(REVERT_ERR, "processed"))
     (buy, _), _, _ = _captured(lambda: _buy_and_sell(client, token, pool_cls))
@@ -1091,7 +1130,7 @@ def _pending_revert_line() -> list[str]:
                 ),
                 datetime.now(UTC).replace(tzinfo=None),
                 WALLET.pubkey,
-                pending=base.PendingBuy(),
+                pending=base.PendingBuy(venue=CurveMarket.name),
             )
             manager = _manager(None, client)
             manager.store = store

@@ -488,7 +488,8 @@ def _buy(
     platform_aware.get_platform_implementations = lambda _p, _c: (
         PlatformImplementations(
             address_provider=SimpleNamespace(
-                derive_pool_address=lambda _mint: Pubkey.new_unique()
+                derive_pool_address=lambda _mint: Pubkey.new_unique(),
+                program_id=None,
             ),
             instruction_builder=builder,
             curve_manager=LaunchLabCurveManager(

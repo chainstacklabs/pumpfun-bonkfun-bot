@@ -31,6 +31,11 @@ class CurveMarket(Market):
         self.curve_manager = curve_manager
 
     @property
+    def program_id(self) -> Pubkey:
+        """The platform's curve program."""
+        return self.address_provider.program_id
+
+    @property
     def spends_exact_amount_in(self) -> bool:
         """Whether the platform's buy spends exactly `amount_in`."""
         return getattr(self.instruction_builder, "spends_exact_amount_in", False)

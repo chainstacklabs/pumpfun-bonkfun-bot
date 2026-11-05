@@ -176,6 +176,7 @@ def _stub_implementations() -> PlatformImplementations:
     address_provider = SimpleNamespace(
         derive_pool_address=lambda _mint: CURVE,
         derive_creator_vault=lambda _creator: CURVE,
+        program_id=None,
     )
     instruction_builder = SimpleNamespace(
         build_buy_instruction=_async_return([]),

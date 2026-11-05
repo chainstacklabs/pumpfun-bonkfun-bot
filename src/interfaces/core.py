@@ -339,6 +339,14 @@ class Market(ABC):
         """
 
     @property
+    def program_id(self) -> Pubkey | None:
+        """The program a trade here is sent to, whose IDL names its reverts.
+
+        None when unknown; a revert's error code is then left unnamed.
+        """
+        return None
+
+    @property
     def spends_exact_amount_in(self) -> bool:
         """Whether a buy spends all of `amount_in` rather than capping at it.
 

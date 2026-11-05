@@ -12,7 +12,8 @@ import struct
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from enum import Enum
-from typing import TYPE_CHECKING
+
+from solders.pubkey import Pubkey
 
 from cleanup.modes import handle_cleanup_after_sell, handle_cleanup_cleared
 from core.client import SolanaClient
@@ -53,9 +54,6 @@ from trading.position import ExitReason, Position
 from trading.position_store import PositionStore, StoredPosition
 from trading.settings import TraderSettings
 from utils.logger import get_logger
-
-if TYPE_CHECKING:
-    from solders.pubkey import Pubkey
 
 logger = get_logger(__name__)
 
@@ -274,7 +272,10 @@ class PositionManager:
             # a node behind it errors, which keeps the record, rather than
             # answering "not found", which would clear it.
             outcome, slot = await self._signature_outcome(
-                signature, first=first, on_revert=revert.append
+                signature,
+                first=first,
+                on_revert=revert.append,
+                program=self._venue_program(pending.venue),
             )
             first = False
             if outcome is ConfirmationStatus.SUCCESS:
@@ -308,12 +309,27 @@ class PositionManager:
         )
         return buy
 
+    def _venue_program(self, venue: str | None) -> Pubkey | None:
+        """The program of the venue a pending buy was sent to (`Market.name`).
+
+        None for a record without one, or naming no venue of this platform.
+        """
+        markets = (
+            self.platform_implementations.curve_market,
+            self.platform_implementations.graduated_market,
+        )
+        for market in markets:
+            if market is not None and market.name == venue:
+                return market.program_id
+        return None
+
     async def _signature_outcome(
         self,
         signature: str | None,
         *,
         first: bool,
         on_revert: Callable[[str], None] | None = None,
+        program: Pubkey | None = None,
     ) -> tuple[ConfirmationStatus | None, int | None]:
         """The signature's status and slot; UNCONFIRMED when the lookup fails.
 
@@ -325,7 +341,10 @@ class PositionManager:
             return None, None
         try:
             return await self.solana_client.get_signature_outcome(
-                signature, search_history=first, on_revert=on_revert
+                signature,
+                search_history=first,
+                on_revert=on_revert,
+                program=program,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Could not look up {signature[:16]}...: {e}")

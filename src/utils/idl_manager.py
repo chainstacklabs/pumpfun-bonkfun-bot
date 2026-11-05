@@ -1,7 +1,10 @@
 """Single point of IDL loading, so no platform class loads its own copy."""
 
+from functools import cache
 from pathlib import Path
 from typing import Any
+
+from solders.pubkey import Pubkey
 
 from interfaces.core import Platform
 from utils.idl_parser import IDLParser
@@ -282,6 +285,48 @@ def get_idl_parser(platform: Platform, verbose: bool = False) -> IDLParser:
         IDLParser instance for the platform
     """
     return get_idl_manager().get_parser(platform, verbose)
+
+
+# The programs whose Anchor error codes a revert can be named from: each IDL
+# file and the name a log line gives its program. Codes from 6000 up mean
+# something different in each, so a code is only ever looked up in the table of
+# the program that raised it. Raydium CPMM has no IDL here: its codes stay
+# unnamed.
+_ERROR_TABLE_IDLS = (
+    ("pump_fun_idl.json", "pump.fun"),
+    ("pump_fees.json", "pump fees"),
+    ("pump_swap_idl.json", "PumpSwap"),
+    ("raydium_launchlab_idl.json", "Raydium LaunchLab"),
+)
+
+
+@cache
+def _error_tables() -> dict[str, tuple[str, IDLParser]]:
+    """Each program's name and IDL, keyed by the program id the IDL itself gives."""
+    idl_dir = Path(__file__).parent.parent.parent / "idl"
+    tables = {}
+    for file, label in _ERROR_TABLE_IDLS:
+        parser = IDLParser(str(idl_dir / file))
+        tables[parser.idl["address"]] = (label, parser)
+    return tables
+
+
+def describe_program_error(program_id: Pubkey | str | None, code: int) -> str | None:
+    """Name an Anchor `Custom(code)` from the IDL of the program that raised it.
+
+    Returns:
+        "<program> IDL: <code> <Name>: <msg>", e.g. "PumpSwap IDL: 6004
+        ExceededSlippage". None when the program is unknown or has no IDL here,
+        or its IDL has no such code.
+    """
+    if program_id is None:
+        return None
+    entry = _error_tables().get(str(program_id))
+    if entry is None:
+        return None
+    label, parser = entry
+    description = parser.describe_error_code(code)
+    return f"{label} IDL: {description}" if description else None
 
 
 def has_idl_support(platform: Platform) -> bool:

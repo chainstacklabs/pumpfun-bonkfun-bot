@@ -150,6 +150,11 @@ class CpmmMarket(Market):
         self._pools: dict[Pubkey, CpmmPool] = {}
 
     @property
+    def program_id(self) -> Pubkey:
+        """Raydium CPMM."""
+        return CPMM_PROGRAM
+
+    @property
     def spends_exact_amount_in(self) -> bool:
         """A buy is `swap_base_input`: it spends all of `amount_in`."""
         return True
