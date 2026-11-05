@@ -403,7 +403,12 @@ class _Chain:
         return False
 
     async def get_signature_outcome(
-        self, signature: str, *, search_history: bool = True, quiet: bool = False
+        self,
+        signature: str,
+        *,
+        search_history: bool = True,
+        quiet: bool = False,
+        **_kwargs: object,
     ) -> tuple[ConfirmationStatus | None, int | None]:
         del search_history, quiet
         n = self.lookups[signature] = self.lookups.get(signature, 0) + 1
