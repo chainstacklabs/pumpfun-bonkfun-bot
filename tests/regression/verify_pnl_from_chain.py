@@ -24,8 +24,9 @@ the read is the same for every venue and the transactions are not:
      transfer fee), the quote it spent with protocol fees, the network fee and
      the rent put into its token accounts apart, and the venue's fill as the
      price exits measure from; the trader's `trades.log` buy row carries them.
-  B. Every recorded sale is priced at what the wallet received per token sold,
-     never the price it was floored at, with the same amounts read.
+  B. Every recorded sale, sold through the seller and manager, is logged at
+     what the wallet received per token, never the seller's reference price,
+     with the same amounts read.
   C. A `time_based` and a `tp_sl` round trip log a sell row with the chain's
      price and quote and the sale's PnL, and a `Final PnL` equal to quote
      received minus quote spent minus both network fees.
@@ -41,6 +42,13 @@ the read is the same for every venue and the transactions are not:
      digits to tell a fresh coin's prices apart.
   H. A position kept in the positions file keeps its buy's amounts, so a
      restart counts PnL from the same cost.
+  I. A sale whose confirmation came late, found landed on the re-check, is read
+     back and logged from the chain like any other, in both strategies.
+  J. A landed sale is settled first: when its transaction is read the
+     position is out of the positions file and holds no slot, and `stop`
+     waits for the read and the row.
+  K. A report that fails (the trade log raising) leaves the sale settled, is
+     logged, and the account is still closed after it.
 
 Usage:
     uv run tests/regression/verify_pnl_from_chain.py
@@ -67,7 +75,7 @@ from core import pubkeys  # noqa: E402
 from core.client import SolanaClient  # noqa: E402
 from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E402
 from platforms import PlatformImplementations  # noqa: E402
-from trading import platform_aware  # noqa: E402
+from trading import platform_aware, position_manager, trade_log  # noqa: E402
 from trading.base import TradeResult  # noqa: E402
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller  # noqa: E402
 from trading.position_manager import PositionManager  # noqa: E402
@@ -133,13 +141,23 @@ def _seed_quote_decimals() -> None:
 class _Chain(SolanaClient):
     """A client whose transactions are the recorded ones; sends land in order."""
 
-    def __init__(self, sends: list[str], unreadable: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        sends: list[str],
+        unreadable: set[str] | None = None,
+        late: set[str] | None = None,
+    ) -> None:
         self.sends = list(sends)
         self.unreadable = unreadable or set()
+        # Sends whose confirmation does not arrive; the re-check finds them.
+        self.late = late or set()
+        self.on_read = None
 
     async def _get_transaction_result(
         self, signature: object, *_a: object, **_k: object
     ) -> dict | None:
+        if self.on_read is not None:
+            await self.on_read(str(signature))
         if str(signature) in self.unreadable:
             return None
         trade = BY_SIG.get(str(signature))
@@ -148,7 +166,11 @@ class _Chain(SolanaClient):
     async def build_and_send_transaction(self, *_a: object, **_k: object) -> Signature:
         return Signature.from_string(self.sends.pop(0))
 
-    async def confirm_transaction_detailed(self, *_a: object, **_k: object):  # noqa: ANN202
+    async def confirm_transaction_detailed(  # noqa: ANN202
+        self, signature: object, *_a: object, **_k: object
+    ):
+        if str(signature) in self.late:
+            return ConfirmationStatus.UNCONFIRMED
         return ConfirmationStatus.SUCCESS
 
     async def get_token_account_balance(self, *_a: object, **_k: object) -> None:
@@ -348,7 +370,16 @@ def _manager(
     manager.cleanup_with_priority_fee = False
     manager.cleanup_force_close_with_burn = False
     manager._graduated_mints = set()  # noqa: SLF001
+    manager._open = set()  # noqa: SLF001
     return manager
+
+
+async def _exit_and_report(
+    manager: PositionManager, token: TokenInfo, buy: TradeResult
+) -> None:
+    """Run the exit, then wait for its sales' reports, as the trader does."""
+    await manager.manage(token, buy)
+    await manager.wait_all()
 
 
 def _round_trip(  # noqa: PLR0913
@@ -359,6 +390,7 @@ def _round_trip(  # noqa: PLR0913
     unreadable: set[str] | None = None,
     caps: list[int] | None = None,
     exit_price: float | None = None,
+    late: set[str] | None = None,
 ) -> SimpleNamespace:
     """Buy through the real buyer and trader, then exit through the real manager.
 
@@ -370,7 +402,7 @@ def _round_trip(  # noqa: PLR0913
     """
     buy_trade = _trade(buy_prefix)
     sells = [_trade(p)["signature"] for p in sell_prefixes]
-    chain = _Chain([buy_trade["signature"], *sells], unreadable)
+    chain = _Chain([buy_trade["signature"], *sells], unreadable, late)
     token = _token(buy_trade)
     quote = Pubkey.from_string(buy_trade["quote_mint"])
 
@@ -395,7 +427,7 @@ def _round_trip(  # noqa: PLR0913
         with tempfile.TemporaryDirectory() as tmp:
             manager.store = PositionStore(Path(tmp) / "positions.json")
             manager.store.add(token, buy, datetime.now(UTC).replace(tzinfo=None))
-            asyncio.run(asyncio.wait_for(manager.manage(token, buy), 30))
+            asyncio.run(asyncio.wait_for(_exit_and_report(manager, token, buy), 30))
         return SimpleNamespace(buy=buy, price=price)
 
     out, rows, lines = _in_tmp(run)
@@ -407,6 +439,23 @@ def _report(name: str, bad: list[str]) -> bool:
     for line in bad:
         print(f"    {name}: {line}")
     return not bad
+
+
+def _unpaid_not_read() -> list[str]:
+    """Only a transaction the wallet paid for is read: the bot's own.
+
+    The curve owns a token account in FLOAT's buy but paid for nothing.
+    """
+    trade = _trade("yw6xTRd2")
+    other = asyncio.run(
+        _Chain([]).get_trade_deltas(
+            trade["signature"],
+            Pubkey.from_string(trade["venue_account"]),
+            Pubkey.from_string(trade["mint"]),
+            pubkeys.WSOL_MINT,
+        )
+    )
+    return [] if other is None else [f"read a transaction it did not pay for: {other}"]
 
 
 def check_a_buys() -> bool:
@@ -436,7 +485,7 @@ def check_a_buys() -> bool:
         want = {
             "from_chain": True,
             "amount_raw": tokens,
-            "quote_amount": -quote / unit,
+            "quote_amount": quote / unit,
             "network_fee_sol": fee / SOL,
             "rent_deposit_sol": rent_in / SOL,
         }
@@ -464,31 +513,64 @@ def check_a_buys() -> bool:
         # Bought: the pool gave more than arrived. Sold: more left than arrived.
         if not (abs(wallet) < venue if wallet > 0 else abs(wallet) > venue):
             bad.append(f"{prefix}: fixture shows no withheld transfer fee")
+    bad += _unpaid_not_read()
     return _report("A", bad)
 
 
+def _sold_rows(trade: dict) -> list[dict]:
+    """Sell a recorded sale's tokens through the real seller and manager."""
+    tokens = -KNOWN[trade["signature"][:8]][0]
+    quote_mint = Pubkey.from_string(trade["quote_mint"])
+    token = _token(trade)
+    chain = _Chain([trade["signature"]])
+    buy = TradeResult(
+        success=True,
+        platform=token.platform,
+        tx_signature="BUY",
+        amount=tokens / TOKEN,
+        amount_raw=tokens,
+        price=1e-9,
+    )
+
+    def run() -> None:
+        implementations = _wire(_Venue(quote_mint, 1e-9))
+        manager = _manager("time_based", _seller(trade, chain), chain, _wallet(trade))
+        manager.platform_implementations = implementations
+        asyncio.run(asyncio.wait_for(_exit_and_report(manager, token, buy), 30))
+
+    return [r for r in _in_tmp(run)[1] if r["action"] == "sell"]
+
+
 def check_b_sales() -> bool:
-    """B: every recorded sale, through the real seller."""
+    """B: every recorded sale, through the real seller and manager."""
     bad: list[str] = []
     for trade in TRADES:
         if trade["side"] != "sell":
             continue
         prefix = trade["signature"][:8]
-        tokens, quote, *_ = KNOWN[prefix]
+        tokens, quote, fee, _, rent_back, other, _ = KNOWN[prefix]
         quote_mint = Pubkey.from_string(trade["quote_mint"])
-        _seed_quote_decimals()
-        reference = 1e-9
-        _wire(_Venue(quote_mint, reference))
-        chain = _Chain([trade["signature"]])
-        sold = asyncio.run(
-            _seller(trade, chain).execute(
-                _token(trade), -tokens / TOKEN, reference, -tokens
-            )
-        )
-        bad += _deltas_match(sold, prefix)
-        want = quote / pubkeys.quote_units_per_token(quote_mint) / (-tokens / TOKEN)
-        if not (sold.success and _close(sold.price, want, want * 1e-12)):
-            bad.append(f"{prefix}: sale priced {sold.price}, the chain paid {want}")
+        unit = pubkeys.quote_units_per_token(quote_mint)
+        rows = _sold_rows(trade)
+        row = rows[0] if rows else {}
+        want = {
+            "from_chain": True,
+            "amount_raw": -tokens,
+            "quote_amount": quote / unit,
+            "network_fee_sol": fee / SOL,
+            "rent_refund_sol": rent_back / SOL,
+            "other_sol": other / SOL,
+            "price": quote / unit / (-tokens / TOKEN),
+        }
+        for key, value in want.items():
+            got = row.get(key)
+            tolerance = abs(value) * 1e-12 + 1e-18 if isinstance(value, float) else 0
+            if got != value and not (
+                isinstance(value, float) and _close(got or 0, value, tolerance)
+            ):
+                bad.append(
+                    f"{prefix}: sell row {key}={got!r}, the chain says {value!r}"
+                )
     return _report("B", bad)
 
 
@@ -496,14 +578,24 @@ def _final(lines: list[str]) -> str:
     return next((line for line in reversed(lines) if line.startswith("Final PnL")), "")
 
 
-def check_c_round_trips() -> bool:
-    """C: time_based and tp_sl rows and Final PnL equal the chain."""
+def check_c_round_trips(*, late: bool = False) -> bool:
+    """C: time_based and tp_sl rows and Final PnL equal the chain.
+
+    Args:
+        late: The sale's confirmation does not arrive, and its re-check finds
+            it landed (check I)
+    """
     bad: list[str] = []
     received, fee_out = 2_970_499, 29_000
     spent, fee_in = 3_688_045, 41_000
     chain_pnl = (received - fee_out - spent - fee_in) / SOL
+    sale = _trade("4VQj9Wm7")["signature"]
     for strategy in ("time_based", "tp_sl"):
-        run = _round_trip("yw6xTRd2", ["4VQj9Wm7"], strategy)
+        run = _round_trip(
+            "yw6xTRd2", ["4VQj9Wm7"], strategy, late={sale} if late else None
+        )
+        if late and not any("confirmed late" in line for line in run.lines):
+            bad.append(f"{strategy}: the sale was not taken as a late confirmation")
         sells = [r for r in run.rows if r["action"] == "sell"]
         buys = [r for r in run.rows if r["action"] == "buy"]
         price = received / SOL / 107_300
@@ -524,7 +616,106 @@ def check_c_round_trips() -> bool:
         final = _final(run.lines)
         if f"({chain_pnl:.6f} SOL from the chain" not in final:
             bad.append(f"{strategy}: {final!r}, chain {chain_pnl:.9f}")
-    return _report("C", bad)
+    return _report("I" if late else "C", bad)
+
+
+def check_i_late_sale() -> bool:
+    """I: a sale confirmed late is read back like any other."""
+    return check_c_round_trips(late=True)
+
+
+def check_j_settled_then_read() -> bool:
+    """J: the store is settled and the slot free before the sale is read; stop waits."""
+    buy_trade = _trade("yw6xTRd2")
+    sale = _trade("4VQj9Wm7")["signature"]
+    chain = _Chain([buy_trade["signature"], sale])
+    token = _token(buy_trade)
+    quote = Pubkey.from_string(buy_trade["quote_mint"])
+    seen: dict = {}
+    held: dict = {}
+
+    async def on_read(signature: str) -> None:
+        if signature == sale and not seen:
+            manager = held["manager"]
+            seen["stored"] = str(token.mint) in manager.store.mints()
+            seen["open"] = manager.open_count
+            await asyncio.sleep(0.3)
+
+    def run() -> None:
+        buy = _buy(buy_trade, chain)
+        chain.on_read = on_read
+        implementations = _wire(_Venue(quote, buy.price * 0.5))
+        manager = _manager(
+            "time_based", _seller(buy_trade, chain), chain, _wallet(buy_trade)
+        )
+        manager.platform_implementations = implementations
+        held["manager"] = manager
+        with tempfile.TemporaryDirectory() as tmp:
+            manager.store = PositionStore(Path(tmp) / "positions.json")
+
+            async def go() -> None:
+                await manager.open(token, buy)
+                await manager.stop()
+
+            asyncio.run(asyncio.wait_for(go(), 30))
+
+    rows = [r for r in _in_tmp(run)[1] if r["action"] == "sell"]
+    bad = []
+    if seen.get("stored") is not False:
+        bad.append(f"the sale was read with the position still stored: {seen}")
+    if seen.get("open") != 0:
+        bad.append(f"the sale was read holding the position's slot: {seen}")
+    if not rows:
+        bad.append("stop returned before the sale's row was written")
+    return _report("J", bad)
+
+
+def check_k_report_failure_keeps_settlement() -> bool:
+    """K: a failing report leaves the sale settled and still closes the account."""
+    buy_trade = _trade("yw6xTRd2")
+    sale = _trade("4VQj9Wm7")["signature"]
+    chain = _Chain([buy_trade["signature"], sale])
+    token = _token(buy_trade)
+    quote = Pubkey.from_string(buy_trade["quote_mint"])
+    closes: list = []
+    out: dict = {}
+
+    async def close(*args: object) -> None:
+        closes.append(args)
+
+    def broken(*_a: object, **_k: object) -> None:
+        raise RuntimeError
+
+    def run() -> None:
+        buy = _buy(buy_trade, chain)
+        implementations = _wire(_Venue(quote, buy.price * 0.5))
+        manager = _manager(
+            "time_based", _seller(buy_trade, chain), chain, _wallet(buy_trade)
+        )
+        manager.platform_implementations = implementations
+        manager.cleanup_mode = "after_sell"
+        originals = (position_manager.handle_cleanup_after_sell, trade_log.log_trade)
+        position_manager.handle_cleanup_after_sell = close
+        trade_log.log_trade = broken
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                manager.store = PositionStore(Path(tmp) / "positions.json")
+                manager.store.add(token, buy, datetime.now(UTC).replace(tzinfo=None))
+                asyncio.run(asyncio.wait_for(_exit_and_report(manager, token, buy), 30))
+                out["stored"] = manager.store.mints()
+        finally:
+            position_manager.handle_cleanup_after_sell = originals[0]
+            trade_log.log_trade = originals[1]
+
+    lines = _in_tmp(run)[2]
+    bad = []
+    if out.get("stored") != set():
+        bad.append(f"the sale is not settled: {out}")
+    if len(closes) != 1:
+        bad.append(f"{len(closes)} account close(s) after the failed report")
+    if not any(line.startswith("Could not report the sale") for line in lines):
+        bad.append("the failed report was not logged")
+    return _report("K", bad)
 
 
 def check_d_partial_sale() -> bool:
@@ -614,6 +805,29 @@ def check_f_estimates() -> bool:
     final = _final(run.lines)
     if "an estimate" not in final:
         bad.append(f"unread buy: {final!r}")
+    # A sale read but in a quote whose decimals are unknown says so.
+    from trading.pnl import CostBasis, pnl_text, sale_pnl  # noqa: PLC0415
+
+    sale = _trade("37hc3CBz")
+    chain = _Chain([sale["signature"]])
+    deltas = asyncio.run(
+        chain.get_trade_deltas(
+            sale["signature"],
+            Pubkey.from_string(sale["wallet"]),
+            Pubkey.from_string(sale["mint"]),
+            Pubkey.from_string(sale["quote_mint"]),
+        )
+    )
+    unknown = Pubkey.new_unique()
+    pnl = sale_pnl(
+        CostBasis(1e-8, from_chain=True),
+        TradeResult(success=True, amount=1.0, price=1e-8, deltas=deltas),
+        unknown,
+        1e-8,
+    )
+    text = pnl_text("Final PnL", pnl, "X")
+    if "decimals are unknown" not in text or "could not be read" in text:
+        bad.append(f"unknown decimals: {text!r}")
     return _report("F", bad)
 
 
@@ -648,9 +862,19 @@ def check_h_restart_keeps_cost() -> bool:
         store.add(_token(trade), buy, datetime.now(UTC).replace(tzinfo=None))
         store.reduce(_token(trade).mint, 50_000.0, 50_000_000_000)
         loaded = PositionStore(Path(tmp) / "positions.json").load()
+        # A record whose stored amounts are malformed is refused, not resumed.
+        path = Path(tmp) / "positions.json"
+        data = json.loads(path.read_text())
+        data["positions"][0]["buy"]["deltas"]["tokens_raw"] = None
+        path.write_text(json.dumps(data))
+        malformed = PositionStore(path).load()
     kept = loaded[0].buy_result if loaded else None
-    ok = kept is not None and getattr(kept, "deltas", None) == getattr(buy, "deltas", 0)
-    return _report("H", [] if ok else [f"stored buy {kept}"])
+    bad = []
+    if kept is None or getattr(kept, "deltas", None) != getattr(buy, "deltas", 0):
+        bad.append(f"stored buy {kept}")
+    if malformed:
+        bad.append("a record with tokens_raw null was resumed")
+    return _report("H", bad)
 
 
 def main() -> int:
@@ -675,6 +899,15 @@ def main() -> int:
         ),
         ("G: TP/SL targets and prices keep their digits", check_g_digits),
         ("H: a kept position keeps its buy's amounts", check_h_restart_keeps_cost),
+        ("I: a sale confirmed late is read from the chain", check_i_late_sale),
+        (
+            "J: settled and slot free before the sale is read; stop waits",
+            check_j_settled_then_read,
+        ),
+        (
+            "K: a failing report keeps the sale settled and closes the account",
+            check_k_report_failure_keeps_settlement,
+        ),
     ]
     failed = 0
     for label, check in checks:

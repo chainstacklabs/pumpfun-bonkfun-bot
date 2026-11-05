@@ -146,8 +146,10 @@ def _deltas_of(buy: dict) -> TradeDeltas | None:
     if not isinstance(deltas, dict):
         raise TypeError
     found = TradeDeltas(**deltas)
-    if not all(_whole(value) for value in dataclasses.astuple(found)):
-        raise TypeError
+    nullable = {"quote_raw", "venue_quote_raw"}
+    for name, value in dataclasses.asdict(found).items():
+        if not _whole(value) or (value is None and name not in nullable):
+            raise TypeError
     return found
 
 

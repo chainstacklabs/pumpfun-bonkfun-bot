@@ -3,7 +3,8 @@
 One reader for both sides: the wallet's own balance changes, so every venue,
 quote asset and token program reads the same way. A Token-2022 transfer fee is
 withheld outside the wallet, so the token change is what the wallet really got
-or gave.
+or gave. Only a transaction the wallet paid for is read, as the bot's own are:
+rent in its token accounts is then rent it put in or took back.
 """
 
 from dataclasses import dataclass
@@ -26,7 +27,7 @@ class TradeDeltas:
     #: other lamports the trade moved, such as rent for an account the wallet
     #: does not own. None: no account of the wallet's holds the quote mint.
     quote_raw: int | None
-    #: The transaction fee, priority fee included, when the wallet paid it.
+    #: The transaction fee, priority fee included.
     network_fee_lamports: int
     #: Rent put into token accounts the wallet owns; it comes back when the
     #: account closes, so it is no trading loss.
@@ -37,7 +38,8 @@ class TradeDeltas:
     #: account another program owns. 0 for a SOL quote, where `quote_raw` has it.
     other_lamports: int = 0
     #: The quote the venue took in: the buy's fill, protocol fees left out.
-    #: None unless asked for with `venue_account`.
+    #: SOL quote: needs `venue_account`. Other quotes: the largest gain of the
+    #: quote mint in any account. None when not found.
     venue_quote_raw: int | None = None
 
 
@@ -136,12 +138,12 @@ def read_trade_deltas(
     Args:
         result: A `getTransaction` result (jsonParsed or json encoding)
         quote_mint: Raw or normalized
-        venue_account: Where a buy's quote lands (curve, or the pool's quote
-            vault), to read the fill price off; None to skip it
+        venue_account: Where a buy's SOL lands (curve, or the pool's quote
+            vault), to read the fill price off
 
     Returns:
-        The deltas, or None when the transaction reverted or shows no token
-        account of the wallet's holding the coin
+        The deltas, or None when the transaction reverted, the wallet did not
+        pay for it, or it shows no token account of the wallet's holding the coin
     """
     meta = result.get("meta") or {}
     if meta.get("err"):
@@ -157,11 +159,10 @@ def read_trade_deltas(
     tokens, quote_change, largest_quote_gain = walk[:3]
     wsol_change, deposited, refunded = walk[3:]
 
-    if tokens is None or wallet not in keys:
-        return None
-    at = keys.index(wallet)
     # The fee payer is the first account.
-    fee = meta.get("fee", 0) if at == 0 else 0
+    if tokens is None or not keys or keys[0] != wallet:
+        return None
+    at, fee = 0, meta.get("fee", 0)
     # Every lamport the wallet gained or lost that is neither the fee nor
     # rent parked in its own token accounts, wrapped SOL counted as SOL.
     moved = (
@@ -173,14 +174,14 @@ def read_trade_deltas(
         + wsol_change
     )
 
-    if venue_account is None:
-        venue_quote = None
-    elif not sol_quote:
+    if not sol_quote:
         # A non-SOL quote lands in a token vault: the largest gain of the
         # quote mint is the venue's.
         venue_quote = largest_quote_gain
-    else:
+    elif venue_account is not None:
         venue_quote = _lamports_gained(meta, keys, str(venue_account))
+    else:
+        venue_quote = None
 
     return TradeDeltas(
         tokens_raw=tokens,

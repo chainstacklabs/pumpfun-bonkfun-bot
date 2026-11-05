@@ -218,8 +218,8 @@ async def _run_buy(client: StubBuyClient) -> TradeResult:
         extreme_fast_mode=True,
     )
     original = platform_aware.get_platform_implementations
-    platform_aware.get_platform_implementations = lambda *_args, **_kwargs: (
-        _stub_implementations()
+    platform_aware.get_platform_implementations = (
+        lambda *_args, **_kwargs: _stub_implementations()
     )
     try:
         return await buyer.execute(_make_token_info())

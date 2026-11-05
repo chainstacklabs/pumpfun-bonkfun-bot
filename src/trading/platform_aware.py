@@ -257,8 +257,9 @@ async def read_deltas(
             normalize_quote_mint(token_info.quote_mint),
             venue_account,
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"Could not read transaction {str(signature)[:16]}...: {e}")
+        logger.debug("Reading the transaction failed", exc_info=True)
         return None
 
 
@@ -308,8 +309,8 @@ def landed_sale(
 
     Args:
         amount_raw: Raw tokens the sale was sent with
-        reference_price: The price it was floored at; its price when the
-            transaction could not be read, which makes it an estimate
+        reference_price: The seller's reference price; the sale's price when
+            the transaction could not be read, which makes it an estimate
     """
     price = reference_price
     quote_mint = normalize_quote_mint(token_info.quote_mint)
@@ -324,8 +325,8 @@ def landed_sale(
         deltas = None
         logger.warning(
             f"The sale of {token_info.symbol} could not be read back; its price "
-            f"{format_price(reference_price)} is the one it was floored at, an "
-            f"estimate"
+            f"is the seller's reference price {format_price(reference_price)}, "
+            f"an estimate"
         )
     return TradeResult(
         success=True,
@@ -1249,11 +1250,15 @@ class PlatformAwareSeller(Trader):
 
             if status is ConfirmationStatus.SUCCESS:
                 logger.info(f"Sell transaction confirmed: {tx_signature}")
-                deltas = await read_deltas(
-                    self.client, tx_signature, self.wallet.pubkey, token_info
-                )
-                return landed_sale(
-                    token_info, tx_signature, token_balance, token_price_sol, deltas
+                # Priced at the reference: the position manager settles the
+                # sale first, then reads it back (`landed_sale`).
+                return TradeResult(
+                    success=True,
+                    platform=token_info.platform,
+                    tx_signature=str(tx_signature),
+                    amount=token_balance_decimal,
+                    amount_raw=token_balance,
+                    price=token_price_sol,
                 )
 
             # The signature belongs on the failure too. A caller weighing

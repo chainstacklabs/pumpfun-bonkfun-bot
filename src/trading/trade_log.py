@@ -68,8 +68,8 @@ def log_trade(  # noqa: PLR0913
 
     `price` is a buy's fill, protocol fees left out (what exits measure from),
     and what a sale paid per token, protocol fees taken off. With `deltas` the
-    row also says what the transaction did to the wallet: `quote_amount` spent
-    or received (protocol fees included, network fee left out), the network
+    row also says what the transaction did to the wallet: `quote_amount`
+    (negative when spent, protocol fees included, network fee left out), the network
     fee, and rent put into or back from the wallet's token accounts, in SOL.
     `from_chain` is false when the transaction was not read: then `price` and
     `amount` are estimates and those fields are null. A sell row with `pnl`
@@ -128,8 +128,9 @@ def _chain_fields(deltas: TradeDeltas | None, quote_mint: object) -> dict:
     return {
         "from_chain": True,
         "amount_raw": abs(deltas.tokens_raw),
+        # Negative when spent, positive when received.
         "quote_amount": (
-            abs(deltas.quote_raw) / unit
+            deltas.quote_raw / unit
             if deltas.quote_raw is not None and unit is not None
             else None
         ),

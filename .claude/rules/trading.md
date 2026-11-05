@@ -9,12 +9,12 @@ Each position's exit runs as its own task (`PositionManager.open`), up to
 a slot is free. Shutdown stops every position task and waits for each to end
 **before** cleanup: post-session cleanup burns and closes token accounts, so it
 must never race a sell still in flight. `verify_concurrent_positions.py` guards
-the order. A sold position's `after_sell` close runs in its own task (`_closes`), so it
-holds no slot and is not stopped or counted as open: `wait_all` waits for it,
-and shutdown waits for it bounded by `_STOP_BUDGET`, then cancels it with a
-warning. Post-session cleanup skips
-every coin still in the positions file, pending ones included: those are kept
-for the next start (`verify_cleanup_closes_every_account.py`). It then closes
+the order. A sold position's `after_sell` close runs in its own task
+(`_closes`, the tail of the sale's report task), so it holds no slot and is
+not stopped or counted as open: `wait_all` waits for it, and shutdown waits
+for it bounded by `_STOP_BUDGET`, then cancels it with a warning. Post-session
+cleanup skips every coin still in the positions file, pending ones included:
+those are kept for the next start (`verify_cleanup_closes_every_account.py`). It then closes
 every other empty token account the wallet owns (SPL Token and Token-2022),
 never a quote mint's (`UniversalTrader._quote_mints`), and burns nothing in them.
 Under `manual` or `marry_mode` it burns nothing and only closes empty accounts.
@@ -72,12 +72,18 @@ close of a sold position at shutdown.
 
 Every landed buy and sale, a late-confirmed one included, is read back with
 `SolanaClient.get_trade_deltas` (`core/trade_deltas.py`, one reader for both
-sides): the wallet's own coin, quote, network fee and token-account rent. A
-failed read never fails a landed trade; it makes the figures estimates, and the
-log says so. A buy's `TradeResult.price` stays the venue's fill (protocol fees
-out), which take profit and stop loss count from: the wallet's cost can carry
-one-off charges, such as a fresh creator vault's rent, that would fire a stop
-loss at once. PnL counts from the cost basis (`trading/pnl.py`), per sale, with
-the whole position on the last line; rent is never a loss. The positions file
-keeps the buy's deltas so a restart counts from the same cost
+sides; only a transaction the wallet paid for): the wallet's own coin, quote,
+network fee and token-account rent. A failed read never fails a landed trade;
+it makes the figures estimates, and the log says so. A buy's
+`TradeResult.price` stays the venue's fill (protocol fees out), which take
+profit and stop loss count from: the wallet's cost can carry one-off charges,
+such as a fresh creator vault's rent, that would fire a stop loss at once. The
+seller does not read its sale back: the manager settles a landed sale in the
+store first, then reads it, writes its trades.log row and PnL line and, once
+all of it is sold, runs the `after_sell` close, all in one task in `_closes`
+(`_after_sale`), so the slot is free during the read, `stop` and `wait_all`
+wait for it, and a failing report never undoes the settlement. PnL counts from
+the cost basis (`trading/pnl.py`), per sale, the parts of a position in order,
+with the whole position on the last line; rent is never a loss. The positions
+file keeps the buy's deltas so a restart counts from the same cost
 (`verify_pnl_from_chain.py`).
