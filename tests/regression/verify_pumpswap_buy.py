@@ -38,7 +38,10 @@ Offline machine checks, no network and no funds moved:
   G. The pool's coin creator and cashback flag are read again for every trade:
      after fee sharing moves the coin creator, the next buy and sell on the
      same market name the new creator's vault, and a pool turned cashback adds
-     its accounts.
+     its accounts. GlobalConfig is read with the pool in the same call: after
+     its fee and buyback recipients and its LP fee change, the next trade names
+     recipients from the new sets and prices with the new fee, and a build of a
+     known pool makes that one read and no other.
 
 Usage:
     uv run tests/regression/verify_pumpswap_buy.py
@@ -47,6 +50,7 @@ Usage:
 import asyncio
 import base64
 import json
+import struct
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -80,10 +84,12 @@ from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E40
 from platforms import PlatformImplementations  # noqa: E402
 from platforms.pumpfun.pumpswap_market import (  # noqa: E402
     _CONFIG_BUYBACK_RECIPIENTS_OFFSET,
+    _CONFIG_LP_FEE_OFFSET,
     _CONFIG_PROTOCOL_RECIPIENTS_OFFSET,
     _CONFIG_RESERVED_RECIPIENT_OFFSET,
     _POOL_CASHBACK_OFFSET,
     _POOL_COIN_CREATOR_OFFSET,
+    GLOBAL_CONFIG,
     PUMP_AMM_PROGRAM,
     PUMP_FEE_PROGRAM,
     PumpSwapMarket,
@@ -132,12 +138,14 @@ class _FixtureClient:
             )
             for k, v in accounts.items()
         }
+        self.calls: list[str] = []
 
     async def get_account_info(
         self,
         address: Pubkey,
         commitment: str | None = None,  # noqa: ARG002
     ) -> SimpleNamespace:
+        self.calls.append("get_account_info")
         if address not in self.accounts:
             raise ValueError(f"Account {address} not found")  # noqa: TRY003
         return self.accounts[address]
@@ -147,6 +155,7 @@ class _FixtureClient:
         addresses: list,
         commitment: str | None = None,  # noqa: ARG002
     ) -> list:
+        self.calls.append("get_multiple_accounts")
         return [self.accounts.get(a) for a in addresses]
 
 
@@ -678,9 +687,42 @@ def check_g_pool_reread_every_trade() -> bool:
             vault(new_creator) in accounts and vault(old_creator) not in accounts
         )
         results[f"{side}, cashback"] = accumulator_ata in accounts
+    _global_config_change(client, market, token, results)
     if not all(results.values()):
         print(f"    {results}")
     return all(results.values())
+
+
+def _global_config_change(
+    client: _FixtureClient, market: PumpSwapMarket, token: TokenInfo, results: dict
+) -> None:
+    """New recipients and a new LP fee in GlobalConfig reach the next trade."""
+    before = asyncio.run(market.get_market_state(token))["fee_fraction"]
+    config = bytearray(client.accounts[GLOBAL_CONFIG].data)
+    fees = [Pubkey.new_unique() for _ in range(8)]
+    buybacks = [Pubkey.new_unique() for _ in range(8)]
+    for offset, keys in (
+        (_CONFIG_PROTOCOL_RECIPIENTS_OFFSET, fees),
+        (_CONFIG_BUYBACK_RECIPIENTS_OFFSET, buybacks),
+    ):
+        config[offset : offset + 32 * len(keys)] = b"".join(bytes(k) for k in keys)
+    lp_fee = struct.unpack_from("<Q", config, _CONFIG_LP_FEE_OFFSET)[0]
+    struct.pack_into("<Q", config, _CONFIG_LP_FEE_OFFSET, lp_fee + 100)
+    client.accounts[GLOBAL_CONFIG] = SimpleNamespace(
+        data=bytes(config), owner=client.accounts[GLOBAL_CONFIG].owner
+    )
+    for side in ("buy", "sell"):
+        build = getattr(market, f"build_{side}_instruction")
+        client.calls = []
+        swap = _swap(asyncio.run(build(token, USER, AMOUNT_IN, MIN_OUT)))
+        accounts = [m.pubkey for m in swap.accounts]
+        results[f"{side}, new recipients"] = (
+            accounts[9] in fees and accounts[-2] in buybacks
+        )
+        # The pool and GlobalConfig in one round trip, nothing else.
+        results[f"{side}, one read"] = client.calls == ["get_multiple_accounts"]
+    after = asyncio.run(market.get_market_state(token))["fee_fraction"]
+    results["new LP fee"] = abs(after - before - 100 / 10_000) < 1e-12  # noqa: PLR2004
 
 
 def main() -> int:

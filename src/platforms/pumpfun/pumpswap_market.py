@@ -128,7 +128,6 @@ class PumpSwapMarket(Market):
         discriminators = IDLParser(str(PUMP_SWAP_IDL)).get_instruction_discriminators()
         self._buy_discriminator = discriminators["buy_exact_quote_in"]
         self._sell_discriminator = discriminators["sell"]
-        self._config: bytes | None = None
         self._pools: dict[Pubkey, PumpSwapPool] = {}
 
     @property
@@ -141,21 +140,31 @@ class PumpSwapMarket(Market):
         """A buy is `buy_exact_quote_in`: it spends all of `amount_in`."""
         return True
 
-    async def _global_config(self) -> bytes:
-        if self._config is None:
-            self._config = (await self.client.get_account_info(GLOBAL_CONFIG)).data
-        return self._config
+    async def _resolve(
+        self, token_info: TokenInfo
+    ) -> tuple[PumpSwapPool, bytes, bytes]:
+        """The pool, its current account data and GlobalConfig's.
 
-    async def _resolve(self, token_info: TokenInfo) -> tuple[PumpSwapPool, bytes]:
-        """The pool, and its current account data. Raises ValueError if it does not exist.
+        Both accounts are read in one call on every trade. The coin creator
+        and the mayhem and cashback flags come from the pool's data: fee
+        sharing can move the coin creator while a position is held, and a swap
+        naming the old one's vault reverts. The fee and buyback recipients and
+        the fee rates come from GlobalConfig's, so an admin change to them
+        applies from the next trade.
 
-        The coin creator and the mayhem and cashback flags are taken from that
-        data every time: fee sharing can move the coin creator while a
-        position is held, and a swap naming the old one's vault reverts.
+        Raises:
+            ValueError: The pool does not exist, or GlobalConfig is unreadable
         """
         quote_mint = normalize_quote_mint(token_info.quote_mint)
         address = canonical_pool_address(token_info.mint, quote_mint)
-        pool_data = (await self.client.get_account_info(address)).data
+        pool_account, config_account = await self.client.get_multiple_accounts(
+            [address, GLOBAL_CONFIG]
+        )
+        if pool_account is None:
+            raise ValueError(f"Account {address} not found")  # noqa: TRY003
+        if config_account is None:
+            raise ValueError(f"PumpSwap GlobalConfig {GLOBAL_CONFIG} not found")  # noqa: TRY003
+        pool_data = pool_account.data
         flags = {
             "coin_creator": Pubkey.from_bytes(
                 pool_data[_POOL_COIN_CREATOR_OFFSET : _POOL_COIN_CREATOR_OFFSET + 32]
@@ -185,7 +194,7 @@ class PumpSwapMarket(Market):
                 **flags,
             )
         self._pools[token_info.mint] = pool
-        return pool, pool_data
+        return pool, pool_data, config_account.data
 
     async def get_market_state(self, token_info: TokenInfo) -> dict[str, Any]:
         """Price from the pool's balances plus its virtual quote reserves.
@@ -194,7 +203,7 @@ class PumpSwapMarket(Market):
             ValueError: If the pool does not exist yet
         """
         try:
-            pool, pool_data = await self._resolve(token_info)
+            pool, pool_data, config = await self._resolve(token_info)
         except ValueError as e:
             raise ValueError(f"No PumpSwap pool for {token_info.mint} yet: {e}") from e  # noqa: TRY003
         base_vault, quote_vault = await self.client.get_multiple_accounts(
@@ -212,7 +221,6 @@ class PumpSwapMarket(Market):
             struct.unpack_from("<Q", quote_vault.data, _TOKEN_AMOUNT_OFFSET)[0]
             + virtual_quote
         )
-        config = await self._global_config()
         fee_bps = sum(
             struct.unpack_from("<Q", config, offset)[0]
             for offset in (
@@ -246,7 +254,7 @@ class PumpSwapMarket(Market):
         buy's account list. Any other quote is paid from the wallet's ATA, which
         must already hold it.
         """
-        pool, _ = await self._resolve(token_info)
+        pool, _, config = await self._resolve(token_info)
         if pool.quote_mint == WSOL_MINT:
             user_quote, open_ixs, close_ixs = wrapped_sol_ata(user, amount_in)
         else:
@@ -256,7 +264,7 @@ class PumpSwapMarket(Market):
         create_base_ata = create_idempotent_associated_token_account(
             user, user, pool.base_mint, pool.base_program
         )
-        accounts = await self._swap_accounts(pool, user, user_quote, is_buy=True)
+        accounts = self._swap_accounts(pool, config, user, user_quote, is_buy=True)
         data = (
             self._buy_discriminator
             + struct.pack("<QQ", amount_in, minimum_amount_out)
@@ -273,26 +281,32 @@ class PumpSwapMarket(Market):
         minimum_amount_out: int,
     ) -> list[Instruction]:
         """Build PumpSwap `sell` for `amount_in` raw tokens."""
-        pool, _ = await self._resolve(token_info)
+        pool, _, config = await self._resolve(token_info)
         user_quote, open_ixs, close_ixs = quote_settlement_account(
             user, pool.quote_mint, pool.quote_program
         )
-        accounts = await self._swap_accounts(pool, user, user_quote, is_buy=False)
+        accounts = self._swap_accounts(pool, config, user, user_quote, is_buy=False)
         data = self._sell_discriminator + struct.pack(
             "<QQ", amount_in, minimum_amount_out
         )
         return [*open_ixs, Instruction(PUMP_AMM_PROGRAM, data, accounts), *close_ixs]
 
-    async def _swap_accounts(
-        self, pool: PumpSwapPool, user: Pubkey, user_quote: Pubkey, *, is_buy: bool
+    def _swap_accounts(
+        self,
+        pool: PumpSwapPool,
+        config: bytes,
+        user: Pubkey,
+        user_quote: Pubkey,
+        *,
+        is_buy: bool,
     ) -> list[AccountMeta]:
         """The swap's accounts, in the order the program reads them.
 
         A buy adds the volume accumulators after the creator vault, and on a
         cashback pool sends only the accumulator's quote account where a sell
-        also sends the accumulator itself.
+        also sends the accumulator itself. `config` is GlobalConfig's data,
+        read with the pool for this trade.
         """
-        config = await self._global_config()
         quote_mint, quote_program = pool.quote_mint, pool.quote_program
 
         if pool.is_mayhem_mode:
