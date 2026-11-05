@@ -23,6 +23,7 @@ from core.pubkeys import cached_quote_token_program, normalize_quote_mint
 from core.token_metadata import decode_token_metadata, metadata_address
 from interfaces.core import CurveManager, Platform, PoolReady, TokenInfo
 from platforms import get_platform_implementations
+from platforms.launchlab.curve_math import mint_transfer_fee
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -151,7 +152,12 @@ class MigrationResolver:
             token_info.quote_vault = state.get("quote_vault")
             token_info.global_config = state.get("global_config")
             token_info.platform_config = state.get("platform_config")
-            token_info.transfer_fee_bps = state.get("transfer_fee_bps", 0)
+            # From the mint read that saw the mint, not the curve manager's own
+            # read: a node behind the stream misses the mint there and the
+            # state then reports no fee.
+            token_info.transfer_fee_bps = (
+                mint_transfer_fee(mint_account.data) or (0, 0)
+            )[0]
         return token_info
 
     async def _read_completed(
@@ -159,11 +165,11 @@ class MigrationResolver:
     ) -> tuple[dict, Account, Account | None]:
         """Curve state, mint and Metaplex account, once the curve shows as completed.
 
-        Both are read at `processed` and re-read until the mint exists and the
-        curve is completed, for up to `pool_wait_seconds`.
+        All three are read at `processed` and re-read until the mint exists and
+        the curve is completed, for up to `pool_wait_seconds`.
 
         Raises:
-            PoolNotTradable: With `not_yet_visible`, when the wait ran out first
+            PoolNotTradable: With `not_yet_visible`, when the wait ran out first.
         """
         deadline = monotonic() + self.pool_wait_seconds
         while True:
@@ -186,7 +192,7 @@ class MigrationResolver:
             else:
                 if state is None:
                     not_seen = PoolNotTradable(
-                        f"its mint was not visible within "
+                        f"its mint was not seen on the last read within "
                         f"{self.pool_wait_seconds:.1f}s",
                         not_yet_visible=True,
                     )

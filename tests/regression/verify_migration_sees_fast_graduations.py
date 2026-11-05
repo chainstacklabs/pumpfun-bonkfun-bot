@@ -1,11 +1,15 @@
 """Verify migration entry buys a coin that graduates seconds after its launch.
 
-A pump.fun coin can be created, bought out and migrated in the same second. The
-stream reports the migration at `processed`; a read at the client's default
-commitment, `finalized`, or on a node a slot behind, does not find a mint that
-young. The resolver read the mint at that default, outside the wait that
-re-reads the curve, and skipped such a coin at once as "mint account not
-found", for good. These are the coins a migration sniper is after.
+A pump.fun coin can be created, bought out and migrated in the same second,
+and a node a slot behind the stream does not find a mint that young. The
+resolver refused a missing mint at once, as "mint account not found", outside
+the wait that re-reads the curve, so such a coin was skipped for good. These
+are the coins a migration sniper is after. The mint is now re-read within that
+wait, and read at `processed`, since the client's default commitment can lag.
+
+A LaunchLab coin's transfer fee came from the curve manager's own read of the
+mint, which a node behind the stream can miss; it then reported no fee and
+`max_transfer_fee_bps` let a high-fee coin through.
 
 `max_token_age` measures the time since the bot detected the coin, not its age
 on chain; the skip lines and the shipped configs must say so.
@@ -22,14 +26,17 @@ Offline machine checks, no network and no funds moved:
   B. The mint is read at `processed`: a node that shows it only at
      `processed` resolves the coin on the first read.
   C. The mint stays missing through the wait: the coin is refused as not yet
-     visible, with a reason saying its mint was not visible in time, only once
-     the wait has run out.
+     visible, with a reason saying its mint was not seen within the wait, only
+     once the wait has run out.
   D. Through the intake (single-token mode, real resolver): a coin whose mint
      shows late is bought; one whose mint never shows is skipped with that
-     reason and does not use the mint up, so a later report is still bought.
-  E. A coin older than `max_token_age` is skipped with a line saying the age is
-     counted from its detection, for launches and migrations, and every shipped
-     config says what the clock measures.
+     reason and does not use the mint up.
+  E. A coin older than `max_token_age` when taken up is skipped with a line
+     saying the age is counted from its detection, for launches and
+     migrations, and every shipped config says what the clock measures and
+     when it is checked.
+  F. A transfer-fee coin whose mint the curve manager's own read misses still
+     resolves to its fee, and `max_transfer_fee_bps` below it refuses the coin.
 
 Usage:
     uv run tests/regression/verify_migration_sees_fast_graduations.py
@@ -52,7 +59,9 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from solders.pubkey import Pubkey  # noqa: E402
 
 from core.pubkeys import WSOL_MINT  # noqa: E402
+from core.token_metadata import metadata_address  # noqa: E402
 from interfaces.core import Platform, PoolReady, TokenInfo  # noqa: E402
+from platforms.launchlab.curve_math import mint_transfer_fee  # noqa: E402
 from trading import migration  # noqa: E402
 from trading.intake import TokenIntake  # noqa: E402
 from trading.migration import MigrationResolver, PoolNotTradable  # noqa: E402
@@ -70,7 +79,9 @@ class _YoungMintClient:
 
     `shows_from` is the 1-based mint read at which the mint is first served
     (None: never). With `processed_only`, a read at any other commitment never
-    finds it, as on a node whose `finalized` view trails the stream.
+    finds it, as on a node whose `finalized` view trails the stream. With
+    `fee_read_misses`, a batch that reads the mint without its metadata
+    account (the curve manager's fee read) never finds it.
     """
 
     def __init__(
@@ -79,6 +90,7 @@ class _YoungMintClient:
         shows_from: int | None,
         *,
         processed_only: bool = False,
+        fee_read_misses: bool = False,
     ) -> None:
         self.rpc_endpoint = f"young-mint-{next(_endpoints)}"
         self.accounts = {
@@ -90,6 +102,7 @@ class _YoungMintClient:
         }
         self.mint = Pubkey.from_string(coin["pool_ready"]["mint"])
         self.shows_from, self.processed_only = shows_from, processed_only
+        self.fee_read_misses = fee_read_misses
         self.mint_reads: list[str | None] = []
         self.misses = 0
 
@@ -113,6 +126,8 @@ class _YoungMintClient:
     async def get_multiple_accounts(
         self, addresses: list, commitment: str | None = None
     ) -> list:
+        if self.fee_read_misses and metadata_address(self.mint) not in addresses:
+            return [None if a == self.mint else self.accounts.get(a) for a in addresses]
         return [
             None
             if a == self.mint and not self._mint_visible(commitment)
@@ -222,7 +237,7 @@ def check_c_mint_never_shows() -> bool:
             continue
         if not got.not_yet_visible:
             problems.append(f"{label}: refused for good, not as not yet visible: {got}")
-        if not re.search(r"mint was not visible within \d", str(got)):
+        if not re.search(r"mint was not seen .*within \d", str(got)):
             problems.append(
                 f"{label}: reason does not say the mint was not visible in time: {got}"
             )
@@ -337,7 +352,7 @@ def check_d_intake() -> bool:
         line
         for line in lines
         if line.startswith(f"Skipping migrated coin {mint}")
-        and "mint was not visible within" in line
+        and re.search(r"mint was not seen .*within \d", line)
     ]
     if not skipped:
         problems.append(f"mint never shows: no skip line naming it; log: {lines}")
@@ -414,17 +429,64 @@ def check_e_token_age_clock() -> bool:  # noqa: C901
                 f"migration, {mode}: skip line does not name its clock: {line!r}"
             )
 
+    # The comment on the key, inline or in the lines just above it.
     for config in sorted((PROJECT_ROOT / "bots").glob("*.yaml")):
-        for text in config.read_text().splitlines():
-            if text.strip().startswith("max_token_age:") and not re.search(
-                r"#.*detected.*not its age on chain", text
+        lines = config.read_text().splitlines()
+        for i, text in enumerate(lines):
+            if not text.strip().startswith("max_token_age:"):
+                continue
+            above = []
+            for prior in reversed(lines[:i]):
+                if not prior.strip().startswith("#"):
+                    break
+                above.insert(0, prior.strip().lstrip("# "))
+            comment = " ".join([*above, text.partition("#")[2]])
+            if not re.search(
+                r"[Cc]hecked once.*detected.*not its age on\s+chain", comment
             ):
-                problems.append(f"{config.name}: {text.strip()}")
-    readme = (PROJECT_ROOT / "README.md").read_text()
-    if "`max_token_age` (seconds since the bot detected the coin" not in readme:
-        problems.append(
-            "README: the filters entry does not say what max_token_age measures"
+                problems.append(f"{config.name}: max_token_age comment: {comment!r}")
+    readme = " ".join((PROJECT_ROOT / "README.md").read_text().split())
+    for where, pattern in (
+        ("filters entry", r"`max_token_age` \(checked once, [^)]*detected"),
+        ("migration section", r"`max_token_age` is checked once, .{0,200}detected"),
+    ):
+        if not re.search(pattern, readme):
+            problems.append(f"README {where}: does not say what max_token_age measures")
+    for problem in problems:
+        print(f"    {problem}")
+    return not problems
+
+
+# ------------------------------------- F: the transfer fee from the mint read
+
+
+def check_f_transfer_fee() -> bool:
+    problems = []
+    fee_coins = [
+        c
+        for c in FIXTURE
+        if mint_transfer_fee(
+            base64.b64decode(c["accounts"][c["pool_ready"]["mint"]]["data"])
         )
+    ]
+    if not fee_coins:
+        problems.append("fixture has no transfer-fee coin")
+    for coin in fee_coins:
+        label = coin["label"]
+        mint = coin["accounts"][coin["pool_ready"]["mint"]]
+        want = mint_transfer_fee(base64.b64decode(mint["data"]))[0]
+        client = _YoungMintClient(coin, 1, fee_read_misses=True)
+        got = _resolve(client, coin, 0.0)
+        if not isinstance(got, TokenInfo):
+            problems.append(f"{label}: refused: {got!r}")
+            continue
+        if got.transfer_fee_bps != want:
+            problems.append(
+                f"{label}: transfer fee {got.transfer_fee_bps} bps, the mint's {want}"
+            )
+        intake = _intake([], object(), max_transfer_fee_bps=want - 1)
+        if not intake.migration_skip_reason(got):
+            problems.append(f"{label}: max_transfer_fee_bps {want - 1} let it through")
     for problem in problems:
         print(f"    {problem}")
     return not problems
@@ -449,6 +511,7 @@ def main() -> int:
             check_d_intake,
         ),
         ("E: max_token_age says it counts from detection", check_e_token_age_clock),
+        ("F: a LaunchLab coin's transfer fee is the mint's", check_f_transfer_fee),
     ]
     passed = 0
     try:

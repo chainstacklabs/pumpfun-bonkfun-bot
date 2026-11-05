@@ -99,7 +99,7 @@ The YAML files are commented inline. The sections that matter most:
 - **`private_key`** or **`keystore`** — the trading wallet: a raw key, or the [encrypted wallet](#encrypted-wallet) file pumpfun-cli writes.
 - **`trade`** — `buy_amount` (in SOL), slippage, `exit_strategy` (`time_based`, `tp_sl`, `manual`), [`entry`](#migration-entry), [`max_open_positions`](#several-positions-at-once) and [`extreme_fast_mode`](#extreme-fast-mode).
 - **`priority_fees`** — fixed or dynamic. Dynamic costs an extra RPC call, which slows the buy.
-- **`filters`** — `listener_type`, `max_token_age` (seconds since the bot detected the coin, not its age on chain: a slow listener detects it later), name/creator matching, `marry_mode` (buy only, never sell), `yolo_mode` (trade continuously).
+- **`filters`** — `listener_type`, `max_token_age` (checked once, when the bot takes a coin up: seconds since it detected the coin, not its age on chain, so a slow listener lets older coins through), name/creator matching, `marry_mode` (buy only, never sell), `yolo_mode` (trade continuously).
 - **`retries`** — attempts and the wait windows around creation, buy, and the next token.
 - **`cleanup`** — when to close leftover token accounts: `disabled`, `on_fail`, `after_sell`, `post_session`. `force_close_with_burn` burns what is left in an account before closing it; under `exit_strategy: manual` or `marry_mode` post-session cleanup burns nothing, since those coins are meant to be held, and closes only empty accounts. `post_session` leaves alone the coins of positions kept for the next start (see [Positions survive a restart](#positions-survive-a-restart)); their accounts are cleaned up at the end of the session that sells them.
 - **`node.max_rps`** — cap requests per second to match your provider's plan.
@@ -146,11 +146,13 @@ Every listener the platform supports reports migrations. The filters,
 differences: `match_string` is checked against the coin's on-chain metadata, and
 `bro_address` against the creator its curve records. A LaunchLab coin is bought
 only when its curve is under a platform config the bot trades, not just the
-migration naming one. `max_token_age` counts from the moment the bot detected
-the migration, not from the coin's creation, in single-token mode too, and
-`wait_after_creation` is waited before the buy. The bot buys once the pool is
-readable, waiting up to 10 seconds for it; `shreds` sees a migration before it
-runs, so its pool does not exist yet.
+migration naming one. `max_token_age` is checked once, when the bot takes the
+migration up, in single-token mode too: it counts from the moment the bot
+detected the migration, not from the coin's creation, and the waits for the
+coin's mint and pool that follow are not counted. `wait_after_creation` is
+waited before the buy. The bot buys once the pool is readable, waiting up to 10
+seconds for it; `shreds` sees a migration before it runs, so its pool does not
+exist yet.
 `extreme_fast_mode: true` with `entry: migration` is refused at startup.
 
 ### Several positions at once

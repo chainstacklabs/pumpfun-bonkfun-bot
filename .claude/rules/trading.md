@@ -37,7 +37,7 @@ decides, capped at `max_amount_raw`, price None. Those balance reads pass
 at): a node behind it errors, which keeps the record, instead of answering "not
 found". A position with price None reads a price above zero before any exit
 runs, and keeps it in the store (`set_price`). Balance reads on resume are at
-`confirmed`; the client's default is `finalized`, seconds behind. Only a sale of all of it removes a position
+`confirmed`; the client's default is `finalized`, which can lag. Only a sale of all of it removes a position
 (a sale the curve could pay for only in part leaves the rest in the file, still
 monitored, and no cleanup runs): a position stopped at shutdown, or whose exit
 gave up or could not be resolved, still holds its coin.
