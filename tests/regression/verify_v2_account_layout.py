@@ -5,7 +5,10 @@ one position or writability flag wrong produces an on-chain failure that is
 awkward to debug, so this script diffs the layouts in
 `platforms.pumpfun.instruction_builder` against `idl/pump_fun_idl.json` and also
 recomputes every PDA/ATA the address provider derives, comparing each against
-the seeds declared in the IDL.
+the seeds declared in the IDL. It also checks that `trade.quote_amounts` and
+`trade.allowed_quote_mints` resolve their aliases (`sol`, `usdc`) and raw mints,
+refuse a zero amount or an invalid mint, and buy SOL off `buy_amount` alone
+when no quote is configured.
 
 Runs entirely offline — no RPC, no keys, no transactions.
 

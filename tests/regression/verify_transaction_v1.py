@@ -17,10 +17,13 @@ parsers prefer the CreateEvent in those logs anyway; it is fatal only for a
 listener that insists on decoding the bytes *before* handing a transaction to a
 parser.
 
-solders 0.29 reads a v1 envelope, but the byte decode stays the fallback, not
-the route: the next version byte will be unreadable in its turn, and a listener
-that has come to depend on the decode goes blind on the day it lands. Both
-routes are pinned below, separately.
+solders 0.29 reads a v1 envelope, but the block listener still routes on the
+logs alone: a transaction whose logs do not name a platform's program never
+reaches a parser, and one whose logs carry no create is not decoded for one, so
+the next unreadable version byte cannot blind it. Past that gate the envelope
+is still read: pump.fun's parser decodes it when the logs carry no CreateEvent,
+and LaunchLab's block parser, whose logs never name the coin, decodes it for
+every launch.
 
 Offline machine checks, no network and no funds moved:
 
@@ -38,10 +41,10 @@ Offline machine checks, no network and no funds moved:
   6. With the envelope replaced by bytes solders cannot read, the v1 create is
      still detected — which is what makes the log route load-bearing rather
      than decorative.
-  7. With the logs removed, the installed solders reads the v1 create straight
-     off the envelope. This is the fallback, and it only works from solders
-     0.29; a failure here means the decode has regressed and the log route is
-     carrying the whole load again.
+  7. The installed solders reads the v1 envelope. Detection does not route on
+     it, but pump.fun's block parser decodes it when the logs carry no
+     CreateEvent, LaunchLab's block parser decodes it for every launch, and
+     the cookbook decoders open it; solders before 0.29 raises on it.
 
 The geyser route decodes protobuf rather than transaction bytes, so it goes
 blind differently and is pinned on its own frame:
@@ -211,11 +214,7 @@ def check_parser_reads_the_v1_create() -> bool:
 
 
 def check_listener_detects_the_v1_create() -> bool:
-    """The regression under test: dispatch must not require a byte decode.
-
-    solders cannot deserialize a v1 envelope, so a listener that decodes first
-    and dispatches second drops the coin without raising anything.
-    """
+    """The block listener hands the v1 create to the parser and gets a coin."""
     listener = UniversalBlockListener("wss://offline.invalid", [Platform.PUMP_FUN])
     result = _load(V1_FIXTURE)
     tokens = listener._process_block_transactions(  # noqa: SLF001
@@ -240,8 +239,8 @@ def check_log_route_detects_without_the_envelope() -> bool:
     listener = UniversalBlockListener("wss://offline.invalid", [Platform.PUMP_FUN])
     result = _load(V1_FIXTURE)
     tx = _as_block_transaction(result)
-    # Valid base64, not a transaction: the decode raises and the fallback has
-    # nothing to offer, so only the logs can answer.
+    # Valid base64, not a transaction: anything that decodes the envelope
+    # raises, so only the logs can answer.
     tx["transaction"] = [base64.b64encode(b"not a transaction").decode(), "base64"]
     tokens = listener._process_block_transactions([tx])  # noqa: SLF001
     if not tokens:
@@ -255,10 +254,11 @@ def check_log_route_detects_without_the_envelope() -> bool:
 def check_solders_reads_a_v1_envelope() -> bool:
     """The installed solders must still deserialize a v1 envelope.
 
-    No detection path depends on this: the block listener routes on the logs
-    alone. It stays as a dependency canary, because the cookbook decode scripts
-    open envelopes and 0.26, 0.27.1 and 0.28 all raise `ValueError: io error:
-    unexpected end of file` on this same fixture.
+    No listener routes on this: the block listener gates on the logs alone. Past
+    that gate the envelope is read, though: pump.fun's block parser decodes it
+    when the logs carry no CreateEvent, LaunchLab's block parser for every
+    launch, and the cookbook decode scripts open it. 0.26, 0.27.1 and 0.28 all
+    raise `ValueError: io error: unexpected end of file` on this same fixture.
     """
     result = _load(V1_FIXTURE)
     try:
@@ -289,7 +289,8 @@ def check_examples_route_on_logs() -> bool:
     """No cookbook or tools listener may detect by opening the envelope.
 
     The envelope is the one part of a transaction whose format changes
-    underneath you, and the installed solders cannot read a v1 one. A script
+    underneath you, and the installed solders is only ever one version behind
+    the next one. A script
     that deserializes it is free to do so for enrichment, but it must also read
     `logMessages`, or it goes blind the moment a version it cannot parse
     arrives. The blocks example printed 30,080 "skipping a v1 transaction"
@@ -380,9 +381,9 @@ def check_geyser_parser_reads_the_v1_create() -> bool:
 def check_geyser_instruction_fallback_reads_v1() -> bool:
     """With the logs gone, the instruction decode still has to find the coin.
 
-    Same split as the block listener: logs are the route, instruction decoding
-    is the fallback, and each is pinned separately so neither can quietly start
-    carrying the other's load. The fallback must *not* set state_from_event —
+    Unlike blocks, geyser hands a frame with no logs to the parser too, and
+    pump.fun's parser then decodes the top-level create instruction. That
+    fallback must *not* set state_from_event —
     `args.creator` is user-supplied and may differ from the
     canonical `BondingCurve.creator`, so the curve still has to be read.
     """

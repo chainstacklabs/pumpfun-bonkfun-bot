@@ -22,7 +22,7 @@ a stub curve manager serving a scripted price series:
   2. The first attempt prices off the buy — nothing fresher exists yet.
   3. The retry prices off a freshly read price, not the stale buy price.
   4. Retries are bounded by trade.max_exit_sell_attempts.
-  5. A sell that succeeds first time is not retried, and cleanup still runs.
+  5. A sell that succeeds first time is not retried.
   6. A price re-read that fails does not abort the retry.
 
 Usage:

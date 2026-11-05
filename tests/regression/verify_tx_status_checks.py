@@ -362,8 +362,8 @@ async def check_versioned_transactions_are_requested() -> None:
 
     Without `maxSupportedTransactionVersion` the RPC answers -32015 for every v0/v1
     transaction, so `meta.err` is unreadable and a successful trade reads back as
-    unconfirmed. The bot currently sends legacy transactions, which is the only
-    reason this was survivable.
+    unconfirmed. The bot sends v0 transactions, so without it every trade it
+    sends would read back that way.
     """
     client = SolanaClient("http://127.0.0.1:1")  # never contacted
     bodies: list[dict[str, Any]] = []

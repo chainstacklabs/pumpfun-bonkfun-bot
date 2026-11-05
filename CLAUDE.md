@@ -111,8 +111,8 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
   `value.block` for the whole notification — indistinguishable from a skipped
   slot, and a near-total outage of the blocks listener. Send `1` everywhere.
 - **A listener routes on `meta.logMessages`, never on the envelope decode.** The
-  RPC has already decoded the envelope by the time it emits the logs, and they
-  read the same for every transaction version; the byte decode is the fallback.
+  logs read the same in every transaction version. pump.fun's parser decodes the
+  create only when they carry no CreateEvent; LaunchLab's always does.
 - `src/` **sends** v0 transactions (`MessageV0.try_compile`, no lookup tables);
   nothing builds a legacy `Message`. The cookbook launch sends v1 — 4096 bytes,
   budget inline, no tables — so scope this rule, don't apply it there.
