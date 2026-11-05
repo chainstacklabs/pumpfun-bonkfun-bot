@@ -228,6 +228,7 @@ class PumpSwapMarket(Market):
             else 0.0,
             "fee_fraction": fee_bps / _BASIS_POINTS,
             "pool": pool.address,
+            "token_program": pool.base_program,
         }
 
     async def build_buy_instruction(

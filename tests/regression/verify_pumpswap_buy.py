@@ -27,7 +27,8 @@ Offline machine checks, no network and no funds moved:
   E. The buyer buys a graduated coin in the pool: the configured spend unpadded,
      a token floor net of the pool fee and slippage, the pool's priority-fee
      accounts and compute limit, and the spend read back at the pool's quote
-     account. A curve that has not graduated is still bought on the curve. A pool
+     account; a token program the listener guessed gives way to the pool's. A
+     curve that has not graduated is still bought on the curve. A pool
      not readable yet sends nothing, and `extreme_fast_mode` skips a graduated
      coin rather than sending a curve buy.
   F. Every buy and sell fits one transaction, cashback pools included, with all
@@ -503,7 +504,11 @@ async def _no_fee(_accounts: list) -> None:
 
 
 def _buy(
-    *, graduated: bool, market: PumpSwapMarket | None, extreme_fast: bool = False
+    *,
+    graduated: bool,
+    market: PumpSwapMarket | None,
+    extreme_fast: bool = False,
+    token: TokenInfo | None = None,
 ) -> tuple[object, _StubClient, _CurveBuilder, list]:
     client = _StubClient()
     builder = _CurveBuilder()
@@ -535,7 +540,7 @@ def _buy(
         extreme_fast_mode=extreme_fast,
         extreme_fast_token_amount=1_000,
     )
-    result = asyncio.run(buyer.execute(_token(CASES["sol"])))
+    result = asyncio.run(buyer.execute(token or _token(CASES["sol"])))
     return result, client, builder, fee_accounts
 
 
@@ -566,6 +571,17 @@ def check_e_buyer_routes_to_pool() -> bool:
     _, curve_client, curve_builder, _ = _buy(graduated=False, market=market)
     on_curve = curve_builder.calls == 1 and curve_client.sent[0][0] == ["curve-buy"]
 
+    # A listener's guess of the token program gives way to the pool's, so the
+    # positions file and cleanup name the account the buy used.
+    guessed = _token(case)
+    guessed.token_program_id = next(
+        p
+        for p in (SystemAddresses.TOKEN_PROGRAM, SystemAddresses.TOKEN_2022_PROGRAM)
+        if p != pool.base_program
+    )
+    _buy(graduated=True, market=market, token=guessed)
+    program = guessed.token_program_id == pool.base_program
+
     not_ready = PumpSwapMarket(
         _FixtureClient({k: v for k, v in case["accounts"].items() if k != case["pool"]})
     )
@@ -586,13 +602,14 @@ def check_e_buyer_routes_to_pool() -> bool:
         and fast_builder.calls == 0
         and "graduated" in (fast_result.error_message or "")
     )
-    if not (routed and on_curve and held and fast):
+    if not (routed and on_curve and held and fast and program):
         print(
             f"    routed={routed} on_curve={on_curve} held={held} fast={fast} "
+            f"program={program} "
             f"floor={int.from_bytes(data[16:24], 'little') if data else None} "
             f"expected {expected_floor} destination={client.destination}"
         )
-    return routed and on_curve and held and fast
+    return routed and on_curve and held and fast and program
 
 
 def check_g_pool_reread_every_trade() -> bool:

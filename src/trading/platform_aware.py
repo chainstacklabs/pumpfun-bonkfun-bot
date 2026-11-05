@@ -549,6 +549,12 @@ class PlatformAwareBuyer(Trader):
                         error_message=f"{token_info.symbol} has graduated: {unavailable}",
                     )
                 token_price_sol = pool_state["price_per_token"]
+                # The pool knows the coin's token program; a listener may have
+                # guessed it. The positions file and cleanup must name the
+                # account this buy fills.
+                self._apply_token_program(
+                    token_info, pool_state.get("token_program"), address_provider
+                )
                 logger.info(
                     f"{token_info.symbol} has graduated; buying in {pool_state['pool']}"
                 )
@@ -615,6 +621,10 @@ class PlatformAwareBuyer(Trader):
                 f"(max: {max_quote_amount_raw / quote_unit:.6f} {quote_label})"
             )
 
+            # Where the spend lands, to read it back; None when unknown.
+            quote_destination = self._quote_destination(
+                token_info, venue, address_provider
+            )
             tx_signature = await self._send(
                 token_info,
                 TradeResult(
@@ -631,8 +641,8 @@ class PlatformAwareBuyer(Trader):
                         if exact_in
                         else token_amount_raw
                     ),
-                    quote_destination=self._quote_destination(
-                        token_info, venue, address_provider
+                    quote_destination=(
+                        None if quote_destination is None else str(quote_destination)
                     ),
                     spend_raw=max_quote_amount_raw if exact_in else None,
                     venue=venue.name,
@@ -660,15 +670,12 @@ class PlatformAwareBuyer(Trader):
             if status is ConfirmationStatus.SUCCESS:
                 logger.info(f"Buy transaction confirmed: {tx_signature}")
 
-                sol_destination = venue.quote_destination(
-                    token_info
-                ) or self._get_sol_destination(token_info, address_provider)
                 deltas = await read_deltas(
                     self.client,
                     tx_signature,
                     self.wallet.pubkey,
                     token_info,
-                    venue_account=sol_destination,
+                    venue_account=quote_destination,
                 )
                 # The fill is what the venue took in, protocol fees left out:
                 # exits measure from it. What the wallet paid is in `deltas`.
@@ -846,15 +853,14 @@ class PlatformAwareBuyer(Trader):
         token_info: TokenInfo,
         venue: Market,
         address_provider: AddressProvider,
-    ) -> str | None:
+    ) -> Pubkey | None:
         """Where the buy's spend lands, for reading it back; None if unknown."""
         try:
-            destination = venue.quote_destination(
-                token_info
-            ) or self._get_sol_destination(token_info, address_provider)
+            return venue.quote_destination(token_info) or self._get_sol_destination(
+                token_info, address_provider
+            )
         except NotImplementedError:
             return None
-        return str(destination)
 
     async def _read_token_balance(self, token_info: TokenInfo) -> int | None:
         """Read how many of a coin the wallet actually holds.
