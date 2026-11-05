@@ -231,10 +231,11 @@ async def check_commitment_is_propagated() -> None:
 
 
 async def check_endpoint_logging_hides_userinfo() -> None:
-    """Endpoint logging must use hostname, not netloc.
+    """No cookbook script reads `urlsplit(...).netloc`.
 
-    netloc keeps any `user:pass@` userinfo, so redacting with it still prints the
-    credential for providers that put the key there.
+    netloc keeps any `user:pass@` userinfo, so whatever is built from it carries
+    the credential for providers that put the key there. Printing an endpoint or
+    its host at all is caught by `verify_no_rpc_credentials_logged.py`.
     """
     offenders = []
     for path in sorted((PROJECT_ROOT / "cookbook").rglob("*.py")):

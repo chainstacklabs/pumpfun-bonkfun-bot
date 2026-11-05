@@ -16,7 +16,6 @@ import asyncio
 import os
 import struct
 import sys
-from urllib.parse import urlsplit
 
 import base58
 from dotenv import load_dotenv
@@ -654,9 +653,8 @@ async def run(token_mint: Pubkey, amount: float, slippage: float) -> None:
         print(f"Starting sell_exact_out for token: {token_mint}")
         print(f"Amount to receive: {amount} SOL")
         print(f"Slippage tolerance: {slippage * 100}%")
-        # Endpoint carries an API key. hostname, not netloc: netloc keeps any
-        # user:pass@ userinfo, which would leak the credential anyway.
-        print(f"Using RPC endpoint: {urlsplit(RPC_ENDPOINT).hostname or '<unset>'}")
+        # Never the endpoint or its host: either can carry the API key.
+        print("Using the RPC endpoint in SOLANA_NODE_RPC_ENDPOINT")
         print()
 
         async with AsyncClient(RPC_ENDPOINT) as client:

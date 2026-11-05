@@ -197,9 +197,7 @@ async def main() -> int:
     args = parser.parse_args()
 
     if urlparse(args.rpc).hostname not in LOCAL_HOSTS:
-        print(
-            f"refusing a non-local RPC: {urlparse(args.rpc).hostname}", file=sys.stderr
-        )
+        print("refusing a non-local RPC; pass a local validator's URL", file=sys.stderr)
         return 2
     if args.transfer_fee_bps and not args.token_2022:
         print("--transfer-fee-bps needs --token-2022", file=sys.stderr)

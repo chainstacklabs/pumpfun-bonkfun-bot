@@ -43,6 +43,8 @@ Rules for adding or changing a script under `cookbook/`.
     so the script dies before printing its own usage.
   - Don't read config from environment variables either — `.env` is for
     endpoints and keys, not for trade parameters no usage line mentions.
+- **Never print an endpoint or any part of it, its host included.** Some
+  providers put the key in the subdomain. Name the variable it came from instead.
   - `sys.argv` never appears at module level. The nine listeners take no input
     and are exempt; they are listed in the verifier.
 - Fixtures are `raw_<what>_from_<method>.json`, next to the script that reads them.

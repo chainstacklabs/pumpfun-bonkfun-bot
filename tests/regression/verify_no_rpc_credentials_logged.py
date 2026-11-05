@@ -24,16 +24,16 @@ Offline machine checks, no network and no funds moved:
      reaches `logs/` unredacted.
   6. Every `logging.basicConfig` in `src/` and `tools/` installs it too, so the
      guard does not depend on import order.
-  7. No script prints an endpoint environment variable raw; the hostname is the
-     most any of them may show.
+  7. No script prints an endpoint or any part of it, its host included: some
+     providers put the key in the subdomain, which is why the bot masks hosts.
 
 Usage:
     uv run tests/regression/verify_no_rpc_credentials_logged.py
 """
 
+import ast
 import logging
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -58,13 +58,12 @@ SECRET_ENV_VARS = (
     "GEYSER_ENDPOINT",
 )
 
-# A print or f-string that interpolates one of those names directly. Reading
-# `.hostname` off it first is allowed and is what the cookbook scripts do.
-RAW_ENV_IN_OUTPUT = re.compile(
-    r"(?:print|logger\.\w+|logging\.\w+)\([^)]*\{("
-    + "|".join(SECRET_ENV_VARS + ("RPC_ENDPOINT", "WSS_ENDPOINT"))
-    + r")\}"
-)
+# What may not appear in a print or log call's arguments: those variables, the
+# module constants scripts load them into, and any part of a parsed URL. A
+# variable's name inside a string literal is fine; it names, not prints, it.
+ENDPOINT_NAMES = frozenset(SECRET_ENV_VARS + ("RPC_ENDPOINT", "WSS_ENDPOINT"))
+URL_PARTS = frozenset(("hostname", "netloc", "host", "port", "username", "password"))
+LOG_METHODS = frozenset(("debug", "info", "warning", "error", "exception", "critical"))
 
 
 class _NotAString:
@@ -229,16 +228,45 @@ def check_every_basic_config_installs_redaction() -> bool:
     return not offenders
 
 
-def check_no_script_prints_a_raw_endpoint() -> bool:
-    """Print the hostname if you must, never the value."""
+def _is_output_call(node: ast.Call) -> bool:
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id == "print"
+    return isinstance(func, ast.Attribute) and func.attr in LOG_METHODS
+
+
+def _leaks(node: ast.AST) -> bool:
+    """Whether an output call's argument reads an endpoint or a URL's parts."""
+    for part in ast.walk(node):
+        if isinstance(part, ast.Name) and part.id in ENDPOINT_NAMES:
+            return True
+        if isinstance(part, ast.Attribute) and part.attr in URL_PARTS:
+            return True
+        if (
+            isinstance(part, ast.Call)
+            and part.args
+            and isinstance(part.args[0], ast.Constant)
+            and part.args[0].value in ENDPOINT_NAMES
+        ):
+            return True  # os.getenv("SOLANA_NODE_RPC_ENDPOINT") and the like
+    return False
+
+
+def check_no_script_prints_an_endpoint() -> bool:
+    """Print the variable's name if you must, never its value or its host."""
     offenders = []
     for root in SCAN_ROOTS:
         for path in sorted((PROJECT_ROOT / root).rglob("*.py")):
-            for number, line in enumerate(path.read_text().splitlines(), start=1):
-                if RAW_ENV_IN_OUTPUT.search(line):
-                    offenders.append(f"{path.relative_to(PROJECT_ROOT)}:{number}")
+            tree = ast.parse(path.read_text(), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call) or not _is_output_call(node):
+                    continue
+                arguments = node.args + [k.value for k in node.keywords]
+                if any(_leaks(argument) for argument in arguments):
+                    where = f"{path.relative_to(PROJECT_ROOT)}:{node.lineno}"
+                    offenders.append(where)
     for hit in offenders:
-        print(f"     {hit} interpolates a credential straight into output")
+        print(f"     {hit} prints an endpoint or part of one")
     return not offenders
 
 
@@ -262,7 +290,10 @@ def main() -> int:
             "every basicConfig installs the redaction",
             check_every_basic_config_installs_redaction,
         ),
-        ("no script prints a raw endpoint", check_no_script_prints_a_raw_endpoint),
+        (
+            "no script prints an endpoint or its host",
+            check_no_script_prints_an_endpoint,
+        ),
     ]
     failed = 0
     for label, check in checks:
