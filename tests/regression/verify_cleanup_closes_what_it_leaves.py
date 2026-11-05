@@ -626,6 +626,7 @@ def check_b_dropped_close_retried() -> list[str]:  # noqa: C901 - one branch per
         or ata in chain.accounts
         or len(warnings) != 1
         or "read timed out" not in warnings[0]
+        or "Closed successfully" not in logs.text()
     ):
         problems.append(
             f"send failed, landed: {len(chain.sent)} sends, open "
