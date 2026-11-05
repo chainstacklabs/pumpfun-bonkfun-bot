@@ -86,6 +86,7 @@ from core.pubkeys import (  # noqa: E402
     USDC_MINT,
     WSOL_MINT,
 )
+from core.trade_deltas import TradeDeltas  # noqa: E402
 from core.wallet import Wallet  # noqa: E402
 from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E402
 from trading import position_manager, universal_trader  # noqa: E402
@@ -113,6 +114,18 @@ ERRORS_BEFORE_LANDING = 3  # confirmation waits that end on an error, "erroring"
 AccountCleanupManager.SETTLE_SECONDS = 0.0
 AccountCleanupManager.RESEND_DELAY = 0.001
 AccountCleanupManager.MAX_WAIT = 0.2
+
+
+def _deltas(tokens_raw: int | None, spent: int | None) -> TradeDeltas | None:
+    """A buy's transaction as the client reads it: `spent` is the venue's fill."""
+    if tokens_raw is None:
+        return None
+    return TradeDeltas(
+        tokens_raw=tokens_raw,
+        quote_raw=None if spent is None else -spent,
+        network_fee_lamports=0,
+        venue_quote_raw=spent,
+    )
 
 
 class _Logs(logging.Handler):
@@ -404,10 +417,8 @@ class _Chain:
         status = self.landed.get(signature)
         return (status, 77) if status is not None else (None, None)
 
-    async def get_buy_transaction_details(
-        self, *_a: object, **_k: object
-    ) -> tuple[int | None, int | None]:
-        return self.buy_details
+    async def get_trade_deltas(self, *_a: object, **_k: object) -> TradeDeltas | None:
+        return _deltas(*self.buy_details)
 
     async def get_health(self) -> str:
         return "ok"

@@ -108,6 +108,7 @@ from solders.signature import Signature  # noqa: E402
 
 from core.client import SolanaClient, TransactionNotSent  # noqa: E402
 from core.pubkeys import TOKEN_PROGRAM, WSOL_MINT  # noqa: E402
+from core.trade_deltas import TradeDeltas  # noqa: E402
 from core.wallet import Wallet  # noqa: E402
 from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E402
 from platforms import PlatformImplementations  # noqa: E402
@@ -174,6 +175,18 @@ def _token(symbol: str) -> TokenInfo:
 
 def _account(token: TokenInfo) -> Pubkey:
     return WALLET.get_associated_token_address(token.mint, TOKEN_PROGRAM)
+
+
+def _deltas(tokens_raw: int | None, spent: int | None) -> TradeDeltas | None:
+    """A buy's transaction as the client reads it: `spent` is the venue's fill."""
+    if tokens_raw is None:
+        return None
+    return TradeDeltas(
+        tokens_raw=tokens_raw,
+        quote_raw=None if spent is None else -spent,
+        network_fee_lamports=0,
+        venue_quote_raw=spent,
+    )
 
 
 class _Client:
@@ -260,10 +273,12 @@ class _Client:
     async def get_block_height_and_slot(self) -> tuple[int, int]:
         return self.block_height, EXPIRY_SLOT
 
-    async def get_buy_transaction_details(
+    async def get_trade_deltas(
         self, signature: object, *_args: object, **_kwargs: object
-    ) -> tuple[int | None, int | None]:
-        return self.details.get(str(signature), (RECEIVED_RAW, SPENT_LAMPORTS))
+    ) -> TradeDeltas | None:
+        return _deltas(
+            *self.details.get(str(signature), (RECEIVED_RAW, SPENT_LAMPORTS))
+        )
 
     async def get_token_account_balance(self, *_args: object) -> int:
         return RECEIVED_RAW

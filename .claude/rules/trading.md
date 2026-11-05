@@ -69,3 +69,15 @@ so it is never bought a second time.
 `verify_positions_survive_restart.py` guards all three;
 `verify_shutdown_keeps_trades_in_flight.py` guards the pending record and the
 close of a sold position at shutdown.
+
+Every landed buy and sale, a late-confirmed one included, is read back with
+`SolanaClient.get_trade_deltas` (`core/trade_deltas.py`, one reader for both
+sides): the wallet's own coin, quote, network fee and token-account rent. A
+failed read never fails a landed trade; it makes the figures estimates, and the
+log says so. A buy's `TradeResult.price` stays the venue's fill (protocol fees
+out), which take profit and stop loss count from: the wallet's cost can carry
+one-off charges, such as a fresh creator vault's rent, that would fire a stop
+loss at once. PnL counts from the cost basis (`trading/pnl.py`), per sale, with
+the whole position on the last line; rent is never a loss. The positions file
+keeps the buy's deltas so a restart counts from the same cost
+(`verify_pnl_from_chain.py`).

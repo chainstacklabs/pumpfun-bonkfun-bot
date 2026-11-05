@@ -1,10 +1,12 @@
 """Base interfaces for trading operations, with platform support."""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from solders.pubkey import Pubkey
+
+from core.trade_deltas import TradeDeltas
 
 # Import from interfaces to avoid duplication
 from interfaces.core import Platform, TokenInfo, TradeFailureReason
@@ -26,6 +28,9 @@ class TradeResult:
     # resubmitting is safe. None on success, and on failures that predate the
     # distinction — treat a missing reason as "unknown", not as "reverted".
     failure_reason: TradeFailureReason | None = None
+    #: What the landed transaction did to the wallet. None when it was not
+    #: read, and `price` and `amount` are then estimates.
+    deltas: TradeDeltas | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/serialization.
@@ -44,6 +49,7 @@ class TradeResult:
             "failure_reason": (
                 self.failure_reason.value if self.failure_reason else None
             ),
+            "deltas": asdict(self.deltas) if self.deltas else None,
         }
 
 
