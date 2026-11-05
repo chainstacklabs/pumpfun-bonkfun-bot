@@ -53,8 +53,8 @@ Offline machine checks, no network and no funds moved:
   E. A buy and a sell that landed and reverted are reported as reverted with the
      transaction's error, in one line, not as "failed to confirm", also when the
      node cannot serve the transaction yet but the confirmed signature status
-     shows the error (an error at `processed` is not taken), its code then named
-     from the IDL of its venue's program (none for CPMM); the client's own
+     shows the error (an error at `processed` is not taken), its code then named,
+     hedged, from the IDL of its venue's program (none for CPMM); the client's own
      line says the same; one never confirmed still says it failed to confirm; a
      pending buy found reverted after a restart is cleared naming its error.
   F. The shutdown line for pending buys says the next start settles them by
@@ -150,11 +150,13 @@ REVERTED_TX = next(
     if entry["signature"].startswith("3BP2RDMc")
 )
 REVERT_ERR = REVERTED_TX["meta"]["err"]
-# What each venue's revert of REVERT_ERR is named when only its signature status
-# is read: from the IDL of the program the trade went to; CPMM has none here.
+# What each venue's revert of REVERT_ERR is named when its signature status
+# shows it and the transaction cannot be read: from the IDL of the program the
+# trade went to, hedged, since a program it called may have raised it; CPMM has
+# no IDL here.
 STATUS_NAMES = {
-    "curve": "pump.fun IDL: 6002 TooMuchSolRequired",
-    "pumpswap": "PumpSwap IDL: 6002 ZeroQuoteAmount",
+    "curve": "pump.fun IDL, if pump.fun raised it: 6002 TooMuchSolRequired",
+    "pumpswap": "PumpSwap IDL, if PumpSwap raised it: 6002 ZeroQuoteAmount",
     "cpmm": None,
 }
 TOKEN = 10**6

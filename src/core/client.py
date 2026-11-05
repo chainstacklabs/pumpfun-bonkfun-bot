@@ -53,6 +53,10 @@ INSTRUCTION_ERROR_PAIR_LEN = 2
 # a CPI's failure comes before its caller's.
 _PROGRAM_FAILED = re.compile(r"^Program (\w+) failed: ")
 
+# How long a revert seen in a signature status waits for its transaction, read
+# only to name the error; past it the error is named, hedged, from the venue.
+REVERT_NAME_BUDGET = 2.5
+
 # How long getTransaction keeps retrying a signature the node has not caught up
 # to yet, and the pause between attempts. A null result means "I cannot see this
 # transaction", which on a load-balanced endpoint is not the same as "it failed".
@@ -171,54 +175,56 @@ def _custom_code(err: object) -> int | None:
 def _failing_program(result: dict) -> str | None:
     """The program that raised a reverted transaction's error, from its `getTransaction` result.
 
-    `meta.err` names the top-level instruction; an error raised by a program it
-    called reaches it unchanged at that index, so the program the logs show
-    failing first wins over the instruction's own. Expects the `jsonParsed`
-    encoding `_get_transaction_result` asks for, where each instruction names
-    its `programId` (lookup tables cannot hold one).
+    `meta.err` names the top-level instruction, but an error raised by a program
+    it called reaches it unchanged at that index. The runtime logs
+    `Program <id> failed:` for the program that raised it first, then for each
+    caller, so the first such line names it.
 
     Returns:
-        The program's base58 id; None when the shape is not recognized or the
-        logs were truncated before they said which program failed.
+        The program's base58 id; None without logs, or with logs truncated
+        before that line.
     """
-    try:
-        index = result["meta"]["err"]["InstructionError"][0]
-        program = result["transaction"]["message"]["instructions"][index]["programId"]
-    except (KeyError, IndexError, TypeError):
-        return None
-    logs = result["meta"].get("logMessages") or []
-    for line in logs:
-        failed = _PROGRAM_FAILED.match(line)
+    for line in (result.get("meta") or {}).get("logMessages") or []:
+        failed = _PROGRAM_FAILED.match(line) if isinstance(line, str) else None
         if failed:
             return failed.group(1)
-    if any(line == "Log truncated" for line in logs):
-        return None
-    return program
+    return None
 
 
-def _describe_program_error(err: object, program: Pubkey | str | None) -> str | None:
-    """Name an Anchor `Custom(N)` in `meta.err` from the IDL of `program`.
-
-    Args:
-        program: The program that raised it: from the transaction when it was
-            read, otherwise the one the caller sent its trade to. None leaves
-            the error unnamed.
-
-    Returns:
-        A description like "PumpSwap IDL: 6004 ExceededSlippage", or None. The
-        "<program> IDL:" prefix stays in the rendered string: the same code
-        means something different in each program, and a reader needs to
-        know whose table the name came from.
-    """
+def _name_error(
+    err: object, transaction: dict | None, venue: Pubkey | None
+) -> str | None:
     code = _custom_code(err)
     if code is None:
         return None
-    return describe_program_error(program, code)
+    raiser = _failing_program(transaction) if transaction is not None else None
+    if raiser is not None:
+        return describe_program_error(raiser, code)
+    return describe_program_error(venue, code, hedged=True)
 
 
-def _revert_text(err: object, program: Pubkey | str | None) -> str:
-    """A transaction's `err` as logged, with `program`'s name for its code when known."""
-    detail = _describe_program_error(err, program)
+def _revert_text(
+    err: object, *, transaction: dict | None = None, venue: Pubkey | None = None
+) -> str:
+    """A transaction's `err` as logged, its Anchor code named when that can be told.
+
+    Codes from 6000 up mean something different in each program, so a code is
+    named only from the table of a program that may have raised it, and the
+    name says whose table it is: "(PumpSwap IDL: 6004 ExceededSlippage)".
+    Naming never raises; a failure leaves the code unnamed.
+
+    Args:
+        transaction: Its `getTransaction` result: names the code from the
+            program its logs show raising it
+        venue: The program the trade was sent to, used when the transaction
+            does not say: the name is hedged, "(PumpSwap IDL, if PumpSwap
+            raised it: ...)", since a program it called may have raised it
+    """
+    try:
+        detail = _name_error(err, transaction, venue)
+    except Exception as e:  # noqa: BLE001 - the revert is reported either way
+        logger.warning(f"Could not name the error {err}: {e!r}")
+        detail = None
     return f"{err}" + (f" ({detail})" if detail else "")
 
 
@@ -760,7 +766,8 @@ class SolanaClient:
             quiet: As in :meth:`confirm_transaction`
             on_error: As in :meth:`confirm_transaction`
             on_revert: As in :meth:`verify_transaction_status`
-            program: As in :meth:`get_signature_outcome`
+            program: As in :meth:`get_signature_outcome`, for a revert the
+                status that ended the wait shows
 
         Returns:
             SUCCESS, REVERTED, or UNCONFIRMED
@@ -801,7 +808,8 @@ class SolanaClient:
         # node that cannot serve the transaction yet cannot make a revert unknown.
         err = _confirmed_error(response)
         if err:
-            self._report_revert(str(signature), _revert_text(err, program), on_revert)
+            error = await self._name_status_revert(str(signature), err, program)
+            self._report_revert(str(signature), error, on_revert)
             return ConfirmationStatus.REVERTED
         return await self.verify_transaction_status(signature, on_revert=on_revert)
 
@@ -821,9 +829,10 @@ class SolanaClient:
                 only holds the last few minutes; slower, so ask once
             quiet: Log nothing when the answer cannot be read
             on_revert: Called with the error when the status is REVERTED
-            program: The program the transaction's trade went to. A status
-                carries no transaction, so a revert's code is named from this
-                program's IDL; None leaves it unnamed.
+            program: The program the trade was sent to. A revert's
+                transaction is read to name its code; when it cannot be read
+                within `REVERT_NAME_BUDGET`, the code is named, hedged, from
+                this program's IDL. None leaves it unnamed then.
 
         Returns:
             The status: SUCCESS or REVERTED once confirmed; UNCONFIRMED when it
@@ -855,7 +864,11 @@ class SolanaClient:
             return ConfirmationStatus.UNCONFIRMED, slot
         if status.get("err"):
             if on_revert is not None:
-                on_revert(_revert_text(status["err"], program))
+                on_revert(
+                    await self._name_status_revert(
+                        str(signature), status["err"], program
+                    )
+                )
             return ConfirmationStatus.REVERTED, slot
         return ConfirmationStatus.SUCCESS, slot
 
@@ -961,11 +974,32 @@ class SolanaClient:
 
         tx_err = result.get("meta", {}).get("err")
         if tx_err:
-            error = _revert_text(tx_err, _failing_program(result))
+            error = _revert_text(tx_err, transaction=result)
             self._report_revert(signature, error, on_revert)
             return ConfirmationStatus.REVERTED
 
         return ConfirmationStatus.SUCCESS
+
+    async def _name_status_revert(
+        self, signature: str, err: object, venue: Pubkey | None
+    ) -> str:
+        """A status's revert as `_revert_text` renders it, its transaction read to name it.
+
+        Read once, bounded by `REVERT_NAME_BUDGET`, and only for an Anchor code:
+        a node that cannot serve the transaction yet holds the caller up no
+        longer than that, and the code is then named, hedged, from `venue`.
+        """
+        transaction = None
+        if _custom_code(err) is not None:
+            try:
+                transaction = await self._get_transaction_result(
+                    signature, budget_seconds=REVERT_NAME_BUDGET
+                )
+            except Exception as e:  # noqa: BLE001 - the revert stands without a name
+                logger.warning(
+                    f"Could not read {signature[:16]}... to name its error: {e!r}"
+                )
+        return _revert_text(err, transaction=transaction, venue=venue)
 
     @staticmethod
     def _report_revert(
@@ -1041,7 +1075,7 @@ class SolanaClient:
         if tx_err:
             logger.error(
                 f"Transaction {signature[:16]}... failed with error: "
-                f"{_revert_text(tx_err, _failing_program(result))}"
+                f"{_revert_text(tx_err, transaction=result)}"
             )
             return None
         if not paid_by(result, wallet):
