@@ -96,7 +96,7 @@ class TraderSettings:
 
     cleanup_mode: str = "disabled"
     cleanup_force_close_with_burn: bool = False
-    cleanup_with_priority_fee: bool = False
+    cleanup_with_priority_fee: bool = True
 
     match_string: str | None = None
     bro_address: str | None = None

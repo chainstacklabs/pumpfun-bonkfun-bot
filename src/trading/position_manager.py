@@ -9,11 +9,12 @@ buy is sent until its sell, and `resume` picks those up again after a restart.
 import asyncio
 import dataclasses
 import struct
+from collections.abc import Coroutine
 from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from cleanup.modes import handle_cleanup_after_sell
+from cleanup.modes import handle_cleanup_after_sell, handle_cleanup_cleared
 from core.client import SolanaClient
 from core.priority_fee.manager import PriorityFeeManager
 from core.pubkeys import (
@@ -104,10 +105,12 @@ class PositionManager:
     #: Where positions are kept across restarts; None keeps them in memory only.
     #: Also a class default: verifiers build a manager without `__init__`.
     store: PositionStore | None = None
-    #: Position tasks past their sale, closing the coin's account: shutdown
-    #: lets them finish rather than stopping them. Rebound, never mutated, so
-    #: the class default serves a manager built without `__init__` too.
-    _sold: frozenset[asyncio.Task] = frozenset()
+    #: Account closes running in their own task, after a sale or for a
+    #: position cleared because the wallet no longer holds its coin. They hold
+    #: no position slot; shutdown lets them finish rather than stopping them.
+    #: Rebound, never mutated, so the class default serves a manager built
+    #: without `__init__` too.
+    _closes: frozenset[asyncio.Task] = frozenset()
 
     def __init__(  # noqa: PLR0913
         self,
@@ -367,6 +370,7 @@ class PositionManager:
                 f"longer holds it, so it was sold or moved while the bot was down"
             )
             self.store.remove(token_info.mint)
+            self._close_cleared(token_info)
             return None
         tokens_raw = min(tokens_raw, held)
         amount = tokens_raw / 10**TOKEN_DECIMALS
@@ -415,6 +419,7 @@ class PositionManager:
                 f"buy {sent.tx_signature} never landed"
             )
             self.store.remove(token_info.mint)
+            self._close_cleared(token_info)
             return None
         cap = pending.max_amount_raw
         amount_raw = held if cap is None else min(held, cap)
@@ -478,9 +483,14 @@ class PositionManager:
             await asyncio.wait(set(self._open), return_when=asyncio.FIRST_COMPLETED)
 
     async def wait_all(self) -> None:
-        """Wait until every open position has run its exit strategy to the end."""
+        """Wait until every open position has run its exit strategy to the end.
+
+        Then until every account close those exits started has finished.
+        """
         while self.open_count:
             await asyncio.wait(set(self._open))
+        while closes := {t for t in self._closes if not t.done()}:
+            await asyncio.wait(closes)
 
     async def stop(self) -> None:
         """Stop every open position and wait until each task has ended.
@@ -488,14 +498,16 @@ class PositionManager:
         Shutdown cleanup closes token accounts, burning what is left with
         `force_close_with_burn`, so it must not start while a position may
         still sell. A position already sold is not stopped: the close of its
-        empty account runs to the end. Runs to the end through a cancellation
-        of its caller, bounded by `_STOP_BUDGET`; the coins stay in the wallet.
+        empty account runs to the end, and so does that of a position cleared
+        because the wallet no longer holds its coin. Runs to the end through a
+        cancellation of its caller, bounded by `_STOP_BUDGET`; the coins stay in
+        the wallet.
         """
         self._report_pending()
-        tasks = {t for t in self._open if not t.done()}
+        tasks = {t for t in self._open | self._closes if not t.done()}
         if not tasks:
             return
-        held, closing = tasks - self._sold, tasks & self._sold
+        held, closing = tasks - self._closes, tasks & self._closes
         if held:
             logger.info(
                 f"Stopping {len(held)} open position(s); their tokens stay in "
@@ -503,8 +515,7 @@ class PositionManager:
             )
         if closing:
             logger.info(
-                f"Waiting for {len(closing)} sold position(s) to close their "
-                f"token account"
+                f"Waiting for {len(closing)} position(s) to close their token account"
             )
         for task in held:
             task.cancel()
@@ -528,7 +539,7 @@ class PositionManager:
         A close still running would race the client closing at shutdown; the
         rent it leaves is reclaimed by `tools/cleanup_accounts.py <MINT>`.
         """
-        closes = {t for t in tasks & self._sold if not t.done()}
+        closes = {t for t in tasks & self._closes if not t.done()}
         for task in closes:
             task.cancel()
         if closes:
@@ -638,6 +649,7 @@ class PositionManager:
                 f"so it was sold or moved while the bot was down"
             )
             self.store.remove(token_info.mint)
+            self._close_cleared(token_info)
             return False
         if not await self._quote_resolved(token_info, label):
             return False
@@ -666,6 +678,51 @@ class PositionManager:
         )
         self.open(token_info, buy, entry_time=stored.entry_time)
         return True
+
+    def _close_cleared(self, token_info: TokenInfo) -> None:
+        """Close the account of a cleared position's coin, under `after_sell`.
+
+        The wallet holds none of the coin, so its account is empty, or gone.
+        It closes in its own task, which `stop` lets finish like the close
+        after a sell; nothing is burned. Under `post_session` the sweep at the
+        end of the session closes it with every other empty account.
+        """
+        if self.cleanup_mode != "after_sell":
+            return
+        self._start_close(self._close_cleared_account(token_info), token_info)
+
+    def _start_close(self, close: Coroutine, token_info: TokenInfo) -> None:
+        """Run an account close in its own task, tracked in `_closes`."""
+        task = asyncio.create_task(close, name=f"close-{token_info.mint}")
+        self._closes |= {task}
+        task.add_done_callback(self._closed)
+
+    def _closed(self, task: asyncio.Task) -> None:
+        self._closes -= {task}
+
+    async def _close_cleared_account(self, token_info: TokenInfo) -> None:
+        try:
+            program = token_info.token_program_id
+            if program is None:
+                program = (
+                    await self.solana_client.get_account_info(
+                        token_info.mint, commitment="confirmed"
+                    )
+                ).owner
+            await handle_cleanup_cleared(
+                self.solana_client,
+                self.wallet,
+                token_info.mint,
+                program,
+                self.priority_fee_manager,
+                self.cleanup_mode,
+                self.cleanup_with_priority_fee,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"Could not close the token account of {token_info.symbol} "
+                f"({token_info.mint}): {e!s}"
+            )
 
     async def _quote_resolved(self, token_info: TokenInfo, label: str) -> bool:
         """Resolve the coin's quote mint; False (logged) when it cannot be."""
@@ -1364,19 +1421,18 @@ class PositionManager:
             self.store.remove(token_info.mint)
 
     async def _cleanup_after_exit(self, token_info: TokenInfo) -> None:
-        """Run the configured post-sell cleanup for a closed position.
+        """Start the configured post-sell cleanup for a closed position.
 
-        Meanwhile the position counts as sold: `stop` lets it finish, bounded,
-        rather than cancelling it in the settle wait, which left the sold
-        coin's empty account open.
+        The close runs in its own task, so the position's slot is free at once
+        however long a dropped close takes; `stop` and `wait_all` wait for it.
 
         Args:
             token_info: Token whose account may now be closable
         """
-        position = asyncio.current_task()
-        self._sold |= {position}
-        try:
-            await handle_cleanup_after_sell(
+        if self.cleanup_mode != "after_sell":
+            return
+        self._start_close(
+            handle_cleanup_after_sell(
                 self.solana_client,
                 self.wallet,
                 token_info.mint,
@@ -1385,6 +1441,6 @@ class PositionManager:
                 self.cleanup_mode,
                 self.cleanup_with_priority_fee,
                 self.cleanup_force_close_with_burn,
-            )
-        finally:
-            self._sold -= {position}
+            ),
+            token_info,
+        )

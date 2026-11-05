@@ -9,12 +9,30 @@ Each position's exit runs as its own task (`PositionManager.open`), up to
 a slot is free. Shutdown stops every position task and waits for each to end
 **before** cleanup: post-session cleanup burns and closes token accounts, so it
 must never race a sell still in flight. `verify_concurrent_positions.py` guards
-the order. A position already sold and closing its account (`after_sell`) is not
-stopped or counted as open: shutdown waits for the close, bounded by
-`_STOP_BUDGET`, then cancels it with a warning. Post-session cleanup skips
-every coin still in the positions file: those are kept for the next start
-(`verify_cleanup_closes_every_account.py`).
+the order. A sold position's `after_sell` close runs in its own task (`_closes`), so it
+holds no slot and is not stopped or counted as open: `wait_all` waits for it,
+and shutdown waits for it bounded by `_STOP_BUDGET`, then cancels it with a
+warning. Post-session cleanup skips
+every coin still in the positions file, pending ones included: those are kept
+for the next start (`verify_cleanup_closes_every_account.py`). It then closes
+every other empty token account the wallet owns (SPL Token and Token-2022),
+never a quote mint's (`UniversalTrader._quote_mints`), and burns nothing in them.
 Under `manual` or `marry_mode` it burns nothing and only closes empty accounts.
+A position cleared because the wallet no longer holds its coin closes the empty
+account under `after_sell` (`PositionManager._close_cleared`, also in `_closes`)
+and is left to the sweep under `post_session`. Every close goes out with the
+priority fee unless `cleanup.with_priority_fee` is false (validated as a bool)
+and a tight compute unit limit. A confirmation wait can end early (a rate limit,
+a timeout), so a close is sent again only when `get_block_height_and_slot`
+shows the height past its blockhash's last valid height **and** its signature
+is not known to have landed: no node knows it, or the lookup failed. One seen
+but unconfirmed, or not provably expired, is waited on; every wait, the
+confirmation wait included, ends by `MAX_WAIT`, then the close is given up
+without a resend, and a confirmation error is warned once per close. At most
+`AccountCleanupManager.CLOSE_ATTEMPTS` sends in total; before each resend the
+account is read at `confirmed` with `min_context_slot` set to the slot the
+expiry was seen at, so a close that landed is never sent again
+(`verify_cleanup_closes_what_it_leaves.py`).
 
 Each monitored position is in `positions/<bot name>.json` (`PositionStore`) from
 the moment its buy **may have reached the chain** until its **sale**. The buyer's

@@ -245,6 +245,8 @@ def validate_config(config: dict) -> None:
         if "Missing required config key" not in str(e):
             raise
 
+    validate_cleanup_config(config)
+
     trade = config.get("trade") or {}
     error = entry_error(
         trade.get("entry", "new_launch"),
@@ -268,6 +270,26 @@ def validate_config(config: dict) -> None:
                 f"Invalid platform '{platform_str}'. Must be one of: {[p.value for p in Platform]}"
             )
         raise
+
+
+CLEANUP_PRIORITY_FEE_NOT_BOOL = (
+    "cleanup.with_priority_fee must be true or false (unquoted, or a ${VAR} set "
+    "to true or false); leave it out for true"
+)
+
+
+def validate_cleanup_config(config: dict) -> None:
+    """`cleanup.with_priority_fee` is a bool or left out (null counts as left out).
+
+    A quoted "false" or a 0 would read as true, sending closes with a fee the
+    config meant to turn off, so both are refused.
+    """
+    cleanup = config.get("cleanup")
+    if not isinstance(cleanup, dict):
+        return
+    fee = cleanup.get("with_priority_fee")
+    if fee is not None and not isinstance(fee, bool):
+        raise ValueError(CLEANUP_PRIORITY_FEE_NOT_BOOL)
 
 
 BOTH_WALLET_KEYS = (

@@ -101,7 +101,11 @@ The YAML files are commented inline. The sections that matter most:
 - **`priority_fees`** — fixed or dynamic. Dynamic costs an extra RPC call, which slows the buy.
 - **`filters`** — `listener_type`, `max_token_age` (checked once, when the bot takes a coin up: seconds since it detected the coin, not its age on chain, so a slow listener lets older coins through), name/creator matching, `marry_mode` (buy only, never sell), `yolo_mode` (trade continuously).
 - **`retries`** — attempts and the wait windows around creation, buy, and the next token.
-- **`cleanup`** — when to close leftover token accounts: `disabled`, `on_fail`, `after_sell`, `post_session`. `force_close_with_burn` burns what is left in an account before closing it; under `exit_strategy: manual` or `marry_mode` post-session cleanup burns nothing, since those coins are meant to be held, and closes only empty accounts. `post_session` leaves alone the coins of positions kept for the next start (see [Positions survive a restart](#positions-survive-a-restart)); their accounts are cleaned up at the end of the session that sells them.
+- **`cleanup`** — when to close leftover token accounts: `disabled`, `on_fail`, `after_sell`, `post_session`.
+  - `after_sell` closes each coin's account once it is sold, and the empty account of a position cleared because the wallet no longer holds its coin (sold by hand while the bot was down).
+  - `post_session` closes, when the session ends, the accounts of the coins it traded, then every other empty token account in the wallet, under SPL Token and Token-2022. It never closes a quote mint's account (wSOL, USDC, any configured quote), or that of a coin still in the positions file, pending buys included: those positions are kept for the next start (see [Positions survive a restart](#positions-survive-a-restart)), and their accounts are cleaned up at the end of the session that sells them.
+  - `force_close_with_burn` burns what is left in a traded coin's account before closing it. It never burns anything in the other accounts `post_session` closes, and under `exit_strategy: manual` or `marry_mode` post-session cleanup burns nothing, since those coins are meant to be held.
+  - Closes and burns go out with the bot's priority fee unless `with_priority_fee` is `false` (it must be `true` or `false`; left out, it is `true`). A close is sent again once the block height is past its blockhash's last valid height and its signature is not known to have landed (no node knows it, or the lookup failed; one seen but not yet confirmed is waited on), at most 3 attempts in total; then the bot logs one warning naming `tools/cleanup_accounts.py`.
 - **`node.max_rps`** — cap requests per second to match your provider's plan.
 
 ### Extreme fast mode
@@ -206,7 +210,8 @@ is below the limit again. A resumed `time_based` position whose wait has run out
 sells at once, priced at the market rather than at its old buy price.
 
 The wallet decides what is left to sell. A position whose coin the wallet no
-longer holds (sold or burned by hand) is cleared, not sold again; one holding
+longer holds (sold or burned by hand) is cleared, not sold again, and its empty
+account is closed (`after_sell` at once, `post_session` at the end of the session); one holding
 less than was bought sells what is held. The bot clears a position only when three balance
 reads, a second apart, all find nothing, since an RPC node lagging behind may
 not show a fresh buy yet. A position whose balance cannot be read stays in the

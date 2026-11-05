@@ -20,6 +20,7 @@ from cleanup.modes import (
 from core.client import SolanaClient
 from core.priority_fee.manager import PriorityFeeManager
 from core.pubkeys import (
+    USDC_MINT,
     WSOL_MINT,
     normalize_quote_mint,
     quote_decimals,
@@ -91,6 +92,17 @@ def _resolve_quote_config(
     return amounts, allowed
 
 
+def _pubkeys(mints: set[str]) -> set[Pubkey]:
+    """The mints that decode as public keys; a key that does not names no account."""
+    decoded = set()
+    for mint in mints:
+        try:
+            decoded.add(Pubkey.from_string(mint))
+        except ValueError:
+            continue
+    return decoded
+
+
 class UniversalTrader:
     """Universal trading coordinator that works with any supported platform."""
 
@@ -101,6 +113,11 @@ class UniversalTrader:
 
     #: Set when `start` caught an error that ended trading.
     _trading_error = False
+
+    #: Quote mints whose accounts post-session cleanup never closes, empty or
+    #: not: the configured ones are added at start. Also a class default:
+    #: verifiers build a trader without `__init__`.
+    _quote_mints: frozenset[Pubkey] = frozenset({WSOL_MINT, USDC_MINT})
 
     @property
     def stopped_on_error(self) -> bool:
@@ -167,6 +184,9 @@ class UniversalTrader:
         compute_units = settings.compute_units or {}
         self.quote_amounts, allowed_quote_mints = _resolve_quote_config(
             settings.buy_amount, settings.quote_amounts, settings.allowed_quote_mints
+        )
+        self._quote_mints = self._quote_mints.union(
+            self.quote_amounts, allowed_quote_mints or ()
         )
 
         # Execution: platform-aware buyer and seller
@@ -421,22 +441,23 @@ class UniversalTrader:
         it is kept for the next start to resume, and `force_close_with_burn`
         would burn it. Its account is cleaned up after the session that sells it.
         Under `manual` or `marry_mode` every coin bought is kept, so nothing is
-        burned: only accounts already empty are closed.
+        burned: only accounts already empty are closed. `post_session` then
+        closes every other empty token account in the wallet, never a quote
+        mint's, and burns nothing in them.
         """
         settings = self.settings
         kept = self.positions.stored_mints()
         mints_list = [mint for mint in self.traded_mints if str(mint) not in kept]
-        if (
-            len(mints_list) < len(self.traded_mints)
-            and settings.cleanup_mode == "post_session"
-        ):
+        post_session = settings.cleanup_mode == "post_session"
+        if len(mints_list) < len(self.traded_mints) and post_session:
             logger.info(
                 f"Leaving {len(self.traded_mints) - len(mints_list)} token "
                 f"account(s) open: their positions are kept for the next start"
             )
-        if mints_list:
+        if mints_list or post_session:
             try:
-                logger.info(f"Cleaning up {len(mints_list)} traded token(s)...")
+                if mints_list:
+                    logger.info(f"Cleaning up {len(mints_list)} traded token(s)...")
                 # Build parallel lists of mints and token_program_ids
                 token_program_ids = [
                     self.traded_token_programs.get(str(mint)) for mint in mints_list
@@ -444,7 +465,7 @@ class UniversalTrader:
                 force_burn = settings.cleanup_force_close_with_burn
                 if force_burn and not self.positions.monitors:
                     force_burn = False
-                    if settings.cleanup_mode == "post_session":
+                    if post_session:
                         logger.info(
                             "Not burning held coins: the exit strategy keeps "
                             "what it buys; only empty accounts are closed"
@@ -458,6 +479,7 @@ class UniversalTrader:
                     settings.cleanup_mode,
                     settings.cleanup_with_priority_fee,
                     force_burn,
+                    self._quote_mints | _pubkeys(kept),
                 )
             except Exception:
                 logger.exception("Error during cleanup")
