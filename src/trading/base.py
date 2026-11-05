@@ -31,6 +31,9 @@ class TradeResult:
     #: What the landed transaction did to the wallet. None when it was not
     #: read, and `price` and `amount` are then estimates.
     deltas: TradeDeltas | None = None
+    #: Where it traded (`Market.name`): the bonding curve or the AMM pool the
+    #: coin graduated to. None when no venue was chosen.
+    venue: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/serialization.
@@ -50,6 +53,7 @@ class TradeResult:
                 self.failure_reason.value if self.failure_reason else None
             ),
             "deltas": asdict(self.deltas) if self.deltas else None,
+            "venue": self.venue,
         }
 
 
@@ -66,6 +70,8 @@ class PendingBuy:
     spend_raw: int | None = None
     #: The block height past which it can no longer land; None when unknown.
     last_valid_block_height: int | None = None
+    #: Where it was sent to trade (`Market.name`); None in an older record.
+    venue: str | None = None
 
 
 class Trader(ABC):

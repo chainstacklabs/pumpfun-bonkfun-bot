@@ -241,29 +241,13 @@ class UniversalShredsListener(BaseTokenListener):
                         token_info = self._process_update(update)
                         if not token_info:
                             continue
-
-                        logger.info(
-                            f"New token detected pre-execution: {token_info.name} "
-                            f"({token_info.symbol}) on {token_info.platform.value}"
+                        await self._deliver(
+                            token_info,
+                            token_callback,
+                            match_string,
+                            creator_address,
+                            pre_execution=True,
                         )
-
-                        if match_string and not (
-                            match_string.lower() in token_info.name.lower()
-                            or match_string.lower() in token_info.symbol.lower()
-                        ):
-                            logger.info(
-                                f"Token does not match filter '{match_string}'. "
-                                "Skipping..."
-                            )
-                            continue
-
-                        if creator_address and str(token_info.user) != creator_address:
-                            logger.info(
-                                f"Token not created by {creator_address}. Skipping..."
-                            )
-                            continue
-
-                        await token_callback(token_info)
 
                 except Exception as e:
                     if isinstance(e, grpc.aio.AioRpcError):

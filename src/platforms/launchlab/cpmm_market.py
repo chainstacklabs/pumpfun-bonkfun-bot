@@ -142,6 +142,8 @@ class CpmmMarket(Market):
     a buy spends exactly its `amount_in`.
     """
 
+    name = "Raydium CPMM"
+
     def __init__(self, client: SolanaClient) -> None:
         self.client = client
         self._cpswap_configs: dict[Pubkey, Pubkey] = {}

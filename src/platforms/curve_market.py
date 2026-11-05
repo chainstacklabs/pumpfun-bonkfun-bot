@@ -18,6 +18,8 @@ from interfaces.core import (
 class CurveMarket(Market):
     """Trades on a bonding curve through the platform's builder and curve manager."""
 
+    name = "bonding curve"
+
     def __init__(
         self,
         address_provider: AddressProvider,

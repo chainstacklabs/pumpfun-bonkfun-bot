@@ -186,6 +186,27 @@ def _describe_program_error(err: object) -> str | None:
     return f"pump.fun IDL: {description}"
 
 
+def _revert_text(err: object) -> str:
+    """A transaction's `err` as logged, with pump.fun's name for its code when known."""
+    detail = _describe_program_error(err)
+    return f"{err}" + (f" ({detail})" if detail else "")
+
+
+def _confirmed_error(response: object) -> object | None:
+    """The `err` of the signature status that ended a confirmation wait.
+
+    None unless the status is at `confirmed` or above: an error seen at
+    `processed` is not final, the fork may still be dropped.
+    """
+    try:
+        status = json.loads(response.to_json())["result"]["value"][0]
+    except (AttributeError, KeyError, IndexError, TypeError, ValueError):
+        return None
+    if not status or status.get("confirmationStatus") not in ("confirmed", "finalized"):
+        return None
+    return status.get("err")
+
+
 # What a failed request says, matched on the error or on the OS error inside
 # a connection error, in this order. Each is a plain reason naming no URL.
 _UNREACHABLE_CAUSES = (
@@ -684,7 +705,7 @@ class SolanaClient:
         )
         return status is ConfirmationStatus.SUCCESS
 
-    async def confirm_transaction_detailed(
+    async def confirm_transaction_detailed(  # noqa: PLR0913
         self,
         signature: str | Signature,
         commitment: str = "confirmed",
@@ -692,6 +713,7 @@ class SolanaClient:
         last_valid_block_height: int | None = None,
         quiet: bool = False,
         on_error: Callable[[Exception], None] | None = None,
+        on_revert: Callable[[str], None] | None = None,
     ) -> ConfirmationStatus:
         """Confirm a transaction, distinguishing a revert from an unknown.
 
@@ -706,6 +728,7 @@ class SolanaClient:
             last_valid_block_height: As in :meth:`confirm_transaction`
             quiet: As in :meth:`confirm_transaction`
             on_error: As in :meth:`confirm_transaction`
+            on_revert: As in :meth:`verify_transaction_status`
 
         Returns:
             SUCCESS, REVERTED, or UNCONFIRMED
@@ -723,7 +746,7 @@ class SolanaClient:
         await self._rate_limiter.acquire()
         client = await self.get_client()
         try:
-            await client.confirm_transaction(
+            response = await client.confirm_transaction(
                 signature,
                 commitment=commitment,
                 sleep_seconds=1,
@@ -742,7 +765,13 @@ class SolanaClient:
                 logger.exception(f"Failed to confirm transaction {signature}")
             return ConfirmationStatus.UNCONFIRMED
 
-        return await self.verify_transaction_status(signature)
+        # The status that ended the wait already says whether it reverted, so a
+        # node that cannot serve the transaction yet cannot make a revert unknown.
+        err = _confirmed_error(response)
+        if err:
+            self._report_revert(str(signature), err, on_revert)
+            return ConfirmationStatus.REVERTED
+        return await self.verify_transaction_status(signature, on_revert=on_revert)
 
     async def get_signature_outcome(
         self,
@@ -750,6 +779,7 @@ class SolanaClient:
         *,
         search_history: bool = True,
         quiet: bool = False,
+        on_revert: Callable[[str], None] | None = None,
     ) -> tuple[ConfirmationStatus | None, int | None]:
         """What the cluster knows of a signature, and the slot it landed in.
 
@@ -757,6 +787,7 @@ class SolanaClient:
             search_history: Look past the node's recent status cache, which
                 only holds the last few minutes; slower, so ask once
             quiet: Log nothing when the answer cannot be read
+            on_revert: Called with the error when the status is REVERTED
 
         Returns:
             The status: SUCCESS or REVERTED once confirmed; UNCONFIRMED when it
@@ -787,6 +818,8 @@ class SolanaClient:
         if status.get("confirmationStatus") not in ("confirmed", "finalized"):
             return ConfirmationStatus.UNCONFIRMED, slot
         if status.get("err"):
+            if on_revert is not None:
+                on_revert(_revert_text(status["err"]))
             return ConfirmationStatus.REVERTED, slot
         return ConfirmationStatus.SUCCESS, slot
 
@@ -859,7 +892,10 @@ class SolanaClient:
         return status is ConfirmationStatus.SUCCESS
 
     async def verify_transaction_status(
-        self, signature: str | Signature
+        self,
+        signature: str | Signature,
+        *,
+        on_revert: Callable[[str], None] | None = None,
     ) -> ConfirmationStatus:
         """Read what actually happened to a landed transaction.
 
@@ -871,6 +907,9 @@ class SolanaClient:
 
         Args:
             signature: Transaction signature, base58 string or Signature
+            on_revert: Called with the error of a transaction that landed and
+                reverted, in place of logging it, so the caller can say it in
+                its own line
 
         Returns:
             SUCCESS, REVERTED, or UNCONFIRMED
@@ -886,14 +925,23 @@ class SolanaClient:
 
         tx_err = result.get("meta", {}).get("err")
         if tx_err:
-            detail = _describe_program_error(tx_err)
-            logger.error(
-                f"Transaction {signature[:16]}... confirmed but failed: {tx_err}"
-                + (f" ({detail})" if detail else "")
-            )
+            self._report_revert(signature, tx_err, on_revert)
             return ConfirmationStatus.REVERTED
 
         return ConfirmationStatus.SUCCESS
+
+    @staticmethod
+    def _report_revert(
+        signature: str, err: object, on_revert: Callable[[str], None] | None
+    ) -> None:
+        """Hand a revert's error to `on_revert`, or log it when there is none."""
+        error = _revert_text(err)
+        if on_revert is not None:
+            on_revert(error)
+        else:
+            logger.error(
+                f"Transaction {signature[:16]}... landed and reverted: {error}"
+            )
 
     async def get_transaction_token_balance(
         self, signature: str | Signature, user_pubkey: Pubkey, mint: Pubkey

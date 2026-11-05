@@ -512,11 +512,12 @@ class UniversalTrader:
                 )
                 await asyncio.sleep(self.wait_time_after_creation)
 
-            # Buy token
+            # The buyer names the venue once it has read whether the curve
+            # has graduated.
             logger.info(
                 f"Buying {self.quote_amounts[token_quote_mint]:.6f} of quote "
                 f"{token_quote_mint} worth of {token_info.symbol} "
-                f"on {token_info.platform.value}..."
+                f"({token_info.mint})..."
             )
             buy_result: TradeResult = await self.buyer.execute(token_info)
 
@@ -544,7 +545,8 @@ class UniversalTrader:
     ) -> None:
         """Handle successful token purchase."""
         logger.info(
-            f"Successfully bought {token_info.symbol} on {token_info.platform.value}"
+            f"Successfully bought {token_info.symbol} on "
+            f"{token_info.platform.value} (venue: {buy_result.venue})"
         )
         trade_log.log_trade(
             "buy",
@@ -553,6 +555,7 @@ class UniversalTrader:
             buy_result.amount,
             buy_result.tx_signature,
             deltas=buy_result.deltas,
+            venue=buy_result.venue,
         )
         self._track_traded(token_info)
         self.positions.open(token_info, buy_result)

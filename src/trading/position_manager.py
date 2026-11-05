@@ -9,7 +9,7 @@ buy is sent until its sell, and `resume` picks those up again after a restart.
 import asyncio
 import dataclasses
 import struct
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -268,17 +268,23 @@ class PositionManager:
         label = f"{token_info.symbol} ({token_info.mint})"
         signature = sent.tx_signature
         first = True
+        revert: list[str] = []
         while True:
             # Every balance read below names the slot this decision rests on:
             # a node behind it errors, which keeps the record, rather than
             # answering "not found", which would clear it.
-            outcome, slot = await self._signature_outcome(signature, first=first)
+            outcome, slot = await self._signature_outcome(
+                signature, first=first, on_revert=revert.append
+            )
             first = False
             if outcome is ConfirmationStatus.SUCCESS:
                 buy = await self._landed_buy(token_info, sent, pending, label, slot)
                 break
             if outcome is ConfirmationStatus.REVERTED:
-                logger.info(f"The buy of {label} ({signature}) reverted; clearing it")
+                error = f": {revert[-1]}" if revert else ""
+                logger.info(
+                    f"The buy of {label} ({signature}) reverted{error}; clearing it"
+                )
                 self.store.remove(token_info.mint)
                 return None
             expired, slot = await self._past_landing(stored)
@@ -292,12 +298,22 @@ class PositionManager:
             return None
         self.store.add(token_info, buy, stored.entry_time, self.wallet.pubkey)
         trade_log.log_trade(
-            "buy", token_info, buy.price, buy.amount, signature, deltas=buy.deltas
+            "buy",
+            token_info,
+            buy.price,
+            buy.amount,
+            signature,
+            deltas=buy.deltas,
+            venue=pending.venue,
         )
         return buy
 
     async def _signature_outcome(
-        self, signature: str | None, *, first: bool
+        self,
+        signature: str | None,
+        *,
+        first: bool,
+        on_revert: Callable[[str], None] | None = None,
     ) -> tuple[ConfirmationStatus | None, int | None]:
         """The signature's status and slot; UNCONFIRMED when the lookup fails.
 
@@ -309,7 +325,7 @@ class PositionManager:
             return None, None
         try:
             return await self.solana_client.get_signature_outcome(
-                signature, search_history=first
+                signature, search_history=first, on_revert=on_revert
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Could not look up {signature[:16]}...: {e}")
@@ -594,7 +610,8 @@ class PositionManager:
             logger.warning(
                 f"{len(pending)} buy(s) sent but not confirmed stay in "
                 f"{self.store.path}: {', '.join(sorted(pending))}. The next start "
-                f"resolves each from the wallet's balance"
+                f"settles each by its signature; one still unknown once its blockhash "
+                f"has expired is settled by the wallet's balance"
             )
 
     def stored_mints(self) -> set[str]:
@@ -1031,7 +1048,9 @@ class PositionManager:
         )
         if left:
             return ExitSellVerdict.PARTIAL, left
-        logger.info(f"Successfully sold {token_info.symbol}")
+        logger.info(
+            f"Successfully sold {token_info.symbol} (venue: {sell_result.venue})"
+        )
         return ExitSellVerdict.SOLD, 0
 
     async def _classify_failed_exit_sell(
@@ -1397,7 +1416,8 @@ class PositionManager:
             return ExitSellVerdict.PARTIAL
         position.close_position(price, exit_reason)
         logger.info(
-            f"Successfully exited position: {exit_reason.value} ({token_info.symbol})"
+            f"Successfully exited position: {exit_reason.value} "
+            f"({token_info.symbol}, venue: {sell_result.venue})"
         )
         return ExitSellVerdict.SOLD
 
@@ -1481,6 +1501,7 @@ class PositionManager:
                     sale.tx_signature,
                     deltas=sale.deltas,
                     pnl=pnl,
+                    venue=sale.venue,
                 )
                 label = "Final PnL" if last else "PnL on the part sold"
                 total = realised.suffix(quote_label) if last else ""
@@ -1531,9 +1552,11 @@ class PositionManager:
                 if quantity_raw is not None
                 else int(quantity * 10**TOKEN_DECIMALS)
             )
-        return landed_sale(
+        sale = landed_sale(
             token_info, sell_result.tx_signature, amount_raw, price, deltas
         )
+        sale.venue = sell_result.venue
+        return sale
 
     def _settle_position(
         self, token_info: TokenInfo, position: Position, sell_result: TradeResult

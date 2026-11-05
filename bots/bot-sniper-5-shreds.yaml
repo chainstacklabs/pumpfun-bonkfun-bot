@@ -22,7 +22,7 @@ private_key: "${SOLANA_PRIVATE_KEY}"
 enabled: false # You can turn off the bot w/o removing its config
 separate_process: true
 
-# Options: "pump_fun" (default), "lets_bonk", "stonk_fun"
+# Options: "pump_fun" (default), "launchlab", "lets_bonk", "stonk_fun"
 platform: "pump_fun"
 
 # Geyser connection. Shreds mode uses the same endpoint and credentials as the
@@ -108,7 +108,7 @@ filters:
   # Accepts "sol"/"usdc" aliases or raw mint addresses.
   #allowed_quote_mints: ["sol"]
   listener_type: "shreds" # Pre-execution detection; see the header of this file.
-  # Supported on every platform. Other options: "logs", "blocks", "geyser".
+  # Supported on every platform. Other options: "logs" (pump_fun only), "blocks", "geyser".
   # Checked once, when the bot takes the coin up: seconds since it detected the
   # coin (its launch, or its migration with entry: migration), not its age on
   # chain. Waits after that, such as a migration's mint and pool waits, don't count.

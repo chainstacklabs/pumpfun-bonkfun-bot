@@ -118,31 +118,12 @@ class UniversalLogsListener(BaseTokenListener):
                             token_info = await self._wait_for_token_creation(websocket)
                             if not token_info:
                                 continue
-
-                            logger.info(
-                                f"New token detected: {token_info.name} ({token_info.symbol}) on {token_info.platform.value}"
+                            await self._deliver(
+                                token_info,
+                                token_callback,
+                                match_string,
+                                creator_address,
                             )
-
-                            # Apply filters
-                            if match_string and not (
-                                match_string.lower() in token_info.name.lower()
-                                or match_string.lower() in token_info.symbol.lower()
-                            ):
-                                logger.info(
-                                    f"Token does not match filter '{match_string}'. Skipping..."
-                                )
-                                continue
-
-                            if (
-                                creator_address
-                                and str(token_info.user) != creator_address
-                            ):
-                                logger.info(
-                                    f"Token not created by {creator_address}. Skipping..."
-                                )
-                                continue
-
-                            await token_callback(token_info)
 
                     except websockets.exceptions.ConnectionClosed:
                         logger.warning("WebSocket connection closed. Reconnecting...")

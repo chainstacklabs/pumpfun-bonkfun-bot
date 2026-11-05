@@ -258,7 +258,7 @@ class _Client:
         return status is ConfirmationStatus.SUCCESS
 
     async def get_signature_outcome(
-        self, signature: object, *, search_history: bool = True
+        self, signature: object, *, search_history: bool = True, **_kwargs: object
     ) -> tuple[object, int | None]:
         key = str(signature)
         self.lookups[key] = self.lookups.get(key, 0) + 1

@@ -121,6 +121,8 @@ class PumpSwapMarket(Market):
     list.
     """
 
+    name = "PumpSwap"
+
     def __init__(self, client: SolanaClient) -> None:
         self.client = client
         discriminators = IDLParser(str(PUMP_SWAP_IDL)).get_instruction_discriminators()

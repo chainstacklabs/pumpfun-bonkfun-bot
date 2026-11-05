@@ -126,6 +126,9 @@ def _pending_of(record: dict) -> PendingBuy | None:
         quote_destination=pending.get("quote_destination"),
         spend_raw=pending.get("spend_raw"),
         last_valid_block_height=pending.get("last_valid_block_height"),
+        # Only a label for the trade log: one that is not a name is dropped
+        # rather than making the record unresumable.
+        venue=venue if isinstance(venue := pending.get("venue"), str) else None,
     )
     destination = found.quote_destination
     if not (

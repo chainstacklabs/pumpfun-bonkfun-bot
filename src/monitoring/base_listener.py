@@ -6,6 +6,7 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
+from core.pubkeys import is_sol_paired
 from interfaces.core import Platform, PoolReady, TokenInfo
 from utils.logger import get_logger
 
@@ -19,6 +20,44 @@ PoolCallback = Callable[[PoolReady], Awaitable[None]]
 # Migrations already reported, kept so a racing duplicate migration or a
 # redelivered frame reports a pool once.
 _SEEN_POOLS_LIMIT = 10_000
+# Launches already logged or handed on, kept so a coin is reported once.
+_SEEN_LAUNCHES_LIMIT = 10_000
+
+
+def _first(seen: OrderedDict, key: object) -> bool:
+    """Whether `key` is new to `seen`; remembers it, forgetting the oldest past the limit."""
+    if key in seen:
+        return False
+    seen[key] = None
+    if len(seen) > _SEEN_LAUNCHES_LIMIT:
+        seen.popitem(last=False)
+    return True
+
+
+def describe_launch(token_info: TokenInfo, *, pre_execution: bool = False) -> str:
+    """The one line a detected coin is logged with.
+
+    Names the mint, so two coins with the same name read apart, and what tells
+    where it launched: its curve, a LaunchLab coin's platform config, the quote
+    asset when the listener read it, and the creator.
+    """
+    stage = " pre-execution" if pre_execution else ""
+    parts = [f"mint {token_info.mint}"]
+    if token_info.platform_config is not None:
+        parts.append(f"platform config {token_info.platform_config}")
+    curve = token_info.bonding_curve or token_info.pool_state
+    if curve is not None:
+        parts.append(f"curve {curve}")
+    if token_info.quote_mint is not None:
+        quote = token_info.quote_mint
+        parts.append(f"quote {'SOL' if is_sol_paired(quote) else quote}")
+    creator = token_info.creator or token_info.user
+    if creator is not None:
+        parts.append(f"creator {creator}")
+    return (
+        f"New token detected{stage}: {token_info.name} ({token_info.symbol}) "
+        f"on {token_info.platform.value}: {', '.join(parts)}"
+    )
 
 
 def reraise_if_cancelled() -> None:
@@ -54,6 +93,9 @@ class BaseTokenListener(ABC):
         # Set by listen_for_tokens; None leaves migrations unparsed.
         self.pool_callback: PoolCallback | None = None
         self._seen_pools: OrderedDict[Pubkey | tuple[Pubkey, str], None] = OrderedDict()
+        # Launches logged, and launches handed to the callback; see `_deliver`.
+        self._logged_launches: OrderedDict[Pubkey, None] = OrderedDict()
+        self._taken_launches: OrderedDict[Pubkey, None] = OrderedDict()
 
     @abstractmethod
     async def listen_for_tokens(
@@ -104,6 +146,44 @@ class BaseTokenListener(ABC):
             except Exception:
                 reraise_if_cancelled()
                 logger.exception(f"Pool callback failed for {pool.mint}")
+
+    async def _deliver(
+        self,
+        token_info: TokenInfo,
+        token_callback: Callable[[TokenInfo], Awaitable[None]],
+        match_string: str | None,
+        creator_address: str | None,
+        *,
+        pre_execution: bool = False,
+    ) -> None:
+        """Log a detected coin once and hand it on once, if the filters take it.
+
+        A mint is created once, so a later report of one is the same coin: a
+        frame delivered again (a `processed` notification from a fork that
+        was dropped, say) or, before execution, another transaction sending
+        the same create. One the name or creator filter refused is looked at
+        again: a later attempt may carry other metadata.
+        """
+        mint = token_info.mint
+        if _first(self._logged_launches, mint):
+            logger.info(describe_launch(token_info, pre_execution=pre_execution))
+
+        if match_string and not (
+            match_string.lower() in token_info.name.lower()
+            or match_string.lower() in token_info.symbol.lower()
+        ):
+            logger.info(f"Token does not match filter '{match_string}'. Skipping...")
+            return
+        if creator_address and str(token_info.user) != creator_address:
+            logger.info(f"Token not created by {creator_address}. Skipping...")
+            return
+
+        # Assumes the intake never takes a second attempt at a launch; move this
+        # into the intake if it ever does.
+        if not _first(self._taken_launches, mint):
+            logger.debug(f"{mint} reported again; already handed on")
+            return
+        await token_callback(token_info)
 
     def should_process_token(self, token_info: TokenInfo) -> bool:
         """Check if a token should be processed based on platform filter.

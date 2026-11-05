@@ -163,17 +163,17 @@ class PumpFunEventParser(EventParser):
         # migration, since most listeners never look for one.
         self._pump_swap_idl_parser: IDLParser | None = None
 
-        logger.info(
+        logger.debug(
             "Pump.Fun event parser initialized with IDL-based event and instruction parsing"
         )
-        logger.info(
+        logger.debug(
             f"CreateEvent discriminator: {self._create_event_discriminator_bytes.hex()}"
         )
-        logger.info(
+        logger.debug(
             f"create instruction discriminator: {self._create_instruction_discriminator_bytes.hex()}"
         )
         if self._create_v2_instruction_discriminator_bytes:
-            logger.info(
+            logger.debug(
                 f"create_v2 instruction discriminator: {self._create_v2_instruction_discriminator_bytes.hex()}"
             )
 
@@ -199,7 +199,7 @@ class PumpFunEventParser(EventParser):
         if not any(log in CREATE_INSTRUCTION_LOGS for log in logs):
             return None
 
-        logger.info(f"🔍 Parsing token creation from logs for signature: {signature}")
+        logger.debug(f"🔍 Parsing token creation from logs for signature: {signature}")
 
         # Look for event data in the logs (CreateEvent data!)
         # We need to find the Program data that comes after "Instruction: Create"
@@ -213,7 +213,7 @@ class PumpFunEventParser(EventParser):
                 if log in CREATE_INSTRUCTION_LOGS:
                     create_instruction_found = True
                     instruction_type = log.rsplit(": ", 1)[1]
-                    logger.info(
+                    logger.debug(
                         f"📝 Found {instruction_type} instruction at log index {i}"
                     )
                 elif "Program data:" in log:
@@ -225,19 +225,19 @@ class PumpFunEventParser(EventParser):
                     # Extract base64 encoded event data
                     encoded_data = log.split("Program data: ")[1].strip()
                     program_data_entries.append((i, encoded_data, log))
-                    logger.info(
+                    logger.debug(
                         f"📊 Found Program data at log index {i}, length: {len(encoded_data)}"
                     )
 
             if not create_instruction_found:
-                logger.info("❌ No Create or CreateV2 instruction found in logs")
+                logger.debug("❌ No Create or CreateV2 instruction found in logs")
                 return None
 
             if not program_data_entries:
-                logger.info("❌ No Program data entries found in logs")
+                logger.debug("❌ No Program data entries found in logs")
                 return None
 
-            logger.info(
+            logger.debug(
                 f"🔍 Found {len(program_data_entries)} Program data entries to check"
             )
 
@@ -246,14 +246,14 @@ class PumpFunEventParser(EventParser):
                 program_data_entries
             ):
                 try:
-                    logger.info(
+                    logger.debug(
                         f"🧪 Trying Program data entry {entry_idx + 1}/{len(program_data_entries)} (log index {log_idx})"
                     )
 
                     decoded_data = base64.b64decode(encoded_data)
 
                     if len(decoded_data) < 8:
-                        logger.info(
+                        logger.debug(
                             f"⚠️ Program data too short: {len(decoded_data)} bytes"
                         )
                         continue
@@ -262,10 +262,10 @@ class PumpFunEventParser(EventParser):
                     discriminator = decoded_data[:8]
                     discriminator_int = struct.unpack("<Q", discriminator)[0]
 
-                    logger.info(
+                    logger.debug(
                         f"🔍 Program data discriminator: {discriminator.hex()} (int: {discriminator_int})"
                     )
-                    logger.info(
+                    logger.debug(
                         f"🎯 Expected CreateEvent discriminator: {self._create_event_discriminator_bytes.hex()} (int: {self._create_event_discriminator})"
                     )
 
@@ -275,25 +275,25 @@ class PumpFunEventParser(EventParser):
                     )
 
                     if not decoded_event:
-                        logger.info("❌ IDL parser returned None for CreateEvent")
+                        logger.debug("❌ IDL parser returned None for CreateEvent")
                         continue
 
                     if decoded_event.get("event_name") != "CreateEvent":
-                        logger.info(
+                        logger.debug(
                             f"❌ Wrong event type: {decoded_event.get('event_name', 'None')}"
                         )
                         continue
 
-                    logger.info(
+                    logger.debug(
                         f"✅ Successfully decoded event: {decoded_event.get('event_name', 'Unknown')}"
                     )
-                    logger.info(
+                    logger.debug(
                         f"🔍 Event fields: {list(decoded_event.get('fields', {}).keys())}"
                     )
 
                     fields = decoded_event.get("fields", {})
                     if not fields:
-                        logger.info("❌ No fields found in decoded event")
+                        logger.debug("❌ No fields found in decoded event")
                         continue
 
                     # Validate required fields exist
@@ -310,10 +310,10 @@ class PumpFunEventParser(EventParser):
                         field for field in required_fields if field not in fields
                     ]
                     if missing_fields:
-                        logger.info(f"❌ Missing required fields: {missing_fields}")
+                        logger.debug(f"❌ Missing required fields: {missing_fields}")
                         continue
 
-                    logger.info(
+                    logger.debug(
                         f"🎯 Token found: {fields.get('symbol', 'Unknown')} ({fields.get('name', 'Unknown')})"
                     )
 
@@ -341,13 +341,13 @@ class PumpFunEventParser(EventParser):
                             else fields["creator"]
                         )
 
-                        logger.info(f"🔑 Mint: {mint}")
-                        logger.info(f"🔑 Bonding Curve: {bonding_curve}")
-                        logger.info(f"🔑 User: {user}")
-                        logger.info(f"🔑 Creator: {creator}")
+                        logger.debug(f"🔑 Mint: {mint}")
+                        logger.debug(f"🔑 Bonding Curve: {bonding_curve}")
+                        logger.debug(f"🔑 User: {user}")
+                        logger.debug(f"🔑 Creator: {creator}")
 
                     except Exception as e:
-                        logger.info(f"❌ Failed to convert pubkey fields: {e}")
+                        logger.debug(f"❌ Failed to convert pubkey fields: {e}")
                         continue
 
                     # Derive additional addresses (default to TOKEN_2022_PROGRAM as per pump.fun's migration to create_v2)
@@ -361,7 +361,7 @@ class PumpFunEventParser(EventParser):
                     creator = self._creator_after_migration(logs, mint, creator)
                     creator_vault = self._derive_creator_vault(creator)
 
-                    logger.info(
+                    logger.debug(
                         f"✅ Successfully parsed CreateEvent for token: {fields.get('symbol', 'Unknown')}"
                     )
 
@@ -405,12 +405,12 @@ class PumpFunEventParser(EventParser):
                     )
 
                 except Exception as e:
-                    logger.info(
+                    logger.debug(
                         f"❌ Failed to decode Program data entry {entry_idx + 1}: {e}"
                     )
                     continue
 
-            logger.info("❌ No valid CreateEvent found in any Program data entries")
+            logger.debug("❌ No valid CreateEvent found in any Program data entries")
             return None
 
         except Exception:
@@ -543,7 +543,7 @@ class PumpFunEventParser(EventParser):
             if event_mint != mint or new_creator is None:
                 continue
 
-            logger.info(f"🔁 Bonding curve creator migrated to: {new_creator}")
+            logger.debug(f"🔁 Bonding curve creator migrated to: {new_creator}")
             return new_creator
 
         return creator

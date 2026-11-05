@@ -63,8 +63,14 @@ def log_trade(  # noqa: PLR0913
     *,
     deltas: TradeDeltas | None = None,
     pnl: SalePnl | None = None,
+    venue: str | None = None,
 ) -> None:
     """Append one buy or sell to `trades/trades.log` as a JSON line.
+
+    `platform` is where the coin launched; `venue` is where this trade went:
+    "bonding curve", or the pool the coin graduated to ("PumpSwap", "Raydium
+    CPMM"). It is null when not known, as for a buy sent before a restart by
+    a version that did not record it.
 
     `price` is a buy's fill, protocol fees left out (what exits measure from),
     and what a sale paid per token, protocol fees taken off. With `deltas` the
@@ -84,6 +90,7 @@ def log_trade(  # noqa: PLR0913
             "timestamp": datetime.utcnow().isoformat(),
             "action": action,
             "platform": token_info.platform.value,
+            "venue": venue,
             "token_address": str(token_info.mint),
             "symbol": token_info.symbol,
             "price": price,
