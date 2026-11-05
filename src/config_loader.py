@@ -301,7 +301,7 @@ BOTH_WALLET_KEYS = (
     "Set either private_key or keystore, not both: remove the private_key line "
     "to trade from the keystore"
 )
-KEYSTORE_NOT_A_PATH = "keystore must be the path of a pumpfun-cli wallet file"
+KEYSTORE_NOT_A_PATH = "keystore must be the path of a keystore file"
 
 
 def validate_wallet_config(config: dict) -> None:

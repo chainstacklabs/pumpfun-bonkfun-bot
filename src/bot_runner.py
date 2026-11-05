@@ -270,14 +270,17 @@ def build_trader_settings(
 def unlock_keystore(cfg: dict) -> None:
     """Decrypt the config's `keystore` into `cfg["private_key"]`.
 
-    The password is `PUMPFUN_PASSWORD`, read after `load_bot_config` loaded the
-    bot's `env_file`. The decrypted key is masked in every later log line.
+    The password is `KEYSTORE_PASSWORD`, else `PUMPFUN_PASSWORD`, read after
+    `load_bot_config` loaded the bot's `env_file`. The decrypted key is masked
+    in every later log line.
 
     Raises:
-        KeystoreError: The keystore cannot be unlocked; the message says why
+        KeystoreError: The keystore cannot be unlocked, or the two password
+            variables differ; the message says why
     """
     path = Path(cfg["keystore"])
-    private_key = keystore_private_key(path, password_from_env())
+    password, source = password_from_env(path)
+    private_key = keystore_private_key(path, password, source)
     register_secret(private_key)
     cfg["private_key"] = private_key
     logger.info(f"Wallet {Wallet(private_key).pubkey} unlocked from keystore {path}")
