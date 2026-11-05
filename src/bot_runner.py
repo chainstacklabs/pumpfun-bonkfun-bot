@@ -9,6 +9,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import base58
+
 # Try to use uvloop on Unix or winloop on Windows for better performance
 # Fall back to standard asyncio if not available
 try:
@@ -36,8 +38,7 @@ from config_loader import (
     validate_platform_listener_combination,
 )
 from core.client import rpc_endpoint_problem
-from core.keystore import KeystoreError, keystore_private_key, password_from_env
-from core.wallet import Wallet
+from core.keystore import KeystoreError, unlock_from_env
 from interfaces.core import Platform
 from trading.position_store import holds_positions
 from trading.settings import DEFAULT_MAX_EXIT_SELL_ATTEMPTS, TraderSettings
@@ -270,17 +271,23 @@ def build_trader_settings(
 def unlock_keystore(cfg: dict) -> None:
     """Decrypt the config's `keystore` into `cfg["private_key"]`.
 
-    The password is `PUMPFUN_PASSWORD`, read after `load_bot_config` loaded the
-    bot's `env_file`. The decrypted key is masked in every later log line.
+    The password is `KEYSTORE_PASSWORD`, else `PUMPFUN_PASSWORD`, read after
+    `load_bot_config` loaded the bot's `env_file`; both are tried, since every
+    bot's `env_file` loads into one environment. The decrypted key is masked in
+    every later log line.
 
     Raises:
         KeystoreError: The keystore cannot be unlocked; the message says why
     """
     path = Path(cfg["keystore"])
-    private_key = keystore_private_key(path, password_from_env())
+    keypair, variable = unlock_from_env(path)
+    private_key = base58.b58encode(bytes(keypair)).decode()
     register_secret(private_key)
     cfg["private_key"] = private_key
-    logger.info(f"Wallet {Wallet(private_key).pubkey} unlocked from keystore {path}")
+    logger.info(
+        f"Wallet {keypair.pubkey()} unlocked from keystore {path} "
+        f"(password from {variable})"
+    )
 
 
 async def start_bot(config_path: str, positions_file: str | None = None) -> bool:
