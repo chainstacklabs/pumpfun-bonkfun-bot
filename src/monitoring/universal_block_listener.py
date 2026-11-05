@@ -131,9 +131,8 @@ class UniversalBlockListener(BaseTokenListener):
                             if not token_info:
                                 continue
 
-                            logger.info(
-                                f"New token detected: {token_info.name} ({token_info.symbol}) on {token_info.platform.value}"
-                            )
+                            if not self._new_launch(token_info):
+                                continue
 
                             # Apply filters
                             if match_string and not (

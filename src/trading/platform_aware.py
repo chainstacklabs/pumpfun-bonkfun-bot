@@ -50,6 +50,22 @@ _FAILURE_REASON_FOR = {
 }
 
 
+def _not_settled(
+    side: str, status: ConfirmationStatus, signature: object, revert: list[str]
+) -> str:
+    """How a buy or sell that did not succeed is reported.
+
+    Args:
+        side: "buy" or "sell"
+        revert: The error of a transaction that landed and reverted, when the
+            client read one
+    """
+    if status is ConfirmationStatus.REVERTED:
+        error = f": {revert[0]}" if revert else ""
+        return f"the {side} landed and reverted{error}; tx {signature}"
+    return f"Transaction failed to confirm: {signature}"
+
+
 async def _read_pool_state_with_retry(
     curve_manager: object,
     pool_address: Pubkey,
@@ -591,7 +607,8 @@ class PlatformAwareBuyer(Trader):
 
             logger.info(
                 f"Buying {token_amount:.6f} tokens at {format_price(token_price_sol)} "
-                f"{quote_label} per token on {token_info.platform.value}"
+                f"{quote_label} per token on {token_info.platform.value} "
+                f"(venue: {venue.name})"
             )
             logger.info(
                 f"Total cost: {quote_amount:.6f} {quote_label} "
@@ -618,6 +635,7 @@ class PlatformAwareBuyer(Trader):
                         token_info, venue, address_provider
                     ),
                     spend_raw=max_quote_amount_raw if exact_in else None,
+                    venue=venue.name,
                 ),
                 instructions,
                 self.wallet.keypair,
@@ -634,7 +652,10 @@ class PlatformAwareBuyer(Trader):
                 ),
             )
 
-            status = await self.client.confirm_transaction_detailed(tx_signature)
+            revert: list[str] = []
+            status = await self.client.confirm_transaction_detailed(
+                tx_signature, on_revert=revert.append
+            )
 
             if status is ConfirmationStatus.SUCCESS:
                 logger.info(f"Buy transaction confirmed: {tx_signature}")
@@ -729,18 +750,16 @@ class PlatformAwareBuyer(Trader):
                     amount_raw=amount_raw,
                     price=token_price_sol,
                     deltas=deltas,
+                    venue=venue.name,
                 )
             else:
                 return TradeResult(
                     success=False,
                     platform=token_info.platform,
                     tx_signature=str(tx_signature),
-                    error_message=(
-                        f"Buy reverted on chain: {tx_signature}"
-                        if status is ConfirmationStatus.REVERTED
-                        else f"Transaction failed to confirm: {tx_signature}"
-                    ),
+                    error_message=_not_settled("buy", status, tx_signature, revert),
                     failure_reason=_FAILURE_REASON_FOR[status],
+                    venue=venue.name,
                 )
 
         except Exception as e:
@@ -1207,7 +1226,8 @@ class PlatformAwareSeller(Trader):
                 int((expected_quote_output * (1 - self.slippage)) * quote_unit),
             )
             logger.info(
-                f"Selling {token_balance_decimal} tokens on {token_info.platform.value}"
+                f"Selling {token_balance_decimal} tokens on "
+                f"{token_info.platform.value} (venue: {venue.name})"
             )
             logger.info(
                 f"Expected {quote_label} output: {expected_quote_output:.10f} {quote_label}"
@@ -1246,7 +1266,10 @@ class PlatformAwareSeller(Trader):
                 ),
             )
 
-            status = await self.client.confirm_transaction_detailed(tx_signature)
+            revert: list[str] = []
+            status = await self.client.confirm_transaction_detailed(
+                tx_signature, on_revert=revert.append
+            )
 
             if status is ConfirmationStatus.SUCCESS:
                 logger.info(f"Sell transaction confirmed: {tx_signature}")
@@ -1259,6 +1282,7 @@ class PlatformAwareSeller(Trader):
                     amount=token_balance_decimal,
                     amount_raw=token_balance,
                     price=token_price_sol,
+                    venue=venue.name,
                 )
 
             # The signature belongs on the failure too. A caller weighing
@@ -1270,12 +1294,9 @@ class PlatformAwareSeller(Trader):
                 platform=token_info.platform,
                 tx_signature=str(tx_signature),
                 amount_raw=token_balance,
-                error_message=(
-                    f"Sell reverted on chain: {tx_signature}"
-                    if status is ConfirmationStatus.REVERTED
-                    else f"Transaction failed to confirm: {tx_signature}"
-                ),
+                error_message=_not_settled("sell", status, tx_signature, revert),
                 failure_reason=_FAILURE_REASON_FOR[status],
+                venue=venue.name,
             )
 
         except Exception as e:
@@ -1299,6 +1320,7 @@ class PlatformAwareSeller(Trader):
                 amount_raw=token_balance,  # set before anything was sent
                 error_message=f"Sell outcome unknown for {tx_signature}: {e}",
                 failure_reason=TradeFailureReason.UNCONFIRMED,
+                venue=venue.name,  # chosen before anything was sent
             )
 
     def _get_cu_override(self, operation: str, platform: Platform) -> int | None:

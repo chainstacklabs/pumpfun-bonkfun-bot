@@ -331,6 +331,14 @@ class Market(ABC):
     """
 
     @property
+    @abstractmethod
+    def name(self) -> str:
+        """The venue as logs and `trades.log` name it.
+
+        "bonding curve" for a curve, "PumpSwap" or "Raydium CPMM" for a pool.
+        """
+
+    @property
     def spends_exact_amount_in(self) -> bool:
         """Whether a buy spends all of `amount_in` rather than capping at it.
 

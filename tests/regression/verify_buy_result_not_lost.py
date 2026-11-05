@@ -155,7 +155,7 @@ class StubBuyClient:
         return self.confirmed
 
     async def confirm_transaction_detailed(
-        self, _signature: object
+        self, _signature: object, **_kwargs: object
     ) -> ConfirmationStatus:
         if self.confirmed:
             return ConfirmationStatus.SUCCESS

@@ -211,12 +211,8 @@ class UniversalGeyserListener(BaseTokenListener):
                     async for update in stub.Subscribe(iter([request])):
                         await self._emit_pools(self._pools_from_update(update))
                         token_info = await self._process_update(update)
-                        if not token_info:
+                        if not token_info or not self._new_launch(token_info):
                             continue
-
-                        logger.info(
-                            f"New token detected: {token_info.name} ({token_info.symbol}) on {token_info.platform.value}"
-                        )
                         _log_envelope(update)
 
                         # Apply filters

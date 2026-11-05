@@ -239,13 +239,10 @@ class UniversalShredsListener(BaseTokenListener):
                     async for update in stub.SubscribeDeshred(iter([request])):
                         await self._emit_pools(self._pools_from_update(update))
                         token_info = self._process_update(update)
-                        if not token_info:
+                        if not token_info or not self._new_launch(
+                            token_info, pre_execution=True
+                        ):
                             continue
-
-                        logger.info(
-                            f"New token detected pre-execution: {token_info.name} "
-                            f"({token_info.symbol}) on {token_info.platform.value}"
-                        )
 
                         if match_string and not (
                             match_string.lower() in token_info.name.lower()

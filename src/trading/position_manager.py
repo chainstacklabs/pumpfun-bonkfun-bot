@@ -292,7 +292,13 @@ class PositionManager:
             return None
         self.store.add(token_info, buy, stored.entry_time, self.wallet.pubkey)
         trade_log.log_trade(
-            "buy", token_info, buy.price, buy.amount, signature, deltas=buy.deltas
+            "buy",
+            token_info,
+            buy.price,
+            buy.amount,
+            signature,
+            deltas=buy.deltas,
+            venue=pending.venue,
         )
         return buy
 
@@ -594,7 +600,8 @@ class PositionManager:
             logger.warning(
                 f"{len(pending)} buy(s) sent but not confirmed stay in "
                 f"{self.store.path}: {', '.join(sorted(pending))}. The next start "
-                f"resolves each from the wallet's balance"
+                f"resolves each by its signature, and from the wallet's balance only "
+                f"one that no node knows once its blockhash has expired"
             )
 
     def stored_mints(self) -> set[str]:
@@ -1031,7 +1038,9 @@ class PositionManager:
         )
         if left:
             return ExitSellVerdict.PARTIAL, left
-        logger.info(f"Successfully sold {token_info.symbol}")
+        logger.info(
+            f"Successfully sold {token_info.symbol} (venue: {sell_result.venue})"
+        )
         return ExitSellVerdict.SOLD, 0
 
     async def _classify_failed_exit_sell(
@@ -1481,6 +1490,7 @@ class PositionManager:
                     sale.tx_signature,
                     deltas=sale.deltas,
                     pnl=pnl,
+                    venue=sale.venue,
                 )
                 label = "Final PnL" if last else "PnL on the part sold"
                 total = realised.suffix(quote_label) if last else ""
@@ -1531,9 +1541,11 @@ class PositionManager:
                 if quantity_raw is not None
                 else int(quantity * 10**TOKEN_DECIMALS)
             )
-        return landed_sale(
+        sale = landed_sale(
             token_info, sell_result.tx_signature, amount_raw, price, deltas
         )
+        sale.venue = sell_result.venue
+        return sale
 
     def _settle_position(
         self, token_info: TokenInfo, position: Position, sell_result: TradeResult

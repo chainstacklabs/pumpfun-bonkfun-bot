@@ -6,6 +6,7 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
+from core.pubkeys import is_sol_paired
 from interfaces.core import Platform, PoolReady, TokenInfo
 from utils.logger import get_logger
 
@@ -19,6 +20,34 @@ PoolCallback = Callable[[PoolReady], Awaitable[None]]
 # Migrations already reported, kept so a racing duplicate migration or a
 # redelivered frame reports a pool once.
 _SEEN_POOLS_LIMIT = 10_000
+# Launches already reported, kept so a coin is reported once; see `_new_launch`.
+_SEEN_LAUNCHES_LIMIT = 10_000
+
+
+def describe_launch(token_info: TokenInfo, *, pre_execution: bool = False) -> str:
+    """The one line a detected coin is logged with.
+
+    Names the mint, so two coins with the same name read apart, and what tells
+    where it launched: its curve, a LaunchLab coin's platform config, the quote
+    asset when the listener read it, and the creator.
+    """
+    stage = " pre-execution" if pre_execution else ""
+    parts = [f"mint {token_info.mint}"]
+    if token_info.platform_config is not None:
+        parts.append(f"platform config {token_info.platform_config}")
+    curve = token_info.bonding_curve or token_info.pool_state
+    if curve is not None:
+        parts.append(f"curve {curve}")
+    if token_info.quote_mint is not None:
+        quote = token_info.quote_mint
+        parts.append(f"quote {'SOL' if is_sol_paired(quote) else quote}")
+    creator = token_info.creator or token_info.user
+    if creator is not None:
+        parts.append(f"creator {creator}")
+    return (
+        f"New token detected{stage}: {token_info.name} ({token_info.symbol}) "
+        f"on {token_info.platform.value}: {', '.join(parts)}"
+    )
 
 
 def reraise_if_cancelled() -> None:
@@ -54,6 +83,7 @@ class BaseTokenListener(ABC):
         # Set by listen_for_tokens; None leaves migrations unparsed.
         self.pool_callback: PoolCallback | None = None
         self._seen_pools: OrderedDict[Pubkey | tuple[Pubkey, str], None] = OrderedDict()
+        self._seen_launches: OrderedDict[Pubkey, None] = OrderedDict()
 
     @abstractmethod
     async def listen_for_tokens(
@@ -104,6 +134,26 @@ class BaseTokenListener(ABC):
             except Exception:
                 reraise_if_cancelled()
                 logger.exception(f"Pool callback failed for {pool.mint}")
+
+    def _new_launch(
+        self, token_info: TokenInfo, *, pre_execution: bool = False
+    ) -> bool:
+        """Log a detected coin once; False when its mint was reported already.
+
+        A mint is created once, so a second report is the same coin: a frame
+        delivered again (a `processed` notification from a fork that was
+        dropped, say) or, before execution, another transaction sending the
+        same create. The intake would not buy it again either, so it is not
+        reported to the callback again.
+        """
+        if token_info.mint in self._seen_launches:
+            logger.debug(f"{token_info.mint} reported again; already detected")
+            return False
+        self._seen_launches[token_info.mint] = None
+        if len(self._seen_launches) > _SEEN_LAUNCHES_LIMIT:
+            self._seen_launches.popitem(last=False)
+        logger.info(describe_launch(token_info, pre_execution=pre_execution))
+        return True
 
     def should_process_token(self, token_info: TokenInfo) -> bool:
         """Check if a token should be processed based on platform filter.

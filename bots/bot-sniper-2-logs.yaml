@@ -10,7 +10,7 @@ private_key: "${SOLANA_PRIVATE_KEY}"
 enabled: false # You can turn off the bot w/o removing its config
 separate_process: true
 
-# Options: "pump_fun" (default), "lets_bonk", "stonk_fun"
+# Options: "pump_fun" (default), "launchlab", "lets_bonk", "stonk_fun"
 platform: "pump_fun"
 
 # Geyser configuration (fastest method for getting updates)
@@ -80,7 +80,7 @@ compute_units:
 filters:
   match_string: null # Only process tokens with this string in name/symbol
   bro_address: null # Only trade tokens created by this user address
-  listener_type: "logs" # Method for detecting new tokens: "logs", "blocks", or "geyser"
+  listener_type: "logs" # Method for detecting new tokens: "logs" (pump_fun only), "blocks", "geyser" or "shreds"
   # Checked once, when the bot takes the coin up: seconds since it detected the
   # coin (its launch, or its migration with entry: migration), not its age on
   # chain. Waits after that, such as a migration's mint and pool waits, don't count.

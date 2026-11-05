@@ -684,7 +684,7 @@ class SolanaClient:
         )
         return status is ConfirmationStatus.SUCCESS
 
-    async def confirm_transaction_detailed(
+    async def confirm_transaction_detailed(  # noqa: PLR0913
         self,
         signature: str | Signature,
         commitment: str = "confirmed",
@@ -692,6 +692,7 @@ class SolanaClient:
         last_valid_block_height: int | None = None,
         quiet: bool = False,
         on_error: Callable[[Exception], None] | None = None,
+        on_revert: Callable[[str], None] | None = None,
     ) -> ConfirmationStatus:
         """Confirm a transaction, distinguishing a revert from an unknown.
 
@@ -706,6 +707,7 @@ class SolanaClient:
             last_valid_block_height: As in :meth:`confirm_transaction`
             quiet: As in :meth:`confirm_transaction`
             on_error: As in :meth:`confirm_transaction`
+            on_revert: As in :meth:`verify_transaction_status`
 
         Returns:
             SUCCESS, REVERTED, or UNCONFIRMED
@@ -742,7 +744,7 @@ class SolanaClient:
                 logger.exception(f"Failed to confirm transaction {signature}")
             return ConfirmationStatus.UNCONFIRMED
 
-        return await self.verify_transaction_status(signature)
+        return await self.verify_transaction_status(signature, on_revert=on_revert)
 
     async def get_signature_outcome(
         self,
@@ -859,7 +861,10 @@ class SolanaClient:
         return status is ConfirmationStatus.SUCCESS
 
     async def verify_transaction_status(
-        self, signature: str | Signature
+        self,
+        signature: str | Signature,
+        *,
+        on_revert: Callable[[str], None] | None = None,
     ) -> ConfirmationStatus:
         """Read what actually happened to a landed transaction.
 
@@ -871,6 +876,9 @@ class SolanaClient:
 
         Args:
             signature: Transaction signature, base58 string or Signature
+            on_revert: Called with the error of a transaction that landed and
+                reverted, in place of logging it, so the caller can say it in
+                its own line
 
         Returns:
             SUCCESS, REVERTED, or UNCONFIRMED
@@ -887,10 +895,13 @@ class SolanaClient:
         tx_err = result.get("meta", {}).get("err")
         if tx_err:
             detail = _describe_program_error(tx_err)
-            logger.error(
-                f"Transaction {signature[:16]}... confirmed but failed: {tx_err}"
-                + (f" ({detail})" if detail else "")
-            )
+            error = f"{tx_err}" + (f" ({detail})" if detail else "")
+            if on_revert is not None:
+                on_revert(error)
+            else:
+                logger.error(
+                    f"Transaction {signature[:16]}... landed and reverted: {error}"
+                )
             return ConfirmationStatus.REVERTED
 
         return ConfirmationStatus.SUCCESS

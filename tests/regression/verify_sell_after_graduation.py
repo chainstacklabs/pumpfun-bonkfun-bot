@@ -319,6 +319,8 @@ class _GraduatedCurve:
 
 
 class _Market(Market):
+    name = "stub pool"
+
     def __init__(self, *, ready: bool) -> None:
         self.ready = ready
         self.minimum_out: int | None = None
