@@ -875,7 +875,11 @@ async def _slot_free_while_closing() -> list[str]:
 
         release.clear()
         closed.clear()
-        await manager._cleanup_after_exit(token)  # noqa: SLF001
+        try:
+            await asyncio.wait_for(manager._cleanup_after_exit(token), 0.5)  # noqa: SLF001
+        except TimeoutError:
+            problems.append("the after-sell cleanup waits for its close")
+            return problems
         stopper = asyncio.create_task(manager.stop())
         await asyncio.sleep(0.05)
         if stopper.done():
