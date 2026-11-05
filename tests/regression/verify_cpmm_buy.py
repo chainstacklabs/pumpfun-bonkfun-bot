@@ -51,6 +51,7 @@ import base58
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from _fakes import _deltas  # noqa: E402
 from solders.compute_budget import (  # noqa: E402
     set_compute_unit_limit,
     set_compute_unit_price,
@@ -101,18 +102,6 @@ BUYER_QUOTE_INDEX = 4
 # Input and output sides of swap_base_input: the user's account, vault, token
 # program and mint each come input first.
 SIDE_PAIRS = ((4, 5), (6, 7), (8, 9), (10, 11))
-
-
-def _deltas(tokens_raw: int | None, spent: int | None) -> TradeDeltas | None:
-    """A buy's transaction as the client reads it: `spent` is the venue's fill."""
-    if tokens_raw is None:
-        return None
-    return TradeDeltas(
-        tokens_raw=tokens_raw,
-        quote_raw=None if spent is None else -spent,
-        network_fee_lamports=0,
-        venue_quote_raw=spent,
-    )
 
 
 class _FixtureClient:

@@ -38,12 +38,13 @@ Usage:
 import asyncio
 import json
 import sys
-from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+from _fakes import _check, _logs_from_fixture  # noqa: E402
 
 from interfaces.core import Platform, TokenInfo  # noqa: E402
 from monitoring.universal_geyser_listener import UniversalGeyserListener  # noqa: E402
@@ -55,27 +56,6 @@ DECODE_DIR = PROJECT_ROOT / "cookbook" / "pumpfun" / "decode"
 INSTRUCTION_ERROR = {"InstructionError": [4, {"Custom": 1}]}
 
 SIGNATURE = "3TpvJ71gxpfpCWEiJ9XzADK732aePo61yNCnuUFPo2aMLaT3c9qdXc28EyaFKs1kRGEZBFhB2NyRwvEhZk1fUKvZ"
-
-
-def _logs_from_fixture(path: Path) -> list[str] | None:
-    """Pull `meta.logMessages` out of a captured transaction fixture.
-
-    Returns:
-        The log lines, or None if the fixture holds no transaction meta.
-    """
-
-    def walk(node: object) -> Iterator[list[str]]:
-        if isinstance(node, dict):
-            for key, value in node.items():
-                if key in ("logMessages", "log_messages") and value:
-                    yield value
-                else:
-                    yield from walk(value)
-        elif isinstance(node, list):
-            for value in node:
-                yield from walk(value)
-
-    return next(walk(json.loads(path.read_text())), None)
 
 
 def _create_logs() -> list[str]:
@@ -124,11 +104,6 @@ async def _feed(frame: dict) -> TokenInfo | None:
     return await listener._wait_for_token_creation(  # noqa: SLF001
         SimpleNamespace(recv=StubWebSocket(frame).recv)
     )
-
-
-def _check(label: str, passed: bool, detail: str) -> bool:  # noqa: FBT001
-    print(f"  [{'PASS' if passed else 'FAIL'}] {label}: {detail}")
-    return passed
 
 
 async def check_reverted_create_yields_no_token() -> bool:

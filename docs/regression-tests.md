@@ -8,6 +8,11 @@ touching the code it covers, and run the ones your change reaches. None move
 funds. `uv run tests/regression/run_all.py` runs the whole set, or name
 individual scripts for a subset.
 
+`tests/regression/_fakes.py` holds the helpers several verifiers share
+(`_check`, `_report`, stub sockets, fixture readers). Only a pure helper that is
+identical in every verifier using it belongs there; one a verifier needs in
+another shape stays in that verifier. Each verifier still runs on its own.
+
 | Script | Checks |
 |---|---|
 | `verify_v2_account_layout.py` | buy_v2/sell_v2 account layouts and PDA/ATA derivations against `idl/pump_fun_idl.json`; quote config resolves `sol`/`usdc` aliases and raw mints, refuses a zero amount or an invalid mint, and falls back to `buy_amount` for SOL |

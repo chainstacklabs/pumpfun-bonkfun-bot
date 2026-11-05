@@ -33,10 +33,10 @@ from types import SimpleNamespace
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from _fakes import _deltas, _no_fee  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
 from core.pubkeys import WSOL_MINT, SystemAddresses  # noqa: E402
-from core.trade_deltas import TradeDeltas  # noqa: E402
 from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E402
 from platforms import PlatformImplementations  # noqa: E402
 from platforms.pumpfun.address_provider import (  # noqa: E402
@@ -80,18 +80,6 @@ def _token_info() -> TokenInfo:
     )
 
 
-def _deltas(tokens_raw: int | None, spent: int | None) -> TradeDeltas | None:
-    """A buy's transaction as the client reads it: `spent` is the venue's fill."""
-    if tokens_raw is None:
-        return None
-    return TradeDeltas(
-        tokens_raw=tokens_raw,
-        quote_raw=None if spent is None else -spent,
-        network_fee_lamports=0,
-        venue_quote_raw=spent,
-    )
-
-
 class _Client:
     def __init__(self, *, tokens_raw=None, balance_raw=None, spent=1_000_000) -> None:
         self.sent: list = []
@@ -122,10 +110,6 @@ class _Curve:
             "is_mayhem_mode": False,
             "is_cashback_coin": False,
         }
-
-
-async def _no_fee(_accounts: list) -> None:
-    return None
 
 
 def _wire(builder=BUILDER) -> None:

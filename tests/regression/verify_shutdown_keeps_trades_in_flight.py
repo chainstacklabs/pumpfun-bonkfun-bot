@@ -102,6 +102,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import base58  # noqa: E402
 import httpx2  # noqa: E402
+from _fakes import _deltas, _report, _until  # noqa: E402
 from solana.rpc.core import RPCException  # noqa: E402
 from solders.hash import Hash  # noqa: E402
 from solders.keypair import Keypair  # noqa: E402
@@ -178,18 +179,6 @@ def _token(symbol: str) -> TokenInfo:
 
 def _account(token: TokenInfo) -> Pubkey:
     return WALLET.get_associated_token_address(token.mint, TOKEN_PROGRAM)
-
-
-def _deltas(tokens_raw: int | None, spent: int | None) -> TradeDeltas | None:
-    """A buy's transaction as the client reads it: `spent` is the venue's fill."""
-    if tokens_raw is None:
-        return None
-    return TradeDeltas(
-        tokens_raw=tokens_raw,
-        quote_raw=None if spent is None else -spent,
-        network_fee_lamports=0,
-        venue_quote_raw=spent,
-    )
 
 
 class _Client:
@@ -468,28 +457,12 @@ def _logged():  # noqa: ANN202
         root.setLevel(level)
 
 
-async def _until(condition: Callable[[], bool], timeout: float = 3.0) -> bool:
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
-    while not condition():
-        if loop.time() >= deadline:
-            return False
-        await asyncio.sleep(0.005)
-    return True
-
-
 async def _shut_down(task: asyncio.Task, timeout: float = 5.0) -> bool:
     """Cancel the trader as SIGINT does under asyncio.run; whether it ended."""
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError, TimeoutError):
         await asyncio.wait_for(task, timeout)
     return task.done()
-
-
-def _report(problems: list[str]) -> bool:
-    for problem in problems:
-        print(f"    {problem}")
-    return not problems
 
 
 def _trade_lines() -> list[dict]:

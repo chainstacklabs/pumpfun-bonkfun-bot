@@ -34,6 +34,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from _fakes import _report  # noqa: E402
+
 import bot_runner  # noqa: E402
 from utils.logger import install_secret_redaction, redact  # noqa: E402
 
@@ -42,12 +44,6 @@ WSS = "wss://acct-1234.solana-mainnet.example-rpc.com/k9f8e7d6c5b4a3928170"
 GEYSER = "grpc.acct-1234.example-geyser.io:10000"
 RPC_HOST = "acct-1234.solana-mainnet.example-rpc.com"
 GEYSER_HOST = "grpc.acct-1234.example-geyser.io"
-
-
-def _report(problems: list[str]) -> bool:
-    for problem in problems:
-        print(f"    {problem}")
-    return not problems
 
 
 def _with_env(**values: str) -> None:

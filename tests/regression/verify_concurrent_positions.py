@@ -40,6 +40,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import base58  # noqa: E402
 import yaml  # noqa: E402
+from _fakes import _report, _until  # noqa: E402
 from solders.keypair import Keypair  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
@@ -185,22 +186,6 @@ def _trader(listener: _Listener, **settings: object) -> object:
 
     trader._resolve_quote_token_programs = no_quotes  # noqa: SLF001
     return trader
-
-
-async def _until(condition: Callable[[], bool], timeout: float = 3.0) -> bool:
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
-    while not condition():
-        if loop.time() >= deadline:
-            return False
-        await asyncio.sleep(0.005)
-    return True
-
-
-def _report(problems: list[str]) -> bool:
-    for problem in problems:
-        print(f"    {problem}")
-    return not problems
 
 
 def check_a_config() -> bool:

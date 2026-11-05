@@ -96,6 +96,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import base58  # noqa: E402
 import websockets  # noqa: E402
+from _fakes import _FakeChannel, _FakeSocket, _FeedEnd  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 from solders.rpc.responses import GetSignatureStatusesResp  # noqa: E402
 from solders.signature import Signature  # noqa: E402
@@ -171,10 +172,6 @@ WANTED_VENUES = {
 def _venue_names() -> dict[str, str | None]:
     classes = {"curve": CurveMarket, "pumpswap": PumpSwapMarket, "cpmm": CpmmMarket}
     return {label: getattr(cls, "name", None) for label, cls in classes.items()}
-
-
-class _FeedEnd(BaseException):
-    """Ends a listener loop once its scripted frames run out."""
 
 
 # --- log capture ----------------------------------------------------------------
@@ -342,41 +339,6 @@ def _frames(platform: Platform, kind: str) -> list:
 
 
 # --- scripted transports --------------------------------------------------------
-
-
-class _FakeSocket:
-    """A websocket that answers subscriptions, then plays frames, then ends."""
-
-    def __init__(self, frames: list[dict]) -> None:
-        self.replies: deque[str] = deque()
-        self.frames = deque(json.dumps(frame) for frame in frames)
-
-    async def send(self, message: str) -> None:
-        self.replies.append(json.dumps({"id": json.loads(message)["id"], "result": 7}))
-
-    async def recv(self) -> str:
-        if self.replies:
-            return self.replies.popleft()
-        if self.frames:
-            return self.frames.popleft()
-        raise _FeedEnd
-
-    async def ping(self) -> None:
-        await asyncio.sleep(3600)
-
-    async def close(self) -> None:
-        return None
-
-    async def __aenter__(self) -> "_FakeSocket":
-        return self
-
-    async def __aexit__(self, *_exc: object) -> None:
-        return None
-
-
-class _FakeChannel:
-    async def close(self) -> None:
-        return None
 
 
 class _FakeStub:

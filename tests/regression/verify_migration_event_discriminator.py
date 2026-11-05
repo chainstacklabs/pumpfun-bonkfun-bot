@@ -37,6 +37,8 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+from _fakes import _check
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 DECODER_FILES = (
@@ -81,11 +83,6 @@ def _load(path: Path) -> ModuleType:
 
 
 DECODERS = {path.name: _load(path).parse_migrate_instruction for path in DECODER_FILES}
-
-
-def _check(label: str, passed: bool, detail: str) -> bool:  # noqa: FBT001
-    print(f"  [{'PASS' if passed else 'FAIL'}] {label}: {detail}")
-    return passed
 
 
 def _rejects(payload: bytes, label: str) -> bool:

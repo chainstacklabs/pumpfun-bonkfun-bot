@@ -49,6 +49,7 @@ import base58
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from _fakes import _keys, _no_fee  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
 from core.pubkeys import WSOL_MINT, SystemAddresses  # noqa: E402
@@ -67,8 +68,8 @@ from platforms.stonkfun import (  # noqa: E402
     StonkFunInstructionBuilder,
 )
 from trading import platform_aware  # noqa: E402
-from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller  # noqa: E402
 from trading.intake import TokenIntake  # noqa: E402
+from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller  # noqa: E402
 from utils.idl_manager import get_idl_manager  # noqa: E402
 
 FIXTURE = Path(__file__).with_name("raw_stonkfun_trades_from_gettransaction.json")
@@ -100,15 +101,6 @@ class _FixtureClient:
         commitment: str | None = None,  # noqa: ARG002
     ) -> list[SimpleNamespace]:
         return [SimpleNamespace(data=self.accounts[k], owner=None) for k in pubkeys]
-
-
-def _keys(tx: dict) -> list[str]:
-    loaded = tx["meta"].get("loadedAddresses") or {}
-    return (
-        tx["transaction"]["message"]["accountKeys"]
-        + loaded.get("writable", [])
-        + loaded.get("readonly", [])
-    )
 
 
 def _instructions(tx: dict):
@@ -346,10 +338,6 @@ def _stub_implementations(pool_state: dict, captured: dict, *, exact_in: bool):
         ),
         curve_manager=Curve(),
     )
-
-
-async def _no_fee(_accounts: list) -> None:
-    return None
 
 
 POOL_STATE = {

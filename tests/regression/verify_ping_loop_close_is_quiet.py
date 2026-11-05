@@ -46,6 +46,8 @@ from websockets.frames import Close
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from _fakes import ErrorCapture, _check  # noqa: E402
+
 import monitoring  # noqa: E402
 from monitoring.universal_block_listener import UniversalBlockListener  # noqa: E402
 from monitoring.universal_logs_listener import UniversalLogsListener  # noqa: E402
@@ -81,17 +83,6 @@ class ClosedWebSocket:
         return None
 
 
-class ErrorCapture(logging.Handler):
-    """Collects records logged at ERROR or above."""
-
-    def __init__(self) -> None:
-        super().__init__(level=logging.ERROR)
-        self.records: list[logging.LogRecord] = []
-
-    def emit(self, record: logging.LogRecord) -> None:
-        self.records.append(record)
-
-
 async def _run_ping_loop(
     listener_cls: type, error: BaseException
 ) -> tuple[bool, list[logging.LogRecord]]:
@@ -117,11 +108,6 @@ async def _run_ping_loop(
     finally:
         logger.removeHandler(capture)
     return returned, capture.records
-
-
-def _check(label: str, passed: bool, detail: str) -> bool:  # noqa: FBT001
-    print(f"  [{'PASS' if passed else 'FAIL'}] {label}: {detail}")
-    return passed
 
 
 async def _check_close_is_quiet(label: str, make_error) -> bool:  # noqa: ANN001

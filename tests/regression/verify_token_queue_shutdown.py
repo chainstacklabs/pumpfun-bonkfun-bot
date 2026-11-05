@@ -46,20 +46,11 @@ from types import SimpleNamespace
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from _fakes import ErrorCapture, _check  # noqa: E402
+
 from trading.intake import TokenIntake  # noqa: E402
 
 MAX_TOKEN_AGE = 30.0
-
-
-class ErrorCapture(logging.Handler):
-    """Collects records logged at ERROR or above."""
-
-    def __init__(self) -> None:
-        super().__init__(level=logging.ERROR)
-        self.records: list[logging.LogRecord] = []
-
-    def emit(self, record: logging.LogRecord) -> None:
-        self.records.append(record)
 
 
 def _make_trader() -> TokenIntake:
@@ -83,11 +74,6 @@ def _token(mint: str = "StubMint") -> SimpleNamespace:
     return SimpleNamespace(
         mint=mint, symbol="STUB", platform=SimpleNamespace(value="pump_fun")
     )
-
-
-def _check(label: str, passed: bool, detail: str) -> bool:  # noqa: FBT001
-    print(f"  [{'PASS' if passed else 'FAIL'}] {label}: {detail}")
-    return passed
 
 
 async def _cancel_parked() -> tuple[BaseException | None, list[logging.LogRecord]]:

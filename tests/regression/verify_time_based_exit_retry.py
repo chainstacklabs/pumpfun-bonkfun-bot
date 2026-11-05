@@ -38,6 +38,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from _fakes import _check  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
 from interfaces.core import (  # noqa: E402
@@ -181,11 +182,6 @@ async def _run_exit(
         timeout=EXIT_TIMEOUT,
     )
     return seller, curve_manager
-
-
-def _check(label: str, passed: bool, detail: str) -> bool:  # noqa: FBT001
-    print(f"  [{'PASS' if passed else 'FAIL'}] {label}: {detail}")
-    return passed
 
 
 async def check_first_attempt_uses_buy_price() -> bool:

@@ -60,6 +60,7 @@ import base58
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from _fakes import _deltas  # noqa: E402
 from solders.compute_budget import (  # noqa: E402
     set_compute_unit_limit,
     set_compute_unit_price,
@@ -113,18 +114,6 @@ SPEND = 10_000_000  # the buyer's 0.01 SOL, in lamports
 # What `_build` asks for: raw quote in, raw token floor.
 AMOUNT_IN, MIN_OUT = 1_000_000, 2_000_000
 USER = Pubkey.from_string("7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU")
-
-
-def _deltas(tokens_raw: int | None, spent: int | None) -> TradeDeltas | None:
-    """A buy's transaction as the client reads it: `spent` is the venue's fill."""
-    if tokens_raw is None:
-        return None
-    return TradeDeltas(
-        tokens_raw=tokens_raw,
-        quote_raw=None if spent is None else -spent,
-        network_fee_lamports=0,
-        venue_quote_raw=spent,
-    )
 
 
 class _FixtureClient:

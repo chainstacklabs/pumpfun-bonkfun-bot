@@ -49,6 +49,7 @@ from types import SimpleNamespace
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from _fakes import _check, _deltas  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
 from core.client import SolanaClient  # noqa: E402
@@ -73,18 +74,6 @@ AMOUNT_TOLERANCE = 1e-9  # float round-trip through raw token units
 LANDED_TX = {"meta": {"err": None, "preBalances": [], "postBalances": []}}
 REVERTED_TX = {"meta": {"err": {"InstructionError": [3, {"Custom": 6062}]}}}
 NULL_RESULT = {"jsonrpc": "2.0", "id": 1, "result": None}
-
-
-def _deltas(tokens_raw: int | None, spent: int | None) -> TradeDeltas | None:
-    """A buy's transaction as the client reads it: `spent` is the venue's fill."""
-    if tokens_raw is None:
-        return None
-    return TradeDeltas(
-        tokens_raw=tokens_raw,
-        quote_raw=None if spent is None else -spent,
-        network_fee_lamports=0,
-        venue_quote_raw=spent,
-    )
 
 
 class StubRpc:
@@ -227,11 +216,6 @@ async def _run_buy(
         return await buyer.execute(token_info or _make_token_info())
     finally:
         platform_aware.get_platform_implementations = original
-
-
-def _check(label: str, passed: bool, detail: str) -> bool:  # noqa: FBT001
-    print(f"  [{'PASS' if passed else 'FAIL'}] {label}: {detail}")
-    return passed
 
 
 async def check_lagging_node_is_retried() -> bool:

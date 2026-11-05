@@ -48,10 +48,10 @@ import base58
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from _fakes import _geyser_update, _keys  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
 from config_loader import validate_config  # noqa: E402
-from geyser.generated import geyser_pb2  # noqa: E402
 from interfaces.core import EventParser, Platform, TokenInfo  # noqa: E402
 from monitoring.listener_factory import ListenerFactory  # noqa: E402
 from platforms import platform_factory  # noqa: E402
@@ -98,15 +98,6 @@ def _other_launches() -> list[dict]:
     return _fixture("raw_launchlab_launches_from_gettransaction.json")
 
 
-def _keys(tx: dict) -> list[str]:
-    loaded = tx["meta"].get("loadedAddresses") or {}
-    return (
-        tx["transaction"]["message"]["accountKeys"]
-        + loaded.get("writable", [])
-        + loaded.get("readonly", [])
-    )
-
-
 def _initialize(tx: dict) -> tuple[dict, dict]:
     """The top-level launch instruction and its accounts by slot name."""
     keys = _keys(tx)
@@ -124,38 +115,6 @@ def _parse_block(parser: EventParser, tx: dict) -> TokenInfo | None:
     return parser.parse_token_creation_from_block(
         {"transactions": [{"transaction": tx["transaction"], "meta": tx["meta"]}]}
     )
-
-
-def _geyser_update(tx: dict) -> geyser_pb2.SubscribeUpdate:
-    """A geyser frame carrying the same transaction as the JSON fixture."""
-    update = geyser_pb2.SubscribeUpdate()
-    info = update.transaction.transaction
-    message = info.transaction.message
-    json_message = tx["transaction"]["message"]
-    message.account_keys.extend(
-        base58.b58decode(k) for k in json_message["accountKeys"]
-    )
-    for ix in json_message["instructions"]:
-        compiled = message.instructions.add()
-        compiled.program_id_index = ix["programIdIndex"]
-        compiled.accounts = bytes(ix["accounts"])
-        compiled.data = base58.b58decode(ix["data"])
-    loaded = tx["meta"].get("loadedAddresses") or {}
-    info.meta.loaded_writable_addresses.extend(
-        base58.b58decode(k) for k in loaded.get("writable", [])
-    )
-    info.meta.loaded_readonly_addresses.extend(
-        base58.b58decode(k) for k in loaded.get("readonly", [])
-    )
-    for group in tx["meta"].get("innerInstructions") or []:
-        inner = info.meta.inner_instructions.add()
-        inner.index = group["index"]
-        for ix in group["instructions"]:
-            compiled = inner.instructions.add()
-            compiled.program_id_index = ix["programIdIndex"]
-            compiled.accounts = bytes(ix["accounts"])
-            compiled.data = base58.b58decode(ix["data"])
-    return update
 
 
 def _fields(token_info: TokenInfo) -> dict:
