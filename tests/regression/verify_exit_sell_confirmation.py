@@ -34,9 +34,13 @@ against a stub seller and a stub client serving scripted confirmations:
      the block height past which it can no longer land; only
      `TransactionNotSent` is SUBMIT_FAILED with no signature.
  13. An unconfirmed sell that carries that height and is still unknown after
-     the re-check is waited on: sold again only once no node knows its
-     signature and the block height is past it, never before; one that lands
-     meanwhile is a late success; one seen but never confirmed is not resold.
+     the re-check is waited on: each look reads the height and its slot, then
+     the signature, then, once the height is past it and no node knows the
+     signature, the wallet's balance at that slot; only a balance still
+     holding what the sell asked for sends another, never before the expiry.
+     One that lands meanwhile, or between the lookup and the balance read, is
+     not resold; a balance node behind the slot is not trusted; one seen but
+     never confirmed is not resold.
 
 Usage:
     uv run tests/regression/verify_exit_sell_confirmation.py
@@ -91,6 +95,10 @@ ONE_ATTEMPT = 1
 TWO_ATTEMPTS = 2
 # The block height past which a scripted sell can no longer land.
 LAST_VALID = 100
+# The slot the scripted block height is read at, and what an unknown sell asked
+# to sell (the wallet holds that much until it lands).
+HEIGHT_SLOT = 5_000
+ASKED_RAW = int(QUANTITY * 10**6)  # the whole position
 
 # Stands in for an RPC error post_rpc does not contain, e.g. a malformed JSON
 # body raising json.JSONDecodeError out of response.json().
@@ -142,6 +150,7 @@ class StubSeller:
                 error_message="scripted failure",
                 failure_reason=self.reason,
                 last_valid_block_height=self.last_valid,
+                amount_raw=None if self.last_valid is None else ASKED_RAW,
             )
         return TradeResult(
             success=True,
@@ -155,7 +164,7 @@ class StubSeller:
 class StubClient:
     """Answers verify_transaction_status from a script."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - one stub, every knob of its script
         self,
         statuses: list[ConfirmationStatus],
         *,
@@ -163,6 +172,8 @@ class StubClient:
         outcomes: list | None = None,
         heights: list[int] | None = None,
         events: list | None = None,
+        lands_after_lookup: int | None = None,
+        node_slot: int = HEIGHT_SLOT,
     ) -> None:
         self.statuses = list(statuses)
         self.raises = raises
@@ -172,18 +183,45 @@ class StubClient:
         self.outcomes = list(outcomes or [(None, None)])
         self.heights = list(heights or [0])
         self.events = events if events is not None else []
+        # The sell lands on chain right after this lookup (0: before any):
+        # the wallet's balance is then gone, as a node at the slot shows it.
+        self.lands_after_lookup = lands_after_lookup
+        self.lookups = 0
+        # The slot of the node answering balance reads; one behind the slot
+        # asked for refuses, and without a slot it answers from before the sale.
+        self.node_slot = node_slot
 
     async def get_signature_outcome(
         self, _signature: str, **_options: object
     ) -> tuple[ConfirmationStatus | None, int | None]:
         outcome = self.outcomes.pop(0) if len(self.outcomes) > 1 else self.outcomes[0]
+        self.lookups += 1
         self.events.append(("lookup", outcome[0]))
         return outcome
 
     async def get_block_height_and_slot(self) -> tuple[int, int]:
         height = self.heights.pop(0) if len(self.heights) > 1 else self.heights[0]
         self.events.append(("height", height))
-        return height, 1
+        return height, HEIGHT_SLOT
+
+    async def get_account_info(
+        self,
+        address: Pubkey,
+        commitment: str | None = None,  # noqa: ARG002 - every read sees one state
+        min_context_slot: int | None = None,
+    ) -> SimpleNamespace:
+        if address == _make_token_info().mint:  # the mint: its token program
+            return SimpleNamespace(owner=SystemAddresses.TOKEN_PROGRAM, data=b"")
+        self.events.append(("balance", min_context_slot))
+        if min_context_slot is not None and min_context_slot > self.node_slot:
+            raise RuntimeError("Minimum context slot has not been reached")  # noqa: TRY003
+        landed = (
+            self.lands_after_lookup is not None
+            and self.lookups >= self.lands_after_lookup
+            and self.node_slot >= HEIGHT_SLOT
+        )
+        held = 0 if landed else ASKED_RAW
+        return SimpleNamespace(data=bytes(64) + held.to_bytes(8, "little") + bytes(93))
 
     async def verify_transaction_status(self, _signature: str) -> ConfirmationStatus:
         """Report the next scripted status.
@@ -259,7 +297,6 @@ def _make_trader(seller: StubSeller, client: StubClient) -> PositionManager:
     )
     trader.seller = seller
     trader.solana_client = client
-    trader.wallet = None
     trader.priority_fee_manager = None
     trader.cleanup_mode = "disabled"  # keeps handle_cleanup_after_sell a no-op
     trader.cleanup_with_priority_fee = False
@@ -267,6 +304,9 @@ def _make_trader(seller: StubSeller, client: StubClient) -> PositionManager:
     # The expiry wait, shortened: polled every 10 ms, given up after 0.5 s.
     trader._PENDING_RECHECK = 0.01  # noqa: SLF001
     trader._SELL_EXPIRY_WAIT = 0.5  # noqa: SLF001
+    trader.wallet = SimpleNamespace(
+        get_associated_token_address=lambda _mint, _program: Pubkey.new_unique()
+    )
     trade_log.log_trade = lambda *_a, **_kw: None
     return trader
 
@@ -297,6 +337,8 @@ async def _run_both_paths(  # noqa: PLR0913 - one script, every knob of it
     last_valid: int | None = None,
     outcomes: list | None = None,
     heights: list[int] | None = None,
+    lands_after_lookup: int | None = None,
+    node_slot: int = HEIGHT_SLOT,
 ) -> list[tuple[str, StubSeller, StubClient]]:
     """Drive the time-based and tp/sl exits over the same script.
 
@@ -323,6 +365,8 @@ async def _run_both_paths(  # noqa: PLR0913 - one script, every knob of it
         outcomes=outcomes,
         heights=heights,
         events=events,
+        lands_after_lookup=lands_after_lookup,
+        node_slot=node_slot,
     )
     trader = _make_trader(seller, client)
     buy_result = TradeResult(
@@ -346,6 +390,8 @@ async def _run_both_paths(  # noqa: PLR0913 - one script, every knob of it
         outcomes=outcomes,
         heights=heights,
         events=events,
+        lands_after_lookup=lands_after_lookup,
+        node_slot=node_slot,
     )
     trader = _make_trader(seller, client)
     async with asyncio.timeout(EXIT_TIMEOUT):
@@ -727,6 +773,55 @@ async def check_ambiguous_send_keeps_its_signature() -> bool:
     )
 
 
+def _resold_in_order(seller: StubSeller) -> bool:
+    """Sold twice, the second only after height, lookup and balance, in order.
+
+    The last look before the second sell reads the height past expiry, then
+    the signature, then the balance no older than the height's slot.
+    """
+    events = seller.events
+    if seller.attempts != TWO_ATTEMPTS or ("sell", 2) not in events:
+        return False
+    before = events[: events.index(("sell", 2))]
+    return (
+        [kind for kind, _ in before[-3:]] == ["height", "lookup", "balance"]
+        and before[-3] == ("height", 101)
+        and before[-1] == ("balance", HEIGHT_SLOT)
+        and [v for kind, v in before if kind == "height"] == [90, 95, 101]
+    )
+
+
+async def _landed_unseen_problems(
+    unknown: TradeFailureReason, pending: list[ConfirmationStatus]
+) -> list[str]:
+    """A sell that landed while no lookup shows it is never resold."""
+    problems = []
+    # The sell lands between the lookup and anything after it: only the
+    # balance can tell, and it is not resold.
+    for label, seller, _client in await _run_both_paths(
+        1, unknown, pending, last_valid=LAST_VALID, heights=[101], lands_after_lookup=1
+    ):
+        if seller.attempts != ONE_ATTEMPT:
+            problems.append(f"landed after the lookup, {label}: {seller.attempts}")
+    # It landed, but the balance node is behind the height's slot: it must
+    # refuse, not answer from before the sale.
+    for label, seller, _client in await _run_both_paths(
+        1,
+        unknown,
+        pending,
+        last_valid=LAST_VALID,
+        heights=[101],
+        lands_after_lookup=0,
+        node_slot=HEIGHT_SLOT - 1,
+    ):
+        slots = {v for kind, v in seller.events if kind == "balance"}
+        if seller.attempts != ONE_ATTEMPT or slots != {HEIGHT_SLOT}:
+            problems.append(
+                f"lagging node, {label}: {seller.attempts} sells, slots {slots}"
+            )
+    return problems
+
+
 async def check_unknown_sell_waits_for_expiry() -> bool:
     """An unknown sell is resold only once it can no longer land.
 
@@ -739,17 +834,11 @@ async def check_unknown_sell_waits_for_expiry() -> bool:
     for label, seller, _client in await _run_both_paths(
         1, unknown, pending, last_valid=LAST_VALID, heights=[90, 95, 101]
     ):
-        heights = [v for kind, v in seller.events if kind == "height"]
-        before = (
-            seller.events[: seller.events.index(("sell", 2))]
-            if (("sell", 2) in seller.events)
-            else seller.events
-        )
-        last_height = [v for kind, v in before if kind == "height"][-1:]
-        if seller.attempts != TWO_ATTEMPTS or last_height != [101]:
+        if not _resold_in_order(seller):
             problems.append(
-                f"expired, {label}: {seller.attempts} sells, heights {heights}"
+                f"expired, {label}: {seller.attempts} sells, {seller.events}"
             )
+    problems += await _landed_unseen_problems(unknown, pending)
     for label, seller, _client in await _run_both_paths(
         1,
         unknown,
@@ -774,7 +863,8 @@ async def check_unknown_sell_waits_for_expiry() -> bool:
         "an unknown sell is resold only after its blockhash expired unseen",
         not problems,
         "; ".join(problems)
-        or "expired: resold after height 101; landed: late success; seen: stopped",
+        or "expired: resold after height, lookup, balance at the slot; landed "
+        "meanwhile or after the lookup: not resold; lagging node and seen: stopped",
     )
 
 

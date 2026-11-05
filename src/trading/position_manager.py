@@ -1143,7 +1143,10 @@ class PositionManager:
 
         if sell_result.last_valid_block_height is not None:
             return await self._sell_after_expiry(
-                token_info, signature, sell_result.last_valid_block_height
+                token_info,
+                signature,
+                sell_result.last_valid_block_height,
+                sell_result.amount_raw,
             )
         logger.error(
             f"Exit sell {signature[:16]}... is still unconfirmed. Not sending "
@@ -1153,19 +1156,27 @@ class PositionManager:
         return ExitSellVerdict.STOP
 
     async def _sell_after_expiry(
-        self, token_info: TokenInfo, signature: str, last_valid: int
+        self,
+        token_info: TokenInfo,
+        signature: str,
+        last_valid: int,
+        asked_raw: int | None,
     ) -> ExitSellVerdict:
         """Wait until an unresolved exit sell has landed or can no longer land.
 
-        Another sell is safe only once the block height is past the sell's
-        `last_valid` and no node knows its signature: then it never landed and
-        never will. A signature seen but not confirmed, or a lookup that
-        failed, is waited on; nothing is resent before the expiry. Bounded by
-        `_SELL_EXPIRY_WAIT`.
+        Each look reads the block height and slot first, then the signature:
+        a sell cannot land once the height is past `last_valid`, so a lookup
+        made after that read sees it if it ever landed. Another sell goes out
+        only when the height is past `last_valid`, no node knows the signature,
+        and the wallet, read at "confirmed" from a node at least at that slot,
+        still holds the `asked_raw` the sell asked for. A smaller balance means
+        it landed after all; a node behind the slot, a signature seen but not
+        confirmed, or a failed read is waited on. Nothing is resent before the
+        expiry. Bounded by `_SELL_EXPIRY_WAIT`.
 
         Returns:
-            LATE_SUCCESS, RETRY (reverted, or expired unknown), or STOP when
-            still unresolved at the bound
+            LATE_SUCCESS, RETRY (reverted, or expired unknown with the coin
+            still held), or STOP when still unresolved at the bound
         """
         logger.warning(
             f"Waiting for exit sell {signature[:16]}... of {token_info.symbol} to "
@@ -1174,6 +1185,10 @@ class PositionManager:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._SELL_EXPIRY_WAIT
         while True:
+            try:
+                height, slot = await self.solana_client.get_block_height_and_slot()
+            except Exception:  # noqa: BLE001
+                height, slot = None, None
             try:
                 outcome, seen_at = await self.solana_client.get_signature_outcome(
                     signature, search_history=True, quiet=True
@@ -1185,12 +1200,16 @@ class PositionManager:
                 return ExitSellVerdict.LATE_SUCCESS
             if outcome is ConfirmationStatus.REVERTED:
                 return ExitSellVerdict.RETRY
-            if outcome is None and seen_at is None:
-                try:
-                    height, _slot = await self.solana_client.get_block_height_and_slot()
-                except Exception:  # noqa: BLE001
-                    height = None
-                if height is not None and height > last_valid:
+            expired = height is not None and height > last_valid
+            if expired and outcome is None and seen_at is None and asked_raw:
+                held = await self._held_raw(token_info, slot)
+                if held is not None and held < asked_raw:
+                    logger.info(
+                        f"Exit sell {signature[:16]}... landed after all: the "
+                        f"wallet holds {held} of the {asked_raw} raw it sold"
+                    )
+                    return ExitSellVerdict.LATE_SUCCESS
+                if held is not None:
                     logger.info(
                         f"Exit sell {signature[:16]}... expired without landing; "
                         f"selling {token_info.symbol} again"
