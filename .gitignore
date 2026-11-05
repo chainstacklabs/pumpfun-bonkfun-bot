@@ -1,6 +1,8 @@
 trades/*
 # open positions, resumed on restart; written by the bot
 positions/
+# encrypted keystores written by pump_bot_wallet
+*.enc
 # written by learning-examples/extract_blocksubscribe_transactions.py
 blocksubscribe-transactions/
 
