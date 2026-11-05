@@ -1479,7 +1479,7 @@
   },
   {
    "signature": "4CVUi1jRidtcYWQnW5Cqk1Db8NcYWzdySZK9Tf9ciZLe7tECoLw1cW3yX5cekgRN6iPMp3qtC6L5s7h84foD9Hgj",
-   "label": "legacy migrate, SOL quote, SPL Token coin",
+   "label": "legacy migrate, SOL quote, Token-2022 coin",
    "get_transaction": {
     "slot": 464953256,
     "version": 0,

@@ -2600,7 +2600,7 @@
    }
   },
   {
-   "label": "pump.fun, legacy migrate, SOL quote, SPL Token coin",
+   "label": "pump.fun, legacy migrate, SOL quote, Token-2022 coin",
    "token": {
     "name": "ESOL",
     "symbol": "$ESOL",

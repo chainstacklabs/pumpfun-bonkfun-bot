@@ -251,6 +251,26 @@ def check_a_accounts_match_chain() -> bool:
             problems.append("mayhem pool not paying the reserved recipient")
         if ours[-2] not in buyback or chain[-2] not in buyback:
             problems.append("buyback recipient not from GlobalConfig")
+        # The recipients' quote accounts, left out of the comparison below
+        # because the recipients are random picks, are each one's own ATA, under
+        # the quote program the real buy used.
+        quote = Pubkey.from_string(case["quote_mint"])
+
+        def ata(owner: str, program: Pubkey, quote: Pubkey = quote) -> str:
+            return str(
+                get_associated_token_address(Pubkey.from_string(owner), quote, program)
+            )
+
+        programs = [
+            p
+            for p in (SystemAddresses.TOKEN_PROGRAM, SystemAddresses.TOKEN_2022_PROGRAM)
+            if ata(chain[9], p) == chain[10]
+        ]
+        if not programs or (
+            ours[10] != ata(ours[9], programs[0])
+            or ours[-1] != ata(ours[-2], programs[0])
+        ):
+            problems.append("a recipient's quote account is not its ATA")
         variable = {5, 6, 9, 10, len(chain) - 2, len(chain) - 1}
         differs = [
             i
@@ -331,6 +351,7 @@ def check_c_cashback_and_pool_v2() -> bool:
         "sell cashback": tail("sell", cashback)
         == [accumulator_ata, accumulator, pool_v2],
         "buy not canonical": tail("buy", not_canonical) == [],
+        "sell not canonical": tail("sell", not_canonical) == [],
     }
     lengths = {
         side: len(_swap(_build(case, USER, side=side)).accounts)

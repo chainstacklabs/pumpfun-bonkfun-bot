@@ -781,7 +781,8 @@ def _check_j_unreadable_bytes(tmp: Path) -> list[str]:
         ("utf8", b"\xff\xfe{", None),
         ("not-list", b'{"version": 1, "positions": {"m": {"mint": "m"}}}', None),
     ]
-    if os.geteuid() != 0:  # root reads a mode-000 file anyway
+    # Root reads a mode-000 file anyway; Windows has no such mode (nor geteuid).
+    if hasattr(os, "geteuid") and os.geteuid() != 0:
         cases.append(("perm", b'{"version": 1, "positions": []}', 0))
     for name, content, mode in cases:
         path = tmp / f"j-{name}.json"
