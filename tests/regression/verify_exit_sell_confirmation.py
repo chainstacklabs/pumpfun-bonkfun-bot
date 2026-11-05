@@ -30,8 +30,13 @@ against a stub seller and a stub client serving scripted confirmations:
      SUBMIT_FAILED - only the latter is safe to resend unchecked.
  11. A re-check that itself throws stops, rather than escaping into a retry.
  12. The real seller, whose send fails after signing in a way that may still
-     have delivered it, reports UNCONFIRMED with the signature it signed;
-     only `TransactionNotSent` is SUBMIT_FAILED with no signature.
+     have delivered it, reports UNCONFIRMED with the signature it signed and
+     the block height past which it can no longer land; only
+     `TransactionNotSent` is SUBMIT_FAILED with no signature.
+ 13. An unconfirmed sell that carries that height and is still unknown after
+     the re-check is waited on: sold again only once no node knows its
+     signature and the block height is past it, never before; one that lands
+     meanwhile is a late success; one seen but never confirmed is not resold.
 
 Usage:
     uv run tests/regression/verify_exit_sell_confirmation.py
@@ -84,6 +89,8 @@ EXIT_TIMEOUT = 10
 
 ONE_ATTEMPT = 1
 TWO_ATTEMPTS = 2
+# The block height past which a scripted sell can no longer land.
+LAST_VALID = 100
 
 # Stands in for an RPC error post_rpc does not contain, e.g. a malformed JSON
 # body raising json.JSONDecodeError out of response.json().
@@ -98,10 +105,14 @@ class StubSeller:
         fail_first: int,
         reason: TradeFailureReason | None,
         signature: str | None = SELL_SIGNATURE,
+        last_valid: int | None = None,
+        events: list | None = None,
     ) -> None:
         self.fail_first = fail_first
         self.reason = reason
         self.signature = signature
+        self.last_valid = last_valid
+        self.events = events if events is not None else []
         self.attempts = 0
 
     async def execute(
@@ -122,6 +133,7 @@ class StubSeller:
             The scripted TradeResult
         """
         self.attempts += 1
+        self.events.append(("sell", self.attempts))
         if self.attempts <= self.fail_first:
             return TradeResult(
                 success=False,
@@ -129,6 +141,7 @@ class StubSeller:
                 tx_signature=self.signature,
                 error_message="scripted failure",
                 failure_reason=self.reason,
+                last_valid_block_height=self.last_valid,
             )
         return TradeResult(
             success=True,
@@ -143,11 +156,34 @@ class StubClient:
     """Answers verify_transaction_status from a script."""
 
     def __init__(
-        self, statuses: list[ConfirmationStatus], *, raises: bool = False
+        self,
+        statuses: list[ConfirmationStatus],
+        *,
+        raises: bool = False,
+        outcomes: list | None = None,
+        heights: list[int] | None = None,
+        events: list | None = None,
     ) -> None:
         self.statuses = list(statuses)
         self.raises = raises
         self.checks = 0
+        # After the re-check: signature lookups and block heights, in order;
+        # the last one repeats.
+        self.outcomes = list(outcomes or [(None, None)])
+        self.heights = list(heights or [0])
+        self.events = events if events is not None else []
+
+    async def get_signature_outcome(
+        self, _signature: str, **_options: object
+    ) -> tuple[ConfirmationStatus | None, int | None]:
+        outcome = self.outcomes.pop(0) if len(self.outcomes) > 1 else self.outcomes[0]
+        self.events.append(("lookup", outcome[0]))
+        return outcome
+
+    async def get_block_height_and_slot(self) -> tuple[int, int]:
+        height = self.heights.pop(0) if len(self.heights) > 1 else self.heights[0]
+        self.events.append(("height", height))
+        return height, 1
 
     async def verify_transaction_status(self, _signature: str) -> ConfirmationStatus:
         """Report the next scripted status.
@@ -228,6 +264,9 @@ def _make_trader(seller: StubSeller, client: StubClient) -> PositionManager:
     trader.cleanup_mode = "disabled"  # keeps handle_cleanup_after_sell a no-op
     trader.cleanup_with_priority_fee = False
     trader.cleanup_force_close_with_burn = False
+    # The expiry wait, shortened: polled every 10 ms, given up after 0.5 s.
+    trader._PENDING_RECHECK = 0.01  # noqa: SLF001
+    trader._SELL_EXPIRY_WAIT = 0.5  # noqa: SLF001
     trade_log.log_trade = lambda *_a, **_kw: None
     return trader
 
@@ -248,13 +287,16 @@ def _make_position() -> Position:
     )
 
 
-async def _run_both_paths(
+async def _run_both_paths(  # noqa: PLR0913 - one script, every knob of it
     fail_first: int,
     reason: TradeFailureReason | None,
     statuses: list[ConfirmationStatus],
     signature: str | None = SELL_SIGNATURE,
     *,
     recheck_raises: bool = False,
+    last_valid: int | None = None,
+    outcomes: list | None = None,
+    heights: list[int] | None = None,
 ) -> list[tuple[str, StubSeller, StubClient]]:
     """Drive the time-based and tp/sl exits over the same script.
 
@@ -273,8 +315,15 @@ async def _run_both_paths(
     """
     runs = []
 
-    seller = StubSeller(fail_first, reason, signature)
-    client = StubClient(list(statuses), raises=recheck_raises)
+    events: list = []
+    seller = StubSeller(fail_first, reason, signature, last_valid, events)
+    client = StubClient(
+        list(statuses),
+        raises=recheck_raises,
+        outcomes=outcomes,
+        heights=heights,
+        events=events,
+    )
     trader = _make_trader(seller, client)
     buy_result = TradeResult(
         success=True,
@@ -289,8 +338,15 @@ async def _run_both_paths(
         )
     runs.append(("time_based", seller, client))
 
-    seller = StubSeller(fail_first, reason, signature)
-    client = StubClient(list(statuses), raises=recheck_raises)
+    events: list = []
+    seller = StubSeller(fail_first, reason, signature, last_valid, events)
+    client = StubClient(
+        list(statuses),
+        raises=recheck_raises,
+        outcomes=outcomes,
+        heights=heights,
+        events=events,
+    )
     trader = _make_trader(seller, client)
     async with asyncio.timeout(EXIT_TIMEOUT):
         await trader._monitor_position_until_exit(  # noqa: SLF001
@@ -575,7 +631,7 @@ class _SendFails:
     async def build_and_send_transaction(self, *_a: object, **kwargs: object) -> str:
         on_signed = kwargs.get("on_signed")
         if on_signed is not None:
-            on_signed(self.signature, 1)
+            on_signed(self.signature, LAST_VALID)
         raise self.error
 
 
@@ -657,6 +713,7 @@ async def check_ambiguous_send_keeps_its_signature() -> bool:
     passed = (
         maybe.failure_reason is TradeFailureReason.UNCONFIRMED
         and maybe.tx_signature == signature
+        and maybe.last_valid_block_height == LAST_VALID
         and _exit_sell_verdict_for(maybe.failure_reason) is None
         and never.failure_reason is TradeFailureReason.SUBMIT_FAILED
         and never.tx_signature is None
@@ -667,6 +724,57 @@ async def check_ambiguous_send_keeps_its_signature() -> bool:
         f"maybe sent: {maybe.failure_reason}, signature kept: "
         f"{maybe.tx_signature == signature}; not sent: {never.failure_reason}, "
         f"signature: {never.tx_signature}",
+    )
+
+
+async def check_unknown_sell_waits_for_expiry() -> bool:
+    """An unknown sell is resold only once it can no longer land.
+
+    Returns:
+        Whether the check passed
+    """
+    unknown = TradeFailureReason.UNCONFIRMED
+    pending = [ConfirmationStatus.UNCONFIRMED]
+    problems = []
+    for label, seller, _client in await _run_both_paths(
+        1, unknown, pending, last_valid=LAST_VALID, heights=[90, 95, 101]
+    ):
+        heights = [v for kind, v in seller.events if kind == "height"]
+        before = (
+            seller.events[: seller.events.index(("sell", 2))]
+            if (("sell", 2) in seller.events)
+            else seller.events
+        )
+        last_height = [v for kind, v in before if kind == "height"][-1:]
+        if seller.attempts != TWO_ATTEMPTS or last_height != [101]:
+            problems.append(
+                f"expired, {label}: {seller.attempts} sells, heights {heights}"
+            )
+    for label, seller, _client in await _run_both_paths(
+        1,
+        unknown,
+        pending,
+        last_valid=LAST_VALID,
+        outcomes=[(None, None), (ConfirmationStatus.SUCCESS, 7)],
+        heights=[90],
+    ):
+        if seller.attempts != ONE_ATTEMPT:
+            problems.append(f"landed meanwhile, {label}: {seller.attempts} sells")
+    for label, seller, _client in await _run_both_paths(
+        1,
+        unknown,
+        pending,
+        last_valid=LAST_VALID,
+        outcomes=[(ConfirmationStatus.UNCONFIRMED, 7)],
+        heights=[500],
+    ):
+        if seller.attempts != ONE_ATTEMPT:
+            problems.append(f"seen, unconfirmed, {label}: {seller.attempts} sells")
+    return _check(
+        "an unknown sell is resold only after its blockhash expired unseen",
+        not problems,
+        "; ".join(problems)
+        or "expired: resold after height 101; landed: late success; seen: stopped",
     )
 
 
@@ -690,6 +798,7 @@ async def main() -> None:
         check_post_submission_throw_is_unconfirmed(),
         check_submit_failed_only_before_a_signature(),
         await check_ambiguous_send_keeps_its_signature(),
+        await check_unknown_sell_waits_for_expiry(),
     ]
 
     print("\n" + "=" * 72)

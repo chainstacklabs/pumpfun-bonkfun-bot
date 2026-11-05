@@ -1112,9 +1112,10 @@ class PlatformAwareSeller(Trader):
         # submitted from one whose outcome is unknown. Only the first is safe to
         # resend without checking the chain.
         tx_signature = None
-        # The signature once the sell is signed: a send that fails without
-        # proving nothing went out may still land.
-        signed: list[Signature] = []
+        # The signature once the sell is signed, and the block height past which
+        # it can no longer land: a send that fails without proving nothing went
+        # out may still land, until then.
+        signed: list[tuple[Signature, int | None]] = []
 
         try:
             implementations = get_platform_implementations(
@@ -1273,7 +1274,9 @@ class PlatformAwareSeller(Trader):
                 account_data_size_limit=self._get_cu_override(
                     "account_data_size", token_info.platform
                 ),
-                on_signed=lambda signature, _last_valid: signed.append(signature),
+                on_signed=lambda signature, last_valid: signed.append(
+                    (signature, last_valid)
+                ),
             )
 
             revert: list[str] = []
@@ -1307,6 +1310,7 @@ class PlatformAwareSeller(Trader):
                 error_message=_not_settled("sell", status, tx_signature, revert),
                 failure_reason=_FAILURE_REASON_FOR[status],
                 venue=venue.name,
+                last_valid_block_height=signed[0][1] if signed else None,
             )
 
         except Exception as e:
@@ -1317,7 +1321,7 @@ class PlatformAwareSeller(Trader):
                 and not isinstance(e, TransactionNotSent)
             ):
                 # Only TransactionNotSent proves no attempt reached the network.
-                tx_signature = signed[0]
+                tx_signature = signed[0][0]
             if tx_signature is None:
                 # Nothing reached the chain, so there is nothing to resolve and
                 # resending is safe.
@@ -1338,6 +1342,7 @@ class PlatformAwareSeller(Trader):
                 error_message=f"Sell outcome unknown for {tx_signature}: {e}",
                 failure_reason=TradeFailureReason.UNCONFIRMED,
                 venue=venue.name,  # chosen before anything was sent
+                last_valid_block_height=signed[0][1] if signed else None,
             )
 
     def _get_cu_override(self, operation: str, platform: Platform) -> int | None:

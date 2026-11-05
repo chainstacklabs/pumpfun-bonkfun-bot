@@ -111,6 +111,9 @@ class PositionManager:
     #: Seconds after its send a buy with no recorded block height is taken to
     #: be past landing; a blockhash lives about 60 to 90.
     _PENDING_EXPIRY = 120.0
+    #: Seconds an unresolved exit sell is waited on for its blockhash to expire
+    #: before the exit gives up on it.
+    _SELL_EXPIRY_WAIT = 180.0
     #: Seconds between warnings while a position waits for its first price.
     _PRICE_WARN_EVERY = 60.0
     #: Where positions are kept across restarts; None keeps them in memory only.
@@ -1070,7 +1073,7 @@ class PositionManager:
         )
         return ExitSellVerdict.SOLD, 0
 
-    async def _classify_failed_exit_sell(
+    async def _classify_failed_exit_sell(  # noqa: PLR0911 - one return per outcome
         self, token_info: TokenInfo, sell_result: TradeResult
     ) -> ExitSellVerdict:
         """Decide whether another exit sell is safe after one came back failed.
@@ -1082,7 +1085,9 @@ class PositionManager:
         A merely unconfirmed signature is re-checked first: `getTransaction`
         keeps answering long after signature statuses age out of the RPC's recent
         history, so a sell that turns out to have landed is reported as a late
-        success rather than retried.
+        success rather than retried. One still unknown that carries its last
+        valid block height is then waited on until it lands or can no longer
+        land (`_sell_after_expiry`).
 
         Args:
             token_info: Token information, for logging
@@ -1134,12 +1139,70 @@ class PositionManager:
             )
             return ExitSellVerdict.RETRY
 
+        if sell_result.last_valid_block_height is not None:
+            return await self._sell_after_expiry(
+                token_info, signature, sell_result.last_valid_block_height
+            )
         logger.error(
             f"Exit sell {signature[:16]}... is still unconfirmed. Not sending "
             f"another sell: it may already have closed the position. Verify "
             f"this signature before acting on {token_info.symbol}."
         )
         return ExitSellVerdict.STOP
+
+    async def _sell_after_expiry(
+        self, token_info: TokenInfo, signature: str, last_valid: int
+    ) -> ExitSellVerdict:
+        """Wait until an unresolved exit sell has landed or can no longer land.
+
+        Another sell is safe only once the block height is past the sell's
+        `last_valid` and no node knows its signature: then it never landed and
+        never will. A signature seen but not confirmed, or a lookup that
+        failed, is waited on; nothing is resent before the expiry. Bounded by
+        `_SELL_EXPIRY_WAIT`.
+
+        Returns:
+            LATE_SUCCESS, RETRY (reverted, or expired unknown), or STOP when
+            still unresolved at the bound
+        """
+        logger.warning(
+            f"Waiting for exit sell {signature[:16]}... of {token_info.symbol} to "
+            f"land or expire (block height {last_valid}) before selling again"
+        )
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._SELL_EXPIRY_WAIT
+        while True:
+            try:
+                outcome, seen_at = await self.solana_client.get_signature_outcome(
+                    signature, search_history=True, quiet=True
+                )
+            except Exception:  # noqa: BLE001
+                outcome, seen_at = ConfirmationStatus.UNCONFIRMED, None
+            if outcome is ConfirmationStatus.SUCCESS:
+                logger.info(f"Exit sell {signature[:16]}... landed after all")
+                return ExitSellVerdict.LATE_SUCCESS
+            if outcome is ConfirmationStatus.REVERTED:
+                return ExitSellVerdict.RETRY
+            if outcome is None and seen_at is None:
+                try:
+                    height, _slot = await self.solana_client.get_block_height_and_slot()
+                except Exception:  # noqa: BLE001
+                    height = None
+                if height is not None and height > last_valid:
+                    logger.info(
+                        f"Exit sell {signature[:16]}... expired without landing; "
+                        f"selling {token_info.symbol} again"
+                    )
+                    return ExitSellVerdict.RETRY
+            if loop.time() >= deadline:
+                logger.error(
+                    f"Exit sell {signature[:16]}... is still unresolved after "
+                    f"{self._SELL_EXPIRY_WAIT:g}s. Not sending another sell: it "
+                    f"may already have closed the position. Verify this "
+                    f"signature before acting on {token_info.symbol}."
+                )
+                return ExitSellVerdict.STOP
+            await asyncio.sleep(self._PENDING_RECHECK)
 
     async def _read_price(self, token_info: TokenInfo) -> float:
         """The coin's price where it trades now: its curve, or after graduation its AMM pool.
