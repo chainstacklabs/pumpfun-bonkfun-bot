@@ -1236,7 +1236,7 @@ async def _check_j(tmp: Path) -> list[str]:
         problems.append("the sold coin's account close was cut short")
     if logs.has("Stopping 1 open position"):
         problems.append("the shutdown log calls the sold position open")
-    if not logs.has("Waiting for 1 sold position(s)"):
+    if not logs.has("Waiting for 1 position(s) to close their token account"):
         problems.append("the shutdown log does not say it waits for the close")
     if run.records():
         problems.append(f"the sold position is still in the file: {run.records()}")

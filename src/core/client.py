@@ -15,7 +15,12 @@ import httpx2
 from aiohttp.http_exceptions import HttpProcessingError
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Processed
-from solana.rpc.core import RPCException, TxOptsModel
+from solana.rpc.core import (
+    RPCException,
+    TransactionExpiredBlockheightExceededError,
+    TxOptsModel,
+    UnconfirmedTxError,
+)
 from solders.account import Account
 from solders.compute_budget import set_compute_unit_limit, set_compute_unit_price
 from solders.hash import Hash
@@ -660,7 +665,9 @@ class SolanaClient:
             commitment: Confirmation commitment level
             last_valid_block_height: Wait until the blockhash the transaction
                 was signed with has expired, rather than a fixed 90 seconds
-            quiet: Log no traceback when the wait ends unconfirmed
+            quiet: Log nothing when the wait runs out (the blockhash expired,
+                or 90 seconds passed without one), and any other error as one
+                warning line without a traceback
 
         Returns:
             Whether transaction was confirmed AND executed successfully
@@ -716,21 +723,32 @@ class SolanaClient:
                 sleep_seconds=1,
                 last_valid_block_height=last_valid_block_height,
             )
-        except Exception:
+        except (TransactionExpiredBlockheightExceededError, UnconfirmedTxError):
             if not quiet:
+                logger.exception(f"Failed to confirm transaction {signature}")
+            return ConfirmationStatus.UNCONFIRMED
+        except Exception as e:
+            if quiet:
+                logger.warning(f"Could not confirm transaction {signature}: {e!s}")
+            else:
                 logger.exception(f"Failed to confirm transaction {signature}")
             return ConfirmationStatus.UNCONFIRMED
 
         return await self.verify_transaction_status(signature)
 
     async def get_signature_outcome(
-        self, signature: str | Signature, *, search_history: bool = True
+        self,
+        signature: str | Signature,
+        *,
+        search_history: bool = True,
+        quiet: bool = False,
     ) -> tuple[ConfirmationStatus | None, int | None]:
         """What the cluster knows of a signature, and the slot it landed in.
 
         Args:
             search_history: Look past the node's recent status cache, which
                 only holds the last few minutes; slower, so ask once
+            quiet: Log nothing when the answer cannot be read
 
         Returns:
             The status: SUCCESS or REVERTED once confirmed; UNCONFIRMED when it
@@ -752,7 +770,8 @@ class SolanaClient:
         try:
             status = response["result"]["value"][0]
         except (KeyError, IndexError, TypeError):
-            logger.warning(f"Could not read the status of {str(signature)[:16]}...")
+            if not quiet:
+                logger.warning(f"Could not read the status of {str(signature)[:16]}...")
             return ConfirmationStatus.UNCONFIRMED, None
         if status is None:
             return None, None

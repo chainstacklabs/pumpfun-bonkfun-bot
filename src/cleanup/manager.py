@@ -90,11 +90,23 @@ class AccountCleanupManager:
     SETTLE_SECONDS = 15.0
     #: Closes `cleanup_atas` keeps in flight at once.
     CONCURRENT_CLOSES = 4
-    #: Times a close is sent before cleanup gives up on its account. Each waits
-    #: until its blockhash has expired, so an earlier one can no longer land.
+    #: Sends of one close, in total, before cleanup gives up on its account. A
+    #: close is sent again only once the block height is past its blockhash's
+    #: last valid height, so the one before can no longer land.
     CLOSE_ATTEMPTS = 3
-    #: Seconds before sending a close again that the node refused to take.
+    #: Seconds between looks at a close in flight, and before sending again
+    #: one the node refused to take.
     RESEND_DELAY = 2.0
+    #: Seconds a close is waited on for proof that it landed or expired; past
+    #: it, cleanup stops without sending it again.
+    MAX_WAIT = 180.0
+    #: Expiry by the clock, for a close whose blockhash height is unknown.
+    EXPIRY_SECONDS = 120.0
+    #: Compute unit limit of a close transaction, so its priority fee is paid
+    #: on what it can use, not the client's 85,000. Burn, harvest and close on
+    #: a transfer-fee Token-2022 account, the most cleanup sends, uses about
+    #: 5,600 with the budget instructions; the rest is headroom.
+    COMPUTE_UNITS = 20_000
 
     def __init__(
         self,
@@ -244,55 +256,104 @@ class AccountCleanupManager:
     ) -> None:
         """Close an empty account the session did not trade; never burns or raises."""
         try:
-            await self._close(mint, account, token_program_id, burn=False)
+            await self._close(mint, account, token_program_id, burn=False, swept=True)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Cleanup failed for the token account of {mint}: {e!s}")
 
     async def _close(
-        self, mint: Pubkey, account: Pubkey, token_program_id: Pubkey, *, burn: bool
+        self,
+        mint: Pubkey,
+        account: Pubkey,
+        token_program_id: Pubkey,
+        *,
+        burn: bool,
+        swept: bool = False,
     ) -> None:
         """Burn what is left if `burn` and close `account`, until it lands.
 
-        A close not confirmed by the time its blockhash expires can no longer
-        land, so it is sent again, up to `CLOSE_ATTEMPTS` times; each attempt
-        reads the account first, so one already closed is left alone. A close
-        that landed is never sent again.
+        A close is sent again only once it provably can no longer land (the
+        block height is past its blockhash's last valid height) and no node
+        knows it, at most `CLOSE_ATTEMPTS` sends in total. Before each resend
+        the account is read again at "confirmed", from a node at least at the
+        slot the expiry was seen at, so one already closed is left alone.
+
+        Args:
+            swept: Found by the post-session sweep, not traded: an account
+                holding tokens is skipped as not empty
         """
+        slot: int | None = None
         for attempt in range(1, self.CLOSE_ATTEMPTS + 1):
             instructions = await self._close_instructions(
-                mint, account, token_program_id, burn=burn
+                mint,
+                account,
+                token_program_id,
+                burn=burn,
+                swept=swept,
+                resend=attempt > 1,
+                min_context_slot=slot,
             )
             if instructions is None:
                 return
-            outcome, signature = await self._send(account, instructions)
+            outcome, signature, slot = await self._send(account, instructions)
             if outcome is ConfirmationStatus.SUCCESS:
                 logger.info(f"Closed successfully: {account}")
                 return
             if outcome is ConfirmationStatus.REVERTED:
-                logger.error(f"Failed to close ATA {account}: {signature}")
+                logger.error(f"Failed to close token account {account}: {signature}")
+                return
+            if outcome is ConfirmationStatus.UNCONFIRMED:
+                logger.warning(
+                    f"Could not tell within {self.MAX_WAIT:g}s whether the close of "
+                    f"{account} ({signature}) landed, so it is not sent again. If "
+                    f"the account is still open, reclaim its rent with "
+                    f"tools/cleanup_accounts.py {mint}"
+                )
                 return
             if attempt < self.CLOSE_ATTEMPTS:
                 logger.info(
-                    f"Close of {account} was not confirmed; sending it again "
-                    f"(attempt {attempt + 1}/{self.CLOSE_ATTEMPTS})"
+                    f"Close of {account} did not land; sending it again "
+                    f"(attempt {attempt + 1} of {self.CLOSE_ATTEMPTS})"
                 )
         logger.warning(
             f"Gave up closing token account {account} of {mint}: none of "
-            f"{self.CLOSE_ATTEMPTS} attempts was confirmed. Reclaim its rent with "
+            f"{self.CLOSE_ATTEMPTS} attempts landed. Reclaim its rent with "
             f"tools/cleanup_accounts.py {mint}"
         )
 
-    async def _close_instructions(
-        self, mint: Pubkey, account: Pubkey, token_program_id: Pubkey, *, burn: bool
+    async def _close_instructions(  # noqa: PLR0913
+        self,
+        mint: Pubkey,
+        account: Pubkey,
+        token_program_id: Pubkey,
+        *,
+        burn: bool,
+        swept: bool,
+        resend: bool,
+        min_context_slot: int | None,
     ) -> list | None:
-        """The burn (if any) and close for `account`; None when there is nothing to do."""
+        """The burn (if any) and close for `account`; None when there is nothing to do.
+
+        Args:
+            resend: Read the account at "confirmed", its balance from the same
+                read, pinned to `min_context_slot` when given
+        """
+        label = "token account" if swept else "ATA"
         try:
-            info = await self.client.get_account_info(account)
+            if resend:
+                info = await self.client.get_account_info(
+                    account, commitment="confirmed", min_context_slot=min_context_slot
+                )
+            else:
+                info = await self.client.get_account_info(account)
         except ValueError:
-            logger.info(f"ATA {account} does not exist or already closed.")
+            logger.info(f"{label} {account} does not exist or already closed.")
             return None
 
-        balance = await self.client.get_token_account_balance(account)
+        if resend:
+            # SPL token account: mint (32), owner (32), amount (u64).
+            balance = struct.unpack_from("<Q", bytes(info.data), 64)[0]
+        else:
+            balance = await self.client.get_token_account_balance(account)
         instructions = []
 
         # Never burn wrapped SOL: closing a WSOL account already returns
@@ -320,6 +381,13 @@ class AccountCleanupManager:
                 )
             )
 
+        elif balance > 0 and swept:
+            logger.info(
+                f"Skipping token account {account} of {mint}: it now holds "
+                f"{balance} tokens, and only empty accounts are swept"
+            )
+            return None
+
         elif balance > 0:
             logger.info(
                 f"Skipping ATA {account} with non-zero balance ({balance} tokens) "
@@ -334,7 +402,7 @@ class AccountCleanupManager:
             logger.info(f"Harvesting {withheld} withheld fee units from {account}")
             instructions.append(harvest_withheld_to_mint(mint, account))
 
-        logger.info(f"Closing ATA: {account}")
+        logger.info(f"Closing {label}: {account}")
         instructions.append(
             close_account(
                 CloseAccountParams(
@@ -349,12 +417,15 @@ class AccountCleanupManager:
 
     async def _send(
         self, account: Pubkey, instructions: list
-    ) -> tuple[ConfirmationStatus | None, Signature | None]:
-        """Send one close and wait until it is confirmed or can no longer land.
+    ) -> tuple[ConfirmationStatus | None, Signature | None, int | None]:
+        """Send one close and wait until it landed or provably cannot.
 
         Returns:
-            The outcome, None or UNCONFIRMED when it did not land (yet); and
-            the signature, None when nothing was sent
+            The outcome: SUCCESS or REVERTED; None when it can be sent again
+            (refused by the node, or expired with no node knowing it);
+            UNCONFIRMED when that could not be told within `MAX_WAIT`. Then the
+            signature (None when nothing was sent) and the slot the expiry was
+            seen at (None when unknown)
         """
         priority_fee = (
             await self.priority_fee_manager.calculate_priority_fee([account])
@@ -376,45 +447,76 @@ class AccountCleanupManager:
                 skip_preflight=True,
                 max_retries=1,
                 priority_fee=priority_fee,
+                compute_unit_limit=self.COMPUTE_UNITS,
                 on_signed=on_signed,
                 quiet=True,
             )
         except TransactionNotSent as e:
             logger.info(f"Close of {account} was not taken by the node: {e!s}")
             await asyncio.sleep(self.RESEND_DELAY)
-            return None, None
-        except Exception:
-            # It may still have reached the network: wait for it like any other.
+            return None, None, None
+        except Exception as e:
             if "signature" not in signed:
                 raise
             signature = signed["signature"]
-        # confirm_transaction is False when the transaction landed but
-        # reverted. Logging success on that would report rent as reclaimed
-        # while the account is still open.
-        if await self.client.confirm_transaction(
-            signature, last_valid_block_height=signed.get("last_valid"), quiet=True
-        ):
-            return ConfirmationStatus.SUCCESS, signature
-        return await self._outcome(signature), signature
+            logger.warning(
+                f"Sending the close of {account} failed ({e!s}); it may still "
+                f"land, so it is waited on"
+            )
+        outcome, slot = await self._wait(signature, signed.get("last_valid"))
+        return outcome, signature, slot
 
-    async def _outcome(self, signature: Signature) -> ConfirmationStatus | None:
-        """What became of a close the confirmation wait did not see land.
+    async def _wait(
+        self, signature: Signature, last_valid: int | None
+    ) -> tuple[ConfirmationStatus | None, int | None]:
+        """Wait until a close landed, reverted, or provably can no longer land.
 
-        The whole history is searched: a close that landed late, or was seen by
-        another node, must not be sent again. One seen but not yet confirmed is
-        looked at a few more times.
+        The confirmation wait can end early (a rate limit, a timeout), so an
+        unconfirmed close counts as gone only when no node knows it and the
+        block height read after it is past `last_valid`. Without a height, it
+        counts as gone `EXPIRY_SECONDS` after it was sent.
+
+        Returns:
+            SUCCESS, REVERTED, None (gone; with the slot the expiry was seen
+            at, if read) or UNCONFIRMED (still unknown at `MAX_WAIT`)
         """
-        for _ in range(self.CLOSE_ATTEMPTS):
+        loop = asyncio.get_running_loop()
+        sent_at = loop.time()
+        while True:
+            # confirm_transaction is False when the transaction landed but
+            # reverted. Logging success on that would report rent as reclaimed
+            # while the account is still open.
+            if await self.client.confirm_transaction(
+                signature, last_valid_block_height=last_valid, quiet=True
+            ):
+                return ConfirmationStatus.SUCCESS, None
+            # The whole history is searched: a close that landed late, or was
+            # seen by another node, must not be sent again.
             try:
-                outcome, slot = await self.client.get_signature_outcome(
-                    signature, search_history=True
+                outcome, seen_at = await self.client.get_signature_outcome(
+                    signature, search_history=True, quiet=True
                 )
-            except Exception as e:  # noqa: BLE001
-                logger.info(
-                    f"Could not look up the close {str(signature)[:16]}...: {e}"
-                )
-                return ConfirmationStatus.UNCONFIRMED
-            if outcome is not ConfirmationStatus.UNCONFIRMED or slot is None:
-                return outcome
+            except Exception:  # noqa: BLE001
+                outcome, seen_at = ConfirmationStatus.UNCONFIRMED, None
+            if outcome in (ConfirmationStatus.SUCCESS, ConfirmationStatus.REVERTED):
+                return outcome, None
+            # Seen but not confirmed yet: it may still land, whatever the height.
+            if outcome is not ConfirmationStatus.UNCONFIRMED or seen_at is None:
+                expired, slot = await self._expired(last_valid, loop.time() - sent_at)
+                if expired:
+                    return None, slot
+            if loop.time() - sent_at >= self.MAX_WAIT:
+                return ConfirmationStatus.UNCONFIRMED, None
             await asyncio.sleep(self.RESEND_DELAY)
-        return outcome
+
+    async def _expired(
+        self, last_valid: int | None, waited: float
+    ) -> tuple[bool, int | None]:
+        """Whether a close can no longer land, and the slot that was seen at."""
+        if last_valid is None:
+            return waited >= self.EXPIRY_SECONDS, None
+        try:
+            height, slot = await self.client.get_block_height_and_slot()
+        except Exception:  # noqa: BLE001
+            return False, None
+        return height > last_valid, slot

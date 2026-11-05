@@ -104,8 +104,8 @@ The YAML files are commented inline. The sections that matter most:
 - **`cleanup`** — when to close leftover token accounts: `disabled`, `on_fail`, `after_sell`, `post_session`.
   - `after_sell` closes each coin's account once it is sold, and the empty account of a position cleared because the wallet no longer holds its coin (sold by hand while the bot was down).
   - `post_session` closes, when the session ends, the accounts of the coins it traded, then every other empty token account in the wallet, under SPL Token and Token-2022. It never closes a quote mint's account (wSOL, USDC, any configured quote), or that of a coin still in the positions file, pending buys included: those positions are kept for the next start (see [Positions survive a restart](#positions-survive-a-restart)), and their accounts are cleaned up at the end of the session that sells them.
-  - `force_close_with_burn` burns what is left in a traded coin's account before closing it. It never burns anything in the other accounts `post_session` closes, and under `exit_strategy: manual` or `marry_mode` it burns nothing, since those coins are meant to be held.
-  - Closes and burns go out with the bot's priority fee unless `with_priority_fee` is `false`. A close not confirmed by the time its blockhash expires is sent again, up to 3 times; then the bot logs one warning naming `tools/cleanup_accounts.py`.
+  - `force_close_with_burn` burns what is left in a traded coin's account before closing it. It never burns anything in the other accounts `post_session` closes, and under `exit_strategy: manual` or `marry_mode` post-session cleanup burns nothing, since those coins are meant to be held.
+  - Closes and burns go out with the bot's priority fee unless `with_priority_fee` is `false` (it must be `true` or `false`; left out, it is `true`). A close is sent again only once its blockhash has expired and no node knows it, at most 3 attempts in total; then the bot logs one warning naming `tools/cleanup_accounts.py`.
 - **`node.max_rps`** — cap requests per second to match your provider's plan.
 
 ### Extreme fast mode
