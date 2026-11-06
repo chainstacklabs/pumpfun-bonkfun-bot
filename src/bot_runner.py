@@ -43,6 +43,7 @@ from interfaces.core import Platform
 from trading.position_store import holds_positions
 from trading.settings import DEFAULT_MAX_EXIT_SELL_ATTEMPTS, TraderSettings
 from trading.universal_trader import UniversalTrader
+from utils import console
 from utils.logger import (
     file_handler,
     get_logger,
@@ -128,6 +129,10 @@ A bot whose YAML says `enabled: false` is skipped.
 
 Each bot writes its log to logs/, its trades to trades/ and its open
 positions to positions/, all under the current folder.
+
+On a terminal each line is short and coloured, and only events print: a coin
+found, a buy, a sale, its profit or loss, a skip, a warning. --verbose prints
+every line, the detail dimmed. logs/ always gets every line, in full.
 
 Exit status: 0 when every enabled bot started and finished without an error,
 1 when a config could not be loaded, a bot could not start or stopped on an
@@ -307,6 +312,7 @@ async def start_bot(config_path: str, positions_file: str | None = None) -> bool
         logger.error(f"Could not load {config_path}: {_one_line(e)}")  # noqa: TRY400
         return False
     mask_endpoints(cfg)
+    console.set_bot_name(cfg["name"])
     handler = setup_logging(cfg["name"])
     try:
         return await _start_loaded(cfg, positions_file)
@@ -568,26 +574,36 @@ def run_all_bots() -> bool:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Read the command line: `-h`/`--help` prints `USAGE` and exits 0.
 
-    Any argument other than help is a usage error (exit 2), so a mistyped flag
-    never starts a bot.
+    Any argument other than help and `--verbose` is a usage error (exit 2), so a
+    mistyped flag never starts a bot.
     """
     parser = argparse.ArgumentParser(
         description=USAGE, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="print every log line on the terminal, not only events",
     )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> None:
     """Run every enabled bot; exit 0 only when all of them ran normally."""
-    parse_args(argv)
+    args = parse_args(argv)
     _stop_on_sigterm()
+    # `force`: a line logged at import (the event loop policy above) has
+    # already given the root logger Python's default handler. The root stays
+    # at WARNING: the bot's modules log INFO through their own loggers
+    # (`get_logger`), while the runner's own INFO lines and the HTTP clients'
+    # request URLs, which carry the provider API key, stay off the terminal.
     logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        level=logging.WARNING,
+        handlers=[console.console_handler(verbose=args.verbose)],
+        force=True,
     )
-    # Turning the root logger up to INFO is what makes the HTTP clients start
-    # printing request URLs, and those URLs carry the provider API key. Redact
-    # before the first line is emitted, not after.
+    # Redact before the first line is emitted, not after.
     install_secret_redaction()
 
     # Log supported platforms and listeners

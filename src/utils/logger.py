@@ -328,10 +328,13 @@ def file_handler(filename: str, level: int = logging.INFO) -> logging.FileHandle
     install_secret_redaction()
     handler = logging.FileHandler(filename)
     handler.setLevel(level)
-    handler.setFormatter(
-        logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
-    )
+    handler.setFormatter(log_line_formatter())
     return handler
+
+
+def log_line_formatter() -> logging.Formatter:
+    """`<date> <time> - <logger> - <LEVEL> - <message>`: a log file's line, and piped output's."""
+    return logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
