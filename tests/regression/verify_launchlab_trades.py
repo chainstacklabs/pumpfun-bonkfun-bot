@@ -49,10 +49,12 @@ import base58
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from _fakes import _keys, _no_fee  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
 from core.pubkeys import WSOL_MINT, SystemAddresses  # noqa: E402
 from interfaces.core import Platform, TokenInfo  # noqa: E402
+from platforms import PlatformImplementations  # noqa: E402
 from platforms.launchlab import LAUNCHLAB_PROGRAM  # noqa: E402
 from platforms.launchlab.curve_math import (  # noqa: E402
     buy_amount_out,
@@ -66,8 +68,8 @@ from platforms.stonkfun import (  # noqa: E402
     StonkFunInstructionBuilder,
 )
 from trading import platform_aware  # noqa: E402
+from trading.intake import TokenIntake  # noqa: E402
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller  # noqa: E402
-from trading.universal_trader import UniversalTrader  # noqa: E402
 from utils.idl_manager import get_idl_manager  # noqa: E402
 
 FIXTURE = Path(__file__).with_name("raw_stonkfun_trades_from_gettransaction.json")
@@ -99,15 +101,6 @@ class _FixtureClient:
         commitment: str | None = None,  # noqa: ARG002
     ) -> list[SimpleNamespace]:
         return [SimpleNamespace(data=self.accounts[k], owner=None) for k in pubkeys]
-
-
-def _keys(tx: dict) -> list[str]:
-    loaded = tx["meta"].get("loadedAddresses") or {}
-    return (
-        tx["transaction"]["message"]["accountKeys"]
-        + loaded.get("writable", [])
-        + loaded.get("readonly", [])
-    )
 
 
 def _instructions(tx: dict):
@@ -318,9 +311,6 @@ class _StubClient:
     ) -> str:
         return "STUB_SIGNATURE"
 
-    async def confirm_transaction(self, *_args: object, **_kwargs: object) -> bool:
-        return False
-
     async def confirm_transaction_detailed(self, *_args: object, **_kwargs: object):
         return platform_aware.ConfirmationStatus.REVERTED
 
@@ -334,8 +324,9 @@ def _stub_implementations(pool_state: dict, captured: dict, *, exact_in: bool):
         async def get_pool_state(self, _pool, commitment=None):  # noqa: ARG002
             return pool_state
 
-    return SimpleNamespace(
+    return PlatformImplementations(
         address_provider=PROVIDER,
+        event_parser=None,
         instruction_builder=SimpleNamespace(
             spends_exact_amount_in=exact_in,
             build_buy_instruction=build,
@@ -347,10 +338,6 @@ def _stub_implementations(pool_state: dict, captured: dict, *, exact_in: bool):
         ),
         curve_manager=Curve(),
     )
-
-
-async def _no_fee(_accounts: list) -> None:
-    return None
 
 
 POOL_STATE = {
@@ -468,7 +455,7 @@ def check_f_single_token_mode_waits_past_refused_coins() -> bool:
                 await asyncio.sleep(0.05)
             await asyncio.sleep(3600)
 
-    trader = SimpleNamespace(
+    intake = SimpleNamespace(
         token_listener=Listener(),
         match_string=None,
         bro_address=None,
@@ -479,8 +466,8 @@ def check_f_single_token_mode_waits_past_refused_coins() -> bool:
         quote_amounts={WSOL_MINT: 0.001},
         max_transfer_fee_bps=100,
     )
-    trader._skip_reason = lambda token: UniversalTrader._skip_reason(trader, token)
-    found = asyncio.run(UniversalTrader._wait_for_token(trader))
+    intake.skip_reason = lambda token: TokenIntake.skip_reason(intake, token)
+    found = asyncio.run(TokenIntake.wait_for_token(intake))
     ok = found is not None and found.symbol == "BUYABLE"
     if not ok:
         print(f"    picked {found and found.symbol}")

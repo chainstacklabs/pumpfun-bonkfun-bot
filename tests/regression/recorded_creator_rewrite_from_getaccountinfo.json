@@ -1,0 +1,17 @@
+{
+  "source": "mainnet getAccountInfo of the bonding curve, plus getTransaction of the three transactions",
+  "mint": "2tM5i4oqa5FNnCE2QaNXBTdrfgtxb8rgzEwe8gVTpump",
+  "bonding_curve": "5EQJyU3LeNd5w7Ybt9tivwGqedRFnVFke4Vj5cmsgEqe",
+  "create_signature": "2e5mgcecHFAa8qFRHB4hnb3kFey8P1hgWq3eejLJ9eAZe5Di5z7WUiwecBezxW3s1FNLLBQjjecaWAk1cDKZeUHD",
+  "create_slot": 465074305,
+  "creator_rewrite_signature": "3wMMTvi9dzpUai67LGDTDXwBNSbKgnJb6GBe2uLBYBPdh5LyZZcEPEbTqJBnxvZvMHgFLHKmeUgnrjYhz6ZDrNub",
+  "creator_rewrite_slot": 465074306,
+  "event_creator": "8TL3rhoL2bw5iER8sddTKAwUPBQBvc8D6Bk7o615CGGs",
+  "reverted_buy_creator_vault": "7pTSeZ5EEVj7TPVzeshBMRYGWUZ6sDaUcoqDrFtzuS35",
+  "program_expected_creator_vault": "3fGe5YmkPbAxsSZzjJs9M8vS8dz69UuVZhur7W3kSSdJ",
+  "curve_account": {
+    "slot": 465143034,
+    "owner": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+    "data": "F7f4N2DYrGAAENhH488DAAysI/wGAAAAAHjF+1HRAgAMAAAAAAAAAACAxqR+jQMAAHWDBy0GVOu4/ma72uBCsP7abczGEs6yK1q/6DayRPT2AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACsI/wGAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+  }
+}

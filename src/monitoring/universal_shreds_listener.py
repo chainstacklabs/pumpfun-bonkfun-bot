@@ -25,12 +25,13 @@ instruction account indices resolve as they do on the executed stream.
 import asyncio
 from collections.abc import Awaitable, Callable
 
+import base58
 import grpc
 from solders.pubkey import Pubkey
 
-from geyser.generated import geyser_pb2, geyser_pb2_grpc
-from interfaces.core import EventParser, Platform, TokenInfo
-from monitoring.base_listener import BaseTokenListener
+from geyser.generated import geyser_pb2, geyser_pb2_grpc, solana_storage_pb2
+from interfaces.core import EventParser, Platform, PoolReady, TokenInfo
+from monitoring.base_listener import BaseTokenListener, PoolCallback
 from platforms import platform_factory
 from utils.logger import get_logger
 
@@ -50,6 +51,7 @@ class UniversalShredsListener(BaseTokenListener):
         geyser_api_token: str,
         geyser_auth_type: str,
         platforms: list[Platform] | None = None,
+        platform_configs: frozenset[Pubkey] | None = None,
     ):
         """Initialize the shreds listener.
 
@@ -57,6 +59,7 @@ class UniversalShredsListener(BaseTokenListener):
             geyser_endpoint: Geyser gRPC endpoint URL
             geyser_auth_type: Either "x-token" or "basic"
             platforms: Platforms to monitor; all supported platforms if None
+            platform_configs: Narrows a LaunchLab platform to these configs
 
         Raises:
             ValueError: If geyser_auth_type is not a supported value
@@ -79,10 +82,14 @@ class UniversalShredsListener(BaseTokenListener):
             self.platforms = platforms
 
         self.platform_parsers: dict[Platform, EventParser] = {}
-        self.platform_program_ids: dict[bytes, EventParser] = {}
+        # LaunchLab serves several platforms from one program, so a program can
+        # have more than one parser; they are tried in registration order.
+        self.program_parsers: dict[bytes, list[EventParser]] = {}
         self.create_discriminators: dict[bytes, tuple[bytes, ...]] = {}
         # Flattened across platforms for the str.startswith prefix test.
         self.all_discriminators: tuple[bytes, ...] = ()
+        # The same prefix test for migrations, read only with a pool callback.
+        self.migration_discriminators: tuple[bytes, ...] = ()
 
         for platform in self.platforms:
             try:
@@ -103,11 +110,13 @@ class UniversalShredsListener(BaseTokenListener):
                         self._blockhash_updater_task = None
 
                 implementations = platform_factory.create_for_platform(
-                    platform, DummyClient()
+                    platform, DummyClient(), platform_configs=platform_configs
                 )
                 parser = implementations.event_parser
                 self.platform_parsers[platform] = parser
-                self.platform_program_ids[bytes(parser.get_program_id())] = parser
+                self.program_parsers.setdefault(
+                    bytes(parser.get_program_id()), []
+                ).append(parser)
                 # Cheap prefix gate, see _process_update: the deshred stream
                 # carries every pump transaction pre-execution, so most
                 # instructions reaching us are trades, not creates.
@@ -116,6 +125,9 @@ class UniversalShredsListener(BaseTokenListener):
                 )
                 self.all_discriminators += tuple(
                     parser.get_instruction_discriminators()
+                )
+                self.migration_discriminators += tuple(
+                    parser.get_migration_instruction_discriminators()
                 )
 
                 logger.info(
@@ -161,14 +173,28 @@ class UniversalShredsListener(BaseTokenListener):
         """
         request = geyser_pb2.SubscribeDeshredRequest()
 
-        for program_id, parser in self.platform_program_ids.items():
-            filter_name = f"platform_filter_{Pubkey.from_bytes(program_id)}"
+        for platform, parser in self.platform_parsers.items():
+            filter_name = f"platform_filter_{platform.value}"
             deshred_filter = request.deshred_transactions[filter_name]
-            # Not the program id: that matches every trade too, and the volume
-            # makes a Python consumer lag until the server ends the stream.
+            # Not the program id where a parser can avoid it: that matches every
+            # trade too, and on pump.fun the volume makes a Python consumer lag
+            # until the server ends the stream.
             for account in parser.get_creation_filter_accounts():
                 deshred_filter.account_include.append(str(account))
             deshred_filter.vote = False
+
+            # pump.fun's migrations name none of its creation accounts, so they
+            # get their own filter, and only when something listens for them.
+            # LaunchLab's name the platform config and program, which the
+            # creation filter already covers, and add none.
+            migration_accounts = parser.get_migration_filter_accounts()
+            if self.pool_callback is not None and migration_accounts:
+                migration_filter = request.deshred_transactions[
+                    f"platform_migrations_{platform.value}"
+                ]
+                for account in migration_accounts:
+                    migration_filter.account_include.append(str(account))
+                migration_filter.vote = False
 
         return request
 
@@ -177,6 +203,7 @@ class UniversalShredsListener(BaseTokenListener):
         token_callback: Callable[[TokenInfo], Awaitable[None]],
         match_string: str | None = None,
         creator_address: str | None = None,
+        pool_callback: PoolCallback | None = None,
     ) -> None:
         """Listen for new token creations on the pre-execution deshred stream.
 
@@ -184,7 +211,10 @@ class UniversalShredsListener(BaseTokenListener):
             token_callback: Called with each detected token
             match_string: Optional substring to require in the name or symbol
             creator_address: Optional creator address to filter by
+            pool_callback: Called once per migrate transaction and mint;
+                its PoolReady has `pre_execution` set. See BaseTokenListener.
         """
+        self.pool_callback = pool_callback
         if not self.platform_parsers:
             logger.error("No platform parsers available. Cannot listen for tokens.")
             return
@@ -207,32 +237,17 @@ class UniversalShredsListener(BaseTokenListener):
 
                 try:
                     async for update in stub.SubscribeDeshred(iter([request])):
+                        await self._emit_pools(self._pools_from_update(update))
                         token_info = self._process_update(update)
                         if not token_info:
                             continue
-
-                        logger.info(
-                            f"New token detected pre-execution: {token_info.name} "
-                            f"({token_info.symbol}) on {token_info.platform.value}"
+                        await self._deliver(
+                            token_info,
+                            token_callback,
+                            match_string,
+                            creator_address,
+                            pre_execution=True,
                         )
-
-                        if match_string and not (
-                            match_string.lower() in token_info.name.lower()
-                            or match_string.lower() in token_info.symbol.lower()
-                        ):
-                            logger.info(
-                                f"Token does not match filter '{match_string}'. "
-                                "Skipping..."
-                            )
-                            continue
-
-                        if creator_address and str(token_info.user) != creator_address:
-                            logger.info(
-                                f"Token not created by {creator_address}. Skipping..."
-                            )
-                            continue
-
-                        await token_callback(token_info)
 
                 except Exception as e:
                     if isinstance(e, grpc.aio.AioRpcError):
@@ -308,10 +323,8 @@ class UniversalShredsListener(BaseTokenListener):
                 if program_index >= len(static_keys):
                     continue
 
-                parser = self.platform_program_ids.get(
-                    bytes(static_keys[program_index])
-                )
-                if parser is None:
+                parsers = self.program_parsers.get(bytes(static_keys[program_index]))
+                if parsers is None:
                     continue
 
                 # Resolve lookup-table accounts only once a real candidate is
@@ -319,9 +332,7 @@ class UniversalShredsListener(BaseTokenListener):
                 if keys is None:
                     keys = self._resolve_account_keys(transaction)
 
-                token_info = parser.parse_token_creation_from_instruction(
-                    instruction.data, instruction.accounts, keys
-                )
+                token_info = self._parse_with_any(parsers, instruction, keys)
                 if token_info:
                     return self._mark_trusted(token_info)
 
@@ -331,18 +342,93 @@ class UniversalShredsListener(BaseTokenListener):
             logger.exception("Error processing deshred update")
             return None
 
+    def _pools_from_update(
+        self, update: geyser_pb2.SubscribeUpdateDeshred
+    ) -> list[PoolReady]:
+        """Pools that top-level migration instructions in this update move into.
+
+        Pre-execution, so a migration that will fail or find the curve already
+        migrated is reported too. Each attempt is reported, not only the first
+        one seen for a mint. A migration reached by CPI is invisible here, as a
+        create is. Empty without a pool callback: nothing is parsed then.
+        """
+        if self.pool_callback is None or not update.HasField("deshred_transaction"):
+            return []
+        transaction = update.deshred_transaction.transaction
+        message = getattr(transaction.transaction, "message", None)
+        if message is None:
+            return []
+        pools = []
+        try:
+            keys = None
+            for instruction in message.instructions:
+                parsers = self._migration_parsers(instruction, message.account_keys)
+                if not parsers:
+                    continue
+                if keys is None:
+                    keys = self._resolve_account_keys(transaction)
+                signature = base58.b58encode(transaction.signature).decode()
+                pool = next(
+                    (
+                        found
+                        for parser in parsers
+                        if (
+                            found := parser.parse_pool_ready_from_instruction(
+                                instruction.data, instruction.accounts, keys, signature
+                            )
+                        )
+                    ),
+                    None,
+                )
+                if pool is not None:
+                    pools.append(pool)
+        except Exception:
+            logger.exception("Error reading a migration from a deshred update")
+            return []
+        return pools
+
+    def _migration_parsers(
+        self,
+        instruction: solana_storage_pb2.CompiledInstruction,
+        static_keys: list[bytes],
+    ) -> list[EventParser]:
+        """Parsers of the program a migration-shaped instruction calls, if any."""
+        if not bytes(instruction.data).startswith(self.migration_discriminators):
+            return []
+        program_index = instruction.program_id_index
+        if program_index >= len(static_keys):
+            return []
+        return self.program_parsers.get(bytes(static_keys[program_index]), [])
+
+    @staticmethod
+    def _parse_with_any(
+        parsers: list[EventParser],
+        instruction: solana_storage_pb2.CompiledInstruction,
+        keys: list[bytes],
+    ) -> TokenInfo | None:
+        """First TokenInfo any of the program's parsers decodes from the instruction."""
+        for parser in parsers:
+            token_info = parser.parse_token_creation_from_instruction(
+                instruction.data, instruction.accounts, keys
+            )
+            if token_info:
+                return token_info
+        return None
+
     @staticmethod
     def _mark_trusted(token_info: TokenInfo) -> TokenInfo:
         """Mark an instruction-parsed TokenInfo as safe to trade without a refresh.
 
         Other listeners leave `state_from_event` False on instruction-parsed
-        tokens, because `args.creator` is user-supplied and the program may write
-        something else into `BondingCurve.creator`. That has exactly one cause,
-        which the parser resolves: a holder-reward coin takes its creator from a
-        PDA of the mint, derivable without reading anything.
+        pump.fun tokens, because `args.creator` is user-supplied and the program
+        may write something else into `BondingCurve.creator`. That has exactly
+        one cause, which the parser resolves: a holder-reward coin takes its
+        creator from a PDA of the mint, derivable without reading anything.
+        A LaunchLab launch names everything the buy needs as accounts or
+        arguments, and its parser already marks the token.
 
-        Waiting for the curve is not a safer fallback here — the account does not
-        exist yet, so the choice is trading on this data or not trading.
+        Waiting for the curve or pool is not a safer fallback here — the account
+        does not exist yet, so the choice is trading on this data or not trading.
 
         Args:
             token_info: Token parsed from a create instruction

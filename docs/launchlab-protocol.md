@@ -1,10 +1,11 @@
-# Raydium LaunchLab: letsbonk.fun and StonkFun
+# Raydium LaunchLab: every launchpad, letsbonk.fun and StonkFun
 
-Both platforms are pools on one program, Raydium LaunchLab
-(`LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj`). The shared code is
-`src/platforms/launchlab/`; `platforms/letsbonk/` and `platforms/stonkfun/` only
-name their platform configs. The IDL is `idl/raydium_launchlab_idl.json`, pulled
-from the program's on-chain IDL account.
+Every launchpad here runs its pools on one program, Raydium LaunchLab
+(`LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj`). `src/platforms/launchlab/` is
+the `launchlab` platform and covers all of them; `platforms/letsbonk/` and
+`platforms/stonkfun/` are presets that only name their platform configs, and
+`platforms/launchlab_presets.py` maps each platform to what it covers. The IDL is
+`idl/raydium_launchlab_idl.json`, pulled from the program's on-chain IDL account.
 
 ## Platforms are platform configs
 
@@ -17,10 +18,17 @@ created under. Every launch and every trade names one, at account 3.
 | StonkFun, standard | `4E876qZTE9FJMrBzgVtBrSrzz2TLivB5Y5QXPjB4gZL7` |
 | StonkFun, reward | `6BwHHDg3u1854jC8PDLXvR4spTcLNaoBxLJNGC4nTESt` |
 
-The geyser and blocks listeners subscribe on these accounts, not on the program
-(`EventParser.get_stream_filter_accounts`), so other launchpads on LaunchLab stay
-out of the stream. Two platforms on one program also mean nothing may key a
-lookup by program id alone.
+Any other launchpad is reached through `platform: launchlab`, which takes a
+launch under any platform config; `launchlab.platform_configs` narrows it, and
+narrows a preset within its own configs. `TokenInfo.platform_config` and the
+trade log record which config a coin came from.
+
+The geyser, blocks and shreds listeners subscribe on the platform configs when
+there is a list (`EventParser.get_stream_filter_accounts`), so other launchpads
+stay out of the stream; `launchlab` without one subscribes on the program, and
+sees every trade on it. No account appears in every launch and in no trade, so
+the shreds listener cannot narrow to launches the way it does on pump.fun. Several platforms on one program also mean nothing may key a lookup
+by program id alone.
 
 ## Launches
 
@@ -31,9 +39,28 @@ accounts by IDL name: `payer` is 0 and `creator` is 1, and the pool's `creator`
 The quote mint is account 7 and its token program account 11. The transfer fee
 is the `transfer_fee_extension_param` argument.
 
+Other launchpads launch with `initialize_v2` (SPL Token coin, Metaplex
+metadata) or `initialize_with_token_2022`, quoted in SOL or another token, with
+the same accounts. A platform config can restrict which global configs and
+curve parameters its launches use (`restrict_global_config`,
+`restrict_curve_param`); its launches then pass two PDAs after the IDL's
+accounts, `["platform_allow_config", platform_config, global_config]` and
+`["platform_curve_rule", platform_config, global_config]`. StonkFun's configs
+do. `tools/launchlab_create_coin.py` always passes both, which an unrestricted
+config ignores.
+
+A global config names a curve: `curve_type` 0 is constant product, 1 fixed
+price, 2 linear, and a launch states its own in the `curve_param` variant. The
+price and trade math here are for the constant-product curve, so the parser
+ignores a launch whose `curve_param` is anything else. The global config is `PDA(["global_config", quote_mint,
+curve_type u8, index u16])`.
+
 Everything a buy needs is in the instruction, so the parsers set
 `state_from_event`. The program's `PoolCreateEvent` carries no base mint, quote
 mint or platform config, which is why there is no logs listener for LaunchLab.
+The same instruction is all the pre-execution `shreds` listener has, and gives
+it the TokenInfo geyser builds; a launch made through another program is an
+inner instruction there, and invisible to it.
 
 ## Trades
 
@@ -90,15 +117,55 @@ migrated; a migrated pool keeps its final reserves, so the curve manager reports
 `migrate_type` 1 means Raydium CPMM, which is where every StonkFun coin goes. The
 CPMM pool is `PDA(["pool", amm_config, token_0, token_1])` under the CPMM program,
 with `amm_config` the platform's `PlatformConfig.cpswap_config` and the two mints
-ordered by their bytes, so it is derived, never searched for. A sell is
-`swap_base_input`, 13 accounts; the creator fee accrues inside the pool and adds
-none. Price is the vault balances less the protocol, fund and creator fees still
-sitting in them. `migrate_type` 0, Raydium AMM v4, has no market in the bot; a
-coin there is reported, not sold.
+ordered by their bytes, so it is derived, never searched for. Price is the vault
+balances less the protocol, fund and creator fees still sitting in them.
+
+Both sides trade with `swap_base_input`, 13 accounts; the creator fee accrues
+inside the pool and adds none. The input token's account, vault, token program
+and mint come before the output token's, so a buy is a sell with the two sides
+swapped. A buy spends exactly its `amount_in`, quote fees included, and its
+`minimum_amount_out` is checked against what reaches the wallet, so on a
+transfer-fee coin the floor is net of that fee, as on the curve. The pool state
+carries no transfer fee; the buyer takes it from the curve. A SOL buy pays from
+a throwaway wrapped-SOL account funded with the spend, any other quote from the
+wallet's account, and the coin's account is created first, under the coin's
+token program.
+
+The buyer reaches the pool when the curve reports `graduated`. While the curve
+waits for its pool (status 1) the buy is skipped with nothing sent. In
+`extreme_fast_mode` a graduated coin is skipped: the pool buy is sized from the
+pool's reserves, which that mode does not read.
+
+`migrate_type` 0, Raydium AMM v4, has no market in the bot; a coin there is
+reported, not bought or sold.
+
+### Detecting a migration
+
+Raydium's migrate wallet (`GlobalConfig.migrate_to_cpswap_wallet`, the only
+payer the instruction takes) sends `migrate_to_cpswap` as a top-level
+instruction: account 1 is the coin, 2 the quote mint, 3 the platform config, 5
+the CPMM pool and 10 its `cpswap_config`. The program's logs name none of them,
+so the listeners decode the instruction, after a whole-line check for
+`Instruction: MigrateToCpswap` in the logs. A report needs the platform config
+to be one the parser covers and the pool to be CPMM's
+`PDA(["pool", cpswap_config, token_0, token_1])`. The wallet often retries a
+migration that already landed; the retry fails with `PoolMigrated` (6006), so
+the executed listeners drop it with the other failed transactions, and `shreds`
+reports it as another pre-execution attempt.
+
+Past the IDL's 28 accounts a migration passes ten more, which the program reads
+positionally: the platform's `platform_nft_wallet`, a new fee-NFT mint (a second
+signer), its ATA for that wallet, the lock program's
+`PDA(["locked_liquidity", nft_mint])`, the NFT's Metaplex metadata, the pool's
+creator, CPMM's `PDA(["permission", launchlab_authority])`, the platform's
+`platform_cp_creator`, and CPMM's `PDA(["support_mint", mint])` for token 0
+and token 1. Every real migration loads the rest through lookup table
+`AcL1Vo8oy1ULiavEcjSUcwfBSForXMudcZvDZy5nzJkU`.
 
 ## Verifiers
 
 `verify_launchlab_trades`, `verify_launchlab_launch_parsing`,
-`verify_cleanup_harvests_withheld_fees` and `verify_sell_after_graduation` cover
-all of the above against captured
+`verify_generic_launchlab`, `verify_cleanup_harvests_withheld_fees`,
+`verify_sell_after_graduation`, `verify_cpmm_buy` and
+`verify_launchlab_migration_detection` cover all of the above against captured
 mainnet transactions.

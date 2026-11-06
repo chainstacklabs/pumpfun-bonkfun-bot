@@ -15,7 +15,6 @@ import os
 import struct
 import sys
 from datetime import datetime
-from urllib.parse import urlsplit
 
 import base58
 import websockets
@@ -490,9 +489,8 @@ async def process_websocket_message(websocket, wallet: str):
 async def listen_for_transactions(wallet: str):
     """Main function to listen for wallet transactions."""
     print(f"Starting to monitor wallet: {wallet}")
-    # Endpoint carries an API key. hostname, not netloc: netloc keeps any
-    # user:pass@ userinfo, which would leak the credential anyway.
-    print(f"Connecting to: {urlsplit(WSS_ENDPOINT).hostname or '<unset>'}")
+    # Never the endpoint or its host: either can carry the API key.
+    print("Connecting to the WebSocket endpoint in SOLANA_NODE_WSS_ENDPOINT")
     print("Looking for pump.fun bonding curve buy/sell transactions only...")
     print("=" * 80)
 

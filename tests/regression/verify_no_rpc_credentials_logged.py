@@ -13,27 +13,24 @@ Offline machine checks, no network and no funds moved:
 
   1. `redact` masks a secret-bearing query parameter, URL userinfo, and an
      opaque path segment — the three shapes a provider credential takes.
-  2. `redact` masks an exact value registered from the environment, keeping the
-     host so a log line still says which provider answered.
-  3. A logger this repo has never heard of, logging at INFO, comes out
+  2. A logger this repo has never heard of, logging at INFO, comes out
      redacted — including when the URL is a non-`str` argument, which is how
      httpx2 passes it and how the first version of this guard was defeated.
-  4. Importing `core.client` installs the redaction: every module that logs
+  3. Importing `core.client` installs the redaction: every module that logs
      calls `get_logger` at import, and that is where it is installed.
-  5. `setup_file_logging` installs it before attaching the handler, so nothing
+  4. `setup_file_logging` installs it before attaching the handler, so nothing
      reaches `logs/` unredacted.
-  6. Every `logging.basicConfig` in `src/` and `tools/` installs it too, so the
+  5. Every `logging.basicConfig` in `src/` and `tools/` installs it too, so the
      guard does not depend on import order.
-  7. No script prints an endpoint environment variable raw; the hostname is the
-     most any of them may show.
+  6. No script prints an endpoint or any part of it, its host included: some
+     providers put the key in the subdomain, which is why the bot masks hosts.
 
 Usage:
     uv run tests/regression/verify_no_rpc_credentials_logged.py
 """
 
+import ast
 import logging
-import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -58,13 +55,12 @@ SECRET_ENV_VARS = (
     "GEYSER_ENDPOINT",
 )
 
-# A print or f-string that interpolates one of those names directly. Reading
-# `.hostname` off it first is allowed and is what the cookbook scripts do.
-RAW_ENV_IN_OUTPUT = re.compile(
-    r"(?:print|logger\.\w+|logging\.\w+)\([^)]*\{("
-    + "|".join(SECRET_ENV_VARS + ("RPC_ENDPOINT", "WSS_ENDPOINT"))
-    + r")\}"
-)
+# What may not appear in a print or log call's arguments: those variables, the
+# module constants scripts load them into, and any part of a parsed URL. A
+# variable's name inside a string literal is fine; it names, not prints, it.
+ENDPOINT_NAMES = frozenset(SECRET_ENV_VARS + ("RPC_ENDPOINT", "WSS_ENDPOINT"))
+URL_PARTS = frozenset(("hostname", "netloc", "host", "port", "username", "password"))
+LOG_METHODS = frozenset(("debug", "info", "warning", "error", "exception", "critical"))
 
 
 class _NotAString:
@@ -103,25 +99,6 @@ def check_redact_masks_every_credential_shape() -> bool:
             print(f"     not masked: {raw} -> {cleaned}")
             ok = False
     return ok
-
-
-def check_redact_masks_a_registered_value() -> bool:
-    """An exact environment value is masked, and the host survives."""
-    endpoint = "https://rpc.example.com/9f8e7d6c5b4a39281706"
-    os.environ["SOLANA_NODE_RPC_ENDPOINT"] = endpoint
-    try:
-        install_secret_redaction()
-        cleaned = redact(f"connecting to {endpoint}")
-    finally:
-        del os.environ["SOLANA_NODE_RPC_ENDPOINT"]
-        install_secret_redaction()
-    if "9f8e7d6c5b4a39281706" in cleaned:
-        print(f"     the registered value survived: {cleaned}")
-        return False
-    if "rpc.example.com" not in cleaned:
-        print(f"     the host was masked too, which makes the line useless: {cleaned}")
-        return False
-    return True
 
 
 def check_an_unknown_logger_is_redacted() -> bool:
@@ -224,16 +201,45 @@ def check_every_basic_config_installs_redaction() -> bool:
     return not offenders
 
 
-def check_no_script_prints_a_raw_endpoint() -> bool:
-    """Print the hostname if you must, never the value."""
+def _is_output_call(node: ast.Call) -> bool:
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id == "print"
+    return isinstance(func, ast.Attribute) and func.attr in LOG_METHODS
+
+
+def _leaks(node: ast.AST) -> bool:
+    """Whether an output call's argument reads an endpoint or a URL's parts."""
+    for part in ast.walk(node):
+        if isinstance(part, ast.Name) and part.id in ENDPOINT_NAMES:
+            return True
+        if isinstance(part, ast.Attribute) and part.attr in URL_PARTS:
+            return True
+        if (
+            isinstance(part, ast.Call)
+            and part.args
+            and isinstance(part.args[0], ast.Constant)
+            and part.args[0].value in ENDPOINT_NAMES
+        ):
+            return True  # os.getenv("SOLANA_NODE_RPC_ENDPOINT") and the like
+    return False
+
+
+def check_no_script_prints_an_endpoint() -> bool:
+    """Print the variable's name if you must, never its value or its host."""
     offenders = []
     for root in SCAN_ROOTS:
         for path in sorted((PROJECT_ROOT / root).rglob("*.py")):
-            for number, line in enumerate(path.read_text().splitlines(), start=1):
-                if RAW_ENV_IN_OUTPUT.search(line):
-                    offenders.append(f"{path.relative_to(PROJECT_ROOT)}:{number}")
+            tree = ast.parse(path.read_text(), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call) or not _is_output_call(node):
+                    continue
+                arguments = node.args + [k.value for k in node.keywords]
+                if any(_leaks(argument) for argument in arguments):
+                    where = f"{path.relative_to(PROJECT_ROOT)}:{node.lineno}"
+                    offenders.append(where)
     for hit in offenders:
-        print(f"     {hit} interpolates a credential straight into output")
+        print(f"     {hit} prints an endpoint or part of one")
     return not offenders
 
 
@@ -242,10 +248,6 @@ def main() -> int:
         (
             "redact masks every credential shape",
             check_redact_masks_every_credential_shape,
-        ),
-        (
-            "redact masks a registered value, keeping the host",
-            check_redact_masks_a_registered_value,
         ),
         ("an unlisted logger is redacted too", check_an_unknown_logger_is_redacted),
         (
@@ -257,7 +259,10 @@ def main() -> int:
             "every basicConfig installs the redaction",
             check_every_basic_config_installs_redaction,
         ),
-        ("no script prints a raw endpoint", check_no_script_prints_a_raw_endpoint),
+        (
+            "no script prints an endpoint or its host",
+            check_no_script_prints_an_endpoint,
+        ),
     ]
     failed = 0
     for label, check in checks:

@@ -28,11 +28,13 @@ scripted `getTransaction` responses:
   3. `verify_transaction_succeeded` is True for a tx that lands after a lag.
   4. A reverted transaction is still False, however many times it is read.
   5. A confirmed buy whose amounts never parse is reported successful, with the
-     token amount taken from the wallet balance so the sell has a real figure.
-  6. That fallback amount is the balance actually held, not the expected amount.
-  7. A balance that predates the buy is capped at what this buy asked for, so
-     the exit cannot liquidate holdings this trade never created.
-  8. A buy whose transaction genuinely failed is still reported unsuccessful.
+     token amount, whole and raw, taken from the wallet balance actually held,
+     not the expected amount, so the sell has a real figure.
+  6. A balance that predates the buy is capped, whole and raw, at what this buy
+     asked for, so the exit cannot liquidate holdings this trade never created.
+  7. A buy whose transaction genuinely failed is still reported unsuccessful.
+  8. A confirmed buy whose quote destination is unknown (a LaunchLab coin
+     with no quote vault recorded) is still a buy, read back without it.
 
 Usage:
     uv run tests/regression/verify_buy_result_not_lost.py
@@ -47,11 +49,14 @@ from types import SimpleNamespace
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from _fakes import _check, _deltas  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
 from core.client import SolanaClient  # noqa: E402
 from core.pubkeys import TOKEN_DECIMALS, WSOL_MINT  # noqa: E402
-from interfaces.core import Platform, TokenInfo  # noqa: E402
+from core.trade_deltas import TradeDeltas  # noqa: E402
+from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E402
+from platforms import PlatformImplementations  # noqa: E402
 from trading import platform_aware  # noqa: E402
 from trading.base import TradeResult  # noqa: E402
 from trading.platform_aware import PlatformAwareBuyer  # noqa: E402
@@ -137,34 +142,40 @@ class StubBuyClient:
     ) -> str:
         return SIGNATURE
 
-    async def confirm_transaction(self, _signature: object) -> bool:
-        return self.confirmed
+    async def confirm_transaction_detailed(
+        self, _signature: object, **_kwargs: object
+    ) -> ConfirmationStatus:
+        if self.confirmed:
+            return ConfirmationStatus.SUCCESS
+        return ConfirmationStatus.REVERTED
 
-    async def get_buy_transaction_details(
+    async def get_trade_deltas(
         self, *_args: object, **_kwargs: object
-    ) -> tuple[int | None, int | None]:
-        return self.details
+    ) -> TradeDeltas | None:
+        return _deltas(*self.details)
 
     async def get_token_account_balance(self, _account: Pubkey) -> int:
         self.balance_reads += 1
         return self.balance_raw
 
 
-def _stub_implementations() -> SimpleNamespace:
+def _stub_implementations() -> PlatformImplementations:
     """Platform implementations that build an empty, unsendable instruction set."""
     address_provider = SimpleNamespace(
         derive_pool_address=lambda _mint: CURVE,
         derive_creator_vault=lambda _creator: CURVE,
+        program_id=None,
     )
     instruction_builder = SimpleNamespace(
         build_buy_instruction=_async_return([]),
         get_required_accounts_for_buy=lambda *_args, **_kwargs: [],
         get_buy_compute_unit_limit=lambda _override: 100_000,
     )
-    return SimpleNamespace(
+    return PlatformImplementations(
         address_provider=address_provider,
         instruction_builder=instruction_builder,
         curve_manager=SimpleNamespace(),
+        event_parser=None,
     )
 
 
@@ -177,7 +188,9 @@ def _async_return(value: object) -> Callable[..., object]:
     return _inner
 
 
-async def _run_buy(client: StubBuyClient) -> TradeResult:
+async def _run_buy(
+    client: StubBuyClient, token_info: TokenInfo | None = None
+) -> TradeResult:
     """Drive the real PlatformAwareBuyer.execute against stubs."""
     wallet = SimpleNamespace(
         pubkey=CURVE,
@@ -196,18 +209,13 @@ async def _run_buy(client: StubBuyClient) -> TradeResult:
         extreme_fast_mode=True,
     )
     original = platform_aware.get_platform_implementations
-    platform_aware.get_platform_implementations = (
-        lambda *_args, **_kwargs: _stub_implementations()
+    platform_aware.get_platform_implementations = lambda *_args, **_kwargs: (
+        _stub_implementations()
     )
     try:
-        return await buyer.execute(_make_token_info())
+        return await buyer.execute(token_info or _make_token_info())
     finally:
         platform_aware.get_platform_implementations = original
-
-
-def _check(label: str, passed: bool, detail: str) -> bool:  # noqa: FBT001
-    print(f"  [{'PASS' if passed else 'FAIL'}] {label}: {detail}")
-    return passed
 
 
 async def check_lagging_node_is_retried() -> bool:
@@ -253,54 +261,64 @@ async def check_revert_still_fails() -> bool:
     )
 
 
-async def check_unparseable_buy_is_not_lost() -> bool:
-    print("\n5. A confirmed buy whose amounts never parse is still a buy")
-    client = StubBuyClient(confirmed=True, details=(None, None))
-    result = await _run_buy(client)
-    return _check(
-        "TradeResult.success",
-        bool(result.success),
-        f"{result.success} (error_message={result.error_message!r})",
-    )
-
-
 async def check_fallback_amount_is_the_balance_held() -> bool:
-    print("\n6. The fallback sells the balance actually held, not the expected amount")
+    print("\n5. A confirmed buy whose amounts never parse sells the balance held")
     client = StubBuyClient(confirmed=True, details=(None, None))
     result = await _run_buy(client)
     held = TOKENS_RECEIVED_RAW / 10**TOKEN_DECIMALS
     return _check(
-        "TradeResult.amount",
-        result.success and abs(result.amount - held) < AMOUNT_TOLERANCE,
-        f"{result.amount} tokens (wallet holds {held}, "
+        "TradeResult.amount and amount_raw",
+        result.success
+        and abs(result.amount - held) < AMOUNT_TOLERANCE
+        and result.amount_raw == TOKENS_RECEIVED_RAW,
+        f"{result.amount} tokens, {result.amount_raw} raw (wallet holds {held}, "
         f"extreme_fast_mode expected {EXPECTED_TOKENS}), "
         f"{client.balance_reads} balance read(s)",
     )
 
 
 async def check_fallback_never_exceeds_what_was_bought() -> bool:
-    print("\n7. A balance predating the buy is capped at what this buy asked for")
+    print("\n6. A balance predating the buy is capped at what this buy asked for")
     client = StubBuyClient(
         confirmed=True, details=(None, None), balance_raw=PRIOR_HOLDING_RAW
     )
     result = await _run_buy(client)
     inflated = PRIOR_HOLDING_RAW / 10**TOKEN_DECIMALS
+    asked_raw = int(EXPECTED_TOKENS * 10**TOKEN_DECIMALS)
     return _check(
-        "TradeResult.amount",
-        result.success and abs(result.amount - EXPECTED_TOKENS) < AMOUNT_TOLERANCE,
-        f"{result.amount} tokens, not the full {inflated} on the books — "
+        "TradeResult.amount and amount_raw",
+        result.success
+        and abs(result.amount - EXPECTED_TOKENS) < AMOUNT_TOLERANCE
+        and result.amount_raw == asked_raw,
+        f"{result.amount} tokens, {result.amount_raw} raw, not the full "
+        f"{inflated} on the books — "
         f"the exit cannot sell a position this trade never opened",
     )
 
 
 async def check_failed_buy_still_fails() -> bool:
-    print("\n8. A buy whose transaction did not succeed is still a failure")
+    print("\n7. A buy whose transaction did not succeed is still a failure")
     client = StubBuyClient(confirmed=False, details=(None, None))
     result = await _run_buy(client)
     return _check(
         "TradeResult.success",
         result.success is False,
         f"{result.success} — an unconfirmed buy is not reported as bought",
+    )
+
+
+async def check_unknown_quote_destination_is_not_lost() -> bool:
+    print("\n8. A confirmed buy with no known quote destination is still a buy")
+    client = StubBuyClient(confirmed=True, details=(TOKENS_RECEIVED_RAW, None))
+    token_info = _make_token_info()
+    token_info.platform = Platform.LAUNCHLAB
+    token_info.quote_vault = None
+    result = await _run_buy(client, token_info)
+    return _check(
+        "TradeResult.success",
+        bool(result.success) and result.amount_raw == TOKENS_RECEIVED_RAW,
+        f"{result.success}, {result.amount_raw} raw "
+        f"(error_message={result.error_message!r})",
     )
 
 
@@ -314,10 +332,10 @@ async def main() -> None:
         await check_retry_is_bounded(),
         await check_verify_succeeds_after_lag(),
         await check_revert_still_fails(),
-        await check_unparseable_buy_is_not_lost(),
         await check_fallback_amount_is_the_balance_held(),
         await check_fallback_never_exceeds_what_was_bought(),
         await check_failed_buy_still_fails(),
+        await check_unknown_quote_destination_is_not_lost(),
     ]
 
     print("\n" + "=" * 72)

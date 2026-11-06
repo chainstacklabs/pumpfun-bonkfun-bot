@@ -1,4 +1,9 @@
+from solders.pubkey import Pubkey
+
 from cleanup.manager import AccountCleanupManager
+from core.client import SolanaClient
+from core.priority_fee.manager import PriorityFeeManager
+from core.wallet import Wallet
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -52,6 +57,36 @@ async def handle_cleanup_after_sell(
         await manager.cleanup_ata(mint, token_program_id)
 
 
+async def handle_cleanup_cleared(  # noqa: PLR0913, PLR0917 - like its siblings
+    client: SolanaClient,
+    wallet: Wallet,
+    mint: Pubkey,
+    token_program_id: Pubkey,
+    priority_fee_manager: PriorityFeeManager,
+    cleanup_mode: str,
+    cleanup_with_prior_fee: bool,  # noqa: FBT001
+) -> None:
+    """Close the account of a coin the wallet no longer holds, under `after_sell`.
+
+    For a position cleared because the coin was sold or moved while the bot was
+    down. Nothing is burned: only an empty account closes. `post_session`
+    closes it at the end of the session, with every other empty account.
+    """
+    if should_cleanup_after_sell(cleanup_mode):
+        logger.info(
+            f"[Cleanup] Closing the token account of {mint}: the wallet no longer "
+            f"holds the coin."
+        )
+        manager = AccountCleanupManager(
+            client,
+            wallet,
+            priority_fee_manager,
+            cleanup_with_prior_fee,
+            force_burn=False,
+        )
+        await manager.cleanup_ata(mint, token_program_id, settle=False)
+
+
 async def handle_cleanup_post_session(
     client,
     wallet,
@@ -61,11 +96,17 @@ async def handle_cleanup_post_session(
     cleanup_mode,
     cleanup_with_prior_fee,
     force_burn,
+    sweep_except: set[Pubkey] | None = None,
 ):
+    """Close the session's traded coins' accounts, then every other empty one.
+
+    Args:
+        sweep_except: Mints whose accounts the sweep of empty accounts leaves
+            open (quote mints, coins kept for the next start); None sweeps none
+    """
     if should_cleanup_post_session(cleanup_mode):
         logger.info("[Cleanup] Triggered post trading session.")
         manager = AccountCleanupManager(
             client, wallet, priority_fee_manager, cleanup_with_prior_fee, force_burn
         )
-        for mint, token_program_id in zip(mints, token_program_ids):
-            await manager.cleanup_ata(mint, token_program_id)
+        await manager.cleanup_atas(mints, token_program_ids, sweep_except=sweep_except)

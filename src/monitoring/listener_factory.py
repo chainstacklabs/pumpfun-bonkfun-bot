@@ -1,5 +1,7 @@
 """Factory for creating platform-aware token listeners."""
 
+from solders.pubkey import Pubkey
+
 from interfaces.core import Platform
 from monitoring.base_listener import BaseTokenListener
 from utils.logger import get_logger
@@ -18,6 +20,7 @@ class ListenerFactory:
         geyser_api_token: str | None = None,
         geyser_auth_type: str = "x-token",
         platforms: list[Platform] | None = None,
+        platform_configs: frozenset[Pubkey] | None = None,
     ) -> BaseTokenListener:
         """Create a token listener based on the specified type.
 
@@ -28,6 +31,9 @@ class ListenerFactory:
             geyser_endpoint: Geyser gRPC endpoint URL (geyser/shreds listeners)
             geyser_api_token: Geyser API token (geyser/shreds listeners)
             platforms: List of platforms to monitor (if None, monitor all)
+            platform_configs: LaunchLab platform configs to narrow to (blocks,
+                geyser and shreds, the listeners LaunchLab runs on); None is
+                all the platform covers
 
         Returns:
             Configured token listener
@@ -50,6 +56,7 @@ class ListenerFactory:
                 geyser_api_token=geyser_api_token,
                 geyser_auth_type=geyser_auth_type,
                 platforms=platforms,
+                platform_configs=platform_configs,
             )
             logger.info("Created Universal Geyser listener for token monitoring")
             return listener
@@ -67,6 +74,7 @@ class ListenerFactory:
                 geyser_api_token=geyser_api_token,
                 geyser_auth_type=geyser_auth_type,
                 platforms=platforms,
+                platform_configs=platform_configs,
             )
             logger.info("Created Universal Shreds listener for token monitoring")
             return listener
@@ -93,6 +101,7 @@ class ListenerFactory:
             listener = UniversalBlockListener(
                 wss_endpoint=wss_endpoint,
                 platforms=platforms,
+                platform_configs=platform_configs,
             )
             logger.info("Created Universal Block listener for token monitoring")
             return listener
@@ -111,17 +120,3 @@ class ListenerFactory:
             List of supported listener type strings
         """
         return ["logs", "blocks", "geyser", "shreds"]
-
-    @staticmethod
-    def get_platform_compatible_listeners(platform: Platform) -> list[str]:
-        """Get list of listener types compatible with a specific platform.
-
-        Args:
-            platform: Platform to check compatibility for
-        """
-        if platform == Platform.PUMP_FUN:
-            return ["logs", "blocks", "geyser", "shreds"]
-        elif platform in (Platform.LETS_BONK, Platform.STONK_FUN):
-            return ["blocks", "geyser"]
-        else:
-            return ["blocks", "geyser"]  # Default universal listeners

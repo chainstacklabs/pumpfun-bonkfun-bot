@@ -55,28 +55,22 @@ _SELL_V2_ACCOUNTS: list[tuple[str, bool]] = [
 class PumpFunInstructionBuilder(InstructionBuilder):
     """Pump.Fun implementation of InstructionBuilder interface with IDL-based discriminators."""
 
-    def __init__(self, idl_parser: IDLParser, *, use_legacy_instructions: bool = False):
+    def __init__(self, idl_parser: IDLParser):
         """Initialize pump.fun instruction builder with injected IDL parser.
 
         Args:
             idl_parser: Pre-loaded IDL parser for pump.fun platform
-            use_legacy_instructions: Build the pre-v2 buy/sell instructions
-                instead of buy_v2/sell_v2. Legacy instructions cannot trade
-                coins paired with anything other than SOL.
         """
         self._idl_parser = idl_parser
-        self._use_legacy_instructions = use_legacy_instructions
 
         # Get discriminators from injected IDL parser
         discriminators = self._idl_parser.get_instruction_discriminators()
-        self._buy_discriminator = discriminators["buy"]
-        self._sell_discriminator = discriminators["sell"]
         self._buy_v2_discriminator = discriminators["buy_v2"]
         self._sell_v2_discriminator = discriminators["sell_v2"]
 
         logger.info(
             "Pump.Fun instruction builder initialized with injected IDL parser "
-            f"(instruction set: {'legacy' if use_legacy_instructions else 'v2'})"
+            "(instruction set: v2)"
         )
 
     @property
@@ -125,10 +119,7 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         minimum_amount_out: int,
         address_provider: AddressProvider,
     ) -> list[Instruction]:
-        """Build buy instruction(s) for pump.fun.
-
-        Dispatches to buy_v2 unless the builder was constructed with
-        ``use_legacy_instructions=True``.
+        """Build buy instruction(s) for pump.fun: buy_v2 plus the ATAs it needs.
 
         Args:
             user: User's wallet address
@@ -140,11 +131,7 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         Returns:
             List of instructions needed for the buy operation
         """
-        if not self._use_legacy_instructions:
-            return await self.build_buy_v2_instruction(
-                token_info, user, amount_in, minimum_amount_out, address_provider
-            )
-        return await self.build_buy_legacy_instruction(
+        return await self.build_buy_v2_instruction(
             token_info, user, amount_in, minimum_amount_out, address_provider
         )
 
@@ -199,9 +186,7 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             )
 
         # buy_v2 args: amount (base tokens out), max_sol_cost (max quote in).
-        # Unlike legacy buy there is no track_volume OptionBool — volume
-        # tracking is unconditional now that user_volume_accumulator is
-        # mandatory.
+        # Volume tracking is unconditional; there is no track_volume flag.
         instruction_data = (
             self._buy_v2_discriminator
             + struct.pack("<Q", minimum_amount_out)
@@ -276,141 +261,6 @@ class PumpFunInstructionBuilder(InstructionBuilder):
 
         return instructions
 
-    async def build_buy_legacy_instruction(
-        self,
-        token_info: TokenInfo,
-        user: Pubkey,
-        amount_in: int,
-        minimum_amount_out: int,
-        address_provider: AddressProvider,
-    ) -> list[Instruction]:
-        """Build the pre-v2 18-account buy instruction.
-
-        Only works for SOL-paired coins.
-
-        Args:
-            user: User's wallet address
-            amount_in: Amount of SOL to spend (in lamports)
-            minimum_amount_out: Exact tokens to buy (raw token units)
-            address_provider: Platform address provider
-
-        Returns:
-            List of instructions needed for the buy operation
-        """
-        instructions = []
-
-        # Get all required accounts (includes mayhem-mode-aware fee recipient)
-        accounts_info = address_provider.get_buy_instruction_accounts(token_info, user)
-
-        # 1. Create idempotent ATA instruction (won't fail if ATA already exists)
-        # Use token_program from accounts_info to ensure AddressProvider controls program selection
-        ata_instruction = create_idempotent_associated_token_account(
-            user,  # payer
-            user,  # owner
-            token_info.mint,  # mint
-            accounts_info["token_program"],  # token program from AddressProvider
-        )
-        instructions.append(ata_instruction)
-
-        # 2. Build buy instruction
-        buy_accounts = [
-            AccountMeta(
-                pubkey=accounts_info["global"], is_signer=False, is_writable=False
-            ),
-            AccountMeta(pubkey=accounts_info["fee"], is_signer=False, is_writable=True),
-            AccountMeta(
-                pubkey=accounts_info["mint"], is_signer=False, is_writable=False
-            ),
-            AccountMeta(
-                pubkey=accounts_info["bonding_curve"], is_signer=False, is_writable=True
-            ),
-            AccountMeta(
-                pubkey=accounts_info["associated_bonding_curve"],
-                is_signer=False,
-                is_writable=True,
-            ),
-            AccountMeta(
-                pubkey=accounts_info["user_token_account"],
-                is_signer=False,
-                is_writable=True,
-            ),
-            AccountMeta(pubkey=accounts_info["user"], is_signer=True, is_writable=True),
-            AccountMeta(
-                pubkey=accounts_info["system_program"],
-                is_signer=False,
-                is_writable=False,
-            ),
-            AccountMeta(
-                pubkey=accounts_info["token_program"],
-                is_signer=False,
-                is_writable=False,
-            ),
-            AccountMeta(
-                pubkey=accounts_info["creator_vault"], is_signer=False, is_writable=True
-            ),
-            AccountMeta(
-                pubkey=accounts_info["event_authority"],
-                is_signer=False,
-                is_writable=False,
-            ),
-            AccountMeta(
-                pubkey=accounts_info["program"], is_signer=False, is_writable=False
-            ),
-            AccountMeta(
-                pubkey=accounts_info["global_volume_accumulator"],
-                is_signer=False,
-                is_writable=False,
-            ),
-            AccountMeta(
-                pubkey=accounts_info["user_volume_accumulator"],
-                is_signer=False,
-                is_writable=True,
-            ),
-            # Index 14: fee_config (readonly)
-            AccountMeta(
-                pubkey=accounts_info["fee_config"],
-                is_signer=False,
-                is_writable=False,
-            ),
-            # Index 15: fee_program (readonly)
-            AccountMeta(
-                pubkey=accounts_info["fee_program"],
-                is_signer=False,
-                is_writable=False,
-            ),
-            # Remaining account: bonding_curve_v2 (readonly, required for all coins)
-            AccountMeta(
-                pubkey=accounts_info["bonding_curve_v2"],
-                is_signer=False,
-                is_writable=False,
-            ),
-            # 18th account: breaking-upgrade fee recipient (mutable), required
-            AccountMeta(
-                pubkey=accounts_info["breaking_fee_recipient"],
-                is_signer=False,
-                is_writable=True,
-            ),
-        ]
-
-        # Build instruction data: discriminator + token_amount + max_sol_cost + track_volume
-        # Encode OptionBool for track_volume: [1, 1] = Some(true)
-        track_volume_bytes = bytes([1, 1])
-        instruction_data = (
-            self._buy_discriminator
-            + struct.pack("<Q", minimum_amount_out)  # token amount in raw units
-            + struct.pack("<Q", amount_in)  # max SOL cost in lamports
-            + track_volume_bytes  # enable volume tracking
-        )
-
-        buy_instruction = Instruction(
-            program_id=accounts_info["program"],
-            data=instruction_data,
-            accounts=buy_accounts,
-        )
-        instructions.append(buy_instruction)
-
-        return instructions
-
     async def build_sell_instruction(
         self,
         token_info: TokenInfo,
@@ -419,10 +269,7 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         minimum_amount_out: int,
         address_provider: AddressProvider,
     ) -> list[Instruction]:
-        """Build sell instruction(s) for pump.fun.
-
-        Dispatches to sell_v2 unless the builder was constructed with
-        ``use_legacy_instructions=True``.
+        """Build sell instruction(s) for pump.fun: sell_v2 plus the ATA it needs.
 
         Args:
             user: User's wallet address
@@ -433,145 +280,9 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         Returns:
             List of instructions needed for the sell operation
         """
-        if not self._use_legacy_instructions:
-            return await self.build_sell_v2_instruction(
-                token_info, user, amount_in, minimum_amount_out, address_provider
-            )
-        return await self.build_sell_legacy_instruction(
+        return await self.build_sell_v2_instruction(
             token_info, user, amount_in, minimum_amount_out, address_provider
         )
-
-    async def build_sell_legacy_instruction(
-        self,
-        token_info: TokenInfo,
-        user: Pubkey,
-        amount_in: int,
-        minimum_amount_out: int,
-        address_provider: AddressProvider,
-    ) -> list[Instruction]:
-        """Build the pre-v2 16/17-account sell instruction.
-
-        Only works for SOL-paired coins.
-
-        Args:
-            user: User's wallet address
-            amount_in: Amount of tokens to sell (raw token units)
-            minimum_amount_out: Minimum SOL expected (in lamports)
-            address_provider: Platform address provider
-
-        Returns:
-            List of instructions needed for the sell operation
-        """
-        instructions = []
-
-        # Get all required accounts (includes mayhem-mode-aware fee recipient)
-        accounts_info = address_provider.get_sell_instruction_accounts(token_info, user)
-
-        # Build sell instruction accounts
-        sell_accounts = [
-            AccountMeta(
-                pubkey=accounts_info["global"], is_signer=False, is_writable=False
-            ),
-            AccountMeta(pubkey=accounts_info["fee"], is_signer=False, is_writable=True),
-            AccountMeta(
-                pubkey=accounts_info["mint"], is_signer=False, is_writable=False
-            ),
-            AccountMeta(
-                pubkey=accounts_info["bonding_curve"], is_signer=False, is_writable=True
-            ),
-            AccountMeta(
-                pubkey=accounts_info["associated_bonding_curve"],
-                is_signer=False,
-                is_writable=True,
-            ),
-            AccountMeta(
-                pubkey=accounts_info["user_token_account"],
-                is_signer=False,
-                is_writable=True,
-            ),
-            AccountMeta(pubkey=accounts_info["user"], is_signer=True, is_writable=True),
-            AccountMeta(
-                pubkey=accounts_info["system_program"],
-                is_signer=False,
-                is_writable=False,
-            ),
-            AccountMeta(
-                pubkey=accounts_info["creator_vault"], is_signer=False, is_writable=True
-            ),
-            AccountMeta(
-                pubkey=accounts_info["token_program"],
-                is_signer=False,
-                is_writable=False,
-            ),
-            AccountMeta(
-                pubkey=accounts_info["event_authority"],
-                is_signer=False,
-                is_writable=False,
-            ),
-            AccountMeta(
-                pubkey=accounts_info["program"], is_signer=False, is_writable=False
-            ),
-            # Index 12: fee_config (readonly)
-            AccountMeta(
-                pubkey=accounts_info["fee_config"],
-                is_signer=False,
-                is_writable=False,
-            ),
-            # Index 13: fee_program (readonly)
-            AccountMeta(
-                pubkey=accounts_info["fee_program"],
-                is_signer=False,
-                is_writable=False,
-            ),
-        ]
-
-        # Remaining accounts (after fee_program) for cashback + bonding_curve_v2.
-        # create_v2 no longer mints cashback coins (6082 CashbackDeprecated), but
-        # existing ones still trade and accrue, so this branch stays live.
-        if token_info.is_cashback_coin:
-            # Cashback sell: user_volume_accumulator (mutable) + bonding_curve_v2 (readonly)
-            sell_accounts.append(
-                AccountMeta(
-                    pubkey=accounts_info["user_volume_accumulator"],
-                    is_signer=False,
-                    is_writable=True,
-                )
-            )
-        # bonding_curve_v2 is required for ALL coins (cashback and non-cashback)
-        sell_accounts.append(
-            AccountMeta(
-                pubkey=accounts_info["bonding_curve_v2"],
-                is_signer=False,
-                is_writable=False,
-            )
-        )
-        # 16/17th account: breaking-upgrade fee recipient (mutable), required
-        sell_accounts.append(
-            AccountMeta(
-                pubkey=accounts_info["breaking_fee_recipient"],
-                is_signer=False,
-                is_writable=True,
-            )
-        )
-
-        # Build instruction data: discriminator + token_amount + min_sol_output + track_volume
-        # Encode OptionBool for track_volume: [1, 1] = Some(true)
-        track_volume_bytes = bytes([1, 1])
-        instruction_data = (
-            self._sell_discriminator
-            + struct.pack("<Q", amount_in)  # token amount in raw units
-            + struct.pack("<Q", minimum_amount_out)  # min SOL output in lamports
-            + track_volume_bytes  # enable volume tracking
-        )
-
-        sell_instruction = Instruction(
-            program_id=accounts_info["program"],
-            data=instruction_data,
-            accounts=sell_accounts,
-        )
-        instructions.append(sell_instruction)
-
-        return instructions
 
     def get_required_accounts_for_buy(
         self, token_info: TokenInfo, user: Pubkey, address_provider: AddressProvider
@@ -585,29 +296,10 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         Returns:
             List of account addresses that will be accessed
         """
-        if not self._use_legacy_instructions:
-            accounts_info = address_provider.get_buy_v2_instruction_accounts(
-                token_info, user
-            )
-            return self._writable_accounts(_BUY_V2_ACCOUNTS, accounts_info)
-
-        accounts_info = address_provider.get_buy_instruction_accounts(token_info, user)
-
-        return [
-            accounts_info["mint"],
-            accounts_info["bonding_curve"],
-            accounts_info["associated_bonding_curve"],
-            accounts_info["user_token_account"],
-            accounts_info["fee"],
-            accounts_info["creator_vault"],
-            accounts_info["global_volume_accumulator"],
-            accounts_info["user_volume_accumulator"],
-            accounts_info["program"],
-            accounts_info["fee_config"],
-            accounts_info["fee_program"],
-            accounts_info["bonding_curve_v2"],
-            accounts_info["breaking_fee_recipient"],
-        ]
+        accounts_info = address_provider.get_buy_v2_instruction_accounts(
+            token_info, user
+        )
+        return self._writable_accounts(_BUY_V2_ACCOUNTS, accounts_info)
 
     @staticmethod
     def _writable_accounts(
@@ -640,27 +332,10 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         Returns:
             List of account addresses that will be accessed
         """
-        if not self._use_legacy_instructions:
-            accounts_info = address_provider.get_sell_v2_instruction_accounts(
-                token_info, user
-            )
-            return self._writable_accounts(_SELL_V2_ACCOUNTS, accounts_info)
-
-        accounts_info = address_provider.get_sell_instruction_accounts(token_info, user)
-
-        return [
-            accounts_info["mint"],
-            accounts_info["bonding_curve"],
-            accounts_info["associated_bonding_curve"],
-            accounts_info["user_token_account"],
-            accounts_info["fee"],
-            accounts_info["creator_vault"],
-            accounts_info["program"],
-            accounts_info["fee_config"],
-            accounts_info["fee_program"],
-            accounts_info["bonding_curve_v2"],
-            accounts_info["breaking_fee_recipient"],
-        ]
+        accounts_info = address_provider.get_sell_v2_instruction_accounts(
+            token_info, user
+        )
+        return self._writable_accounts(_SELL_V2_ACCOUNTS, accounts_info)
 
     def get_buy_compute_unit_limit(self, config_override: int | None = None) -> int:
         """Get the recommended compute unit limit for pump.fun buy operations.
@@ -673,11 +348,8 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         """
         if config_override is not None:
             return config_override
-        if self._use_legacy_instructions:
-            # Buy operations: ATA creation + buy instruction
-            return 100_000
-        # buy_v2 touches 27 accounts, so it costs more than the legacy 18-account
-        # buy. 180k leaves headroom for a non-SOL quote's extra ATA init.
+        # buy_v2 touches 27 accounts; 180k leaves headroom for a non-SOL quote's
+        # extra ATA init.
         # Re-measure with `tools/simulate_v2_trades.py` after a program upgrade;
         # the exact figure varies with account state.
         return 180_000
@@ -693,9 +365,6 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         """
         if config_override is not None:
             return config_override
-        if self._use_legacy_instructions:
-            # Sell operations: typically just sell instruction (ATA exists)
-            return 60_000
         # sell_v2 touches 26 accounts; 120k leaves headroom. Re-measure with
         # `tools/simulate_v2_trades.py` after a program upgrade; the exact figure
         # varies with account state.

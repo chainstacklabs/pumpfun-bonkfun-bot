@@ -1,10 +1,12 @@
 """Position management for take-profit / stop-loss exits."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
 from solders.pubkey import Pubkey
+
+from trading.pnl import CostBasis, Realised, format_price
 
 
 class ExitReason(Enum):
@@ -41,6 +43,11 @@ class Position:
     exit_reason: ExitReason | None = None
     exit_price: float | None = None
     exit_time: datetime | None = None
+
+    #: What each token cost, for the realised PnL; None: priced at entry_price.
+    cost: CostBasis | None = None
+    #: The PnL of the sales so far.
+    realised: Realised = field(default_factory=Realised)
 
     @classmethod
     def create_from_buy_result(
@@ -140,11 +147,15 @@ class Position:
         self.exit_reason = exit_reason
         self.exit_time = datetime.utcnow()
 
-    def get_pnl(self, current_price: float | None = None) -> dict:
+    def get_pnl(
+        self, current_price: float | None = None, quantity: float | None = None
+    ) -> dict:
         """Calculate profit/loss for the position.
 
         Args:
             current_price: Current price (uses exit_price if position is closed)
+            quantity: Whole tokens to count, such as the part a sell sold;
+                None counts the whole position
 
         Returns:
             Dictionary with PnL information
@@ -158,7 +169,9 @@ class Position:
 
         price_change = price_to_use - self.entry_price
         price_change_pct = (price_change / self.entry_price) * 100
-        unrealized_pnl = price_change * self.quantity
+        if quantity is None:
+            quantity = self.quantity
+        unrealized_pnl = price_change * quantity
 
         return {
             "entry_price": self.entry_price,
@@ -166,7 +179,7 @@ class Position:
             "price_change": price_change,
             "price_change_pct": price_change_pct,
             "unrealized_pnl_quote": unrealized_pnl,
-            "quantity": self.quantity,
+            "quantity": quantity,
         }
 
     def __str__(self) -> str:
@@ -177,4 +190,7 @@ class Position:
             status = f"CLOSED ({self.exit_reason.value})"
         else:
             status = "CLOSED (UNKNOWN)"
-        return f"Position({self.symbol}: {self.quantity:.6f} @ {self.entry_price:.8f} - {status})"
+        return (
+            f"Position({self.symbol}: {self.quantity:.6f} @ "
+            f"{format_price(self.entry_price)} - {status})"
+        )

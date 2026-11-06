@@ -1,6 +1,6 @@
 """Factory and registry for platform-specific implementations of the interfaces."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from core.client import SolanaClient
@@ -8,10 +8,11 @@ from interfaces.core import (
     AddressProvider,
     CurveManager,
     EventParser,
-    GraduatedMarket,
     InstructionBuilder,
+    Market,
     Platform,
 )
+from platforms.curve_market import CurveMarket
 from utils.idl_manager import get_idl_manager, has_idl_support
 from utils.logger import get_logger
 
@@ -27,7 +28,14 @@ class PlatformImplementations:
     curve_manager: CurveManager
     event_parser: EventParser
     # Where the coin trades once its curve graduates; None where unsupported.
-    graduated_market: GraduatedMarket | None = None
+    graduated_market: Market | None = None
+    # The curve itself, as a Market: built from the three parts above.
+    curve_market: CurveMarket = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.curve_market = CurveMarket(
+            self.address_provider, self.instruction_builder, self.curve_manager
+        )
 
 
 class PlatformRegistry:
@@ -35,7 +43,9 @@ class PlatformRegistry:
 
     def __init__(self):
         self._implementations: dict[Platform, dict[str, type]] = {}
-        self._instances: dict[tuple[Platform, str], PlatformImplementations] = {}
+        self._instances: dict[
+            tuple[Platform, str, frozenset | None], PlatformImplementations
+        ] = {}
 
     def register_platform(
         self,
@@ -44,7 +54,7 @@ class PlatformRegistry:
         instruction_builder_class: type[InstructionBuilder],
         curve_manager_class: type[CurveManager],
         event_parser_class: type[EventParser],
-        graduated_market_class: type[GraduatedMarket] | None = None,
+        graduated_market_class: type[Market] | None = None,
     ) -> None:
         """Register platform implementations.
 
@@ -67,7 +77,8 @@ class PlatformRegistry:
         Args:
             platform: Platform to create implementations for
             client: Solana RPC client
-            **kwargs: Additional arguments for implementation constructors
+            **kwargs: `verbose_idl`; `platform_configs` narrows a LaunchLab
+                event parser to those platform configs
 
         Returns:
             PlatformImplementations containing all interface implementations
@@ -78,8 +89,11 @@ class PlatformRegistry:
         if platform not in self._implementations:
             raise ValueError(f"Platform {platform} is not registered")
 
-        # Use client address as cache key to allow multiple clients
-        cache_key = (platform, str(client.rpc_endpoint))
+        platform_configs = kwargs.get("platform_configs")
+        if platform_configs is not None:
+            platform_configs = frozenset(platform_configs)
+        # One set per client and narrowing: only the event parser differs.
+        cache_key = (platform, str(client.rpc_endpoint), platform_configs)
 
         # Check if we already have instances for this platform + client combo
         if cache_key in self._instances:
@@ -110,7 +124,14 @@ class PlatformRegistry:
                 idl_parser=idl_parser
             )
             curve_manager = impl_classes["curve_manager"](client, idl_parser=idl_parser)
-            event_parser = impl_classes["event_parser"](idl_parser=idl_parser)
+            narrowing = (
+                {}
+                if platform_configs is None
+                else {"platform_configs": platform_configs}
+            )
+            event_parser = impl_classes["event_parser"](
+                idl_parser=idl_parser, **narrowing
+            )
         else:
             # Fallback for platforms without IDL support
             instruction_builder = impl_classes["instruction_builder"]()
@@ -142,7 +163,7 @@ class PlatformRegistry:
         Returns:
             PlatformImplementations if available, None otherwise
         """
-        cache_key = (platform, client_endpoint)
+        cache_key = (platform, client_endpoint, None)
         return self._instances.get(cache_key)
 
     def get_supported_platforms(self) -> list[Platform]:
@@ -213,6 +234,29 @@ class PlatformFactory:
         except ImportError as e:
             print(f"Warning: Could not register pump.fun platform: {e}")
 
+        # Raydium LaunchLab, every platform config; letsbonk.fun and StonkFun
+        # below are the same classes narrowed to their own configs.
+        try:
+            from platforms.launchlab import (  # noqa: PLC0415
+                LaunchLabAddressProvider,
+                LaunchLabCurveManager,
+                LaunchLabEventParser,
+                LaunchLabInstructionBuilder,
+            )
+            from platforms.launchlab.cpmm_market import CpmmMarket  # noqa: PLC0415
+
+            self.registry.register_platform(
+                Platform.LAUNCHLAB,
+                LaunchLabAddressProvider,
+                LaunchLabInstructionBuilder,
+                LaunchLabCurveManager,
+                LaunchLabEventParser,
+                CpmmMarket,
+            )
+
+        except ImportError as e:
+            print(f"Warning: Could not register LaunchLab platform: {e}")
+
         # Import and register LetsBonk platform
         try:
             from platforms.letsbonk import (
@@ -264,66 +308,13 @@ class PlatformFactory:
         Args:
             platform: Platform to create implementations for
             client: Solana RPC client
-            **config: Platform-specific configuration (including verbose_idl)
+            **config: `verbose_idl`, and `platform_configs` to narrow a
+                LaunchLab event parser
 
         Returns:
             PlatformImplementations containing all interface implementations
         """
         return self.registry.create_platform_implementations(platform, client, **config)
-
-    def get_address_provider(
-        self, platform: Platform, client: SolanaClient
-    ) -> AddressProvider:
-        """Get address provider for platform.
-
-        Args:
-            platform: Platform to get provider for
-            client: Solana RPC client
-        """
-        implementations = self.registry.create_platform_implementations(
-            platform, client
-        )
-        return implementations.address_provider
-
-    def get_instruction_builder(
-        self, platform: Platform, client: SolanaClient
-    ) -> InstructionBuilder:
-        """Get instruction builder for platform.
-
-        Args:
-            platform: Platform to get builder for
-            client: Solana RPC client
-        """
-        implementations = self.registry.create_platform_implementations(
-            platform, client
-        )
-        return implementations.instruction_builder
-
-    def get_curve_manager(
-        self, platform: Platform, client: SolanaClient
-    ) -> CurveManager:
-        """Get curve manager for platform.
-
-        Args:
-            platform: Platform to get manager for
-            client: Solana RPC client
-        """
-        implementations = self.registry.create_platform_implementations(
-            platform, client
-        )
-        return implementations.curve_manager
-
-    def get_event_parser(self, platform: Platform, client: SolanaClient) -> EventParser:
-        """Get event parser for platform.
-
-        Args:
-            platform: Platform to get parser for
-            client: Solana RPC client
-        """
-        implementations = self.registry.create_platform_implementations(
-            platform, client
-        )
-        return implementations.event_parser
 
     def get_supported_platforms(self) -> list[Platform]:
         """Get list of supported platforms."""

@@ -7,12 +7,15 @@ from typing import Any, Final
 
 from solders.instruction import AccountMeta, Instruction
 from solders.pubkey import Pubkey
-from spl.token.instructions import get_associated_token_address
+from spl.token.instructions import (
+    create_idempotent_associated_token_account,
+    get_associated_token_address,
+)
 
 from core.client import SolanaClient
 from core.pubkeys import normalize_quote_mint
 from core.quote_account import quote_settlement_account
-from interfaces.core import AddressProvider, GraduatedMarket, TokenInfo
+from interfaces.core import Market, TokenInfo
 
 CPMM_PROGRAM: Final[Pubkey] = Pubkey.from_string(
     "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C"
@@ -63,7 +66,7 @@ _TOKEN_AMOUNT_OFFSET = 64
 
 @dataclass(frozen=True)
 class CpmmPool:
-    """One CPMM pool, oriented around the coin being sold."""
+    """One CPMM pool, oriented around the coin being traded."""
 
     address: Pubkey
     amm_config: Pubkey
@@ -130,18 +133,31 @@ def accrued_fees(data: bytes, base_is_token_0: bool) -> tuple[int, int]:
     return (token_0, token_1) if base_is_token_0 else (token_1, token_0)
 
 
-class CpmmMarket(GraduatedMarket):
-    """Sells a graduated LaunchLab coin into its Raydium CPMM pool.
+class CpmmMarket(Market):
+    """Buys and sells a graduated LaunchLab coin in its Raydium CPMM pool.
 
     The pool is derived, not searched for: CPMM keys it by the platform's
     `cpswap_config` and the two mints. Platform configs and AMM configs are
-    shared by many pools and read once.
+    shared by many pools and read once. Both sides are `swap_base_input`, so
+    a buy spends exactly its `amount_in`.
     """
+
+    name = "Raydium CPMM"
 
     def __init__(self, client: SolanaClient) -> None:
         self.client = client
         self._cpswap_configs: dict[Pubkey, Pubkey] = {}
         self._pools: dict[Pubkey, CpmmPool] = {}
+
+    @property
+    def program_id(self) -> Pubkey:
+        """Raydium CPMM."""
+        return CPMM_PROGRAM
+
+    @property
+    def spends_exact_amount_in(self) -> bool:
+        """A buy is `swap_base_input`: it spends all of `amount_in`."""
+        return True
 
     async def _platform_config(self, token_info: TokenInfo) -> Pubkey:
         if token_info.platform_config:
@@ -191,7 +207,7 @@ class CpmmMarket(GraduatedMarket):
             if await self._migrated_to_amm_v4(token_info):
                 raise ValueError(  # noqa: TRY003
                     f"{token_info.mint} migrated to Raydium AMM v4, which the bot "
-                    f"cannot sell into"
+                    f"cannot trade in"
                 ) from e
             raise ValueError(  # noqa: TRY003
                 f"No CPMM pool for {token_info.mint} yet: {e}"
@@ -224,7 +240,36 @@ class CpmmMarket(GraduatedMarket):
             else 0.0,
             "fee_fraction": (trade_fee + creator_fee) / FEE_RATE_DENOMINATOR,
             "pool": pool.address,
+            "token_program": pool.base_program,
         }
+
+    async def build_buy_instruction(
+        self,
+        token_info: TokenInfo,
+        user: Pubkey,
+        amount_in: int,
+        minimum_amount_out: int,
+    ) -> list[Instruction]:
+        """Build swap_base_input spending exactly `amount_in` raw quote units.
+
+        `amount_in` includes the pool's fees. `minimum_amount_out` is checked
+        against what reaches the wallet, so on a transfer-fee coin it must be
+        net of that fee. A SOL pool is paid from a throwaway wrapped-SOL
+        account funded with `amount_in`; any other quote from the wallet's
+        account, which must already hold it. The coin's account is created
+        first if missing.
+        """
+        pool = await self._resolve(token_info)
+        quote_account, open_ixs, close_ixs = quote_settlement_account(
+            user, pool.quote_mint, pool.quote_program, funding=amount_in
+        )
+        create_base_ata = create_idempotent_associated_token_account(
+            user, user, pool.base_mint, pool.base_program
+        )
+        swap = self._swap(
+            pool, user, quote_account, (amount_in, minimum_amount_out), is_buy=True
+        )
+        return [*open_ixs, create_base_ata, swap, *close_ixs]
 
     async def build_sell_instruction(
         self,
@@ -232,45 +277,84 @@ class CpmmMarket(GraduatedMarket):
         user: Pubkey,
         amount_in: int,
         minimum_amount_out: int,
-        address_provider: AddressProvider,  # noqa: ARG002
     ) -> list[Instruction]:
         """Build swap_base_input selling `amount_in` raw tokens for the quote."""
         pool = await self._resolve(token_info)
-        user_base = get_associated_token_address(
-            user, pool.base_mint, pool.base_program
-        )
         quote_account, open_ixs, close_ixs = quote_settlement_account(
             user, pool.quote_mint, pool.quote_program
         )
+        swap = self._swap(
+            pool, user, quote_account, (amount_in, minimum_amount_out), is_buy=False
+        )
+        return [*open_ixs, swap, *close_ixs]
+
+    @staticmethod
+    def _swap(
+        pool: CpmmPool,
+        user: Pubkey,
+        quote_account: Pubkey,
+        amounts: tuple[int, int],
+        *,
+        is_buy: bool,
+    ) -> Instruction:
+        """swap_base_input of (amount_in, minimum_amount_out), input side first.
+
+        The program reads the input token's account, vault, token program and
+        mint before the output token's; a buy inputs the quote, a sell the coin.
+        """
+        user_base = get_associated_token_address(
+            user, pool.base_mint, pool.base_program
+        )
+        base = (user_base, pool.base_vault, pool.base_program, pool.base_mint)
+        quote = (quote_account, pool.quote_vault, pool.quote_program, pool.quote_mint)
+        first, second = (quote, base) if is_buy else (base, quote)
+        in_user, in_vault, in_program, in_mint = first
+        out_user, out_vault, out_program, out_mint = second
         accounts = [
             AccountMeta(user, is_signer=True, is_writable=True),
             AccountMeta(_AUTHORITY, is_signer=False, is_writable=False),
             AccountMeta(pool.amm_config, is_signer=False, is_writable=False),
             AccountMeta(pool.address, is_signer=False, is_writable=True),
-            AccountMeta(user_base, is_signer=False, is_writable=True),
-            AccountMeta(quote_account, is_signer=False, is_writable=True),
-            AccountMeta(pool.base_vault, is_signer=False, is_writable=True),
-            AccountMeta(pool.quote_vault, is_signer=False, is_writable=True),
-            AccountMeta(pool.base_program, is_signer=False, is_writable=False),
-            AccountMeta(pool.quote_program, is_signer=False, is_writable=False),
-            AccountMeta(pool.base_mint, is_signer=False, is_writable=False),
-            AccountMeta(pool.quote_mint, is_signer=False, is_writable=False),
+            AccountMeta(in_user, is_signer=False, is_writable=True),
+            AccountMeta(out_user, is_signer=False, is_writable=True),
+            AccountMeta(in_vault, is_signer=False, is_writable=True),
+            AccountMeta(out_vault, is_signer=False, is_writable=True),
+            AccountMeta(in_program, is_signer=False, is_writable=False),
+            AccountMeta(out_program, is_signer=False, is_writable=False),
+            AccountMeta(in_mint, is_signer=False, is_writable=False),
+            AccountMeta(out_mint, is_signer=False, is_writable=False),
             AccountMeta(pool.observation, is_signer=False, is_writable=True),
         ]
-        data = _SWAP_BASE_INPUT + struct.pack("<QQ", amount_in, minimum_amount_out)
-        return [*open_ixs, Instruction(CPMM_PROGRAM, data, accounts), *close_ixs]
+        data = _SWAP_BASE_INPUT + struct.pack("<QQ", *amounts)
+        return Instruction(CPMM_PROGRAM, data, accounts)
+
+    def get_required_accounts_for_buy(
+        self,
+        token_info: TokenInfo,
+        user: Pubkey,
+    ) -> list[Pubkey]:
+        """The pool and its vaults, as for a sell."""
+        return self.get_required_accounts_for_sell(token_info, user)
 
     def get_required_accounts_for_sell(
         self,
         token_info: TokenInfo,
         user: Pubkey,  # noqa: ARG002
-        address_provider: AddressProvider,  # noqa: ARG002
     ) -> list[Pubkey]:
         """The pool and its vaults, once the pool has been resolved."""
         pool = self._pools.get(token_info.mint)
         if pool is None:
             return [CPMM_PROGRAM]
         return [pool.address, pool.base_vault, pool.quote_vault, CPMM_PROGRAM]
+
+    def quote_destination(self, token_info: TokenInfo) -> Pubkey | None:
+        """The pool's quote vault, once the pool has been resolved."""
+        pool = self._pools.get(token_info.mint)
+        return pool.quote_vault if pool else None
+
+    def get_buy_compute_unit_limit(self, config_override: int | None = None) -> int:
+        """Compute units for a CPMM buy, the coin's account creation included."""
+        return config_override if config_override is not None else 150_000
 
     def get_sell_compute_unit_limit(self, config_override: int | None = None) -> int:
         """Compute units for a CPMM sell."""

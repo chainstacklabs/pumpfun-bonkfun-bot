@@ -2,6 +2,7 @@
 
 import base64
 import struct
+from collections.abc import Sequence
 from time import monotonic
 from typing import Any
 
@@ -9,12 +10,18 @@ from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
 
 from core.pubkeys import (
+    WSOL_MINT,
     SystemAddresses,
     cached_quote_token_program,
     normalize_quote_mint,
 )
-from interfaces.core import EventParser, Platform, TokenInfo
+from interfaces.core import EventParser, Platform, PoolReady, TokenInfo
 from platforms.pumpfun.address_provider import PumpFunAddresses
+from platforms.pumpfun.pumpswap_market import (
+    PUMP_AMM_PROGRAM,
+    PUMP_SWAP_IDL,
+    canonical_pool_address,
+)
 from utils.idl_parser import IDLParser
 from utils.logger import get_logger
 
@@ -38,6 +45,21 @@ _CREATE_V2_USER_ACCOUNT_INDEX = 5
 
 # Length of a Solana public key in bytes.
 PUBKEY_BYTE_LENGTH = 32
+
+# Account indexes of base mint, quote mint and pool on the two migration
+# instructions. Legacy `migrate` is SOL-paired only and names no quote mint
+# account before the pool.
+_MIGRATE_MINT_ACCOUNT_INDEX = 2
+_MIGRATE_POOL_ACCOUNT_INDEX = 9
+_MIGRATE_V2_QUOTE_MINT_ACCOUNT_INDEX = 3
+_MIGRATE_V2_POOL_ACCOUNT_INDEX = 10
+
+# The log lines pump.fun writes for its two migration instructions, at any
+# invocation depth. Matched whole, like CREATE_INSTRUCTION_LOGS below.
+MIGRATE_INSTRUCTION_LOGS = (
+    "Program log: Instruction: Migrate",
+    "Program log: Instruction: MigrateV2",
+)
 
 # The two log lines the pump.fun program writes when it creates a coin. They are
 # matched whole: Anchor writes `Instruction: <Name>` for every program, so a
@@ -135,17 +157,23 @@ class PumpFunEventParser(EventParser):
             else None
         )
 
-        logger.info(
+        self._migrate_discriminator_bytes = instruction_discriminators["migrate"]
+        self._migrate_v2_discriminator_bytes = instruction_discriminators["migrate_v2"]
+        # PumpSwap's IDL, for its CreatePoolEvent; loaded on the first
+        # migration, since most listeners never look for one.
+        self._pump_swap_idl_parser: IDLParser | None = None
+
+        logger.debug(
             "Pump.Fun event parser initialized with IDL-based event and instruction parsing"
         )
-        logger.info(
+        logger.debug(
             f"CreateEvent discriminator: {self._create_event_discriminator_bytes.hex()}"
         )
-        logger.info(
+        logger.debug(
             f"create instruction discriminator: {self._create_instruction_discriminator_bytes.hex()}"
         )
         if self._create_v2_instruction_discriminator_bytes:
-            logger.info(
+            logger.debug(
                 f"create_v2 instruction discriminator: {self._create_v2_instruction_discriminator_bytes.hex()}"
             )
 
@@ -171,7 +199,7 @@ class PumpFunEventParser(EventParser):
         if not any(log in CREATE_INSTRUCTION_LOGS for log in logs):
             return None
 
-        logger.info(f"🔍 Parsing token creation from logs for signature: {signature}")
+        logger.debug(f"🔍 Parsing token creation from logs for signature: {signature}")
 
         # Look for event data in the logs (CreateEvent data!)
         # We need to find the Program data that comes after "Instruction: Create"
@@ -185,7 +213,7 @@ class PumpFunEventParser(EventParser):
                 if log in CREATE_INSTRUCTION_LOGS:
                     create_instruction_found = True
                     instruction_type = log.rsplit(": ", 1)[1]
-                    logger.info(
+                    logger.debug(
                         f"📝 Found {instruction_type} instruction at log index {i}"
                     )
                 elif "Program data:" in log:
@@ -197,19 +225,19 @@ class PumpFunEventParser(EventParser):
                     # Extract base64 encoded event data
                     encoded_data = log.split("Program data: ")[1].strip()
                     program_data_entries.append((i, encoded_data, log))
-                    logger.info(
+                    logger.debug(
                         f"📊 Found Program data at log index {i}, length: {len(encoded_data)}"
                     )
 
             if not create_instruction_found:
-                logger.info("❌ No Create or CreateV2 instruction found in logs")
+                logger.debug("❌ No Create or CreateV2 instruction found in logs")
                 return None
 
             if not program_data_entries:
-                logger.info("❌ No Program data entries found in logs")
+                logger.debug("❌ No Program data entries found in logs")
                 return None
 
-            logger.info(
+            logger.debug(
                 f"🔍 Found {len(program_data_entries)} Program data entries to check"
             )
 
@@ -218,14 +246,14 @@ class PumpFunEventParser(EventParser):
                 program_data_entries
             ):
                 try:
-                    logger.info(
+                    logger.debug(
                         f"🧪 Trying Program data entry {entry_idx + 1}/{len(program_data_entries)} (log index {log_idx})"
                     )
 
                     decoded_data = base64.b64decode(encoded_data)
 
                     if len(decoded_data) < 8:
-                        logger.info(
+                        logger.debug(
                             f"⚠️ Program data too short: {len(decoded_data)} bytes"
                         )
                         continue
@@ -234,10 +262,10 @@ class PumpFunEventParser(EventParser):
                     discriminator = decoded_data[:8]
                     discriminator_int = struct.unpack("<Q", discriminator)[0]
 
-                    logger.info(
+                    logger.debug(
                         f"🔍 Program data discriminator: {discriminator.hex()} (int: {discriminator_int})"
                     )
-                    logger.info(
+                    logger.debug(
                         f"🎯 Expected CreateEvent discriminator: {self._create_event_discriminator_bytes.hex()} (int: {self._create_event_discriminator})"
                     )
 
@@ -247,25 +275,25 @@ class PumpFunEventParser(EventParser):
                     )
 
                     if not decoded_event:
-                        logger.info("❌ IDL parser returned None for CreateEvent")
+                        logger.debug("❌ IDL parser returned None for CreateEvent")
                         continue
 
                     if decoded_event.get("event_name") != "CreateEvent":
-                        logger.info(
+                        logger.debug(
                             f"❌ Wrong event type: {decoded_event.get('event_name', 'None')}"
                         )
                         continue
 
-                    logger.info(
+                    logger.debug(
                         f"✅ Successfully decoded event: {decoded_event.get('event_name', 'Unknown')}"
                     )
-                    logger.info(
+                    logger.debug(
                         f"🔍 Event fields: {list(decoded_event.get('fields', {}).keys())}"
                     )
 
                     fields = decoded_event.get("fields", {})
                     if not fields:
-                        logger.info("❌ No fields found in decoded event")
+                        logger.debug("❌ No fields found in decoded event")
                         continue
 
                     # Validate required fields exist
@@ -282,10 +310,10 @@ class PumpFunEventParser(EventParser):
                         field for field in required_fields if field not in fields
                     ]
                     if missing_fields:
-                        logger.info(f"❌ Missing required fields: {missing_fields}")
+                        logger.debug(f"❌ Missing required fields: {missing_fields}")
                         continue
 
-                    logger.info(
+                    logger.debug(
                         f"🎯 Token found: {fields.get('symbol', 'Unknown')} ({fields.get('name', 'Unknown')})"
                     )
 
@@ -313,13 +341,13 @@ class PumpFunEventParser(EventParser):
                             else fields["creator"]
                         )
 
-                        logger.info(f"🔑 Mint: {mint}")
-                        logger.info(f"🔑 Bonding Curve: {bonding_curve}")
-                        logger.info(f"🔑 User: {user}")
-                        logger.info(f"🔑 Creator: {creator}")
+                        logger.debug(f"🔑 Mint: {mint}")
+                        logger.debug(f"🔑 Bonding Curve: {bonding_curve}")
+                        logger.debug(f"🔑 User: {user}")
+                        logger.debug(f"🔑 Creator: {creator}")
 
                     except Exception as e:
-                        logger.info(f"❌ Failed to convert pubkey fields: {e}")
+                        logger.debug(f"❌ Failed to convert pubkey fields: {e}")
                         continue
 
                     # Derive additional addresses (default to TOKEN_2022_PROGRAM as per pump.fun's migration to create_v2)
@@ -333,7 +361,7 @@ class PumpFunEventParser(EventParser):
                     creator = self._creator_after_migration(logs, mint, creator)
                     creator_vault = self._derive_creator_vault(creator)
 
-                    logger.info(
+                    logger.debug(
                         f"✅ Successfully parsed CreateEvent for token: {fields.get('symbol', 'Unknown')}"
                     )
 
@@ -377,12 +405,12 @@ class PumpFunEventParser(EventParser):
                     )
 
                 except Exception as e:
-                    logger.info(
+                    logger.debug(
                         f"❌ Failed to decode Program data entry {entry_idx + 1}: {e}"
                     )
                     continue
 
-            logger.info("❌ No valid CreateEvent found in any Program data entries")
+            logger.debug("❌ No valid CreateEvent found in any Program data entries")
             return None
 
         except Exception:
@@ -408,7 +436,7 @@ class PumpFunEventParser(EventParser):
         return [emitter == program_id for emitter in emitters]
 
     @staticmethod
-    def _emitting_program(logs: list[str]) -> list[str | None]:
+    def _emitting_program(logs: Sequence[str]) -> list[str | None]:
         """Map each log line to the program id whose invocation emitted it.
 
         The runtime brackets every invocation with `Program <id> invoke [depth]`
@@ -515,7 +543,7 @@ class PumpFunEventParser(EventParser):
             if event_mint != mint or new_creator is None:
                 continue
 
-            logger.info(f"🔁 Bonding curve creator migrated to: {new_creator}")
+            logger.debug(f"🔁 Bonding curve creator migrated to: {new_creator}")
             return new_creator
 
         return creator
@@ -750,6 +778,124 @@ class PumpFunEventParser(EventParser):
             List of event discriminator bytes to match
         """
         return [self._create_event_discriminator_bytes]
+
+    def parse_pools_ready_from_logs(
+        self, logs: Sequence[str], signature: str
+    ) -> list[PoolReady]:
+        """Pools a migration in these logs created, from PumpSwap's CreatePoolEvent.
+
+        pump.fun's own `CompletePumpAmmMigrationEvent` goes out as an event
+        CPI, an inner instruction, so logsSubscribe never carries it. The
+        `create_pool` that `migrate`/`migrate_v2` calls logs PumpSwap's
+        CreatePoolEvent, which names the mint, quote mint and pool. A payload
+        counts only when PumpSwap's own invocation emitted it and the pool is
+        the coin's canonical one: that pool's creator is pump.fun's
+        pool-authority PDA, so only a migration can create it. A migration
+        that was already done logs `MigrateV2` and no event.
+
+        Returns:
+            One entry per pool created, usually none
+        """
+        if not any(log in MIGRATE_INSTRUCTION_LOGS for log in logs):
+            return []
+
+        emitters = self._emitting_program(logs)
+        pump_amm = str(PUMP_AMM_PROGRAM)
+        pools = []
+        for log, emitter in zip(logs, emitters, strict=True):
+            if emitter != pump_amm or not log.startswith("Program data: "):
+                continue
+            try:
+                data = base64.b64decode(log.split("Program data: ", 1)[1].strip())
+            except (ValueError, TypeError):
+                continue
+            pool = self._pool_from_create_pool_event(data, signature)
+            if pool is not None:
+                pools.append(pool)
+        return pools
+
+    def _pool_from_create_pool_event(
+        self, data: bytes, signature: str
+    ) -> PoolReady | None:
+        """A PoolReady from a CreatePoolEvent payload, if its pool is canonical."""
+        if self._pump_swap_idl_parser is None:
+            self._pump_swap_idl_parser = IDLParser(str(PUMP_SWAP_IDL))
+        event = self._pump_swap_idl_parser.decode_event_data(data, "CreatePoolEvent")
+        if not event:
+            return None
+        fields = event.get("fields", {})
+        mint = _coerce_pubkey(fields.get("base_mint"))
+        quote_mint = _coerce_pubkey(fields.get("quote_mint"))
+        pool = _coerce_pubkey(fields.get("pool"))
+        if mint is None or quote_mint is None or pool is None:
+            return None
+        if pool != canonical_pool_address(mint, quote_mint):
+            return None
+        return PoolReady(
+            platform=Platform.PUMP_FUN,
+            mint=mint,
+            pool=pool,
+            quote_mint=quote_mint,
+            signature=signature,
+            detection_timestamp=monotonic(),
+        )
+
+    def parse_pool_ready_from_instruction(
+        self,
+        instruction_data: bytes,
+        accounts: list[int],
+        account_keys: list[bytes],
+        signature: str,
+    ) -> PoolReady | None:
+        """The pool a top-level `migrate` or `migrate_v2` moves the curve into.
+
+        Read before execution: most migrate calls on mainnet arrive after
+        another one already moved the curve and do nothing, and any can fail.
+        The pool must be the canonical one for the named mints, which a
+        well-formed migration always names.
+        """
+        data = bytes(instruction_data)
+        if data.startswith(self._migrate_v2_discriminator_bytes):
+            pool_index = _MIGRATE_V2_POOL_ACCOUNT_INDEX
+            quote_index = _MIGRATE_V2_QUOTE_MINT_ACCOUNT_INDEX
+        elif data.startswith(self._migrate_discriminator_bytes):
+            pool_index = _MIGRATE_POOL_ACCOUNT_INDEX
+            quote_index = None
+        else:
+            return None
+
+        def key(index: int) -> Pubkey | None:
+            if index >= len(accounts) or accounts[index] >= len(account_keys):
+                return None
+            return Pubkey.from_bytes(bytes(account_keys[accounts[index]]))
+
+        mint = key(_MIGRATE_MINT_ACCOUNT_INDEX)
+        quote_mint = WSOL_MINT if quote_index is None else key(quote_index)
+        pool = key(pool_index)
+        if mint is None or quote_mint is None or pool is None:
+            return None
+        if pool != canonical_pool_address(mint, quote_mint):
+            return None
+        return PoolReady(
+            platform=Platform.PUMP_FUN,
+            mint=mint,
+            pool=pool,
+            quote_mint=quote_mint,
+            signature=signature,
+            pre_execution=True,
+            detection_timestamp=monotonic(),
+        )
+
+    def get_migration_instruction_discriminators(self) -> list[bytes]:
+        """`migrate_v2` and legacy `migrate`; both are still sent."""
+        return [
+            self._migrate_v2_discriminator_bytes,
+            self._migrate_discriminator_bytes,
+        ]
+
+    def get_migration_filter_accounts(self) -> list[Pubkey]:
+        """Global's withdraw authority: account 1 of both migrations, in no trade."""
+        return [PumpFunAddresses.LIQUIDITY_MIGRATOR]
 
     def parse_token_creation_from_block(self, block_data: dict) -> TokenInfo | None:
         """Parse token creation from block data (for block listener).

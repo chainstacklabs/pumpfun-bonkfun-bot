@@ -1,15 +1,23 @@
 """Universal blockSubscribe listener, platform-agnostic via the interfaces."""
 
 import asyncio
+import base64
 import json
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 
 import websockets
+from solders.pubkey import Pubkey
+from solders.transaction import VersionedTransaction
 
 from core.client import SolanaClient
-from interfaces.core import Platform, TokenInfo
-from monitoring.base_listener import BaseTokenListener, reraise_if_cancelled
-from platforms import get_platform_implementations, platform_factory
+from interfaces.core import Platform, PoolReady, TokenInfo
+from monitoring.base_listener import (
+    BaseTokenListener,
+    PoolCallback,
+    reraise_if_cancelled,
+)
+from platforms import platform_factory
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -28,12 +36,14 @@ class UniversalBlockListener(BaseTokenListener):
         self,
         wss_endpoint: str,
         platforms: list[Platform] | None = None,
+        platform_configs: frozenset[Pubkey] | None = None,
     ) -> None:
         """Initialize universal block listener.
 
         Args:
             wss_endpoint: WebSocket endpoint URL
             platforms: List of platforms to monitor (if None, monitor all supported platforms)
+            platform_configs: Narrows a LaunchLab platform to these configs
         """
         super().__init__()
         self.wss_endpoint = wss_endpoint
@@ -69,7 +79,9 @@ class UniversalBlockListener(BaseTokenListener):
 
                 dummy_client = DummyClient()
 
-                implementations = get_platform_implementations(platform, dummy_client)
+                implementations = platform_factory.create_for_platform(
+                    platform, dummy_client, platform_configs=platform_configs
+                )
                 parser = implementations.event_parser
                 self.platform_parsers[platform] = parser
                 program_id_str = str(parser.get_program_id())
@@ -90,6 +102,7 @@ class UniversalBlockListener(BaseTokenListener):
         token_callback: Callable[[TokenInfo], Awaitable[None]],
         match_string: str | None = None,
         creator_address: str | None = None,
+        pool_callback: PoolCallback | None = None,
     ) -> None:
         """Listen for new token creations using blockSubscribe.
 
@@ -97,7 +110,9 @@ class UniversalBlockListener(BaseTokenListener):
             token_callback: Callback function for new tokens
             match_string: Optional string to match in token name/symbol
             creator_address: Optional creator address to filter by
+            pool_callback: Called once per migrated mint; see BaseTokenListener
         """
+        self.pool_callback = pool_callback
         if not self.platform_parsers:
             logger.error("No platform parsers available. Cannot listen for tokens.")
             return
@@ -112,34 +127,16 @@ class UniversalBlockListener(BaseTokenListener):
 
                     try:
                         while True:
-                            token_info = await self._wait_for_token_creation(websocket)
-                            if not token_info:
-                                continue
-
-                            logger.info(
-                                f"New token detected: {token_info.name} ({token_info.symbol}) on {token_info.platform.value}"
-                            )
-
-                            # Apply filters
-                            if match_string and not (
-                                match_string.lower() in token_info.name.lower()
-                                or match_string.lower() in token_info.symbol.lower()
+                            # A block can hold several creates; each is a coin.
+                            for token_info in await self._wait_for_token_creation(
+                                websocket
                             ):
-                                logger.info(
-                                    f"Token does not match filter '{match_string}'. Skipping..."
+                                await self._deliver(
+                                    token_info,
+                                    token_callback,
+                                    match_string,
+                                    creator_address,
                                 )
-                                continue
-
-                            if (
-                                creator_address
-                                and str(token_info.user) != creator_address
-                            ):
-                                logger.info(
-                                    f"Token not created by {creator_address}. Skipping..."
-                                )
-                                continue
-
-                            await token_callback(token_info)
 
                     except websockets.exceptions.ConnectionClosed:
                         logger.warning("WebSocket connection closed. Reconnecting...")
@@ -254,20 +251,24 @@ class UniversalBlockListener(BaseTokenListener):
 
     async def _wait_for_token_creation(
         self, websocket: websockets.WebSocketServerProtocol
-    ) -> TokenInfo | None:
-        """Wait for token creation event from any platform.
+    ) -> list[TokenInfo]:
+        """Wait for the next block and read the coins created in it.
 
         Args:
             websocket: Active WebSocket connection
 
         Returns:
-            TokenInfo if a token creation is found, None otherwise
+            Every coin the block's successful transactions created, in block
+            order; empty when the frame carries none
         """
         try:
             response = await asyncio.wait_for(websocket.recv(), timeout=30)
             transactions = self._transactions_from_frame(json.loads(response))
             if transactions is None:
-                return None
+                return []
+
+            if self.pool_callback is not None:
+                await self._emit_pools(self._pools_from_block(transactions))
 
             # Process all transactions in the block for token creations
             return self._process_block_transactions(transactions)
@@ -292,17 +293,18 @@ class UniversalBlockListener(BaseTokenListener):
             logger.exception("Error reading from the WebSocket; reconnecting")
             raise
 
-        return None
+        return []
 
-    def _process_block_transactions(self, transactions: list) -> TokenInfo | None:
+    def _process_block_transactions(self, transactions: list) -> list[TokenInfo]:
         """Process all transactions in a block looking for token creations.
 
         Args:
             transactions: List of transaction data from block
 
         Returns:
-            TokenInfo if a token creation is found, None otherwise
+            One TokenInfo per create found, in block order
         """
+        tokens = []
         for tx in transactions:
             if not isinstance(tx, dict):
                 continue
@@ -324,9 +326,9 @@ class UniversalBlockListener(BaseTokenListener):
             # exercise, done by cookbook/pumpfun/decode/.
             token_info = self._parse_from_logs(tx)
             if token_info:
-                return token_info
+                tokens.append(token_info)
 
-        return None
+        return tokens
 
     def _parse_from_logs(self, tx: dict) -> TokenInfo | None:
         """Dispatch one transaction to its platform parser using its logs.
@@ -359,3 +361,51 @@ class UniversalBlockListener(BaseTokenListener):
                 return token_info
 
         return None
+
+    def _pools_from_block(self, transactions: list) -> list[PoolReady]:
+        """Pools that the block's successful migrations created.
+
+        Every transaction in the block is read, as for token creations: a
+        block can hold more than one migration. A parser that fails on one
+        transaction is logged and skipped.
+        """
+        pools = []
+        for tx in transactions:
+            if not isinstance(tx, dict):
+                continue
+            meta = tx.get("meta")
+            if not isinstance(meta, dict) or meta.get("err") is not None:
+                continue
+            logs = meta.get("logMessages") or meta.get("log_messages")
+            if not logs:
+                continue
+            found = []
+            for program_id, _platform, parser in self.program_id_to_parser:
+                if any(program_id in line for line in logs):
+                    # One transaction a parser fails on costs only its own
+                    # pools, not the block or the connection.
+                    try:
+                        found += parser.parse_pools_ready_from_block_transaction(tx)
+                    except Exception:
+                        logger.exception("Error reading a migration from a block")
+            if found:
+                signature = _signature(tx)
+                pools += [replace(pool, signature=signature) for pool in found]
+        return pools
+
+
+def _signature(tx: dict) -> str:
+    """The transaction's first signature, or "" if the envelope cannot be read.
+
+    Only for the log line; detection never depends on decoding the envelope.
+    """
+    envelope = tx.get("transaction")
+    try:
+        if isinstance(envelope, dict):
+            return envelope["signatures"][0]
+        if isinstance(envelope, list) and envelope:
+            raw = base64.b64decode(envelope[0])
+            return str(VersionedTransaction.from_bytes(raw).signatures[0])
+    except Exception:  # noqa: BLE001
+        logger.debug("Could not read a transaction signature")
+    return ""
