@@ -83,10 +83,13 @@ Set `enabled: false` to keep a config around without running it; such a file is 
 
 ```bash
 pump_bot                   # as an installed package
+pump_bot --verbose         # every log line on the terminal, not only events
 uv run src/bot_runner.py   # or directly
 ```
 
-Logs land in `logs/{bot_name}_{timestamp}.log`.
+Logs land in `logs/{bot_name}_{timestamp}.log`, every line in full.
+
+On a terminal each line is the time, the bot's name and the message, coloured by phase: cyan when a coin is found, green for a buy, purple for a sale, yellow when an exit triggers, and the profit or loss in green or red. Addresses are cut to their ends (`DGAify…pump`) and a line is cut to the window; a warning or an error is never cut. By default only events print: a coin found, a buy, an exit, a sale and its profit or loss, a skipped coin, every warning. `--verbose` adds the detail (prices, confirmations, fees, cleanup), dimmed. Piped into a file or another program, every line prints in the log file's format, and `NO_COLOR=1` turns colour off.
 
 Run it from the folder that holds `bots/`: it reads `bots/*.yaml` there and writes `logs/`, `trades/` and `positions/` beside it. `pump_bot --help` says this and starts nothing.
 
