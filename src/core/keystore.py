@@ -96,8 +96,8 @@ def resolve_keystore_path(value: str, config_dir: Path) -> Path:
     return beside_config if beside_config.exists() else path
 
 
-def password_from_env(path: Path) -> tuple[str | None, str]:
-    """Read the password for a new keystore from the environment.
+def new_keystore_variable(path: Path) -> str | None:
+    """The environment variable holding the password for a new keystore.
 
     An empty variable counts as unset. Unlocking uses `unlock_from_env`, which
     tries both variables instead of refusing two values.
@@ -106,8 +106,8 @@ def password_from_env(path: Path) -> tuple[str | None, str]:
         path: The keystore, named in the error
 
     Returns:
-        The password, None when neither variable is set, and the name of the
-        variable to blame for a wrong one
+        `PASSWORD_ENV_VAR`, else `FALLBACK_PASSWORD_ENV_VAR`, else None when
+        neither is set
 
     Raises:
         KeystoreError: Both variables are set and differ.
@@ -121,10 +121,10 @@ def password_from_env(path: Path) -> tuple[str | None, str]:
             f"{FALLBACK_PASSWORD_ENV_VAR} are both set and differ; unset one",
         )
     if primary:
-        return primary, PASSWORD_ENV_VAR
+        return PASSWORD_ENV_VAR
     if fallback:
-        return fallback, FALLBACK_PASSWORD_ENV_VAR
-    return None, PASSWORD_ENV_VAR
+        return FALLBACK_PASSWORD_ENV_VAR
+    return None
 
 
 def unlock_from_env(path: Path) -> tuple[Keypair, str]:

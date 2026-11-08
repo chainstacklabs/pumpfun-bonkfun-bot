@@ -28,7 +28,7 @@ hold both directions to its format and keep a bad password from starting a bot:
      alone and the old one exported in the shell beside a different new one
      in `env_file`; with both wrong it logs one error naming both variables
      and neither value. Two keystore bots in one `run_all_bots`, one
-     `env_file` per variable, both unlock. For a new file `password_from_env`
+     `env_file` per variable, both unlock. For a new file `new_keystore_variable`
      takes the new variable first, the old one when it is unset or empty, and
      refuses two different values in one line naming both and neither value.
   G. `write_keystore` writes a file that unlocks to its keypair, mode 600 in a
@@ -90,7 +90,7 @@ from core.keystore import (  # noqa: E402
     KeystoreError,
     keystore_private_key,
     load_keystore,
-    password_from_env,
+    new_keystore_variable,
     write_keystore,
 )
 from core.wallet import Wallet  # noqa: E402
@@ -536,8 +536,8 @@ def check_e_secrets_masked() -> bool:
     return _report(problems)
 
 
-def _env_password(primary: str | None, fallback: str | None) -> object:
-    """password_from_env's answer with these variables set, or its refusal."""
+def _env_choice(primary: str | None, fallback: str | None) -> object:
+    """new_keystore_variable's answer with these variables set, or its refusal."""
     _clear_passwords()
     for variable, value in (
         (PASSWORD_ENV_VAR, primary),
@@ -546,7 +546,7 @@ def _env_password(primary: str | None, fallback: str | None) -> object:
         if value is not None:
             os.environ[variable] = value
     try:
-        return password_from_env(Path("/w/wallet.enc"))
+        return new_keystore_variable(Path("/w/wallet.enc"))
     except KeystoreError as e:
         return f"refused: {e}"
     finally:
@@ -556,21 +556,21 @@ def _env_password(primary: str | None, fallback: str | None) -> object:
 def _precedence_problems() -> list[str]:
     problems = []
     for label, primary, fallback, want in (
-        ("only the new variable", "new-pass", None, ("new-pass", PASSWORD_ENV_VAR)),
+        ("only the new variable", "new-pass", None, PASSWORD_ENV_VAR),
         (
             "only the old variable",
             None,
             "old-pass",
-            ("old-pass", FALLBACK_PASSWORD_ENV_VAR),
+            FALLBACK_PASSWORD_ENV_VAR,
         ),
-        ("both, equal", "same-pass", "same-pass", ("same-pass", PASSWORD_ENV_VAR)),
-        ("new one empty", "", "old-pass", ("old-pass", FALLBACK_PASSWORD_ENV_VAR)),
-        ("neither", None, None, (None, PASSWORD_ENV_VAR)),
+        ("both, equal", "same-pass", "same-pass", PASSWORD_ENV_VAR),
+        ("new one empty", "", "old-pass", FALLBACK_PASSWORD_ENV_VAR),
+        ("neither", None, None, None),
     ):
-        got = _env_password(primary, fallback)
+        got = _env_choice(primary, fallback)
         if got != want:
             problems.append(f"{label}: {got!r}, want {want!r}")
-    got = str(_env_password("new-pass", "old-pass"))
+    got = str(_env_choice("new-pass", "old-pass"))
     if not got.startswith("refused: "):
         problems.append(f"both set and differing: not refused ({got!r})")
     problems += [
@@ -617,7 +617,7 @@ def _unlocked_start_problems(folder: Path, config: dict) -> list[str]:
     return problems
 
 
-def _start_password_problems(folder: Path, config: dict) -> list[str]:
+def _start_unlock_problems(folder: Path, config: dict) -> list[str]:
     problems = _unlocked_start_problems(folder, config)
     for label, env, needles, secrets in (
         (
@@ -702,7 +702,7 @@ def check_f_password_variables() -> bool:
     config = {k: v for k, v in base.items() if k != "private_key"}
     config["keystore"] = str(FIXTURE)
     with tempfile.TemporaryDirectory() as tmp:
-        problems += _start_password_problems(Path(tmp), config)
+        problems += _start_unlock_problems(Path(tmp), config)
     with tempfile.TemporaryDirectory() as tmp:
         problems += _two_bots_problems(Path(tmp), base)
     return _report(problems)
@@ -937,7 +937,7 @@ def _create_problems(folder: Path, env: dict[str, str]) -> list[str]:
     return problems
 
 
-def _password_variable_problems(folder: Path, env: dict[str, str]) -> list[str]:
+def _wallet_variable_problems(folder: Path, env: dict[str, str]) -> list[str]:
     """show tries both variables; create refuses two different values."""
     problems = []
     password = env[PASSWORD_ENV_VAR]
@@ -1007,7 +1007,7 @@ def _prompt_problems(folder: Path) -> list[str]:
 def _wallet_write_problems(folder: Path) -> list[str]:
     env = {PASSWORD_ENV_VAR: WALLET_PASSWORD}
     problems = _create_problems(folder, env)
-    problems += _password_variable_problems(folder, env)
+    problems += _wallet_variable_problems(folder, env)
     return problems + _prompt_problems(folder)
 
 

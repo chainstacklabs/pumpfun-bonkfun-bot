@@ -134,8 +134,10 @@ def check_an_unknown_logger_is_redacted() -> bool:
     if leaked:
         print(f"     {len(leaked)} of {len(capture.lines)} lines kept the key")
         return False
-    if not all("mainnet.example.com" in line for line in capture.lines):
-        print("     the host was masked too, which makes the line useless")
+    # The whole URL with only the key masked, not just the host somewhere.
+    masked = "https://mainnet.example.com/?api-key=***"
+    if not all(masked in line for line in capture.lines):
+        print("     the URL was not kept with only its key masked")
         return False
     return len(capture.lines) == 3
 
