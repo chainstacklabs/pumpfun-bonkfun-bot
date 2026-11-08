@@ -41,6 +41,8 @@ _STUB_FAILURE = "stub cleanup failure"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from _fakes import _check  # noqa: E402
+
 from trading.universal_trader import UniversalTrader  # noqa: E402
 
 
@@ -53,11 +55,6 @@ class RecordCapture(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         self.records.append(record)
-
-
-def _check(label: str, passed: bool, detail: str) -> bool:  # noqa: FBT001
-    print(f"  [{'PASS' if passed else 'FAIL'}] {label}: {detail}")
-    return passed
 
 
 async def _shutdown_with(  # noqa: ANN202

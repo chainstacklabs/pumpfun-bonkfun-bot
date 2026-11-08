@@ -148,8 +148,12 @@ def check_get_mint_info_resolves_both_and_raises() -> bool:
     return ok
 
 
-def check_recipient_list_matches_chain() -> bool:
-    """--live: the committed buyback recipients must still be the authorized set."""
+def check_recipient_list_matches_chain() -> bool | None:
+    """--live: the committed buyback recipients must still be the authorized set.
+
+    Returns:
+        None when no endpoint is configured: nothing was checked
+    """
     import asyncio
     import base64
     import os
@@ -161,8 +165,8 @@ def check_recipient_list_matches_chain() -> bool:
     load_dotenv(PROJECT_ROOT / ".env")
     endpoint = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
     if not endpoint:
-        print("     SOLANA_NODE_RPC_ENDPOINT is unset; skipping")
-        return True
+        print("     SOLANA_NODE_RPC_ENDPOINT is unset")
+        return None
 
     async def read() -> list[str]:
         body = {
@@ -214,7 +218,7 @@ def main() -> int:
             ("committed recipients match the chain", check_recipient_list_matches_chain)
         )
 
-    failed = 0
+    failed = skipped = 0
     for label, check in checks:
         try:
             ok = check()
@@ -222,12 +226,20 @@ def main() -> int:
             print(f"FAIL {label}: {type(error).__name__}: {error}")
             failed += 1
             continue
+        if ok is None:
+            print(f"SKIP {label}")
+            skipped += 1
+            continue
         print(f"{'PASS' if ok else 'FAIL'} {label}")
         failed += 0 if ok else 1
 
     if not live:
         print("\n(skipping the network check; pass --live to read GlobalConfig)")
-    print(f"\n{len(checks) - failed}/{len(checks)} checks passed")
+    ran = len(checks) - skipped
+    print(
+        f"\n{ran - failed}/{ran} checks passed"
+        + (f", {skipped} skipped" if skipped else "")
+    )
     return 1 if failed else 0
 
 

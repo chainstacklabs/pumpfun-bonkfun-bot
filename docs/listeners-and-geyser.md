@@ -50,7 +50,7 @@ compiler does not emit, so the output needs rewriting.
 
 A separate RPC delivering transactions **before execution**, as entries form from
 shreds. It backs the **`shreds` listener**
-(`monitoring/universal_shreds_listener.py`, pump.fun only,
+(`monitoring/universal_shreds_listener.py`, pump.fun and LaunchLab,
 `bots/bot-sniper-5-shreds.yaml`), off by default. Deshred arrives ahead of
 `Subscribe` on most creates; `tools/compare_deshred_latency.py` measures the lead
 per signature, and `tools/compare_listeners.py` runs it as a lane against the
@@ -63,6 +63,12 @@ other four to show which coins it never reports.
   yet, so a refresh can only time out and skip the coin.
 - Outcomes are unknown at detection: a create that goes on to revert is delivered
   exactly like one that lands.
+- The same create can come again in another transaction. Every listener logs a
+  coin once, in one INFO line naming the mint, written before the name and
+  creator filters so a refused coin is still named. It hands a coin on once per
+  mint (`BaseTokenListener._deliver`); that hand-off is counted after the
+  filters, so an attempt they refused does not hide a later one. The parsers'
+  own detail is at DEBUG.
 - **A coin created through a router is invisible on it.** The create arrives as a
   CPI, and inner instructions are produced *by* execution, so a pre-execution
   stream never carries them — present on the stream and undetectable, not
@@ -73,7 +79,33 @@ other four to show which coins it never reports.
 That miss rate is the trade: a few percent of coins never seen, against a head
 start on the rest. `geyser` stays the default; pick `shreds` deliberately.
 `cookbook/pumpfun/listen/pumpfun_listen_tokens_deshred.py` demonstrates the raw
-stream; `tests/regression/verify_shreds_listener.py` pins the listener.
+stream; `tests/regression/verify_shreds_listener.py` pins the listener on
+pump.fun and `verify_launchlab_shreds.py` on LaunchLab.
+
+## Migrations
+
+`listen_for_tokens` takes an optional `pool_callback`. With it set, every
+listener also reports a curve's migration as a `PoolReady` (mint, pool, quote
+mint, signature): pump.fun to PumpSwap, and LaunchLab to Raydium CPMM on
+`blocks`, `geyser` and `shreds`. Without it nothing is parsed and the shreds
+subscription is unchanged. The name and creator filters apply only to new
+coins. `logs`, `blocks` and `geyser` report a migration that executed, once per
+mint. `shreds` reports each migrate transaction before execution with
+`pre_execution` set, so the pool may not exist yet and the call may be a no-op,
+fail, or name a pool the coin does not use. The same mint can come more than
+once, one report per attempt; read the pool before trading it. *Detecting a migration* in
+`docs/pumpfun-protocol.md` and `docs/launchlab-protocol.md` has the sources.
+
+`trade.entry: migration` is the consumer (`trading/intake.py`,
+`trading/migration.py`). It reads the coin's curve, mint and metadata to apply
+the filters, then waits up to `POOL_WAIT_SECONDS` for the pool to be readable.
+The curve is read at `processed` and re-read for up to `POOL_WAIT_SECONDS`
+until it shows as completed: a stream reports a migration before every node
+serves its slot, and a LaunchLab migration can land in the slot of the buy that
+completed the curve. A pre-execution report that leaves nothing to buy (curve
+not complete, a quote the curve does not use, no pool in time) does not use the
+mint up, so a later attempt is still bought; an executed one does, unless its
+curve never showed as completed.
 
 ## Listener and decoder pitfalls
 
@@ -89,7 +121,9 @@ against mainnet.
   envelope is the one part of a transaction whose format changes under you, and
   the installed solders is only ever one version behind. Route on
   `meta.logMessages`, which the RPC has already decoded and which is
-  version-agnostic; keep the byte decode as a fallback.
+  version-agnostic. A parser may read the envelope once the logs have routed a
+  transaction to it: pump.fun's when the logs carry no CreateEvent, LaunchLab's
+  for every launch, since its logs never name the coin.
 - **Match a create marker as a whole log line, not a substring.** Anchor writes
   `Program log: Instruction: <Name>` for every program, so
   `"Program log: Instruction: Create" in log` also accepts CreateTokenAccount,

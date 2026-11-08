@@ -30,14 +30,14 @@ Usage:
     uv run tests/regression/verify_create_log_gate.py
 """
 
-import json
 import re
 import sys
-from collections.abc import Iterator
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+from _fakes import _check, _logs_from_fixture  # noqa: E402
 
 from interfaces.core import Platform  # noqa: E402
 from platforms.pumpfun.event_parser import PumpFunEventParser  # noqa: E402
@@ -78,27 +78,6 @@ def _parser() -> PumpFunEventParser:
     )
 
 
-def _logs_from_fixture(path: Path) -> list[str] | None:
-    """Pull `meta.logMessages` out of a captured transaction fixture.
-
-    Returns:
-        The log lines, or None if the fixture holds no transaction meta.
-    """
-
-    def walk(node: object) -> Iterator[list[str]]:
-        if isinstance(node, dict):
-            for key, value in node.items():
-                if key in ("logMessages", "log_messages") and value:
-                    yield value
-                else:
-                    yield from walk(value)
-        elif isinstance(node, list):
-            for value in node:
-                yield from walk(value)
-
-    return next(walk(json.loads(path.read_text())), None)
-
-
 def _create_fixtures() -> list[tuple[Path, list[str]]]:
     """Every decode fixture whose logs carry a create marker."""
     found = []
@@ -107,11 +86,6 @@ def _create_fixtures() -> list[tuple[Path, list[str]]]:
         if logs and any("Instruction: Create" in line for line in logs):
             found.append((path, logs))
     return found
-
-
-def _check(label: str, passed: bool, detail: str) -> bool:  # noqa: FBT001
-    print(f"  [{'PASS' if passed else 'FAIL'}] {label}: {detail}")
-    return passed
 
 
 def check_real_creates_are_still_detected() -> bool:

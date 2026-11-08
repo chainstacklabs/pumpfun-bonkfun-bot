@@ -1,6 +1,6 @@
 # Agent guide
 
-Solana trading bot for pump.fun, letsbonk.fun and StonkFun. Snipes newly created tokens and exits on a configured strategy. See [README.md](README.md) for setup and configuration.
+Solana trading bot for pump.fun and Raydium LaunchLab (any launchpad; letsbonk.fun and StonkFun presets). Snipes newly created tokens and exits on a configured strategy. See [README.md](README.md) for setup and configuration.
 
 `AGENTS.md` is a symlink to this file, so Claude Code, Codex, Cursor and Windsurf read the same guide.
 
@@ -11,7 +11,7 @@ Deeper notes, kept out of this file so they load only when needed:
 | Doc | Read it before |
 |---|---|
 | [docs/pumpfun-protocol.md](docs/pumpfun-protocol.md) | touching account layouts, instruction args, fee recipients or quote assets |
-| [docs/launchlab-protocol.md](docs/launchlab-protocol.md) | touching letsbonk.fun or StonkFun: platform configs, swap accounts, quote assets, transfer fees |
+| [docs/launchlab-protocol.md](docs/launchlab-protocol.md) | touching LaunchLab (any launchpad, letsbonk.fun, StonkFun): platform configs, swap accounts, quote assets, transfer fees |
 | [docs/listeners-and-geyser.md](docs/listeners-and-geyser.md) | changing a listener, the geyser stubs or a decoder |
 | [docs/cookbook-conventions.md](docs/cookbook-conventions.md) | adding or changing anything under `cookbook/` |
 | [docs/regression-tests.md](docs/regression-tests.md) | picking which verifiers your change needs |
@@ -52,11 +52,11 @@ Dependency layers, low to high — don't introduce an upward import:
 `interfaces` is the leaf; `geyser` holds only generated stubs; `cleanup` sits on
 `core`/`utils` and is pulled in by `trading`.
 
-Platform differences resolve through `interfaces/core.py` abstractions
-(`AddressProvider`, curve manager, event parser, instruction builder) and the
-registry in `platforms/__init__.py`. Listeners and the trader are
-platform-agnostic (`Universal*`); anything platform-shaped belongs under
-`platforms/<name>/`.
+Platform differences resolve through `interfaces/core.py` and the registry in
+`platforms/__init__.py`; anything platform-shaped goes in `platforms/<name>/`. Trades
+go through one `Market`: `curve_market` (`CurveMarket`, builder + curve manager), then
+`graduated_market` (`PumpSwapMarket`, `CpmmMarket`: both buy and sell). `UniversalTrader`
+coordinates `trading/intake.py`, `platform_aware.py` and `position_manager.py`.
 
 ## Commands
 
@@ -111,8 +111,8 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
   `value.block` for the whole notification — indistinguishable from a skipped
   slot, and a near-total outage of the blocks listener. Send `1` everywhere.
 - **A listener routes on `meta.logMessages`, never on the envelope decode.** The
-  RPC has already decoded the envelope by the time it emits the logs, and they
-  read the same for every transaction version; the byte decode is the fallback.
+  logs read the same in every transaction version. pump.fun's parser decodes the
+  create only when they carry no CreateEvent; LaunchLab's always does.
 - `src/` **sends** v0 transactions (`MessageV0.try_compile`, no lookup tables);
   nothing builds a legacy `Message`. The cookbook launch sends v1 — 4096 bytes,
   budget inline, no tables — so scope this rule, don't apply it there.
@@ -127,8 +127,9 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
   Normalize at the boundary: a `Signature` is neither JSON serializable nor
   sliceable, and solana-py's `confirm_transaction` rejects a `str`.
 - **The endpoints carry their API key in the URL, so any log line holding one is
-  a leak.** `install_secret_redaction` (`utils/logger.py`) masks the value at
-  log-record creation, and every entry point calls it before attaching a handler.
+  a leak.** `install_secret_redaction` (`utils/logger.py`) masks the value, its
+  host and the traceback at log-record creation, and every entry point calls it
+  before attaching a handler; `bot_runner.mask_endpoints` adds a config's own.
   Redact the **rendered** message, not `record.msg` plus the string arguments —
   httpx2 passes its URL as a `URL` object, so a type check skips the one argument
   that matters.
@@ -159,10 +160,10 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
 
 **Selling**
 
-- `PlatformAwareSeller.execute` does not read a price — the `token_price` it is
-  handed **is** the slippage floor (`min_quote_output = amount * price *
-  (1 - slippage)`). The caller owns that floor, so an exit prices off the value
-  that triggered it, never the entry price.
+- `PlatformAwareSeller.execute` reads no price: it floors a sell at `amount *
+  price * (1 - slippage)` on the `token_price` it is handed. A pump.fun curve sell
+  its real reserves can't pay is cut to what they can, floored at `amount *
+  min(price, payout per token) * (1 - slippage)`; the position keeps the rest.
 - The seller's `max_retries` covers **transaction submission only**. An on-chain
   revert comes back as `success=False` and is retried in the monitor loop, where
   the price is re-read first, bounded by `trade.max_exit_sell_attempts` (default
@@ -170,8 +171,8 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
 - An exit sell is **not idempotent**, so "it failed" is not enough to act on.
   `confirm_transaction_detailed` / `verify_transaction_status` return
   `ConfirmationStatus` (`SUCCESS` / `REVERTED` / `UNCONFIRMED`): a `REVERTED`
-  retries, an `UNCONFIRMED` signature is re-checked first. A missing
-  `failure_reason` means "unknown", never "reverted".
+  retries; an `UNCONFIRMED` one is re-checked, resold only past its last valid
+  height unseen. A missing `failure_reason` means "unknown", never "reverted".
 - `SUBMIT_FAILED` means "no transaction ever reached the chain" and nothing else
   — the one reason besides `REVERTED` that retries without asking the chain. A
   post-submission throw reports `UNCONFIRMED` with its signature.
@@ -179,22 +180,22 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
   bools. Returning the enum would be silent: every member is truthy, so every
   `if await client.confirm_transaction(sig):` would start passing unconditionally.
 - `calculate_price` returns `0.0` for a curve with no virtual token reserves, and
-  raises `CurveGraduatedError` for a graduated one; price and sell then go through
-  the platform's `GraduatedMarket`. Never store a non-positive read as the last
+  raises `CurveGraduatedError` for a graduated one; price, buy and sell go through
+  the platform's `graduated_market`. Never store a non-positive read as the last
   known price or floor a sell against one; `0.0` satisfies the stop-loss check.
 
 ## Config notes
 
-- Bot YAML supports `${VAR}` interpolation from the file named by `env_file`:
-  `SOLANA_NODE_RPC_ENDPOINT`, `SOLANA_NODE_WSS_ENDPOINT`, `SOLANA_PRIVATE_KEY`,
-  `GEYSER_*`.
+- Bot YAML supports `${VAR}` interpolation from the file named by `env_file`;
+  a `true` or `false` value becomes a bool, anything else stays a string. The
+  wallet is `private_key` or `keystore`, never both; `pump_bot_wallet` writes a
+  keystore (`core/keystore.py`); the bot tries `KEYSTORE_PASSWORD`, then `PUMPFUN_PASSWORD`.
 - `src/config_loader.py` (package root, not under `core/`) validates the
   platform/listener pairing before startup: pump.fun supports `logs`, `blocks`,
-  `geyser`, `shreds`; letsbonk.fun and StonkFun support `blocks` and `geyser` —
-  not `logs` (LaunchLab's logs never name the coin) or `shreds` (issue #201).
+  `geyser`, `shreds`; the LaunchLab platforms support `blocks`, `geyser` and
+  `shreds` — not `logs` (LaunchLab's logs never name the coin).
   Adding a listener means updating `PLATFORM_LISTENER_COMPATIBILITY` there too.
 - Bots with `separate_process: true` run in their own process, one log file each.
-- `pump_bot` runs **every** `bots/*.yaml`, and four of the five committed configs
-  ship `enabled: false`. With all of them disabled it prints nothing and exits 0,
-  indistinguishable from a clean run — check that `logs/<name>_<timestamp>.log`
-  appeared before reading anything into a run.
+- `pump_bot` runs **every** `bots/*.yaml` in the current folder (four of five
+  committed configs ship `enabled: false`). Exit 0 only when every enabled bot
+  ran without an error; 1 otherwise, with one line saying why.

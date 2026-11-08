@@ -20,8 +20,6 @@ PLATFORM_CONFIGS: Final[frozenset[Pubkey]] = frozenset(
 class LetsBonkAddressProvider(LaunchLabAddressProvider):
     """letsbonk.fun addresses."""
 
-    PLATFORM_CONFIGS = PLATFORM_CONFIGS
-
     @property
     def platform(self) -> Platform:
         """letsbonk.fun."""

@@ -29,7 +29,8 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from solders.pubkey import Pubkey  # noqa: E402
 
 from core.pubkeys import WSOL_MINT, SystemAddresses  # noqa: E402
-from interfaces.core import Platform, TokenInfo  # noqa: E402
+from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E402
+from platforms import PlatformImplementations  # noqa: E402
 from platforms.pumpfun.address_provider import PumpFunAddressProvider  # noqa: E402
 from platforms.pumpfun.curve_manager import PumpFunCurveManager  # noqa: E402
 from trading import platform_aware  # noqa: E402
@@ -118,11 +119,13 @@ class _StubClient:
         self.sent.append(instructions)
         return "STUB_SIGNATURE"
 
-    async def confirm_transaction(self, _signature: str, **_kwargs: object) -> bool:
-        return False
+    async def confirm_transaction_detailed(
+        self, *_a: object, **_k: object
+    ) -> ConfirmationStatus:
+        return ConfirmationStatus.REVERTED
 
 
-def _stub_implementations(curve_manager: object) -> SimpleNamespace:
+def _stub_implementations(curve_manager: object) -> PlatformImplementations:
     async def build_buy_instruction(*_args: object, **_kwargs: object) -> list[str]:
         return ["stub-instruction"]
 
@@ -131,10 +134,11 @@ def _stub_implementations(curve_manager: object) -> SimpleNamespace:
         get_required_accounts_for_buy=lambda *_a, **_k: [],
         get_buy_compute_unit_limit=lambda _override: 100_000,
     )
-    return SimpleNamespace(
+    return PlatformImplementations(
         address_provider=PROVIDER,
         instruction_builder=instruction_builder,
         curve_manager=curve_manager,
+        event_parser=None,
     )
 
 

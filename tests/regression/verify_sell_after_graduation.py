@@ -47,10 +47,12 @@ from solders.pubkey import Pubkey  # noqa: E402
 from core.pubkeys import WSOL_MINT, SystemAddresses  # noqa: E402
 from interfaces.core import (  # noqa: E402
     CurveGraduatedError,
+    Market,
     Platform,
     TokenInfo,
     TradeFailureReason,
 )
+from platforms import PlatformImplementations  # noqa: E402
 from platforms.launchlab.cpmm_market import CPMM_PROGRAM, CpmmMarket  # noqa: E402
 from platforms.pumpfun.curve_manager import PumpFunCurveManager  # noqa: E402
 from platforms.pumpfun.pumpswap_market import (  # noqa: E402
@@ -63,7 +65,7 @@ from platforms.pumpfun.pumpswap_market import (  # noqa: E402
 from platforms.stonkfun import StonkFunCurveManager  # noqa: E402
 from trading import platform_aware  # noqa: E402
 from trading.platform_aware import PlatformAwareSeller  # noqa: E402
-from trading.universal_trader import UniversalTrader  # noqa: E402
+from trading.position_manager import PositionManager  # noqa: E402
 from utils.idl_manager import get_idl_manager  # noqa: E402
 
 FIXTURE = json.loads(
@@ -219,9 +221,7 @@ def check_c_sell_accounts_match_chain() -> bool:
         fixture = PUMP if name == "pumpswap" else LAUNCHLAB
         chain = _chain_sell(fixture, program)
         seller = Pubkey.from_string(chain[1] if name == "pumpswap" else chain[0])
-        instructions = asyncio.run(
-            market.build_sell_instruction(token, seller, 1, 1, None)
-        )
+        instructions = asyncio.run(market.build_sell_instruction(token, seller, 1, 1))
         ours = [
             str(m.pubkey)
             for m in next(
@@ -318,7 +318,9 @@ class _GraduatedCurve:
         raise CurveGraduatedError("stub")
 
 
-class _Market:
+class _Market(Market):
+    name = "stub pool"
+
     def __init__(self, *, ready: bool) -> None:
         self.ready = ready
         self.minimum_out: int | None = None
@@ -328,7 +330,7 @@ class _Market:
             raise ValueError("pool not created yet")  # noqa: TRY003
         return {"price_per_token": 0.00000005, "fee_fraction": 0.0125, "pool": "POOL"}
 
-    async def build_sell_instruction(self, _token, _user, _amount, minimum_out, _ap):
+    async def build_sell_instruction(self, _token, _user, _amount, minimum_out):
         self.minimum_out = minimum_out
         return ["market-sell"]
 
@@ -345,11 +347,14 @@ async def _no_fee(_accounts) -> None:
 
 def _sell(market: _Market) -> tuple[object, _StubClient]:
     client = _StubClient()
-    platform_aware.get_platform_implementations = lambda _p, _c: SimpleNamespace(
-        address_provider=SimpleNamespace(),
-        instruction_builder=SimpleNamespace(),
-        curve_manager=_GraduatedCurve(),
-        graduated_market=market,
+    platform_aware.get_platform_implementations = lambda _p, _c: (
+        PlatformImplementations(
+            address_provider=SimpleNamespace(),
+            instruction_builder=SimpleNamespace(),
+            curve_manager=_GraduatedCurve(),
+            event_parser=None,
+            graduated_market=market,
+        )
     )
     seller = PlatformAwareSeller(
         client,
@@ -396,13 +401,17 @@ def check_e_seller_routes_to_market() -> bool:
 
 def check_f_trader_price_follows_graduation() -> bool:
     """F: CurveGraduatedError -> the market's price."""
-    trader = SimpleNamespace(
-        platform=Platform.STONK_FUN,
-        platform_implementations=SimpleNamespace(
-            curve_manager=_GraduatedCurve(), graduated_market=_Market(ready=True)
+    positions = SimpleNamespace(
+        platform_implementations=PlatformImplementations(
+            address_provider=SimpleNamespace(
+                derive_pool_address=lambda _mint: Pubkey.new_unique()
+            ),
+            instruction_builder=None,
+            curve_manager=_GraduatedCurve(),
+            event_parser=None,
+            graduated_market=_Market(ready=True),
         ),
         _graduated_mints=set(),
-        _get_pool_address=lambda _token: Pubkey.new_unique(),
     )
     token = TokenInfo(
         name="",
@@ -411,7 +420,7 @@ def check_f_trader_price_follows_graduation() -> bool:
         mint=Pubkey.new_unique(),
         platform=Platform.STONK_FUN,
     )
-    price = asyncio.run(UniversalTrader._read_price(trader, token))
+    price = asyncio.run(PositionManager._read_price(positions, token))
     ok = price == 0.00000005
     if not ok:
         print(f"    price {price}")

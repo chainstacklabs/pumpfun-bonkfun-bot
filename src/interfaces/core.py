@@ -1,6 +1,7 @@
 """Abstract base classes each trading platform implements."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -13,6 +14,9 @@ class Platform(Enum):
     """Supported trading platforms."""
 
     PUMP_FUN = "pump_fun"
+    # Every launchpad on Raydium LaunchLab; letsbonk.fun and StonkFun are the
+    # same program narrowed to their own platform configs.
+    LAUNCHLAB = "launchlab"
     LETS_BONK = "lets_bonk"
     STONK_FUN = "stonk_fun"
 
@@ -62,11 +66,12 @@ class TokenInfo:
     platform: Platform
     bonding_curve: Pubkey | None = None  # pump.fun specific
     associated_bonding_curve: Pubkey | None = None  # pump.fun specific
-    pool_state: Pubkey | None = None  # LetsBonk specific
-    base_vault: Pubkey | None = None  # LetsBonk specific
-    quote_vault: Pubkey | None = None  # LetsBonk specific
-    global_config: Pubkey | None = None  # LetsBonk specific
-    platform_config: Pubkey | None = None  # LetsBonk specific
+    pool_state: Pubkey | None = None  # LaunchLab specific
+    base_vault: Pubkey | None = None  # LaunchLab specific
+    quote_vault: Pubkey | None = None  # LaunchLab specific
+    global_config: Pubkey | None = None  # LaunchLab specific
+    # LaunchLab: the launchpad the coin was launched on.
+    platform_config: Pubkey | None = None
 
     # Common fields
     user: Pubkey | None = None
@@ -111,6 +116,23 @@ class TokenInfo:
     # Metadata
     creation_timestamp: float | None = None
     additional_data: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class PoolReady:
+    """A coin's bonding curve migrated, and the coin now trades in an AMM pool."""
+
+    platform: Platform
+    mint: Pubkey
+    pool: Pubkey
+    # The pool's quote mint; wrapped SOL for a SOL-paired coin.
+    quote_mint: Pubkey
+    signature: str
+    # True when read off the shreds stream before execution: the migration may
+    # still fail or be a no-op, the pool may not exist yet, and the same mint
+    # may come again from another attempt. Read the pool before trading it.
+    pre_execution: bool = False
+    detection_timestamp: float | None = None
 
 
 class AddressProvider(ABC):
@@ -295,30 +317,94 @@ class InstructionBuilder(ABC):
 class CurveGraduatedError(Exception):
     """The bonding curve has graduated and takes no more trades.
 
-    Raised by `CurveManager.calculate_price`; the coin's price is now its
-    `GraduatedMarket`'s.
+    Raised by `CurveManager.calculate_price`; the coin's price is now that of
+    the AMM pool it migrated to.
     """
 
 
-class GraduatedMarket(ABC):
-    """The AMM pool a coin trades in once its bonding curve has graduated.
+class Market(ABC):
+    """A venue a coin trades in: its bonding curve, or the AMM pool it migrated to.
 
-    A curve that has graduated can no longer be sold into. Its sell methods
-    match `InstructionBuilder`'s, so the seller swaps one for the other.
+    The trader prices, buys and sells through this one interface whatever the
+    venue. A venue that does not take buys leaves the three buy methods at
+    their default, which raises `NotImplementedError`.
     """
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """The venue as logs and `trades.log` name it.
+
+        "bonding curve" for a curve, "PumpSwap" or "Raydium CPMM" for a pool.
+        """
+
+    @property
+    def program_id(self) -> Pubkey | None:
+        """The program a trade here is sent to, whose IDL names its reverts.
+
+        None when unknown; a revert's error code is then left unnamed.
+        """
+        return None
+
+    @property
+    def spends_exact_amount_in(self) -> bool:
+        """Whether a buy spends all of `amount_in` rather than capping at it.
+
+        False means `amount_in` is a ceiling and the trader pads it for
+        slippage. True means the venue spends exactly what it is given, so a
+        padded value would overspend by the padding.
+        """
+        return False
 
     @abstractmethod
     async def get_market_state(self, token_info: TokenInfo) -> dict[str, Any]:
-        """Read the pool the coin migrated to.
+        """Read the venue's current state.
 
         Returns:
-            At least `price_per_token`, in whole quote units per whole token,
-            and `fee_fraction`, the share of a sell's proceeds taken as fees
+            `price_per_token`, in whole quote units per whole token. A curve
+            sets it to None when the quote mint's decimals are not cached or
+            the curve has graduated, so a venue whose state can hold None
+            overrides `get_price`. An AMM pool also returns `fee_fraction`,
+            the share of a trade taken as fees, `pool`, its address, and
+            `token_program`, the program that owns its coin vault.
 
         Raises:
-            ValueError: If the pool does not exist yet — migration lands a
+            ValueError: If the venue does not exist yet — an AMM pool lands a
                 moment after graduation — or cannot be read
         """
+
+    async def get_price(self, token_info: TokenInfo) -> float:
+        """Current price in whole quote units per whole token.
+
+        Raises:
+            ValueError: As `get_market_state`
+        """
+        return (await self.get_market_state(token_info))["price_per_token"]
+
+    def quote_destination(self, token_info: TokenInfo) -> Pubkey | None:  # noqa: ARG002
+        """The account a buy's quote lands in, to read the spend back from the transaction.
+
+        None when the venue cannot name it; the buyer then falls back to the
+        coin's curve, and an exact-in buy to the amount it submitted.
+        """
+        return None
+
+    async def build_buy_instruction(
+        self,
+        token_info: TokenInfo,
+        user: Pubkey,
+        amount_in: int,
+        minimum_amount_out: int,
+    ) -> list[Instruction]:
+        """Build a buy.
+
+        Args:
+            amount_in: Raw quote units: all of it is spent when
+                `spends_exact_amount_in`, otherwise it is the most to spend
+            minimum_amount_out: Raw base tokens: the floor that must arrive
+                when `spends_exact_amount_in`, otherwise the exact count to buy
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not take buys")
 
     @abstractmethod
     async def build_sell_instruction(
@@ -327,23 +413,32 @@ class GraduatedMarket(ABC):
         user: Pubkey,
         amount_in: int,
         minimum_amount_out: int,
-        address_provider: AddressProvider,
     ) -> list[Instruction]:
-        """Build a sell of exactly `amount_in` raw base tokens into the pool.
+        """Build a sell of exactly `amount_in` raw base tokens.
 
         Args:
             minimum_amount_out: Raw quote units that must be paid out
         """
 
+    def get_required_accounts_for_buy(
+        self, token_info: TokenInfo, user: Pubkey
+    ) -> list[Pubkey]:
+        """Accounts a buy locks, for priority-fee estimation."""
+        raise NotImplementedError(f"{type(self).__name__} does not take buys")
+
     @abstractmethod
     def get_required_accounts_for_sell(
-        self, token_info: TokenInfo, user: Pubkey, address_provider: AddressProvider
+        self, token_info: TokenInfo, user: Pubkey
     ) -> list[Pubkey]:
-        """Writable accounts a sell locks, for priority-fee estimation."""
+        """Accounts a sell locks, for priority-fee estimation."""
+
+    def get_buy_compute_unit_limit(self, config_override: int | None = None) -> int:
+        """Compute units for a buy; `config_override` wins when set."""
+        raise NotImplementedError(f"{type(self).__name__} does not take buys")
 
     @abstractmethod
     def get_sell_compute_unit_limit(self, config_override: int | None = None) -> int:
-        """Compute units for a sell into the pool."""
+        """Compute units for a sell; `config_override` wins when set."""
 
 
 class CurveManager(ABC):
@@ -536,3 +631,72 @@ class EventParser(ABC):
             List of discriminator bytes to match
         """
         pass
+
+    # Migration detection. A platform whose curves do not migrate, or whose
+    # migrations are not detected yet, keeps these defaults and never reports
+    # a pool.
+
+    def parse_pools_ready_from_logs(
+        self,
+        logs: Sequence[str],  # noqa: ARG002
+        signature: str,  # noqa: ARG002
+    ) -> list[PoolReady]:
+        """Pools that a successful transaction's logs show a migration created.
+
+        The caller has already dropped failed transactions: a reverted
+        migration still leaves its logs.
+        """
+        return []
+
+    def parse_pools_ready_from_block_transaction(
+        self, transaction: dict[str, Any]
+    ) -> list[PoolReady]:
+        """Pools a successful blockSubscribe transaction's migrations created.
+
+        `transaction` is one entry of a block's `transactions`, envelope and
+        meta. The caller has dropped failed transactions and sets each
+        result's signature. By default reads the logs.
+        """
+        meta = transaction.get("meta")
+        if not isinstance(meta, dict):
+            return []
+        logs = meta.get("logMessages") or meta.get("log_messages")
+        return self.parse_pools_ready_from_logs(logs, "") if logs else []
+
+    def parse_pools_ready_from_geyser(
+        self, transaction_info: object
+    ) -> list[PoolReady]:
+        """Pools a successful geyser transaction update's migrations created.
+
+        `transaction_info` is the SubscribeUpdate, as for
+        `parse_token_creation_from_geyser`. The caller has dropped failed
+        transactions and sets each result's signature. By default reads the
+        logs, in place.
+        """
+        logs = transaction_info.transaction.transaction.meta.log_messages
+        return self.parse_pools_ready_from_logs(logs, "") if logs else []
+
+    def parse_pool_ready_from_instruction(
+        self,
+        instruction_data: bytes,  # noqa: ARG002
+        accounts: list[int],  # noqa: ARG002
+        account_keys: list[bytes],  # noqa: ARG002
+        signature: str,  # noqa: ARG002
+    ) -> PoolReady | None:
+        """The pool a top-level migration instruction moves the curve into.
+
+        Read before execution, so the result has `pre_execution` set.
+        """
+        return None
+
+    def get_migration_instruction_discriminators(self) -> list[bytes]:
+        """Discriminators of the instructions that migrate a curve."""
+        return []
+
+    def get_migration_filter_accounts(self) -> list[Pubkey]:
+        """Accounts every migration names and no trade does.
+
+        The shreds listener subscribes on these, as it does on
+        `get_creation_filter_accounts` for creations.
+        """
+        return []

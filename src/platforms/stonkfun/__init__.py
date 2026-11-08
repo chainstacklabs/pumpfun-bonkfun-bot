@@ -13,8 +13,6 @@ from platforms.stonkfun.addresses import PLATFORM_CONFIGS
 class StonkFunAddressProvider(LaunchLabAddressProvider):
     """StonkFun addresses."""
 
-    PLATFORM_CONFIGS = PLATFORM_CONFIGS
-
     @property
     def platform(self) -> Platform:
         """StonkFun."""

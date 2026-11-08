@@ -7,7 +7,10 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
+from core.keystore import resolve_keystore_path
 from interfaces.core import Platform
+from platforms.launchlab_presets import resolve_platform_configs
+from trading.settings import ENTRIES, entry_error
 
 # Existing validation rules (keeping all existing ones)
 REQUIRED_FIELDS = [
@@ -38,6 +41,13 @@ CONFIG_VALIDATION_RULES = [
         1,
         100,
         "trade.max_exit_sell_attempts must be between 1 and 100",
+    ),
+    (
+        "trade.max_open_positions",
+        int,
+        1,
+        100,
+        "trade.max_open_positions must be between 1 and 100",
     ),
     (
         "filters.max_transfer_fee_bps",
@@ -88,15 +98,34 @@ VALID_VALUES = {
     "filters.listener_type": ["logs", "blocks", "geyser", "shreds"],
     "cleanup.mode": ["disabled", "on_fail", "after_sell", "post_session"],
     "trade.exit_strategy": ["time_based", "tp_sl", "manual"],
-    "platform": ["pump_fun", "lets_bonk", "stonk_fun"],
+    "trade.entry": list(ENTRIES),
+    "platform": ["pump_fun", "launchlab", "lets_bonk", "stonk_fun"],
 }
 
-# Platform-specific listener compatibility
+# Which listeners each platform supports. The one copy: config validation,
+# bot_runner and tools/live_listener_matrix.py all read it.
 PLATFORM_LISTENER_COMPATIBILITY = {
     Platform.PUMP_FUN: ["logs", "blocks", "geyser", "shreds"],
-    Platform.LETS_BONK: ["blocks", "geyser"],
-    Platform.STONK_FUN: ["blocks", "geyser"],
+    Platform.LAUNCHLAB: ["blocks", "geyser", "shreds"],
+    Platform.LETS_BONK: ["blocks", "geyser", "shreds"],
+    Platform.STONK_FUN: ["blocks", "geyser", "shreds"],
 }
+
+
+def disabled_in_yaml(path: str) -> bool:
+    """Whether the file's raw YAML says `enabled: false`.
+
+    Read before `${VAR}` interpolation and validation, so a disabled config is
+    skipped even when it could not load. False when the file cannot be read or
+    `enabled` is anything else, `${VAR}` included: such a config is loaded and
+    checked as usual.
+    """
+    try:
+        with Path(path).open() as f:
+            raw = yaml.safe_load(f)
+    except (OSError, yaml.YAMLError):
+        return False
+    return isinstance(raw, dict) and raw.get("enabled") is False
 
 
 def load_bot_config(path: str) -> dict:
@@ -116,6 +145,10 @@ def load_bot_config(path: str) -> dict:
 
     resolve_env_vars(config)
 
+    keystore = config.get("keystore")
+    if isinstance(keystore, str) and keystore.strip():
+        config["keystore"] = str(resolve_keystore_path(keystore, config_path.parent))
+
     # Set default platform if not specified (backward compatibility)
     if "platform" not in config:
         config["platform"] = "pump_fun"
@@ -125,7 +158,12 @@ def load_bot_config(path: str) -> dict:
 
 
 def resolve_env_vars(config: dict) -> None:
-    """Recursively resolve environment variables in the configuration."""
+    """Recursively resolve environment variables in the configuration.
+
+    A value that is `true` or `false` in any case becomes a bool, so a switch
+    set from the environment means what it says; every other value stays a
+    string.
+    """
 
     def resolve_env(value):
         if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
@@ -133,6 +171,9 @@ def resolve_env_vars(config: dict) -> None:
             env_value = os.getenv(env_var)
             if env_value is None:
                 raise ValueError(f"Environment variable '{env_var}' not found")
+            switch = env_value.strip().lower()
+            if switch in ("true", "false"):
+                return switch == "true"
             return env_value
         return value
 
@@ -161,7 +202,15 @@ def validate_config(config: dict) -> None:
     """Validate the configuration against defined rules with platform support."""
     # Validate required fields
     for field in REQUIRED_FIELDS:
+        if field == "private_key" and "keystore" in config:
+            continue  # the keystore stands in for it, checked below
         get_nested_value(config, field)
+    # The name keys the bot's positions file: without one the bot would keep
+    # its open positions in memory only, and shutdown cleanup could burn them.
+    if not isinstance(config["name"], str) or not config["name"].strip():
+        msg = "name must be a non-empty string"
+        raise ValueError(msg)
+    validate_wallet_config(config)
 
     # Validate config rules
     for path, expected_type, min_val, max_val, error_msg in CONFIG_VALIDATION_RULES:
@@ -201,6 +250,16 @@ def validate_config(config: dict) -> None:
         if "Missing required config key" not in str(e):
             raise
 
+    validate_cleanup_config(config)
+
+    trade = config.get("trade") or {}
+    error = entry_error(
+        trade.get("entry", "new_launch"),
+        extreme_fast_mode=bool(trade.get("extreme_fast_mode", False)),
+    )
+    if error:
+        raise ValueError(error)
+
     # Quote-asset configuration must resolve before the bot starts trading,
     # otherwise a bad mint alias only surfaces on the first non-SOL coin.
     validate_quote_config(config)
@@ -216,6 +275,48 @@ def validate_config(config: dict) -> None:
                 f"Invalid platform '{platform_str}'. Must be one of: {[p.value for p in Platform]}"
             )
         raise
+
+
+CLEANUP_PRIORITY_FEE_NOT_BOOL = (
+    "cleanup.with_priority_fee must be true or false (unquoted, or a ${VAR} set "
+    "to true or false); leave it out for true"
+)
+
+
+def validate_cleanup_config(config: dict) -> None:
+    """`cleanup.with_priority_fee` is a bool or left out (null counts as left out).
+
+    A quoted "false" or a 0 would read as true, sending closes with a fee the
+    config meant to turn off, so both are refused.
+    """
+    cleanup = config.get("cleanup")
+    if not isinstance(cleanup, dict):
+        return
+    fee = cleanup.get("with_priority_fee")
+    if fee is not None and not isinstance(fee, bool):
+        raise ValueError(CLEANUP_PRIORITY_FEE_NOT_BOOL)
+
+
+BOTH_WALLET_KEYS = (
+    "Set either private_key or keystore, not both: remove the private_key line "
+    "to trade from the keystore"
+)
+KEYSTORE_NOT_A_PATH = "keystore must be the path of a keystore file"
+
+
+def validate_wallet_config(config: dict) -> None:
+    """Check the wallet comes from exactly one of `private_key` and `keystore`.
+
+    Raises:
+        ValueError: Both are set, or `keystore` is not a non-empty path string
+    """
+    if "keystore" not in config:
+        return
+    if "private_key" in config:
+        raise ValueError(BOTH_WALLET_KEYS)
+    keystore = config["keystore"]
+    if not isinstance(keystore, str) or not keystore.strip():
+        raise ValueError(KEYSTORE_NOT_A_PATH)
 
 
 def validate_quote_config(config: dict) -> None:
@@ -275,15 +376,12 @@ def validate_platform_config(config: dict, platform: Platform) -> None:
         if "Missing required config key" not in str(e):
             raise
 
-    # Platform-specific configuration validation
-    if platform == Platform.PUMP_FUN:
-        # pump.fun doesn't require additional config beyond base requirements
-        pass
-
-    elif platform == Platform.LETS_BONK:
-        # LetsBonk may require additional configuration in the future
-        # For now, it uses the same base configuration as pump.fun
-        pass
+    # launchlab.platform_configs: LaunchLab platforms only, each a valid address
+    launchlab = config.get("launchlab") or {}
+    if not isinstance(launchlab, dict):
+        msg = "launchlab must be a mapping, such as platform_configs: [...]"
+        raise ValueError(msg)  # noqa: TRY004 - config errors are ValueError here
+    resolve_platform_configs(platform, launchlab.get("platform_configs"))
 
 
 def get_platform_from_config(config: dict) -> Platform:
@@ -319,23 +417,6 @@ def get_supported_listeners_for_platform(platform: Platform) -> list[str]:
         platform: Platform enum
     """
     return PLATFORM_LISTENER_COMPATIBILITY.get(platform, [])
-
-
-def get_platform_specific_required_config(platform: Platform) -> list[str]:
-    """Get platform-specific required configuration paths.
-
-    Args:
-        platform: Platform enum
-
-    Returns:
-        List of additional required config paths for the platform
-    """
-    if platform == Platform.PUMP_FUN:
-        return []  # No additional requirements
-    elif platform == Platform.LETS_BONK:
-        return []  # No additional requirements yet
-    else:
-        return []
 
 
 def print_config_summary(config: dict) -> None:

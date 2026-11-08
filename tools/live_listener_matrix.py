@@ -32,6 +32,7 @@ from dotenv import load_dotenv  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
 from cleanup.manager import AccountCleanupManager  # noqa: E402
+from config_loader import get_supported_listeners_for_platform  # noqa: E402
 from core.client import SolanaClient  # noqa: E402
 from core.priority_fee.manager import PriorityFeeManager  # noqa: E402
 from core.pubkeys import LAMPORTS_PER_SOL, SystemAddresses  # noqa: E402
@@ -56,11 +57,9 @@ BUY_SLIPPAGE = 0.3
 DETECT_TIMEOUT_SECONDS = 150.0
 # Time to let a close/sell finalize before reading balances or account state.
 SETTLE_SECONDS = 20
-# Taken from the factory so a listener added there cannot be silently skipped
-# here while the run still reports every listener passing.
-ALL_LISTENERS = tuple(
-    ListenerFactory.get_platform_compatible_listeners(Platform.PUMP_FUN)
-)
+# Taken from the config validator's table so a listener added there cannot be
+# silently skipped here while the run still reports every listener passing.
+ALL_LISTENERS = tuple(get_supported_listeners_for_platform(Platform.PUMP_FUN))
 
 
 @dataclass

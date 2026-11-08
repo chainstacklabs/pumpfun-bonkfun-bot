@@ -52,6 +52,13 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   two u64). Volume tracking is unconditional now that `user_volume_accumulator`
   is mandatory. `max_sol_cost`/`min_sol_output` are in the **quote mint's** raw
   units — lamports for SOL, 1e-6 for USDC.
+- **A sell can't pay out more than `real_quote_reserves`.** It is priced on the
+  virtual reserves, `amount * virtual_quote / (virtual_token + amount)` rounded
+  down, and that payout, fees included, comes out of the real reserves and the
+  curve's lamports; past them the program reverts 6024 Overflow. The virtual
+  reserves normally cover the real ones, but on a mayhem-mode coin they drift
+  far apart, so the seller sells the largest part of a position the curve can
+  pay for, and the position stays open with the rest for a later attempt.
 - Even for SOL-paired coins you must pass **wrapped SOL** as `quote_mint`, not
   `Pubkey::default()`. Transfers still happen in native SOL, and the
   `associated_quote_*` accounts are only seed-constrained — do **not** create the
@@ -101,7 +108,9 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   - `pool-v2` is sent **only for a canonical pool**. The buyback fee recipient and
     its quote ATA are always the last two accounts and are read positionally, so
     adding `pool-v2` on a non-canonical pool shifts them and the program rejects
-    the `pool-v2` PDA with `BuybackFeeRecipientNotAuthorized` (6053). Upstream's
+    the `pool-v2` PDA with `BuybackFeeRecipientNotAuthorized` (6053), while
+    leaving it out of a canonical pool's trade throws `AnchorError 6023
+    (Overflow)` after the transfers complete. Upstream's
     BREAKING_FEE_RECIPIENT.md says the pair goes after `pool-v2` "for coins that
     graduate from bonding curve", and separately that the pair is needed either
     way — the qualifier is the whole rule. Account counts: buy 26/27 canonical,
@@ -124,9 +133,66 @@ on the zero reserves, and `calculate_price` raises `CurveGraduatedError`.
 The pool a migration creates is canonical and derived, not searched for:
 `PDA(["pool", u16 0, pool_authority, base_mint, quote_mint])` under pump-amm, with
 `pool_authority = PDA(["pool-authority", base_mint])` under the pump.fun program.
-`platforms/pumpfun/pumpswap_market.py` sells into it with the account rules
-above, taking the fee, mayhem and buyback recipients from PumpSwap's
+`platforms/pumpfun/pumpswap_market.py` buys and sells in it with the account
+rules above, taking the fee, mayhem and buyback recipients from PumpSwap's
 `GlobalConfig` — the mayhem one is `reserved_fee_recipient`, at offset 385.
+
+The buy is `buy_exact_quote_in(spendable_quote_in, min_base_amount_out,
+track_volume)`: it spends exactly `spendable_quote_in`, fees included, so the
+buyer passes the configured amount unpadded and puts the slippage on the token
+floor. `track_volume` is an `OptionBool` sent as one `1` byte; real buys also
+leave it off. After the IDL's first 19 accounts a buy sends
+`global_volume_accumulator` and the user's `user_volume_accumulator` (writable;
+the program creates it on first use, no init instruction needed), then
+`fee_config` and the fee program. On a cashback pool a buy adds only the
+accumulator's quote ATA, where a sell adds that ATA and the accumulator.
+
+A SOL buy pays through the wallet's WSOL ATA (create idempotent, transfer the
+spend, `sync_native`, close after the swap), not the throwaway seeded account
+the sells use: that account's creation carries a seed and an owner key, and
+beside a buy's account list it pushes a v0 transaction without lookup tables
+to the 1232-byte limit, past it on a cashback pool. Closing the ATA also
+unwraps any WSOL the wallet held there.
+
+The buyer reaches the pool when the curve it reads reports `graduated`. In
+`extreme_fast_mode` it skips the coin instead: the pool buy is sized from the
+pool's reserves, which that mode does not read.
+
+The fee the market reports is GlobalConfig's `lp + protocol + coin_creator`
+bps. The fee program can charge more on a pool (`GetFeesWithQuoteMint` picks a
+tier), so the buy's token floor and the sell's quote floor sit that much above
+what arrives; a slippage setting of a few percent covers it.
+
+### Detecting a migration
+
+Anyone can migrate a complete curve: `migrate_v2(base_mint, quote_mint, …)`, or
+legacy `migrate` for a SOL-paired coin, both still sent. The migrate has
+pump-amm's `create_pool` make the canonical pool. Most migrate calls arrive
+after another one already moved the curve: they succeed, log `Bonding curve
+already migrated` and create nothing, so a migrate instruction alone does not
+mean a new pool.
+
+The two events of a real migration travel differently:
+
+- pump.fun's `CompletePumpAmmMigrationEvent` (mint, pool, quote mint, the
+  default key for SOL) is an **event CPI only**, an inner instruction, never a
+  `Program data:` log line. logsSubscribe cannot see it.
+- pump-amm's `CreatePoolEvent` (base mint, quote mint as wrapped SOL for SOL,
+  pool, …) is **logged** under pump-amm's own invocation, as well as emitted
+  as an event CPI.
+
+So the listeners with logs (`logs`, `blocks`, `geyser`) read `CreatePoolEvent`,
+counting it only when pump-amm's invocation emitted it and its pool is the
+coin's canonical one: that pool's creator is pump.fun's pool-authority PDA, so
+nothing but a migration can create it. `shreds` has no logs and decodes the
+top-level migrate instruction: base mint at account 2, quote mint at 3 and pool
+at 10 for `migrate_v2`; mint at 2 and pool at 9 for `migrate`. It subscribes on
+`Global.withdraw_authority` (`39azUYFW…`), account 1 of both and of no trade.
+`migrate_v2` needs two remaining accounts after the IDL's 27, for pump-amm's
+`init_boost`: `boost_vault_authority = PDA(["boost_vault", pool])` under pump-amm,
+then its quote-mint ATA (writable). Without them it reverts 6027
+`NotEnoughRemainingAccounts` after `create_pool` ran, so a reverted migration
+can still log a `CreatePoolEvent`.
 
 ## Coin creation
 
@@ -139,7 +205,7 @@ above, taking the fee, mayhem and buyback recipients from PumpSwap's
 - **`is_cashback_enabled = [true]` is rejected** with `6082 CashbackDeprecated`:
   `create_v2` can no longer mint a new cashback coin. Existing cashback coins keep
   trading, accruing and claiming, so every cashback code path in this repo (the
-  legacy sell path's cashback branch, `is_cashback_coin` on `TokenInfo`) stays
+  PumpSwap sell's cashback accounts, `is_cashback_coin` on `TokenInfo`) stays
   live and must not be treated as dead.
 - **The trailing args are positional, not independently optional.** Reaching
   `is_holder_reward` (arg 8) means sending `is_cashback_enabled` (6) and
@@ -184,6 +250,12 @@ above, taking the fee, mayhem and buyback recipients from PumpSwap's
   entirely. Event
   parsers populate `quote_mint` from `CreateEvent`, which carries `quote_mint` and
   `virtual_quote_reserves` as trailing fields.
+- **`BondingCurve.creator` can change after launch.** Setting up creator-fee
+  sharing (`MigrateBondingCurveCreator`, often in its own transaction a slot after
+  the create) moves it to the coin's fee-sharing config, so `CreateEvent.creator`
+  goes stale and a `creator_vault` derived from it reverts `ConstraintSeeds`
+  (2006). Every path that reads the curve before a buy or sell takes the creator
+  from that read; only the zero-RPC `extreme_fast_mode` buy trades on the event's.
 
 ## Holder reward coins
 
@@ -207,16 +279,3 @@ PumpSwap instructions take identical accounts and arguments either way.
 bot — see the field comments on `TokenInfo` in `src/interfaces/core.py`. SOL- and
 USDC-paired coins keep `creator_fee_bps` at 0; custom-pair coins carry a nonzero
 value.
-
-## Legacy instructions (fallback only)
-
-Retained behind `PumpFunInstructionBuilder(..., use_legacy_instructions=True)`.
-The IDL under-reports these: `buy` is **18 accounts** on-chain (IDL lists 16) and
-`sell` is **16 non-cashback / 17 cashback** (IDL lists 14). The extras are
-`bonding-curve-v2` (PDA `["bonding-curve-v2", mint]`) followed by a mutable
-buyback fee recipient; the cashback sell path also inserts
-`user_volume_accumulator` before `bonding-curve-v2`. On the PumpSwap side the
-legacy path needs `pool-v2` (PDA `["pool-v2", base_mint]` under pump-amm) —
-without it pump-amm throws `AnchorError 6023 (Overflow)` after the transfers
-complete, a misleading code for a missing account. Prefer v2 — it is the interface
-pump.fun maintains.

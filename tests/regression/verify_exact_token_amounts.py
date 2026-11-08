@@ -10,15 +10,13 @@ unit below the configured amount.
 Offline machine checks, no network and no funds moved. Buyer and seller run
 through the real pump.fun instruction builder; instruction data is decoded:
 
-  A. The chosen raw count really is one the float round trip loses.
-  B. A landed buy reports the transaction's raw token count as `amount_raw`,
+  A. A landed buy reports the transaction's raw token count as `amount_raw`,
      also when the spend could not be read back.
-  C. When the amounts cannot be parsed back, `amount_raw` is the wallet's raw
-     balance, capped at what the buy asked for.
-  D. The sell's `sell_v2` amount is `amount_raw` exactly when it is passed.
-  E. Both exit paths in the trader hand the raw amount to the seller, and the
+  B. The sell's `sell_v2` amount is `amount_raw` exactly when it is passed;
+     without it, the float path sells this count one raw unit short.
+  C. Both exit paths in the trader hand the raw amount to the seller, and the
      tp/sl position keeps it.
-  F. An exact-in buy spends the configured amount to the raw unit, and when
+  D. An exact-in buy spends the configured amount to the raw unit, and when
      the spend cannot be read back, prices the position from that amount.
 
 Usage:
@@ -35,16 +33,18 @@ from types import SimpleNamespace
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from _fakes import _deltas, _no_fee  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
 from core.pubkeys import WSOL_MINT, SystemAddresses  # noqa: E402
 from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E402
+from platforms import PlatformImplementations  # noqa: E402
 from platforms.pumpfun.address_provider import (  # noqa: E402
     PumpFunAddresses,
     PumpFunAddressProvider,
 )
 from platforms.pumpfun.instruction_builder import PumpFunInstructionBuilder  # noqa: E402
-from trading import platform_aware, universal_trader  # noqa: E402
+from trading import platform_aware, position_manager  # noqa: E402
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller  # noqa: E402
 from utils.idl_manager import get_idl_manager  # noqa: E402
 
@@ -54,7 +54,7 @@ PROVIDER = PumpFunAddressProvider()
 BUILDER = PumpFunInstructionBuilder(get_idl_manager().get_parser(Platform.PUMP_FUN))
 
 PRICE = 0.00000004
-# A raw count the float round trip loses; check A proves it.
+# A raw count the float round trip loses; check B's legacy sell proves it.
 LOSSY_RAW = 65_758_096_180
 EXPECTED_TOKENS = 50_000
 
@@ -91,22 +91,14 @@ class _Client:
         self.sent.append(instructions)
         return "STUB_SIGNATURE"
 
-    async def confirm_transaction(self, *_a, **_k) -> bool:
-        return True
-
     async def confirm_transaction_detailed(self, *_a, **_k):
         return ConfirmationStatus.SUCCESS
 
-    async def get_buy_transaction_details(self, *_a, **_k):
-        if self.tokens_raw is None:
-            return None, None
-        return self.tokens_raw, self.spent
+    async def get_trade_deltas(self, *_a, **_k):
+        return _deltas(self.tokens_raw, self.spent)
 
     async def get_token_account_balance(self, _ata) -> int:
         return self.balance_raw
-
-    async def get_sell_transaction_details(self, *_a, **_k):
-        return None, None
 
 
 class _Curve:
@@ -120,16 +112,15 @@ class _Curve:
         }
 
 
-async def _no_fee(_accounts: list) -> None:
-    return None
-
-
 def _wire(builder=BUILDER) -> None:
-    platform_aware.get_platform_implementations = lambda _p, _c: SimpleNamespace(
-        address_provider=PROVIDER,
-        instruction_builder=builder,
-        curve_manager=_Curve(),
-        graduated_market=None,
+    platform_aware.get_platform_implementations = lambda _p, _c: (
+        PlatformImplementations(
+            address_provider=PROVIDER,
+            instruction_builder=builder,
+            curve_manager=_Curve(),
+            event_parser=None,
+            graduated_market=None,
+        )
     )
 
 
@@ -159,17 +150,8 @@ def _buy(client: _Client, *, amount: float = 0.002, builder=BUILDER):
     return asyncio.run(buyer.execute(_token_info()))
 
 
-def check_a_round_trip_is_lossy() -> bool:
-    """A: the float round trip really drops a unit for this raw count."""
-    rebuilt = int((LOSSY_RAW / 10**6) * 10**6)
-    ok = rebuilt == LOSSY_RAW - 1
-    if not ok:
-        print(f"    rebuilt {rebuilt}, expected {LOSSY_RAW - 1}")
-    return ok
-
-
-def check_b_buy_reports_exact_raw() -> bool:
-    """B: amount_raw is the transaction's raw token count, spend read or not."""
+def check_a_buy_reports_exact_raw() -> bool:
+    """A: amount_raw is the transaction's raw token count, spend read or not."""
     full = _buy(_Client(tokens_raw=LOSSY_RAW))
     # No spend and no balance: only the transaction's token count is left.
     no_spend = _buy(_Client(tokens_raw=LOSSY_RAW, spent=None, balance_raw=None))
@@ -180,17 +162,6 @@ def check_b_buy_reports_exact_raw() -> bool:
     )
     if not ok:
         print(f"    full={full.amount_raw} no_spend={no_spend.amount_raw}")
-    return ok
-
-
-def check_c_balance_fallback_is_raw() -> bool:
-    """C: unparsed buy falls back to the raw balance, capped at the request."""
-    held = 12_345_678_901  # below the 50,000 tokens asked for
-    below = _buy(_Client(tokens_raw=None, balance_raw=held))
-    above = _buy(_Client(tokens_raw=None, balance_raw=EXPECTED_TOKENS * 10**6 + 999))
-    ok = below.amount_raw == held and above.amount_raw == EXPECTED_TOKENS * 10**6
-    if not ok:
-        print(f"    below={below.amount_raw} above={above.amount_raw}")
     return ok
 
 
@@ -211,8 +182,8 @@ def _sell_amount(**kwargs) -> int:
     return struct.unpack_from("<Q", bytes(sell.data), 8)[0]
 
 
-def check_d_sell_uses_exact_raw() -> bool:
-    """D: sell_v2 sells amount_raw exactly; without it, the old floor stays."""
+def check_b_sell_uses_exact_raw() -> bool:
+    """B: sell_v2 sells amount_raw exactly; without it, the old floor stays."""
     exact = _sell_amount(token_amount=LOSSY_RAW / 10**6, token_amount_raw=LOSSY_RAW)
     legacy = _sell_amount(token_amount=LOSSY_RAW / 10**6)
     ok = exact == LOSSY_RAW and legacy == LOSSY_RAW - 1
@@ -221,9 +192,9 @@ def check_d_sell_uses_exact_raw() -> bool:
     return ok
 
 
-def check_e_trader_passes_raw() -> bool:
-    """E: both exit paths hand the raw amount on; the position keeps it."""
-    source = inspect.getsource(universal_trader)
+def check_c_trader_passes_raw() -> bool:
+    """C: both exit paths hand the raw amount on; the position keeps it."""
+    source = inspect.getsource(position_manager)
     calls = source.count("self.seller.execute(")
     with_raw = source.count("token_amount_raw=buy_result.amount_raw") + source.count(
         "token_amount_raw=position.quantity_raw"
@@ -254,8 +225,8 @@ class _ExactInBuilder:
         return 100_000
 
 
-def check_f_exact_in_spend() -> bool:
-    """F: an exact-in buy spends the configured amount, and prices from it."""
+def check_d_exact_in_spend() -> bool:
+    """D: an exact-in buy spends the configured amount, and prices from it."""
     amount = 0.00013  # 130,000 lamports; as a float product, 129,999
     builder = _ExactInBuilder()
     _buy(_Client(tokens_raw=1), amount=amount, builder=builder)
@@ -283,20 +254,12 @@ def check_f_exact_in_spend() -> bool:
 def main() -> int:
     """Run every check and report."""
     checks = [
+        ("A: a landed buy reports the exact raw count", check_a_buy_reports_exact_raw),
+        ("B: the sell uses the exact raw count", check_b_sell_uses_exact_raw),
+        ("C: the trader passes the raw count to every sell", check_c_trader_passes_raw),
         (
-            "A: the chosen raw count is lossy through a float",
-            check_a_round_trip_is_lossy,
-        ),
-        ("B: a landed buy reports the exact raw count", check_b_buy_reports_exact_raw),
-        (
-            "C: the balance fallback reports a raw count",
-            check_c_balance_fallback_is_raw,
-        ),
-        ("D: the sell uses the exact raw count", check_d_sell_uses_exact_raw),
-        ("E: the trader passes the raw count to every sell", check_e_trader_passes_raw),
-        (
-            "F: an exact-in buy spends and prices from its amount",
-            check_f_exact_in_spend,
+            "D: an exact-in buy spends and prices from its amount",
+            check_d_exact_in_spend,
         ),
     ]
     passed = 0

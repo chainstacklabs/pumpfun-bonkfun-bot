@@ -2,23 +2,27 @@
 
 import random
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Final
 
 from solders.instruction import AccountMeta, Instruction
 from solders.pubkey import Pubkey
-from spl.token.instructions import get_associated_token_address
+from spl.token.instructions import (
+    create_idempotent_associated_token_account,
+    get_associated_token_address,
+)
 
 from core.client import SolanaClient
 from core.pubkeys import (
     TOKEN_DECIMALS,
+    WSOL_MINT,
     SystemAddresses,
     normalize_quote_mint,
     quote_units_per_token,
 )
-from core.quote_account import quote_settlement_account
-from interfaces.core import AddressProvider, GraduatedMarket, TokenInfo
+from core.quote_account import quote_settlement_account, wrapped_sol_ata
+from interfaces.core import Market, TokenInfo
 from platforms.pumpfun.address_provider import PumpFunAddresses
 from utils.idl_parser import IDLParser
 
@@ -34,10 +38,11 @@ def _amm_pda(*seeds: bytes) -> Pubkey:
     return Pubkey.find_program_address(list(seeds), PUMP_AMM_PROGRAM)[0]
 
 
-_PUMP_SWAP_IDL = Path(__file__).resolve().parents[3] / "idl" / "pump_swap_idl.json"
+PUMP_SWAP_IDL = Path(__file__).resolve().parents[3] / "idl" / "pump_swap_idl.json"
 
 GLOBAL_CONFIG: Final[Pubkey] = _amm_pda(b"global_config")
 EVENT_AUTHORITY: Final[Pubkey] = _amm_pda(b"__event_authority")
+GLOBAL_VOLUME_ACCUMULATOR: Final[Pubkey] = _amm_pda(b"global_volume_accumulator")
 FEE_CONFIG: Final[Pubkey] = Pubkey.find_program_address(
     [b"fee_config", bytes(PUMP_AMM_PROGRAM)], PUMP_FEE_PROGRAM
 )[0]
@@ -62,6 +67,8 @@ _CONFIG_PROTOCOL_RECIPIENTS_OFFSET = 57
 _CONFIG_CREATOR_FEE_OFFSET = 313
 _CONFIG_RESERVED_RECIPIENT_OFFSET = 385
 _CONFIG_BUYBACK_RECIPIENTS_OFFSET = 643
+# buy_exact_quote_in's last arg, track_volume: an OptionBool, sent as a bare bool.
+_TRACK_VOLUME = b"\x01"
 _BASIS_POINTS = 10_000
 _TOKEN_AMOUNT_OFFSET = 64
 
@@ -103,36 +110,72 @@ def _pubkeys(data: bytes, offset: int, count: int) -> list[Pubkey]:
     ]
 
 
-class PumpSwapMarket(GraduatedMarket):
-    """Sells a graduated pump.fun coin into its canonical PumpSwap pool.
+class PumpSwapMarket(Market):
+    """Buys and sells a graduated pump.fun coin in its canonical PumpSwap pool.
 
     The pool is derived from the mint, so finding it costs no search. The
-    accounts follow PumpSwap's `sell`: the IDL's 21, then the cashback pair on a
-    cashback pool, `pool-v2` on a pool with a coin creator — which every
-    canonical pool has — and a buyback recipient with its quote account last,
-    which the program reads from the end of the list.
+    accounts follow PumpSwap's swaps: the IDL's 23 (buy) or 21 (sell), then the
+    user's cashback account(s) on a cashback pool, `pool-v2` on a pool with a
+    coin creator — which every canonical pool has — and a buyback recipient
+    with its quote account last, which the program reads from the end of the
+    list.
     """
+
+    name = "PumpSwap"
 
     def __init__(self, client: SolanaClient) -> None:
         self.client = client
-        self._sell_discriminator = IDLParser(
-            str(_PUMP_SWAP_IDL)
-        ).get_instruction_discriminators()["sell"]
-        self._config: bytes | None = None
+        discriminators = IDLParser(str(PUMP_SWAP_IDL)).get_instruction_discriminators()
+        self._buy_discriminator = discriminators["buy_exact_quote_in"]
+        self._sell_discriminator = discriminators["sell"]
         self._pools: dict[Pubkey, PumpSwapPool] = {}
 
-    async def _global_config(self) -> bytes:
-        if self._config is None:
-            self._config = (await self.client.get_account_info(GLOBAL_CONFIG)).data
-        return self._config
+    @property
+    def program_id(self) -> Pubkey:
+        """PumpSwap (pump-amm)."""
+        return PUMP_AMM_PROGRAM
 
-    async def _resolve(self, token_info: TokenInfo) -> tuple[PumpSwapPool, bytes]:
-        """The pool, and its current account data. Raises ValueError if it does not exist."""
+    @property
+    def spends_exact_amount_in(self) -> bool:
+        """A buy is `buy_exact_quote_in`: it spends all of `amount_in`."""
+        return True
+
+    async def _resolve(
+        self, token_info: TokenInfo
+    ) -> tuple[PumpSwapPool, bytes, bytes]:
+        """The pool, its current account data and GlobalConfig's.
+
+        Both accounts are read in one call on every trade. The coin creator
+        and the mayhem and cashback flags come from the pool's data: fee
+        sharing can move the coin creator while a position is held, and a swap
+        naming the old one's vault reverts. The fee and buyback recipients and
+        the fee rates come from GlobalConfig's, so an admin change to them
+        applies from the next trade.
+
+        Raises:
+            ValueError: The pool does not exist, or GlobalConfig is unreadable
+        """
         quote_mint = normalize_quote_mint(token_info.quote_mint)
         address = canonical_pool_address(token_info.mint, quote_mint)
-        pool_data = (await self.client.get_account_info(address)).data
+        pool_account, config_account = await self.client.get_multiple_accounts(
+            [address, GLOBAL_CONFIG]
+        )
+        if pool_account is None:
+            raise ValueError(f"Account {address} not found")  # noqa: TRY003
+        if config_account is None:
+            raise ValueError(f"PumpSwap GlobalConfig {GLOBAL_CONFIG} not found")  # noqa: TRY003
+        pool_data = pool_account.data
+        flags = {
+            "coin_creator": Pubkey.from_bytes(
+                pool_data[_POOL_COIN_CREATOR_OFFSET : _POOL_COIN_CREATOR_OFFSET + 32]
+            ),
+            "is_mayhem_mode": bool(pool_data[_POOL_MAYHEM_OFFSET]),
+            "is_cashback_coin": bool(pool_data[_POOL_CASHBACK_OFFSET]),
+        }
         pool = self._pools.get(token_info.mint)
-        if pool is None:
+        if pool is not None:
+            pool = replace(pool, **flags)
+        else:
             base_account, quote_account = (
                 Pubkey.from_bytes(pool_data[o : o + 32])
                 for o in (_POOL_BASE_ACCOUNT_OFFSET, _POOL_QUOTE_ACCOUNT_OFFSET)
@@ -148,16 +191,10 @@ class PumpSwapMarket(GraduatedMarket):
                 quote_account=quote_account,
                 base_program=vaults[0].owner,
                 quote_program=vaults[1].owner,
-                coin_creator=Pubkey.from_bytes(
-                    pool_data[
-                        _POOL_COIN_CREATOR_OFFSET : _POOL_COIN_CREATOR_OFFSET + 32
-                    ]
-                ),
-                is_mayhem_mode=bool(pool_data[_POOL_MAYHEM_OFFSET]),
-                is_cashback_coin=bool(pool_data[_POOL_CASHBACK_OFFSET]),
+                **flags,
             )
-            self._pools[token_info.mint] = pool
-        return pool, pool_data
+        self._pools[token_info.mint] = pool
+        return pool, pool_data, config_account.data
 
     async def get_market_state(self, token_info: TokenInfo) -> dict[str, Any]:
         """Price from the pool's balances plus its virtual quote reserves.
@@ -166,7 +203,7 @@ class PumpSwapMarket(GraduatedMarket):
             ValueError: If the pool does not exist yet
         """
         try:
-            pool, pool_data = await self._resolve(token_info)
+            pool, pool_data, config = await self._resolve(token_info)
         except ValueError as e:
             raise ValueError(f"No PumpSwap pool for {token_info.mint} yet: {e}") from e  # noqa: TRY003
         base_vault, quote_vault = await self.client.get_multiple_accounts(
@@ -184,7 +221,6 @@ class PumpSwapMarket(GraduatedMarket):
             struct.unpack_from("<Q", quote_vault.data, _TOKEN_AMOUNT_OFFSET)[0]
             + virtual_quote
         )
-        config = await self._global_config()
         fee_bps = sum(
             struct.unpack_from("<Q", config, offset)[0]
             for offset in (
@@ -200,7 +236,42 @@ class PumpSwapMarket(GraduatedMarket):
             else 0.0,
             "fee_fraction": fee_bps / _BASIS_POINTS,
             "pool": pool.address,
+            "token_program": pool.base_program,
         }
+
+    async def build_buy_instruction(
+        self,
+        token_info: TokenInfo,
+        user: Pubkey,
+        amount_in: int,
+        minimum_amount_out: int,
+    ) -> list[Instruction]:
+        """Build PumpSwap `buy_exact_quote_in`, spending exactly `amount_in`.
+
+        `amount_in` includes the pool's fees. A SOL pool is paid through the
+        wallet's WSOL ATA, funded with `amount_in` and closed in the same
+        transaction: the throwaway account the sell uses does not fit beside a
+        buy's account list. Any other quote is paid from the wallet's ATA, which
+        must already hold it.
+        """
+        pool, _, config = await self._resolve(token_info)
+        if pool.quote_mint == WSOL_MINT:
+            user_quote, open_ixs, close_ixs = wrapped_sol_ata(user, amount_in)
+        else:
+            user_quote, open_ixs, close_ixs = quote_settlement_account(
+                user, pool.quote_mint, pool.quote_program
+            )
+        create_base_ata = create_idempotent_associated_token_account(
+            user, user, pool.base_mint, pool.base_program
+        )
+        accounts = self._swap_accounts(pool, config, user, user_quote, is_buy=True)
+        data = (
+            self._buy_discriminator
+            + struct.pack("<QQ", amount_in, minimum_amount_out)
+            + _TRACK_VOLUME
+        )
+        swap = Instruction(PUMP_AMM_PROGRAM, data, accounts)
+        return [*open_ixs, create_base_ata, swap, *close_ixs]
 
     async def build_sell_instruction(
         self,
@@ -208,11 +279,34 @@ class PumpSwapMarket(GraduatedMarket):
         user: Pubkey,
         amount_in: int,
         minimum_amount_out: int,
-        address_provider: AddressProvider,  # noqa: ARG002
     ) -> list[Instruction]:
         """Build PumpSwap `sell` for `amount_in` raw tokens."""
-        pool, _ = await self._resolve(token_info)
-        config = await self._global_config()
+        pool, _, config = await self._resolve(token_info)
+        user_quote, open_ixs, close_ixs = quote_settlement_account(
+            user, pool.quote_mint, pool.quote_program
+        )
+        accounts = self._swap_accounts(pool, config, user, user_quote, is_buy=False)
+        data = self._sell_discriminator + struct.pack(
+            "<QQ", amount_in, minimum_amount_out
+        )
+        return [*open_ixs, Instruction(PUMP_AMM_PROGRAM, data, accounts), *close_ixs]
+
+    def _swap_accounts(
+        self,
+        pool: PumpSwapPool,
+        config: bytes,
+        user: Pubkey,
+        user_quote: Pubkey,
+        *,
+        is_buy: bool,
+    ) -> list[AccountMeta]:
+        """The swap's accounts, in the order the program reads them.
+
+        A buy adds the volume accumulators after the creator vault, and on a
+        cashback pool sends only the accumulator's quote account where a sell
+        also sends the accumulator itself. `config` is GlobalConfig's data,
+        read with the pool for this trade.
+        """
         quote_mint, quote_program = pool.quote_mint, pool.quote_program
 
         if pool.is_mayhem_mode:
@@ -225,9 +319,7 @@ class PumpSwapMarket(GraduatedMarket):
             _pubkeys(config, _CONFIG_BUYBACK_RECIPIENTS_OFFSET, 8)
         )
         creator_vault = _amm_pda(b"creator_vault", bytes(pool.coin_creator))
-        user_quote, open_ixs, close_ixs = quote_settlement_account(
-            user, quote_mint, quote_program
-        )
+        accumulator = _amm_pda(b"user_volume_accumulator", bytes(user))
 
         def ata(owner: Pubkey) -> Pubkey:
             return get_associated_token_address(owner, quote_mint, quote_program)
@@ -262,15 +354,26 @@ class PumpSwapMarket(GraduatedMarket):
             AccountMeta(PUMP_AMM_PROGRAM, is_signer=False, is_writable=False),
             AccountMeta(ata(creator_vault), is_signer=False, is_writable=True),
             AccountMeta(creator_vault, is_signer=False, is_writable=False),
+        ]
+        if is_buy:
+            accounts += [
+                AccountMeta(
+                    GLOBAL_VOLUME_ACCUMULATOR, is_signer=False, is_writable=False
+                ),
+                AccountMeta(accumulator, is_signer=False, is_writable=True),
+            ]
+        accounts += [
             AccountMeta(FEE_CONFIG, is_signer=False, is_writable=False),
             AccountMeta(PUMP_FEE_PROGRAM, is_signer=False, is_writable=False),
         ]
         if pool.is_cashback_coin:
-            accumulator = _amm_pda(b"user_volume_accumulator", bytes(user))
-            accounts += [
-                AccountMeta(ata(accumulator), is_signer=False, is_writable=True),
-                AccountMeta(accumulator, is_signer=False, is_writable=True),
-            ]
+            accounts.append(
+                AccountMeta(ata(accumulator), is_signer=False, is_writable=True)
+            )
+            if not is_buy:
+                accounts.append(
+                    AccountMeta(accumulator, is_signer=False, is_writable=True)
+                )
         if pool.coin_creator != Pubkey.default():
             accounts.append(
                 AccountMeta(
@@ -283,22 +386,39 @@ class PumpSwapMarket(GraduatedMarket):
             AccountMeta(buyback_recipient, is_signer=False, is_writable=False),
             AccountMeta(ata(buyback_recipient), is_signer=False, is_writable=True),
         ]
-        data = self._sell_discriminator + struct.pack(
-            "<QQ", amount_in, minimum_amount_out
-        )
-        return [*open_ixs, Instruction(PUMP_AMM_PROGRAM, data, accounts), *close_ixs]
+        return accounts
+
+    def get_required_accounts_for_buy(
+        self,
+        token_info: TokenInfo,
+        user: Pubkey,
+    ) -> list[Pubkey]:
+        """The pool and its token accounts, as for a sell."""
+        return self.get_required_accounts_for_sell(token_info, user)
 
     def get_required_accounts_for_sell(
         self,
         token_info: TokenInfo,
         user: Pubkey,  # noqa: ARG002
-        address_provider: AddressProvider,  # noqa: ARG002
     ) -> list[Pubkey]:
         """The pool and its token accounts, once the pool has been resolved."""
         pool = self._pools.get(token_info.mint)
         if pool is None:
             return [PUMP_AMM_PROGRAM]
         return [pool.address, pool.base_account, pool.quote_account, PUMP_AMM_PROGRAM]
+
+    def quote_destination(self, token_info: TokenInfo) -> Pubkey | None:
+        """The pool's quote account, once the pool has been resolved."""
+        pool = self._pools.get(token_info.mint)
+        return pool.quote_account if pool else None
+
+    def get_buy_compute_unit_limit(self, config_override: int | None = None) -> int:
+        """Compute units for a PumpSwap buy.
+
+        More than a sell: the buy also creates the base-token ATA and, on the
+        wallet's first PumpSwap buy, its volume accumulator.
+        """
+        return config_override if config_override is not None else 250_000
 
     def get_sell_compute_unit_limit(self, config_override: int | None = None) -> int:
         """Compute units for a PumpSwap sell."""

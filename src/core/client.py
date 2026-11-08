@@ -1,15 +1,27 @@
 """Solana client abstraction for blockchain operations."""
 
 import asyncio
+import base64
+import json
 import random
+import re
+import socket
 import struct
+from collections.abc import Callable
 from time import monotonic
 from typing import Any
 
 import aiohttp
+import httpx2
+from aiohttp.http_exceptions import HttpProcessingError
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Processed
-from solana.rpc.core import TxOptsModel
+from solana.rpc.core import (
+    RPCException,
+    TransactionExpiredBlockheightExceededError,
+    TxOptsModel,
+    UnconfirmedTxError,
+)
 from solders.account import Account
 from solders.compute_budget import set_compute_unit_limit, set_compute_unit_price
 from solders.hash import Hash
@@ -20,19 +32,30 @@ from solders.pubkey import Pubkey
 from solders.signature import Signature
 from solders.transaction import VersionedTransaction
 
-from core.pubkeys import is_sol_paired
 from core.rpc_rate_limiter import TokenBucketRateLimiter
-from interfaces.core import ConfirmationStatus, Platform
-from utils.idl_manager import get_idl_parser
+from core.trade_deltas import TradeDeltas, paid_by, read_trade_deltas
+from interfaces.core import ConfirmationStatus
+from utils.idl_manager import describe_program_error
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 HTTP_TOO_MANY_REQUESTS = 429
+HTTP_CLIENT_ERROR = 400
+HTTP_UNAUTHORIZED = 401
+HTTP_FORBIDDEN = 403
 
 # Length of the `[instruction_index, error_detail]` pair inside
 # `{"InstructionError": [...]}` -- fixed by the RPC's `meta.err` shape.
 INSTRUCTION_ERROR_PAIR_LEN = 2
+
+# The line the runtime logs for the program whose error ended the transaction;
+# a CPI's failure comes before its caller's.
+_PROGRAM_FAILED = re.compile(r"^Program (\w+) failed: ")
+
+# How long a revert seen in a signature status waits for its transaction, read
+# only to name the error; past it the error is named, hedged, from the venue.
+REVERT_NAME_BUDGET = 2.5
 
 # How long getTransaction keeps retrying a signature the node has not caught up
 # to yet, and the pause between attempts. A null result means "I cannot see this
@@ -132,26 +155,8 @@ def set_loaded_accounts_data_size_limit(bytes_limit: int) -> Instruction:
     return Instruction(COMPUTE_BUDGET_PROGRAM, data, [])
 
 
-def _describe_program_error(err: object) -> str | None:
-    """Best-effort human name for an Anchor `Custom(N)` error in `meta.err`.
-
-    Digs `{"InstructionError": [idx, {"Custom": n}]}` out of `meta.err` and looks
-    the code up in pump.fun's IDL error table. `SolanaClient` is shared across
-    platforms and carries no record of which program a transaction invoked, so
-    only pump.fun's table (`idl/pump_fun_idl.json`) is ever checked. A revert on
-    another program is described against the wrong table if its numeric code is
-    also defined there, and left unnamed otherwise. An unrecognized shape returns
-    None, never raises.
-
-    Args:
-        err: The raw `meta.err` value from a `getTransaction` response.
-
-    Returns:
-        A description like "pump.fun IDL: 6062 BuybackFeeRecipientMissing", or
-        None. The "pump.fun IDL:" prefix must stay in the rendered string: a
-        reader of a log line needs to know the name is pump.fun's interpretation,
-        not a fact about whichever program actually reverted.
-    """
+def _custom_code(err: object) -> int | None:
+    """The N of `{"InstructionError": [idx, {"Custom": N}]}`; None for any other shape."""
     if not isinstance(err, dict):
         return None
     instruction_error = err.get("InstructionError")
@@ -164,16 +169,205 @@ def _describe_program_error(err: object) -> str | None:
     if not isinstance(detail, dict):
         return None
     code = detail.get("Custom")
-    if not isinstance(code, int):
+    return code if isinstance(code, int) else None
+
+
+def _failing_program(result: dict) -> str | None:
+    """The program that raised a reverted transaction's error, from its `getTransaction` result.
+
+    `meta.err` names the top-level instruction, but an error raised by a program
+    it called reaches it unchanged at that index. The runtime logs
+    `Program <id> failed:` for the program that raised it first, then for each
+    caller, so the first such line names it.
+
+    Returns:
+        The program's base58 id; None without logs, or with logs truncated
+        before that line.
+    """
+    for line in (result.get("meta") or {}).get("logMessages") or []:
+        failed = _PROGRAM_FAILED.match(line) if isinstance(line, str) else None
+        if failed:
+            return failed.group(1)
+    return None
+
+
+def _name_error(
+    err: object, transaction: dict | None, venue: Pubkey | None
+) -> str | None:
+    code = _custom_code(err)
+    if code is None:
         return None
-    description = get_idl_parser(Platform.PUMP_FUN).describe_error_code(code)
-    if description is None:
+    raiser = _failing_program(transaction) if transaction is not None else None
+    if raiser is not None:
+        return describe_program_error(raiser, code)
+    return describe_program_error(venue, code, hedged=True)
+
+
+def _revert_text(
+    err: object, *, transaction: dict | None = None, venue: Pubkey | None = None
+) -> str:
+    """A transaction's `err` as logged, its Anchor code named when that can be told.
+
+    Codes from 6000 up mean something different in each program, so a code is
+    named only from the table of a program that may have raised it, and the
+    name says whose table it is: "(PumpSwap IDL: 6004 ExceededSlippage)".
+    Naming never raises; a failure leaves the code unnamed.
+
+    Args:
+        transaction: Its `getTransaction` result: names the code from the
+            program its logs show raising it
+        venue: The program the trade was sent to, used when the transaction
+            does not say: the name is hedged, "(PumpSwap IDL, if PumpSwap
+            raised it: ...)", since a program it called may have raised it
+    """
+    try:
+        detail = _name_error(err, transaction, venue)
+    except Exception as e:  # noqa: BLE001 - the revert is reported either way
+        logger.warning(f"Could not name the error {err}: {e!r}")
+        detail = None
+    return f"{err}" + (f" ({detail})" if detail else "")
+
+
+def _confirmed_error(response: object) -> object | None:
+    """The `err` of the signature status that ended a confirmation wait.
+
+    None unless the status is at `confirmed` or above: an error seen at
+    `processed` is not final, the fork may still be dropped.
+    """
+    try:
+        status = json.loads(response.to_json())["result"]["value"][0]
+    except (AttributeError, KeyError, IndexError, TypeError, ValueError):
         return None
-    return f"pump.fun IDL: {description}"
+    if not status or status.get("confirmationStatus") not in ("confirmed", "finalized"):
+        return None
+    return status.get("err")
+
+
+# What a failed request says, matched on the error or on the OS error inside
+# a connection error, in this order. Each is a plain reason naming no URL.
+_UNREACHABLE_CAUSES = (
+    (aiohttp.InvalidURL, "not an http(s) URL"),
+    (aiohttp.NonHttpUrlClientError, "not an http(s) URL"),
+    (aiohttp.TooManyRedirects, "too many redirects"),
+    (aiohttp.ClientSSLError, "TLS handshake failed"),
+    (aiohttp.ServerDisconnectedError, "the server closed the connection"),
+    (aiohttp.ClientPayloadError, "the answer was cut off"),
+    (socket.gaierror, "cannot resolve the host name"),
+    (ConnectionRefusedError, "connection refused"),
+    # IDNA rejects the name before any lookup, e.g. a label over 63 characters.
+    (UnicodeError, "invalid host name"),
+    (ValueError, "not a valid URL"),
+)
+
+
+def _unreachable_cause(error: Exception, timeout: float) -> str:
+    """A few plain words on why a request got no answer.
+
+    Never the exception's own text: aiohttp's carries the URL.
+    """
+    if isinstance(error, TimeoutError):
+        return f"no answer within {timeout:g} s"
+    os_error = getattr(error, "os_error", None)
+    for kind, cause in _UNREACHABLE_CAUSES:
+        if isinstance(error, kind) or isinstance(os_error, kind):
+            return cause
+    if isinstance(error, aiohttp.ClientResponseError):
+        # aiohttp reports a reply it could not parse as a 400 of its own.
+        if isinstance(error.__cause__, HttpProcessingError):
+            return "the answer is not HTTP"
+        return f"HTTP {error.status}"
+    if isinstance(os_error, OSError) and os_error.strerror:
+        return os_error.strerror
+    return type(error).__name__
+
+
+def _is_json_rpc(body: bytes) -> bool:
+    """Whether a reply body is a JSON-RPC envelope (result or error).
+
+    A Solana node always sends the `jsonrpc` key; a gateway's own
+    `{"error": ...}` page does not, so it does not count as an answer.
+    """
+    try:
+        answer = json.loads(body)
+    except (ValueError, RecursionError):  # nested too deep for the decoder
+        return False
+    return isinstance(answer, dict) and "jsonrpc" in answer
+
+
+async def rpc_endpoint_problem(
+    endpoint: str, attempts: int = 3, timeout: float = 10.0
+) -> str | None:
+    """What keeps `endpoint` from serving the bot, or None when it answers.
+
+    Sends `getHealth` up to `attempts` times, 1 s then 2 s apart, each bounded
+    by `timeout` seconds. A JSON-RPC envelope is an answer whatever the HTTP
+    status, an error object included (a 503 from a node that is behind, a
+    400), and so is HTTP 429. HTTP 401 and 403 are final at once.
+
+    Returns:
+        None, `rejected the request (HTTP 401)` (or 403), or
+        `is unreachable (<cause>)`; never a URL
+    """
+    body = {"jsonrpc": "2.0", "id": 1, "method": "getHealth"}
+    reason = None
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=timeout)
+    ) as session:
+        for attempt in range(attempts):
+            if attempt:
+                await asyncio.sleep(2 ** (attempt - 1))
+            try:
+                async with session.post(endpoint, json=body) as response:
+                    if response.status in (HTTP_UNAUTHORIZED, HTTP_FORBIDDEN):
+                        return f"rejected the request (HTTP {response.status})"
+                    if response.status == HTTP_TOO_MANY_REQUESTS or _is_json_rpc(
+                        await response.read()
+                    ):
+                        return None
+                    reason = (
+                        f"HTTP {response.status}"
+                        if response.status >= HTTP_CLIENT_ERROR
+                        else "the answer is not JSON-RPC"
+                    )
+            except (TimeoutError, aiohttp.ClientError, ValueError) as e:
+                reason = _unreachable_cause(e, timeout)
+    return f"is unreachable ({reason})"
+
+
+class TransactionNotSent(Exception):  # noqa: N818 - names an outcome
+    """No attempt of a send can have reached the network.
+
+    Every attempt either never left this process (no connection, none free in
+    the pool) or was refused by the node with an error before it took the
+    transaction. Any other failure, a read timeout above all, may have been
+    accepted and is raised as it is.
+    """
+
+
+# HTTP statuses from here up are server errors: a proxy may have passed it on.
+_FIRST_SERVER_ERROR = 500
+
+
+def _never_sent(error: Exception) -> bool:
+    """Whether a failed send attempt provably did not reach the network."""
+    if isinstance(error, RPCException):
+        return True  # the node answered with an error: it took nothing
+    cause = error.__cause__ or error
+    if isinstance(
+        cause, httpx2.ConnectError | httpx2.ConnectTimeout | httpx2.PoolTimeout
+    ):
+        return True
+    return (
+        isinstance(cause, httpx2.HTTPStatusError)
+        and cause.response.status_code < _FIRST_SERVER_ERROR  # a 4xx: refused
+    )
 
 
 class SolanaClient:
     """Abstraction for Solana RPC client operations."""
+
+    #: The block height past which the cached blockhash can no longer land.
+    _cached_last_valid_block_height: int | None = None
 
     def __init__(self, rpc_endpoint: str, max_rps: float = 25.0):
         """Initialize Solana client with RPC endpoint.
@@ -197,9 +391,16 @@ class SolanaClient:
         """Start background task to update recent blockhash."""
         while True:
             try:
-                blockhash = await self.get_latest_blockhash()
+                await self._rate_limiter.acquire()
+                client = await self.get_client()
+                latest = (
+                    await client.get_latest_blockhash(commitment="processed")
+                ).value
                 async with self._blockhash_lock:
-                    self._cached_blockhash = blockhash
+                    self._cached_blockhash = latest.blockhash
+                    self._cached_last_valid_block_height = (
+                        latest.last_valid_block_height
+                    )
             except Exception as e:
                 logger.warning(f"Blockhash fetch failed: {e!s}")
             finally:
@@ -260,14 +461,22 @@ class SolanaClient:
         return None
 
     async def get_account_info(
-        self, pubkey: Pubkey, commitment: str | None = None
+        self,
+        pubkey: Pubkey,
+        commitment: str | None = None,
+        min_context_slot: int | None = None,
     ) -> Account:
         """Get account info from the blockchain.
 
         Args:
             pubkey: Public key of the account
             commitment: Optional commitment override (e.g., "processed" for
-                fresh state right after a geyser event; default "confirmed")
+                fresh state right after a geyser event). None is solana-py's
+                default, "finalized", which can lag "confirmed": an account a
+                buy just created can read as missing.
+            min_context_slot: Refuse an answer from a node that has not reached
+                this slot: it raises instead of reporting an account it has not
+                seen yet as missing. Reads at "confirmed" unless `commitment`.
 
         Returns:
             The solders `Account` -- callers read attributes like `.data` and
@@ -275,7 +484,13 @@ class SolanaClient:
 
         Raises:
             ValueError: If account doesn't exist
+            RuntimeError: With `min_context_slot`, the node could not answer,
+                one behind that slot included
         """
+        if min_context_slot is not None:
+            return await self._account_at(
+                pubkey, commitment or "confirmed", min_context_slot
+            )
         await self._rate_limiter.acquire()
         client = await self.get_client()
         kwargs: dict[str, Any] = {"encoding": "base64"}
@@ -285,6 +500,38 @@ class SolanaClient:
         if not response.value:
             raise ValueError(f"Account {pubkey} not found")
         return response.value
+
+    async def _account_at(
+        self, pubkey: Pubkey, commitment: str, min_context_slot: int
+    ) -> Account:
+        """`getAccountInfo` with `minContextSlot`, which solana-py cannot send."""
+        body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getAccountInfo",
+            "params": [
+                str(pubkey),
+                {
+                    "encoding": "base64",
+                    "commitment": commitment,
+                    "minContextSlot": min_context_slot,
+                },
+            ],
+        }
+        response = await self.post_rpc(body)
+        if not response or "result" not in response:
+            error = (response or {}).get("error", {}).get("message", "no answer")
+            raise RuntimeError(f"getAccountInfo {pubkey}: {error}")  # noqa: TRY003
+        value = response["result"].get("value")
+        if value is None:
+            raise ValueError(f"Account {pubkey} not found")  # noqa: TRY003
+        return Account(
+            lamports=value["lamports"],
+            data=base64.b64decode(value["data"][0]),
+            owner=Pubkey.from_string(value["owner"]),
+            executable=value.get("executable", False),
+            rent_epoch=value.get("rentEpoch", 0),
+        )
 
     async def get_multiple_accounts(
         self, pubkeys: list[Pubkey], commitment: str | None = None
@@ -297,7 +544,8 @@ class SolanaClient:
 
         Args:
             pubkeys: Public keys of the accounts
-            commitment: Optional commitment override (default "confirmed")
+            commitment: Optional commitment override. None is solana-py's
+                default, "finalized", which can lag "confirmed".
 
         Returns:
             One entry per pubkey, in order -- a solders `Account` or None.
@@ -315,9 +563,10 @@ class SolanaClient:
     ) -> int:
         """Get token balance for an account.
 
-        Defaults to "confirmed" rather than solana-py's "finalized", which lags
-        it: the finalized balance right after a sell is the pre-sell amount, and
-        cleanup then builds a burn for tokens the account no longer holds.
+        Defaults to "confirmed" rather than solana-py's "finalized", which can
+        lag it: a finalized balance read right after a sell can still be the
+        pre-sell amount, and cleanup then builds a burn for tokens the account no
+        longer holds.
 
         Args:
             commitment: Commitment level for the balance read
@@ -350,6 +599,9 @@ class SolanaClient:
         priority_fee: int | None = None,
         compute_unit_limit: int | None = None,
         account_data_size_limit: int | None = None,
+        on_signed: Callable[[Signature, int | None], None] | None = None,
+        *,
+        quiet: bool = False,
     ) -> Signature:
         """Send a transaction with optional priority fee and compute unit limit.
 
@@ -362,9 +614,21 @@ class SolanaClient:
             compute_unit_limit: Compute unit limit. Defaults to 85,000.
             account_data_size_limit: Account data size limit in bytes. Reduces CU
                 cost from 16k to ~128 CU; must be the first instruction.
+            on_signed: Called with the signature and the block height past which
+                the transaction can no longer land (None when unknown) once it
+                is signed, before the first send, so a caller cancelled or failed
+                mid-send still knows what may have reached the chain. Every retry
+                resends the same transaction. Must not block: it runs on the
+                send path.
+            quiet: Log no traceback when the last attempt fails; the caller
+                reports the failure.
 
         Returns:
             Transaction signature.
+
+        Raises:
+            TransactionNotSent: No attempt can have reached the network
+            Exception: The last attempt's error, when one of them may have
         """
         client = await self.get_client()
 
@@ -397,12 +661,17 @@ class SolanaClient:
             instructions = fee_instructions + instructions
 
         recent_blockhash = await self.get_cached_blockhash()
+        last_valid_block_height = self._cached_last_valid_block_height
         # No address lookup tables: the bot builds every account list itself.
         message = MessageV0.try_compile(
             signer_keypair.pubkey(), instructions, [], recent_blockhash
         )
         transaction = VersionedTransaction(message, [signer_keypair])
+        if on_signed is not None:
+            on_signed(transaction.signatures[0], last_valid_block_height)
 
+        # Set once an attempt failed in a way that may still have delivered it.
+        maybe_sent = False
         for attempt in range(max_retries):
             try:
                 await self._rate_limiter.acquire()
@@ -413,10 +682,14 @@ class SolanaClient:
                 return response.value
 
             except Exception as e:
+                maybe_sent = maybe_sent or not _never_sent(e)
                 if attempt == max_retries - 1:
-                    logger.exception(
-                        f"Failed to send transaction after {max_retries} attempts"
-                    )
+                    if not quiet:
+                        logger.exception(
+                            f"Failed to send transaction after {max_retries} attempts"
+                        )
+                    if not maybe_sent:
+                        raise TransactionNotSent(str(e)) from e
                     raise
 
                 wait_time = 2**attempt
@@ -426,7 +699,13 @@ class SolanaClient:
                 await asyncio.sleep(wait_time)
 
     async def confirm_transaction(
-        self, signature: str | Signature, commitment: str = "confirmed"
+        self,
+        signature: str | Signature,
+        commitment: str = "confirmed",
+        *,
+        last_valid_block_height: int | None = None,
+        quiet: bool = False,
+        on_error: Callable[[Exception], None] | None = None,
     ) -> bool:
         """Wait for transaction confirmation and verify execution success.
 
@@ -442,15 +721,36 @@ class SolanaClient:
         Args:
             signature: Transaction signature, base58 string or Signature
             commitment: Confirmation commitment level
+            last_valid_block_height: Wait until the blockhash the transaction
+                was signed with has expired, rather than a fixed 90 seconds
+            quiet: Log nothing when the wait runs out (the blockhash expired,
+                or 90 seconds passed without one), and any other error as one
+                warning line without a traceback
+            on_error: Called with any error other than the wait running out,
+                in place of logging it; the caller decides how often to say so
 
         Returns:
             Whether transaction was confirmed AND executed successfully
         """
-        status = await self.confirm_transaction_detailed(signature, commitment)
+        status = await self.confirm_transaction_detailed(
+            signature,
+            commitment,
+            last_valid_block_height=last_valid_block_height,
+            quiet=quiet,
+            on_error=on_error,
+        )
         return status is ConfirmationStatus.SUCCESS
 
-    async def confirm_transaction_detailed(
-        self, signature: str | Signature, commitment: str = "confirmed"
+    async def confirm_transaction_detailed(  # noqa: PLR0913
+        self,
+        signature: str | Signature,
+        commitment: str = "confirmed",
+        *,
+        last_valid_block_height: int | None = None,
+        quiet: bool = False,
+        on_error: Callable[[Exception], None] | None = None,
+        on_revert: Callable[[str], None] | None = None,
+        program: Pubkey | None = None,
     ) -> ConfirmationStatus:
         """Confirm a transaction, distinguishing a revert from an unknown.
 
@@ -462,6 +762,12 @@ class SolanaClient:
         Args:
             signature: Transaction signature, base58 string or Signature
             commitment: Confirmation commitment level
+            last_valid_block_height: As in :meth:`confirm_transaction`
+            quiet: As in :meth:`confirm_transaction`
+            on_error: As in :meth:`confirm_transaction`
+            on_revert: As in :meth:`verify_transaction_status`
+            program: As in :meth:`get_signature_outcome`, for a revert the
+                status that ended the wait shows
 
         Returns:
             SUCCESS, REVERTED, or UNCONFIRMED
@@ -479,14 +785,145 @@ class SolanaClient:
         await self._rate_limiter.acquire()
         client = await self.get_client()
         try:
-            await client.confirm_transaction(
-                signature, commitment=commitment, sleep_seconds=1
+            response = await client.confirm_transaction(
+                signature,
+                commitment=commitment,
+                sleep_seconds=1,
+                last_valid_block_height=last_valid_block_height,
             )
-        except Exception:
-            logger.exception(f"Failed to confirm transaction {signature}")
+        except (TransactionExpiredBlockheightExceededError, UnconfirmedTxError):
+            if not quiet:
+                logger.exception(f"Failed to confirm transaction {signature}")
+            return ConfirmationStatus.UNCONFIRMED
+        except Exception as e:
+            if on_error is not None:
+                on_error(e)
+            elif quiet:
+                logger.warning(f"Could not confirm transaction {signature}: {e!s}")
+            else:
+                logger.exception(f"Failed to confirm transaction {signature}")
             return ConfirmationStatus.UNCONFIRMED
 
-        return await self.verify_transaction_status(signature)
+        # The status that ended the wait already says whether it reverted, so a
+        # node that cannot serve the transaction yet cannot make a revert unknown.
+        err = _confirmed_error(response)
+        if err:
+            error = await self._name_status_revert(str(signature), err, program)
+            self._report_revert(str(signature), error, on_revert)
+            return ConfirmationStatus.REVERTED
+        return await self.verify_transaction_status(signature, on_revert=on_revert)
+
+    async def get_signature_outcome(
+        self,
+        signature: str | Signature,
+        *,
+        search_history: bool = True,
+        quiet: bool = False,
+        on_revert: Callable[[str], None] | None = None,
+        program: Pubkey | None = None,
+    ) -> tuple[ConfirmationStatus | None, int | None]:
+        """What the cluster knows of a signature, and the slot it landed in.
+
+        Args:
+            search_history: Look past the node's recent status cache, which
+                only holds the last few minutes; slower, so ask once
+            quiet: Log nothing when the answer cannot be read
+            on_revert: Called with the error when the status is REVERTED
+            program: The program the trade was sent to. A revert's
+                transaction is read to name its code; when it cannot be read
+                within `REVERT_NAME_BUDGET`, the code is named, hedged, from
+                this program's IDL. None leaves it unnamed then.
+
+        Returns:
+            The status: SUCCESS or REVERTED once confirmed; UNCONFIRMED when it
+            is seen but not confirmed yet (an error at "processed" included: the
+            fork may still be dropped), or the lookup failed; None when no node
+            knows it, which settles nothing until its blockhash has expired.
+            Then the slot it landed in, None unless seen.
+        """
+        body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getSignatureStatuses",
+            "params": [
+                [str(signature)],
+                {"searchTransactionHistory": search_history},
+            ],
+        }
+        response = await self.post_rpc(body)
+        try:
+            status = response["result"]["value"][0]
+        except (KeyError, IndexError, TypeError):
+            if not quiet:
+                logger.warning(f"Could not read the status of {str(signature)[:16]}...")
+            return ConfirmationStatus.UNCONFIRMED, None
+        if status is None:
+            return None, None
+        slot = status.get("slot")
+        if status.get("confirmationStatus") not in ("confirmed", "finalized"):
+            return ConfirmationStatus.UNCONFIRMED, slot
+        if status.get("err"):
+            if on_revert is not None:
+                on_revert(
+                    await self._name_status_revert(
+                        str(signature), status["err"], program
+                    )
+                )
+            return ConfirmationStatus.REVERTED, slot
+        return ConfirmationStatus.SUCCESS, slot
+
+    async def get_token_accounts(
+        self, owner: Pubkey, token_program: Pubkey
+    ) -> list[tuple[Pubkey, bytes]]:
+        """Every token account `owner` holds under `token_program`, at "confirmed".
+
+        Returns:
+            Each account's address and raw data
+
+        Raises:
+            RuntimeError: The node did not answer with them
+        """
+        body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTokenAccountsByOwner",
+            "params": [
+                str(owner),
+                {"programId": str(token_program)},
+                {"encoding": "base64", "commitment": "confirmed"},
+            ],
+        }
+        response = await self.post_rpc(body)
+        try:
+            return [
+                (
+                    Pubkey.from_string(entry["pubkey"]),
+                    base64.b64decode(entry["account"]["data"][0]),
+                )
+                for entry in response["result"]["value"]
+            ]
+        except (KeyError, IndexError, TypeError, ValueError):
+            error = (response or {}).get("error", {}).get("message", "no answer")
+            raise RuntimeError(f"getTokenAccountsByOwner: {error}") from None  # noqa: TRY003
+
+    async def get_block_height_and_slot(self) -> tuple[int, int]:
+        """The cluster's block height and slot at "confirmed", read together.
+
+        Raises:
+            RuntimeError: The node did not answer with them
+        """
+        body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getEpochInfo",
+            "params": [{"commitment": "confirmed"}],
+        }
+        response = await self.post_rpc(body)
+        info = response.get("result") if response else None
+        try:
+            return int(info["blockHeight"]), int(info["absoluteSlot"])
+        except (KeyError, TypeError, ValueError):
+            raise RuntimeError("no block height in the answer") from None  # noqa: TRY003
 
     async def verify_transaction_succeeded(self, signature: str | Signature) -> bool:
         """Check whether a landed transaction actually executed successfully.
@@ -504,7 +941,10 @@ class SolanaClient:
         return status is ConfirmationStatus.SUCCESS
 
     async def verify_transaction_status(
-        self, signature: str | Signature
+        self,
+        signature: str | Signature,
+        *,
+        on_revert: Callable[[str], None] | None = None,
     ) -> ConfirmationStatus:
         """Read what actually happened to a landed transaction.
 
@@ -516,6 +956,9 @@ class SolanaClient:
 
         Args:
             signature: Transaction signature, base58 string or Signature
+            on_revert: Called with the error of a transaction that landed and
+                reverted, in place of logging it, so the caller can say it in
+                its own line
 
         Returns:
             SUCCESS, REVERTED, or UNCONFIRMED
@@ -531,14 +974,44 @@ class SolanaClient:
 
         tx_err = result.get("meta", {}).get("err")
         if tx_err:
-            detail = _describe_program_error(tx_err)
-            logger.error(
-                f"Transaction {signature[:16]}... confirmed but failed: {tx_err}"
-                + (f" ({detail})" if detail else "")
-            )
+            error = _revert_text(tx_err, transaction=result)
+            self._report_revert(signature, error, on_revert)
             return ConfirmationStatus.REVERTED
 
         return ConfirmationStatus.SUCCESS
+
+    async def _name_status_revert(
+        self, signature: str, err: object, venue: Pubkey | None
+    ) -> str:
+        """A status's revert as `_revert_text` renders it, its transaction read to name it.
+
+        Read once, bounded by `REVERT_NAME_BUDGET`, and only for an Anchor code:
+        a node that cannot serve the transaction yet holds the caller up no
+        longer than that, and the code is then named, hedged, from `venue`.
+        """
+        transaction = None
+        if _custom_code(err) is not None:
+            try:
+                transaction = await self._get_transaction_result(
+                    signature, budget_seconds=REVERT_NAME_BUDGET
+                )
+            except Exception as e:  # noqa: BLE001 - the revert stands without a name
+                logger.warning(
+                    f"Could not read {signature[:16]}... to name its error: {e!r}"
+                )
+        return _revert_text(err, transaction=transaction, venue=venue)
+
+    @staticmethod
+    def _report_revert(
+        signature: str, error: str, on_revert: Callable[[str], None] | None
+    ) -> None:
+        """Hand a revert's error, as `_revert_text` renders it, to `on_revert`, or log it."""
+        if on_revert is not None:
+            on_revert(error)
+        else:
+            logger.error(
+                f"Transaction {signature[:16]}... landed and reverted: {error}"
+            )
 
     async def get_transaction_token_balance(
         self, signature: str | Signature, user_pubkey: Pubkey, mint: Pubkey
@@ -572,134 +1045,52 @@ class SolanaClient:
 
         return None
 
-    async def get_buy_transaction_details(
+    async def get_trade_deltas(
         self,
         signature: str | Signature,
+        wallet: Pubkey,
         mint: Pubkey,
-        sol_destination: Pubkey,
-        quote_mint: Pubkey | None = None,
-    ) -> tuple[int | None, int | None]:
-        """Get actual tokens received and quote spent from a buy transaction.
-
-        Reads SOL transferred to the pool/curve from preBalances/postBalances and
-        tokens received from the token balance diff. A non-SOL quote asset does
-        not show up in lamport balances, so its spend comes from the quote mint's
-        token balance deltas instead.
+        quote_mint: Pubkey | None,
+        venue_account: Pubkey | str | None = None,
+    ) -> TradeDeltas | None:
+        """What a landed buy or sell did to the wallet, from its transaction.
 
         Args:
-            signature: Transaction signature, base58 string or Signature
-            mint: Token mint address
-            sol_destination: Address where SOL is sent (bonding curve for pump.fun,
-                           quote_vault for letsbonk)
-            quote_mint: Quote mint of the coin. Pass None or wrapped SOL for
-                       SOL-paired coins.
+            quote_mint: The coin's quote asset, raw or normalized
+            venue_account: As in `read_trade_deltas`: where a buy's quote
+                lands, to read its fill
 
         Returns:
-            Tuple of (tokens_received_raw, quote_spent_raw), or (None, None)
+            The deltas; None when the transaction cannot be read within
+            `TX_RESULT_RETRY_BUDGET`, reverted, was not paid for by `wallet`,
+            or shows no token account of the wallet's holding the coin
         """
         # Normalized up front: the log lines below slice it, which a Signature
         # does not support.
         signature = str(signature)
         result = await self._get_transaction_result(signature)
         if not result:
-            return None, None
-
-        meta = result.get("meta", {})
-
-        # Check for transaction execution errors (e.g., MaxLoadedAccountsDataSizeExceeded)
-        tx_err = meta.get("err")
+            return None
+        tx_err = result.get("meta", {}).get("err")
         if tx_err:
-            detail = _describe_program_error(tx_err)
             logger.error(
-                f"Transaction {signature[:16]}... failed with error: {tx_err}"
-                + (f" ({detail})" if detail else "")
+                f"Transaction {signature[:16]}... failed with error: "
+                f"{_revert_text(tx_err, transaction=result)}"
             )
-            return None, None
-
-        # Get tokens received from pre/post token balance diff
-        # This works for Token2022 where owner might be different
-        tokens_received = self._extract_positive_token_diff(meta, str(mint))
-        if tokens_received is not None:
-            logger.info(f"Tokens received from tx: {tokens_received}")
-
-        # Non-SOL quote assets move as SPL token transfers, so the lamport
-        # deltas below would report only rent/fees. Read the quote spend from
-        # the quote mint's token balance deltas: the positive diff is the
-        # curve's quote vault receiving what the buyer paid.
-        if quote_mint is not None and not is_sol_paired(quote_mint):
-            quote_spent = self._extract_positive_token_diff(meta, str(quote_mint))
-            if quote_spent is None:
-                logger.warning(
-                    f"No positive {quote_mint} balance diff found in tx "
-                    f"{signature[:16]}...; cannot determine quote spent"
-                )
-            else:
-                logger.info(f"Quote spent from tx: {quote_spent} (mint {quote_mint})")
-            return tokens_received, quote_spent
-
-        # Get SOL spent from preBalances/postBalances at sol_destination
-        sol_destination_str = str(sol_destination)
-        sol_spent = None
-        pre_balances = meta.get("preBalances", [])
-        post_balances = meta.get("postBalances", [])
-        account_keys = (
-            result.get("transaction", {}).get("message", {}).get("accountKeys", [])
-        )
-
-        for i, key in enumerate(account_keys):
-            key_str = key if isinstance(key, str) else key.get("pubkey", "")
-            if key_str == sol_destination_str:
-                if i < len(pre_balances) and i < len(post_balances):
-                    sol_spent = post_balances[i] - pre_balances[i]
-                    if sol_spent > 0:
-                        logger.info(f"SOL to pool/curve: {sol_spent} lamports")
-                    else:
-                        logger.warning(
-                            f"SOL destination balance change not positive: {sol_spent}"
-                        )
-                        sol_spent = None
-                break
-
-        return tokens_received, sol_spent
-
-    @staticmethod
-    def _extract_positive_token_diff(meta: dict, mint_str: str) -> int | None:
-        """Find the largest positive token balance change for a mint in a tx.
-
-        Args:
-            meta: Transaction meta containing pre/postTokenBalances
-            mint_str: Mint address to look for
-
-        Returns:
-            Raw positive balance delta, or None if no account gained this mint
-        """
-        pre_by_idx = {
-            b.get("accountIndex"): b for b in meta.get("preTokenBalances", [])
-        }
-        post_by_idx = {
-            b.get("accountIndex"): b for b in meta.get("postTokenBalances", [])
-        }
-
-        best: int | None = None
-        for idx in set(pre_by_idx) | set(post_by_idx):
-            pre = pre_by_idx.get(idx)
-            post = post_by_idx.get(idx)
-
-            if (post or pre).get("mint", "") != mint_str:
-                continue
-
-            pre_amount = (
-                int(pre.get("uiTokenAmount", {}).get("amount", 0)) if pre else 0
+            return None
+        if not paid_by(result, wallet):
+            logger.warning(
+                f"Transaction {signature[:16]}... was not paid for by {wallet}; "
+                f"its amounts are not read"
             )
-            post_amount = (
-                int(post.get("uiTokenAmount", {}).get("amount", 0)) if post else 0
+            return None
+        deltas = read_trade_deltas(result, wallet, mint, quote_mint, venue_account)
+        if deltas is None:
+            logger.warning(
+                f"Transaction {signature[:16]}... shows no token account of "
+                f"{wallet} holding {mint}"
             )
-            diff = post_amount - pre_amount
-
-            if diff > 0 and (best is None or diff > best):
-                best = diff
-
-        return best
+        return deltas
 
     async def _get_transaction_result(
         self,

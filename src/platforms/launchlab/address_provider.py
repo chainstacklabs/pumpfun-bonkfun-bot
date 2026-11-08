@@ -1,6 +1,6 @@
 """Raydium LaunchLab addresses and PDA derivations, shared by the platforms on it."""
 
-from typing import ClassVar, Final
+from typing import Final
 
 from solders.pubkey import Pubkey
 from spl.token.instructions import get_associated_token_address
@@ -10,7 +10,7 @@ from core.pubkeys import (
     cached_quote_token_program,
     normalize_quote_mint,
 )
-from interfaces.core import AddressProvider, TokenInfo
+from interfaces.core import AddressProvider, Platform, TokenInfo
 
 LAUNCHLAB_PROGRAM: Final[Pubkey] = Pubkey.from_string(
     "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj"
@@ -22,17 +22,21 @@ def _pda(seeds: list[bytes]) -> Pubkey:
 
 
 class LaunchLabAddressProvider(AddressProvider):
-    """Addresses for one launchpad built on Raydium LaunchLab.
+    """Addresses for a pool on Raydium LaunchLab, under any platform config.
 
     LaunchLab is one program serving many launchpads; a launchpad is the set of
-    platform configs its pools are created under. Subclasses name theirs.
+    platform configs its pools are created under. Nothing here depends on
+    which: the pool's own configs come from `TokenInfo`.
 
     Every pool address and both fee vaults are keyed by the pool's quote mint,
     so each derivation takes it from `TokenInfo.quote_mint`. Wrapped SOL is only
     the default when a caller has not resolved the quote yet.
     """
 
-    PLATFORM_CONFIGS: ClassVar[frozenset[Pubkey]] = frozenset()
+    @property
+    def platform(self) -> Platform:
+        """Every launchpad on LaunchLab."""
+        return Platform.LAUNCHLAB
 
     @property
     def program_id(self) -> Pubkey:

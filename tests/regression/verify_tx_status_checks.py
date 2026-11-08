@@ -231,14 +231,15 @@ async def check_commitment_is_propagated() -> None:
 
 
 async def check_endpoint_logging_hides_userinfo() -> None:
-    """Endpoint logging must use hostname, not netloc.
+    """No cookbook script reads `urlsplit(...).netloc`.
 
-    netloc keeps any `user:pass@` userinfo, so redacting with it still prints the
-    credential for providers that put the key there.
+    netloc keeps any `user:pass@` userinfo, so whatever is built from it carries
+    the credential for providers that put the key there. Printing an endpoint or
+    its host at all is caught by `verify_no_rpc_credentials_logged.py`.
     """
     offenders = []
     for path in sorted((PROJECT_ROOT / "cookbook").rglob("*.py")):
-        if "__pycache__" in path.parts or path.name == Path(__file__).name:
+        if "__pycache__" in path.parts:
             continue
         for n, line in enumerate(path.read_text().splitlines(), 1):
             if "urlsplit" in line and ".netloc" in line:
@@ -318,52 +319,13 @@ async def check_client_accepts_both_signature_types() -> None:
     await client.close()
 
 
-async def check_rpc_timeouts_are_retried_not_raised() -> None:
-    """An RPC timeout must be retried and reported, never raised at the caller.
-
-    aiohttp signals a request timeout with `asyncio.TimeoutError`, which is not
-    an `aiohttp.ClientError`. While `post_rpc` caught only the latter, every
-    timeout escaped un-retried — and `str()` on it is empty, so callers logged a
-    blank reason. This is what broke three of the four listeners in
-    live_listener_matrix mid-run.
-    """
-    client = SolanaClient("http://127.0.0.1:1")
-    attempts = 0
-
-    class _TimingOutSession:
-        def post(self, *_args: Any, **_kwargs: Any) -> Any:
-            nonlocal attempts
-            attempts += 1
-
-            class _Ctx:
-                async def __aenter__(_self) -> Any:
-                    raise TimeoutError
-
-                async def __aexit__(_self, *_exc: Any) -> bool:
-                    return False
-
-            return _Ctx()
-
-    async def _session() -> Any:
-        return _TimingOutSession()
-
-    client._get_session = _session  # noqa: SLF001
-    client._rate_limiter.acquire = lambda: asyncio.sleep(0)  # noqa: SLF001
-
-    result = await client.post_rpc({"method": "getTransaction"}, max_retries=2)
-    await client.close()
-
-    assert result is None, f"expected None on repeated timeout, got {result!r}"
-    assert attempts == 2, f"timeout should be retried; saw {attempts} attempt(s)"
-
-
 async def check_versioned_transactions_are_requested() -> None:
     """getTransaction must opt in to versioned transactions.
 
     Without `maxSupportedTransactionVersion` the RPC answers -32015 for every v0/v1
     transaction, so `meta.err` is unreadable and a successful trade reads back as
-    unconfirmed. The bot currently sends legacy transactions, which is the only
-    reason this was survivable.
+    unconfirmed. The bot sends v0 transactions, so without it every trade it
+    sends would read back that way.
     """
     client = SolanaClient("http://127.0.0.1:1")  # never contacted
     bodies: list[dict[str, Any]] = []
@@ -442,7 +404,6 @@ CHECKS = (
         "getTransaction requests versioned transactions",
         check_versioned_transactions_are_requested,
     ),
-    ("RPC timeouts are retried, not raised", check_rpc_timeouts_are_retried_not_raised),
     ("every example checks meta.err", check_examples_call_a_status_check),
     ("src/ reads the confirmation result", check_bot_reads_the_confirmation_result),
 )

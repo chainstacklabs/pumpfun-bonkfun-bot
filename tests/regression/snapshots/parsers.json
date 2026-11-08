@@ -1,0 +1,2822 @@
+{
+ "raw_stonkfun_launches_from_gettransaction.json": [
+  {
+   "signature": "2FFqEKPYpMQfMqJyT5QUopqZqtLNUKKub5LhdsRTwDussUSdVGBB11uGBFU2B3pveuRjQZGaE7bsHVr6eEWXWhcw",
+   "version": "legacy",
+   "stonkfun block": {
+    "name": "SpaceXSI",
+    "symbol": "XSI",
+    "uri": "https://gateway.irys.xyz/59ECgELpUeAVJGgQ9ey6wfuoXe8A6YWuKQXqbRjNj4jk",
+    "mint": "J2V7tRwJqwr9a1gpL3VMQRuJVbebcH2YbvNezfiMhGUr",
+    "platform": "stonk_fun",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "DgFe7zmq6x3AvJCVVgEJKQ97D73MRfdchLyQMEGhi6eT",
+    "base_vault": "3PXSXWnjmkEdmnFbakEw13QDpGzvs2mkxvTTgb7q5m3r",
+    "quote_vault": "kqnHSBPiWDYdE5FaQynUo5GxNzMEfGndJ5kP3rRFCRB",
+    "global_config": "6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX",
+    "platform_config": "4E876qZTE9FJMrBzgVtBrSrzz2TLivB5Y5QXPjB4gZL7",
+    "user": "9ePSmJyUxsXcWcjxeUpqJSxq3R65MvuFuLPkSWvU43TX",
+    "creator": "9ePSmJyUxsXcWcjxeUpqJSxq3R65MvuFuLPkSWvU43TX",
+    "creator_vault": null,
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": true,
+    "additional_data": null
+   },
+   "stonkfun geyser": {
+    "name": "SpaceXSI",
+    "symbol": "XSI",
+    "uri": "https://gateway.irys.xyz/59ECgELpUeAVJGgQ9ey6wfuoXe8A6YWuKQXqbRjNj4jk",
+    "mint": "J2V7tRwJqwr9a1gpL3VMQRuJVbebcH2YbvNezfiMhGUr",
+    "platform": "stonk_fun",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "DgFe7zmq6x3AvJCVVgEJKQ97D73MRfdchLyQMEGhi6eT",
+    "base_vault": "3PXSXWnjmkEdmnFbakEw13QDpGzvs2mkxvTTgb7q5m3r",
+    "quote_vault": "kqnHSBPiWDYdE5FaQynUo5GxNzMEfGndJ5kP3rRFCRB",
+    "global_config": "6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX",
+    "platform_config": "4E876qZTE9FJMrBzgVtBrSrzz2TLivB5Y5QXPjB4gZL7",
+    "user": "9ePSmJyUxsXcWcjxeUpqJSxq3R65MvuFuLPkSWvU43TX",
+    "creator": "9ePSmJyUxsXcWcjxeUpqJSxq3R65MvuFuLPkSWvU43TX",
+    "creator_vault": null,
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": true,
+    "additional_data": null
+   },
+   "letsbonk block": null,
+   "letsbonk geyser": null,
+   "launchlab instructions": {
+    "top 2": {
+     "instruction_name": "initialize_with_token_2022",
+     "args": {
+      "base_mint_param": {
+       "decimals": 6,
+       "name": "SpaceXSI",
+       "symbol": "XSI",
+       "uri": "https://gateway.irys.xyz/59ECgELpUeAVJGgQ9ey6wfuoXe8A6YWuKQXqbRjNj4jk"
+      },
+      "curve_param": {
+       "variant": "Constant",
+       "data": {
+        "data": {
+         "supply": 1000000000000000,
+         "total_base_sell": 793100000000000,
+         "total_quote_fund_raising": 85000000000,
+         "migrate_type": 1
+        }
+       }
+      },
+      "vesting_param": {
+       "total_locked_amount": 0,
+       "cliff_period": 0,
+       "unlock_period": 0
+      },
+      "amm_fee_on": {
+       "variant": "QuoteToken"
+      },
+      "transfer_fee_extension_param": null
+     },
+     "accounts": {
+      "payer": "KfNJeiwgdQbj74P5jMWjCmisaUqtBdRQ8ceEUDjaN7Kz3BqRd7veCJaLQkYX",
+      "creator": "KfNJeiwgdQbj74P5jMWjCmisaUqtBdRQ8ceEUDjaN7Kz3BqRd7veCJaLQkYX",
+      "global_config": "JhpKTBTR6UZrSpQwetjcVt6bnZBc2k4QAaCj8hnKXzL6JfAcbc5CGFLVpjGK",
+      "platform_config": "HziNXQEWq21MQLAYH368XYxvMzcpeS5T22AT92TheFpAfD29DUMXEAsHUyzv",
+      "authority": "7RyvEjNvckZDegL8HRnRr3UPxKYViotJsVnwJYjuTiKXuqGqxVFmgjsN6B9",
+      "pool_state": "PEx4spYht95pupimbVqN5mivaqvSnbcQVUrjtDtUD44CJok5kj6VWvRQsfgf",
+      "base_mint": "R8CTiWQPH7gT78RsSfoD7E8kpv1zqJgN3euFSJuoBt5SjhRUp1zvip2kjPYu",
+      "quote_mint": "79UVHPFQm8gS75KHsFV5Mo7fT3FdjnzLDWs88zrxi9zwaWZmPxRgVxso3D3",
+      "base_vault": "Hgg9GK1CUvCPmfvn5zXtqQBm9hBFBaBy8FCpTMUDudvZejhHV7TYmDCWqQ5X",
+      "quote_vault": "8v3zCCoAvKA8rmqRMysPv59jM1GR8zLFWzw55raUx4FbmBiNgkBsiM69Z7P",
+      "base_token_program": "7DkWmNPFv3kUHALeCeNA4Euopob4EYCqeBtDpZgxe7JiecpQM6FG6JLav6M",
+      "quote_token_program": "7DkWmNPDi2C8XLo736dZR8PvYQokw5L7njUC15S3EP8PgavFpeeMegCNUNU",
+      "system_program": "4K2V1kpVycZ6qSFsNdz2FtpNxnJs17eBNzf9rdCMcKoe",
+      "event_authority": "HLvyat8VsPMSW6ENtUq3AUQtM2btWxGns2KCNDF9t34je4LyXtVQnj2o85ZB",
+      "program": "6dLXeq88p6Un1D7netAqRtUJPYsserUvTVgq52MrhYTQe9zewVhEuPyUfr1"
+     }
+    },
+    "top 7": {
+     "instruction_name": "buy_exact_in",
+     "args": {
+      "amount_in": 400000000,
+      "minimum_amount_out": 13787921070000,
+      "share_fee_rate": 0
+     },
+     "accounts": {
+      "payer": "KfNJeiwgdQbj74P5jMWjCmisaUqtBdRQ8ceEUDjaN7Kz3BqRd7veCJaLQkYX",
+      "authority": "7RyvEjNvckZDegL8HRnRr3UPxKYViotJsVnwJYjuTiKXuqGqxVFmgjsN6B9",
+      "global_config": "JhpKTBTR6UZrSpQwetjcVt6bnZBc2k4QAaCj8hnKXzL6JfAcbc5CGFLVpjGK",
+      "platform_config": "HziNXQEWq21MQLAYH368XYxvMzcpeS5T22AT92TheFpAfD29DUMXEAsHUyzv",
+      "pool_state": "PEx4spYht95pupimbVqN5mivaqvSnbcQVUrjtDtUD44CJok5kj6VWvRQsfgf",
+      "user_base_token": "JMw86bUVh7Aujxa4YWaqVCvYhhQp4W4T3NojchJjeFsRV4JT2PC4GsmjANbA",
+      "user_quote_token": "NGpS4eRXgwN6mfunqxKpYNAbcCC8fUb9tjnnmj5m1bdByySC6wcupg7tGu83",
+      "base_vault": "Hgg9GK1CUvCPmfvn5zXtqQBm9hBFBaBy8FCpTMUDudvZejhHV7TYmDCWqQ5X",
+      "quote_vault": "8v3zCCoAvKA8rmqRMysPv59jM1GR8zLFWzw55raUx4FbmBiNgkBsiM69Z7P",
+      "base_token_mint": "R8CTiWQPH7gT78RsSfoD7E8kpv1zqJgN3euFSJuoBt5SjhRUp1zvip2kjPYu",
+      "quote_token_mint": "79UVHPFQm8gS75KHsFV5Mo7fT3FdjnzLDWs88zrxi9zwaWZmPxRgVxso3D3",
+      "base_token_program": "7DkWmNPFv3kUHALeCeNA4Euopob4EYCqeBtDpZgxe7JiecpQM6FG6JLav6M",
+      "quote_token_program": "7DkWmNPDi2C8XLo736dZR8PvYQokw5L7njUC15S3EP8PgavFpeeMegCNUNU",
+      "event_authority": "HLvyat8VsPMSW6ENtUq3AUQtM2btWxGns2KCNDF9t34je4LyXtVQnj2o85ZB",
+      "program": "6dLXeq88p6Un1D7netAqRtUJPYsserUvTVgq52MrhYTQe9zewVhEuPyUfr1"
+     }
+    }
+   }
+  },
+  {
+   "signature": "4FqXvdwKnch1JHoViWFqQra7vKHGV8h3XqkAV6dLVyWBN7pSM9ms4uRLqX8QDvyWKQiG9kdNbfruPXnnt8CsXBfE",
+   "version": 0,
+   "stonkfun block": {
+    "name": "ORE Party",
+    "symbol": "PARTY",
+    "uri": "http://201.78.143.16:3000/m/jGZAXvXJJK",
+    "mint": "E3myentprJHSWdUvD4LDS3A48QMnUNQVUaHwSmDNsm7k",
+    "platform": "stonk_fun",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "8S5qhNkfYHmFzhxDQhSPRxBcKgGTEh3oytRi8YDiXgd4",
+    "base_vault": "4q9JphKCvswFJNVNbXJrqx2w1Y9ixENUfQerqtWR6qhC",
+    "quote_vault": "F2vzerkGnvwRHhL3Gq8y9KDhCE2eYs8TDbiWnB8xTmKg",
+    "global_config": "7QV2swQrGvArbdrLFmg2861hdCZLEKBNiM77j4hvvE1g",
+    "platform_config": "4E876qZTE9FJMrBzgVtBrSrzz2TLivB5Y5QXPjB4gZL7",
+    "user": "FkKXAcfrso5t53QVxnKzHQaypDpCc7jQF2qpZENhYz2A",
+    "creator": "FkKXAcfrso5t53QVxnKzHQaypDpCc7jQF2qpZENhYz2A",
+    "creator_vault": null,
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": true,
+    "additional_data": null
+   },
+   "stonkfun geyser": {
+    "name": "ORE Party",
+    "symbol": "PARTY",
+    "uri": "http://201.78.143.16:3000/m/jGZAXvXJJK",
+    "mint": "E3myentprJHSWdUvD4LDS3A48QMnUNQVUaHwSmDNsm7k",
+    "platform": "stonk_fun",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "8S5qhNkfYHmFzhxDQhSPRxBcKgGTEh3oytRi8YDiXgd4",
+    "base_vault": "4q9JphKCvswFJNVNbXJrqx2w1Y9ixENUfQerqtWR6qhC",
+    "quote_vault": "F2vzerkGnvwRHhL3Gq8y9KDhCE2eYs8TDbiWnB8xTmKg",
+    "global_config": "7QV2swQrGvArbdrLFmg2861hdCZLEKBNiM77j4hvvE1g",
+    "platform_config": "4E876qZTE9FJMrBzgVtBrSrzz2TLivB5Y5QXPjB4gZL7",
+    "user": "FkKXAcfrso5t53QVxnKzHQaypDpCc7jQF2qpZENhYz2A",
+    "creator": "FkKXAcfrso5t53QVxnKzHQaypDpCc7jQF2qpZENhYz2A",
+    "creator_vault": null,
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": true,
+    "additional_data": null
+   },
+   "letsbonk block": null,
+   "letsbonk geyser": null,
+   "launchlab instructions": {
+    "top 2": {
+     "instruction_name": "initialize_with_token_2022",
+     "args": {
+      "base_mint_param": {
+       "decimals": 6,
+       "name": "ORE Party",
+       "symbol": "PARTY",
+       "uri": "http://201.78.143.16:3000/m/jGZAXvXJJK"
+      },
+      "curve_param": {
+       "variant": "Constant",
+       "data": {
+        "data": {
+         "supply": 1000000000000000,
+         "total_base_sell": 793100000000000,
+         "total_quote_fund_raising": 7737695747226,
+         "migrate_type": 1
+        }
+       }
+      },
+      "vesting_param": {
+       "total_locked_amount": 0,
+       "cliff_period": 0,
+       "unlock_period": 0
+      },
+      "amm_fee_on": {
+       "variant": "QuoteToken"
+      },
+      "transfer_fee_extension_param": null
+     },
+     "accounts": {
+      "payer": "PtxmJ4CeScLoNoS5PCepGkuMKZsRT8wMdnskNhQtbKGRfpAQR3cixZhCyzFa",
+      "creator": "PtxmJ4CeScLoNoS5PCepGkuMKZsRT8wMdnskNhQtbKGRfpAQR3cixZhCyzFa",
+      "global_config": "JzBRpWQDpSvhuB5Cp1tDqCpusoPV4eeguf2w2poHjHfv2zn8mAuxdoUpZSjG",
+      "platform_config": "HziNXQEWq21MQLAYH368XYxvMzcpeS5T22AT92TheFpAfD29DUMXEAsHUyzv",
+      "authority": "7RyvEjNvckZDegL8HRnRr3UPxKYViotJsVnwJYjuTiKXuqGqxVFmgjsN6B9",
+      "pool_state": "KKBBvm9WSPusMg25SZf8K913DaDaenfqeBpm2Xx8fgNPdMBqE333jEuRPhgF",
+      "base_mint": "PVzK2G8GRggGREvx16h1deu1GtXq9tuV4n9t9ih3ri3vXBetHkYGXo1bfjTG",
+      "quote_mint": "9DA9GVxccE9XZH9JsGpgpNXSNHtYQiGgzeDs1Lg6Vt3CCgzYRH35DUxHjHR",
+      "base_vault": "J3xP1LpVjXqcArDuLsp37sfKFS5Mg8dMjYvhmprd5pd3JvnXE5xErvVi1BY6",
+      "quote_vault": "Ppmx8oHquZctrcMRhDCAuZwtor83s3N25dYtiHdMiJAmgA2HPmK7RRQm6yxi",
+      "base_token_program": "7DkWmNPFv3kUHALeCeNA4Euopob4EYCqeBtDpZgxe7JiecpQM6FG6JLav6M",
+      "quote_token_program": "7DkWmNPDi2C8XLo736dZR8PvYQokw5L7njUC15S3EP8PgavFpeeMegCNUNU",
+      "system_program": "4K2V1kpVycZ6qSFsNdz2FtpNxnJs17eBNzf9rdCMcKoe",
+      "event_authority": "HLvyat8VsPMSW6ENtUq3AUQtM2btWxGns2KCNDF9t34je4LyXtVQnj2o85ZB",
+      "program": "6dLXeq88p6Un1D7netAqRtUJPYsserUvTVgq52MrhYTQe9zewVhEuPyUfr1"
+     }
+    },
+    "top 5": {
+     "instruction_name": "buy_exact_in",
+     "args": {
+      "amount_in": 140538414920,
+      "minimum_amount_out": 50852821648774,
+      "share_fee_rate": 0
+     },
+     "accounts": {
+      "payer": "PtxmJ4CeScLoNoS5PCepGkuMKZsRT8wMdnskNhQtbKGRfpAQR3cixZhCyzFa",
+      "authority": "7RyvEjNvckZDegL8HRnRr3UPxKYViotJsVnwJYjuTiKXuqGqxVFmgjsN6B9",
+      "global_config": "JzBRpWQDpSvhuB5Cp1tDqCpusoPV4eeguf2w2poHjHfv2zn8mAuxdoUpZSjG",
+      "platform_config": "HziNXQEWq21MQLAYH368XYxvMzcpeS5T22AT92TheFpAfD29DUMXEAsHUyzv",
+      "pool_state": "KKBBvm9WSPusMg25SZf8K913DaDaenfqeBpm2Xx8fgNPdMBqE333jEuRPhgF",
+      "user_base_token": "NwCQmdnJLP4JhecZGrWQtxVims4k45Gb7PeqBnXJnu6T66xPBc9cJZtMxLx8",
+      "user_quote_token": "PCA3Vn2CNxno6WZiT7pF4MFk37izBXBfxrdwaGUKVKqnSYiVL5YHL9eBC2wW",
+      "base_vault": "J3xP1LpVjXqcArDuLsp37sfKFS5Mg8dMjYvhmprd5pd3JvnXE5xErvVi1BY6",
+      "quote_vault": "Ppmx8oHquZctrcMRhDCAuZwtor83s3N25dYtiHdMiJAmgA2HPmK7RRQm6yxi",
+      "base_token_mint": "PVzK2G8GRggGREvx16h1deu1GtXq9tuV4n9t9ih3ri3vXBetHkYGXo1bfjTG",
+      "quote_token_mint": "9DA9GVxccE9XZH9JsGpgpNXSNHtYQiGgzeDs1Lg6Vt3CCgzYRH35DUxHjHR",
+      "base_token_program": "7DkWmNPFv3kUHALeCeNA4Euopob4EYCqeBtDpZgxe7JiecpQM6FG6JLav6M",
+      "quote_token_program": "7DkWmNPDi2C8XLo736dZR8PvYQokw5L7njUC15S3EP8PgavFpeeMegCNUNU",
+      "event_authority": "HLvyat8VsPMSW6ENtUq3AUQtM2btWxGns2KCNDF9t34je4LyXtVQnj2o85ZB",
+      "program": "6dLXeq88p6Un1D7netAqRtUJPYsserUvTVgq52MrhYTQe9zewVhEuPyUfr1"
+     }
+    }
+   }
+  },
+  {
+   "signature": "2FG9RsWQ6Gz9JNT8K1rwTiypfkAjDFSe4xdGwp1uJYTnZu8tDCkNmpXyNX89S6b7iXZfJA4eTCgtrhSQkvfJmvPi",
+   "version": 1,
+   "stonkfun block": {
+    "name": "Scronkfinkle",
+    "symbol": "Scronkfinkle",
+    "uri": "https://metadata.j7tracker.io/metadata/Es4ZrcOFl9.json",
+    "mint": "H4Jz31z5JKrPKtbndUqvpj29KK6kMFdcnduwgmMu6BPE",
+    "platform": "stonk_fun",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "HDDws6cgVgwzWjNMZx2xtm6TX6WbCZv31UvTMWDxn7KP",
+    "base_vault": "GD4ML46x9M3QRtpWmAqh3y7dSyfNgZvdQg5rEJrvWHTe",
+    "quote_vault": "H8ovNygGe6HzZr5AcAsgWX3Z8pdJLsBrqXHHZE3k52dF",
+    "global_config": "9mfQRzhyaACD49VhrSwCWKjrHVLcNfhxSdhg2hDSwCd8",
+    "platform_config": "6BwHHDg3u1854jC8PDLXvR4spTcLNaoBxLJNGC4nTESt",
+    "user": "GpTXmkdvrTajqkzX1fBmC4BUjSboF9dHgfnqPqj8WAc4",
+    "creator": "GpTXmkdvrTajqkzX1fBmC4BUjSboF9dHgfnqPqj8WAc4",
+    "creator_vault": null,
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "Xs3oZwbHvqis4NYcf4YKWmEia2eC84wSiVrcYcTqpH8",
+    "quote_token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 100,
+    "state_from_event": true,
+    "additional_data": null
+   },
+   "stonkfun geyser": {
+    "name": "Scronkfinkle",
+    "symbol": "Scronkfinkle",
+    "uri": "https://metadata.j7tracker.io/metadata/Es4ZrcOFl9.json",
+    "mint": "H4Jz31z5JKrPKtbndUqvpj29KK6kMFdcnduwgmMu6BPE",
+    "platform": "stonk_fun",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "HDDws6cgVgwzWjNMZx2xtm6TX6WbCZv31UvTMWDxn7KP",
+    "base_vault": "GD4ML46x9M3QRtpWmAqh3y7dSyfNgZvdQg5rEJrvWHTe",
+    "quote_vault": "H8ovNygGe6HzZr5AcAsgWX3Z8pdJLsBrqXHHZE3k52dF",
+    "global_config": "9mfQRzhyaACD49VhrSwCWKjrHVLcNfhxSdhg2hDSwCd8",
+    "platform_config": "6BwHHDg3u1854jC8PDLXvR4spTcLNaoBxLJNGC4nTESt",
+    "user": "GpTXmkdvrTajqkzX1fBmC4BUjSboF9dHgfnqPqj8WAc4",
+    "creator": "GpTXmkdvrTajqkzX1fBmC4BUjSboF9dHgfnqPqj8WAc4",
+    "creator_vault": null,
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "Xs3oZwbHvqis4NYcf4YKWmEia2eC84wSiVrcYcTqpH8",
+    "quote_token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 100,
+    "state_from_event": true,
+    "additional_data": null
+   },
+   "letsbonk block": null,
+   "letsbonk geyser": null,
+   "launchlab instructions": {
+    "top 0": {
+     "instruction_name": "initialize_with_token_2022",
+     "args": {
+      "base_mint_param": {
+       "decimals": 6,
+       "name": "Scronkfinkle",
+       "symbol": "Scronkfinkle",
+       "uri": "https://metadata.j7tracker.io/metadata/Es4ZrcOFl9.json"
+      },
+      "curve_param": {
+       "variant": "Constant",
+       "data": {
+        "data": {
+         "supply": 1000000000000000,
+         "total_base_sell": 793100000000000,
+         "total_quote_fund_raising": 6463760319,
+         "migrate_type": 1
+        }
+       }
+      },
+      "vesting_param": {
+       "total_locked_amount": 0,
+       "cliff_period": 0,
+       "unlock_period": 0
+      },
+      "amm_fee_on": {
+       "variant": "QuoteToken"
+      },
+      "transfer_fee_extension_param": {
+       "transfer_fee_basis_points": 100,
+       "maximum_fee": 1000000000000000
+      }
+     },
+     "accounts": {
+      "payer": "QEC3EicSymM1YBbRoFxHkahAhH8NTT1BWGe8CbQcmuuCsDYfSeoX27RyhaDR",
+      "creator": "QEC3EicSymM1YBbRoFxHkahAhH8NTT1BWGe8CbQcmuuCsDYfSeoX27RyhaDR",
+      "global_config": "KfxrPADx1x6dsx2ZfYtJU4DxTM8U5ia4H7VcYxbZt1dsTRc2US1CGwZrm9AX",
+      "platform_config": "JeE8ZWy4XqpK5GTCyQWey1o3vZfAuC6T28mKZFFe2xbFL8NCFWxFZ79SBK2K",
+      "authority": "7RyvEjNvckZDegL8HRnRr3UPxKYViotJsVnwJYjuTiKXuqGqxVFmgjsN6B9",
+      "pool_state": "QVoYdPcdWMoML2SDgxGe3N7nrKjtJGLmnefZWbxkpP9PzY4rMUzfBaeQMjeP",
+      "base_mint": "QUdHZNS1mqJ7tDuGbLJJ8gHPKDf4SKWmCoYhoNkLnvh6zoqGdFT8pnQhGpfN",
+      "quote_mint": "7WuPwLVzcWmCc4SUYSzUbxxrwPEBuYNscmtixeiC984HatdeqBomKnpFGiK",
+      "base_vault": "QAwWn78Yk75rfSxh6Ansjh27ntkVaKkFqjqDbU8xU6gv4JSH8s6gYWMwHYNg",
+      "quote_vault": "QUvzahDyQZe7qmV94i4vqETGzZ5nQagrrG7nSTEkoS1h7bA2jp1zVAEZciaq",
+      "base_token_program": "7DkWmNPFv3kUHALeCeNA4Euopob4EYCqeBtDpZgxe7JiecpQM6FG6JLav6M",
+      "quote_token_program": "7DkWmNPFv3kUHALeCeNA4Euopob4EYCqeBtDpZgxe7JiecpQM6FG6JLav6M",
+      "system_program": "4K2V1kpVycZ6qSFsNdz2FtpNxnJs17eBNzf9rdCMcKoe",
+      "event_authority": "HLvyat8VsPMSW6ENtUq3AUQtM2btWxGns2KCNDF9t34je4LyXtVQnj2o85ZB",
+      "program": "6dLXeq88p6Un1D7netAqRtUJPYsserUvTVgq52MrhYTQe9zewVhEuPyUfr1"
+     }
+    },
+    "inner 3.0": {
+     "instruction_name": "buy_exact_in",
+     "args": {
+      "amount_in": 380253313,
+      "minimum_amount_out": 1,
+      "share_fee_rate": 0
+     },
+     "accounts": {
+      "payer": "QEC3EicSymM1YBbRoFxHkahAhH8NTT1BWGe8CbQcmuuCsDYfSeoX27RyhaDR",
+      "authority": "7RyvEjNvckZDegL8HRnRr3UPxKYViotJsVnwJYjuTiKXuqGqxVFmgjsN6B9",
+      "global_config": "KfxrPADx1x6dsx2ZfYtJU4DxTM8U5ia4H7VcYxbZt1dsTRc2US1CGwZrm9AX",
+      "platform_config": "JeE8ZWy4XqpK5GTCyQWey1o3vZfAuC6T28mKZFFe2xbFL8NCFWxFZ79SBK2K",
+      "pool_state": "QVoYdPcdWMoML2SDgxGe3N7nrKjtJGLmnefZWbxkpP9PzY4rMUzfBaeQMjeP",
+      "user_base_token": "NEFRv4qFvdAnMxEiRYXA9myKcAACCi5Tq36ZMP3yNJAWEP8hyXRoH4NALzDj",
+      "user_quote_token": "Hez7Gi8jhdeptS2gM4YqxPh11Qb8GdTtbYjPk5oZwEtV2ETCyWeDwtMr7AJJ",
+      "base_vault": "QAwWn78Yk75rfSxh6Ansjh27ntkVaKkFqjqDbU8xU6gv4JSH8s6gYWMwHYNg",
+      "quote_vault": "QUvzahDyQZe7qmV94i4vqETGzZ5nQagrrG7nSTEkoS1h7bA2jp1zVAEZciaq",
+      "base_token_mint": "QUdHZNS1mqJ7tDuGbLJJ8gHPKDf4SKWmCoYhoNkLnvh6zoqGdFT8pnQhGpfN",
+      "quote_token_mint": "7WuPwLVzcWmCc4SUYSzUbxxrwPEBuYNscmtixeiC984HatdeqBomKnpFGiK",
+      "base_token_program": "7DkWmNPFv3kUHALeCeNA4Euopob4EYCqeBtDpZgxe7JiecpQM6FG6JLav6M",
+      "quote_token_program": "7DkWmNPFv3kUHALeCeNA4Euopob4EYCqeBtDpZgxe7JiecpQM6FG6JLav6M",
+      "event_authority": "HLvyat8VsPMSW6ENtUq3AUQtM2btWxGns2KCNDF9t34je4LyXtVQnj2o85ZB",
+      "program": "6dLXeq88p6Un1D7netAqRtUJPYsserUvTVgq52MrhYTQe9zewVhEuPyUfr1"
+     }
+    }
+   }
+  }
+ ],
+ "raw_launchlab_launches_from_gettransaction.json": [
+  {
+   "signature": "2G9qA28CncuSc45fuqw1MEPYT2GZGqipQsaVHhb1aQY7sZ43SedZZ4sLGytk3nksHK1BhHNJ3boyPBVuFCiDxV2X",
+   "version": 0,
+   "launchlab block": {
+    "name": "RAY GUY",
+    "symbol": "RAYGUY",
+    "uri": "https://gateway.pinata.cloud/ipfs/QmTEnRjCMdprGvb9zLTnGaZ5dgsyNRS74hu5sHntgkdz8y",
+    "mint": "Gguq8P3UkdFK4hKFK3fwh9jTSdvKdqxEbHKHucgKM6Pr",
+    "platform": "launchlab",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "4wo8DsPm9auThzNbvpkzz1YUY2pzHV8Gtm7JGov2ZZ3v",
+    "base_vault": "8HzQxXH6sE7R4HaJo3oUFfWJujvqJkrM4tiWcYzXkqR6",
+    "quote_vault": "4L1yXf917KXqjMrb3gAdBHXh5hUALEP7GC2i1QwRMAE5",
+    "global_config": "FATRfLS8REmE8iSBDQG6yF77HV5qQiedPY146CZ4Ydk6",
+    "platform_config": "Vu2EhNNDkJfG4CKiRPPjf2iisN2J8DqzZeAHMyr4G6C",
+    "user": "3FtuFx4DkUjQGze5fSgcfRE8CBQQfGGufj8bAbhvfxN7",
+    "creator": "3FtuFx4DkUjQGze5fSgcfRE8CBQQfGGufj8bAbhvfxN7",
+    "creator_vault": null,
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": true,
+    "additional_data": null
+   },
+   "launchlab geyser": {
+    "name": "RAY GUY",
+    "symbol": "RAYGUY",
+    "uri": "https://gateway.pinata.cloud/ipfs/QmTEnRjCMdprGvb9zLTnGaZ5dgsyNRS74hu5sHntgkdz8y",
+    "mint": "Gguq8P3UkdFK4hKFK3fwh9jTSdvKdqxEbHKHucgKM6Pr",
+    "platform": "launchlab",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "4wo8DsPm9auThzNbvpkzz1YUY2pzHV8Gtm7JGov2ZZ3v",
+    "base_vault": "8HzQxXH6sE7R4HaJo3oUFfWJujvqJkrM4tiWcYzXkqR6",
+    "quote_vault": "4L1yXf917KXqjMrb3gAdBHXh5hUALEP7GC2i1QwRMAE5",
+    "global_config": "FATRfLS8REmE8iSBDQG6yF77HV5qQiedPY146CZ4Ydk6",
+    "platform_config": "Vu2EhNNDkJfG4CKiRPPjf2iisN2J8DqzZeAHMyr4G6C",
+    "user": "3FtuFx4DkUjQGze5fSgcfRE8CBQQfGGufj8bAbhvfxN7",
+    "creator": "3FtuFx4DkUjQGze5fSgcfRE8CBQQfGGufj8bAbhvfxN7",
+    "creator_vault": null,
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": true,
+    "additional_data": null
+   },
+   "stonkfun block": null,
+   "stonkfun geyser": null,
+   "letsbonk block": null,
+   "letsbonk geyser": null,
+   "launchlab instructions": {
+    "top 2": {
+     "instruction_name": "initialize_with_token_2022",
+     "args": {
+      "base_mint_param": {
+       "decimals": 6,
+       "name": "RAY GUY",
+       "symbol": "RAYGUY",
+       "uri": "https://gateway.pinata.cloud/ipfs/QmTEnRjCMdprGvb9zLTnGaZ5dgsyNRS74hu5sHntgkdz8y"
+      },
+      "curve_param": {
+       "variant": "Constant",
+       "data": {
+        "data": {
+         "supply": 1000000000000000,
+         "total_base_sell": 785014833748375,
+         "total_quote_fund_raising": 4154302730,
+         "migrate_type": 1
+        }
+       }
+      },
+      "vesting_param": {
+       "total_locked_amount": 0,
+       "cliff_period": 0,
+       "unlock_period": 0
+      },
+      "amm_fee_on": {
+       "variant": "QuoteToken"
+      },
+      "transfer_fee_extension_param": null
+     },
+     "accounts": {
+      "payer": "HfwtSbE8oEYmFPmdFoWYhdFhpbfKLASLn8DFFhB4x1phUYdLacUmkVucAhXt",
+      "creator": "HfwtSbE8oEYmFPmdFoWYhdFhpbfKLASLn8DFFhB4x1phUYdLacUmkVucAhXt",
+      "global_config": "PqsU9v8wq9VomVXsetMzbC1vLaTqSxPdM6T9Uzbr9GV7jKpLKCn3FjPkTi7P",
+      "platform_config": "7NPiXuoQDYJN1G83ukPcot3suKcjfGN9W1wAVngFwwZLj4nF7xebAtfK2DQ",
+      "authority": "7RyvEjNvckZDegL8HRnRr3UPxKYViotJsVnwJYjuTiKXuqGqxVFmgjsN6B9",
+      "pool_state": "J4Qv3Qfy6JkMebY34jLHHN5S84acx4Lt9ZMQNN83RFLAEw6fEsa1TzBJ7DFT",
+      "base_mint": "QDY92Rq11CaiVjTGek4KH7Ln3D3oiifKw6qZ2mffWPyUMia5chhs5D9D9rCH",
+      "quote_mint": "J3WeLsFoAdVXXAnYRoseFBqkrkZPzc49exzTB82xVomBnKfFM9eosvc8AuY5",
+      "base_vault": "KJPLjkymWSnKPTEdgqBMQXd8FMzTf1C62HWhuTqvnZz8MbeaLiwQPNUnnnz1",
+      "quote_vault": "J1EAdvciXjkVFqmF7LCwr2aBvXoXCw2jC3mLpLCePtT8FUnXsL9HaJjRrR8Q",
+      "base_token_program": "7DkWmNPFv3kUHALeCeNA4Euopob4EYCqeBtDpZgxe7JiecpQM6FG6JLav6M",
+      "quote_token_program": "7DkWmNPDi2C8XLo736dZR8PvYQokw5L7njUC15S3EP8PgavFpeeMegCNUNU",
+      "system_program": "4K2V1kpVycZ6qSFsNdz2FtpNxnJs17eBNzf9rdCMcKoe",
+      "event_authority": "HLvyat8VsPMSW6ENtUq3AUQtM2btWxGns2KCNDF9t34je4LyXtVQnj2o85ZB",
+      "program": "6dLXeq88p6Un1D7netAqRtUJPYsserUvTVgq52MrhYTQe9zewVhEuPyUfr1"
+     }
+    }
+   }
+  },
+  {
+   "signature": "36hnTWfLvi6qJofBgFgqfk9GbE12HEBBZepbPCist15Zj191QSE7qHeDzYbGEXNfQK3sQptrrroLnaHvWUKfKpWh",
+   "version": 0,
+   "launchlab block": {
+    "name": "TEST123",
+    "symbol": "TEST",
+    "uri": "https://dev.myfilebase.com/ipfs/QmXFQFmEzXp7HAbxjKt4XaSnwEhnTvJTvNWuupRQG64u7C",
+    "mint": "qybd5qP1wk1s8TvQWoR6H1y8dwfCW8CykRzpF412Eco",
+    "platform": "launchlab",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "E6SS6QKrzFG1Jgar5FQJyjhdgS3LK6BKjwNDtMp81eHV",
+    "base_vault": "ANE1g2K1XBiXd83BBmfg5Vy3ymHsZraPbbRFvszpJcLZ",
+    "quote_vault": "91pLDYMe1ume6uUFaRfSdwSishLyg7WTAGtngbu4MCE8",
+    "global_config": "6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX",
+    "platform_config": "Jur4pn6aCzvoFgEFrnWLMdiYsospytZdymeueeCu2sm",
+    "user": "88tLauVMiYR78URzfpWycnrVx813TGKTd5DLn5qVyGA2",
+    "creator": "88tLauVMiYR78URzfpWycnrVx813TGKTd5DLn5qVyGA2",
+    "creator_vault": null,
+    "token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": true,
+    "additional_data": null
+   },
+   "launchlab geyser": {
+    "name": "TEST123",
+    "symbol": "TEST",
+    "uri": "https://dev.myfilebase.com/ipfs/QmXFQFmEzXp7HAbxjKt4XaSnwEhnTvJTvNWuupRQG64u7C",
+    "mint": "qybd5qP1wk1s8TvQWoR6H1y8dwfCW8CykRzpF412Eco",
+    "platform": "launchlab",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "E6SS6QKrzFG1Jgar5FQJyjhdgS3LK6BKjwNDtMp81eHV",
+    "base_vault": "ANE1g2K1XBiXd83BBmfg5Vy3ymHsZraPbbRFvszpJcLZ",
+    "quote_vault": "91pLDYMe1ume6uUFaRfSdwSishLyg7WTAGtngbu4MCE8",
+    "global_config": "6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX",
+    "platform_config": "Jur4pn6aCzvoFgEFrnWLMdiYsospytZdymeueeCu2sm",
+    "user": "88tLauVMiYR78URzfpWycnrVx813TGKTd5DLn5qVyGA2",
+    "creator": "88tLauVMiYR78URzfpWycnrVx813TGKTd5DLn5qVyGA2",
+    "creator_vault": null,
+    "token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": true,
+    "additional_data": null
+   },
+   "stonkfun block": null,
+   "stonkfun geyser": null,
+   "letsbonk block": null,
+   "letsbonk geyser": null,
+   "launchlab instructions": {
+    "top 2": {
+     "instruction_name": "initialize_v2",
+     "args": {
+      "base_mint_param": {
+       "decimals": 6,
+       "name": "TEST123",
+       "symbol": "TEST",
+       "uri": "https://dev.myfilebase.com/ipfs/QmXFQFmEzXp7HAbxjKt4XaSnwEhnTvJTvNWuupRQG64u7C"
+      },
+      "curve_param": {
+       "variant": "Constant",
+       "data": {
+        "data": {
+         "supply": 1000000000000000,
+         "total_base_sell": 793100000000000,
+         "total_quote_fund_raising": 85000000000,
+         "migrate_type": 1
+        }
+       }
+      },
+      "vesting_param": {
+       "total_locked_amount": 0,
+       "cliff_period": 0,
+       "unlock_period": 0
+      },
+      "amm_fee_on": {
+       "variant": "QuoteToken"
+      }
+     },
+     "accounts": {
+      "payer": "KHCt2JFgYWXinXjD3bpbmGCyJSdJUk9aH74MG1VqpZ3T67AVUqSQza2W7Kj7",
+      "creator": "KHCt2JFgYWXinXjD3bpbmGCyJSdJUk9aH74MG1VqpZ3T67AVUqSQza2W7Kj7",
+      "global_config": "JhpKTBTR6UZrSpQwetjcVt6bnZBc2k4QAaCj8hnKXzL6JfAcbc5CGFLVpjGK",
+      "platform_config": "6V8HwbFSq247F5p7PxvU3HvcvVFH9aUZGvLFC8xev4tCDAU5JfLsKefCdja",
+      "authority": "7RyvEjNvckZDegL8HRnRr3UPxKYViotJsVnwJYjuTiKXuqGqxVFmgjsN6B9",
+      "pool_state": "PWCh8K2Lbo6x6h96B2WbysK7EZbRHRXMruoNZMwxoKw5Kf5nb6sZ67KG1Hq7",
+      "base_mint": "9MpX3H8MiSi2y7GyKJBqmXv3zGL6pRhuUBWCr1QFEEQXyTaaPGjsskSgqCi",
+      "quote_mint": "79UVHPFQm8gS75KHsFV5Mo7fT3FdjnzLDWs88zrxi9zwaWZmPxRgVxso3D3",
+      "base_vault": "NEXwy8ocFtbfz1rS6VqDMeq1VwjZpjac394eybjqhm2DqcxQsp27SBFfAg2V",
+      "quote_vault": "KbYfiRL1A1bxZxdAvd5GZQb7YZZzDhMoBP6ah8rTxCbHTHtUGwj437k34nko",
+      "metadata_account": "8PgFAiYpbRHi1y36Xomww777s6FTm4Yj4bUNfDUNDdZPT4jQHw61mL6c9WP",
+      "base_token_program": "7DkWmNPDi2C8XLo736dZR8PvYQokw5L7njUC15S3EP8PgavFpeeMegCNUNU",
+      "quote_token_program": "7DkWmNPDi2C8XLo736dZR8PvYQokw5L7njUC15S3EP8PgavFpeeMegCNUNU",
+      "metadata_program": "94Q1FCrcdrMm7FeH2EvFz49U8F2L89Kq2P2rfWq9rH8gxfZSffZdXthX56r",
+      "system_program": "4K2V1kpVycZ6qSFsNdz2FtpNxnJs17eBNzf9rdCMcKoe",
+      "rent_program": "79eRFXj8HzpEHq2PqH86aRGeggk1X5qdy8WBbDxUn3mbz7RVZhjBNPUhsYt",
+      "event_authority": "HLvyat8VsPMSW6ENtUq3AUQtM2btWxGns2KCNDF9t34je4LyXtVQnj2o85ZB",
+      "program": "6dLXeq88p6Un1D7netAqRtUJPYsserUvTVgq52MrhYTQe9zewVhEuPyUfr1"
+     }
+    },
+    "top 7": {
+     "instruction_name": "buy_exact_in",
+     "args": {
+      "amount_in": 100,
+      "minimum_amount_out": 3470066,
+      "share_fee_rate": 0
+     },
+     "accounts": {
+      "payer": "KHCt2JFgYWXinXjD3bpbmGCyJSdJUk9aH74MG1VqpZ3T67AVUqSQza2W7Kj7",
+      "authority": "7RyvEjNvckZDegL8HRnRr3UPxKYViotJsVnwJYjuTiKXuqGqxVFmgjsN6B9",
+      "global_config": "JhpKTBTR6UZrSpQwetjcVt6bnZBc2k4QAaCj8hnKXzL6JfAcbc5CGFLVpjGK",
+      "platform_config": "6V8HwbFSq247F5p7PxvU3HvcvVFH9aUZGvLFC8xev4tCDAU5JfLsKefCdja",
+      "pool_state": "PWCh8K2Lbo6x6h96B2WbysK7EZbRHRXMruoNZMwxoKw5Kf5nb6sZ67KG1Hq7",
+      "user_base_token": "PuBhTwgt8taPkdaDwuJ7mFBoeTXqAhTCY9Ftmr4JwTGJu8A6gYDisaDPdVbG",
+      "user_quote_token": "QBBN8KbtuwqdbVAJPHxdUKsbX7fWARGoUhyXLx2vAvmTdrzWaEbYrxBnghBY",
+      "base_vault": "NEXwy8ocFtbfz1rS6VqDMeq1VwjZpjac394eybjqhm2DqcxQsp27SBFfAg2V",
+      "quote_vault": "KbYfiRL1A1bxZxdAvd5GZQb7YZZzDhMoBP6ah8rTxCbHTHtUGwj437k34nko",
+      "base_token_mint": "9MpX3H8MiSi2y7GyKJBqmXv3zGL6pRhuUBWCr1QFEEQXyTaaPGjsskSgqCi",
+      "quote_token_mint": "79UVHPFQm8gS75KHsFV5Mo7fT3FdjnzLDWs88zrxi9zwaWZmPxRgVxso3D3",
+      "base_token_program": "7DkWmNPDi2C8XLo736dZR8PvYQokw5L7njUC15S3EP8PgavFpeeMegCNUNU",
+      "quote_token_program": "7DkWmNPDi2C8XLo736dZR8PvYQokw5L7njUC15S3EP8PgavFpeeMegCNUNU",
+      "event_authority": "HLvyat8VsPMSW6ENtUq3AUQtM2btWxGns2KCNDF9t34je4LyXtVQnj2o85ZB",
+      "program": "6dLXeq88p6Un1D7netAqRtUJPYsserUvTVgq52MrhYTQe9zewVhEuPyUfr1"
+     }
+    }
+   }
+  }
+ ],
+ "raw_graduated_markets_from_getaccountinfo.json": {
+  "pump.fun curve": {
+   "virtual_token_reserves": 0,
+   "virtual_quote_reserves": 0,
+   "real_token_reserves": 0,
+   "real_quote_reserves": 0,
+   "token_total_supply": 1000000000000000,
+   "complete": true,
+   "graduated": true,
+   "creator": "AzAfVMVd7AdD4gZuvPTYa25K5z8Sk9hr7LAPz3wRo7Mf",
+   "is_mayhem_mode": false,
+   "is_cashback_coin": false,
+   "is_holder_reward": false,
+   "creator_fee_bps": 0,
+   "quote_mint": "So11111111111111111111111111111111111111112",
+   "is_sol_paired": true,
+   "virtual_sol_reserves": 0,
+   "real_sol_reserves": 0,
+   "price_per_token": null
+  },
+  "LaunchLab curve": {
+   "epoch": 1033,
+   "auth_bump": 250,
+   "status": 2,
+   "base_decimals": 6,
+   "quote_decimals": 9,
+   "migrate_type": 1,
+   "supply": 1000000000000000,
+   "total_base_sell": 793100000000000,
+   "virtual_base": 1073025605596382,
+   "virtual_quote": 30000852951,
+   "real_base": 793100000000000,
+   "real_quote": 85000000010,
+   "total_quote_fund_raising": 85000000000,
+   "quote_protocol_fee": 523597413,
+   "platform_fee": 0,
+   "migrate_fee": 0,
+   "vesting_schedule": {
+    "total_locked_amount": 0,
+    "cliff_period": 0,
+    "unlock_period": 0,
+    "start_time": 0,
+    "allocated_share_amount": 0
+   },
+   "global_config": "6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX",
+   "platform_config": "4E876qZTE9FJMrBzgVtBrSrzz2TLivB5Y5QXPjB4gZL7",
+   "base_mint": "AqoPZcUumKUBHrnfBsNtoNuneYEjoimaiWYq8GH8gpX9",
+   "quote_mint": "So11111111111111111111111111111111111111112",
+   "base_vault": "2ewKCXcVHj6p781DzkL1eVyysGtEzhAdEo1eeD8qFXQH",
+   "quote_vault": "5ED8NaZvNqAdco7VRDiYYkXzeGsEhecsu9ThHZbMog7w",
+   "creator": "GDLafJUokaU85DFZK2JNhWtNhe5nWQUBQRCWoGJ9cncv",
+   "token_program_flag": 1,
+   "amm_creator_fee_on": {
+    "variant": "QuoteToken"
+   },
+   "platform_vesting_share": 0,
+   "padding": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "price_per_token": 4.1082648625869894e-07,
+   "fee_rate": 12500,
+   "fee_fraction": 0.0125,
+   "transfer_fee_bps": 0,
+   "transfer_fee_max": 0,
+   "graduated": true
+  },
+  "PumpSwap market": {
+   "price_per_token": 4.7205631033132743e-07,
+   "fee_fraction": 0.003,
+   "pool": "B9WYSKaLDWnegupPNG1h99XiiokMUYj6k64Dbqv18qr8",
+   "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+  },
+  "PumpSwap pool": {
+   "address": "B9WYSKaLDWnegupPNG1h99XiiokMUYj6k64Dbqv18qr8",
+   "base_mint": "DJGsptd7CEMEKrHdmVPastxKcPNSqGJT5K7HWcn5pump",
+   "quote_mint": "So11111111111111111111111111111111111111112",
+   "base_account": "j6iUvMo6Z2yivpHmsME2nXrafjbhtbCJqdevsJstunV",
+   "quote_account": "C3FQnUxE56fXfbTZTFLvddizyrQqXJsG7VRTvdSPk3uU",
+   "base_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+   "quote_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+   "coin_creator": "AzAfVMVd7AdD4gZuvPTYa25K5z8Sk9hr7LAPz3wRo7Mf",
+   "is_mayhem_mode": false,
+   "is_cashback_coin": false
+  },
+  "CPMM market": {
+   "price_per_token": 1.5922285112513127e-06,
+   "fee_fraction": 0.0125,
+   "pool": "nEnhtdXrHocxDQnmfTWgaLodJP8jxFbY6958iv28GzV",
+   "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+  },
+  "CPMM pool": {
+   "address": "nEnhtdXrHocxDQnmfTWgaLodJP8jxFbY6958iv28GzV",
+   "amm_config": "CRRS5ieQmBrZjWhcj99JuGrT5tyuWDaGAXLXLFjbAtjQ",
+   "observation": "7ZByvGQ2xwREo3ZwMSXgU6gL1wQUJWmzQ4hiEvuCajMD",
+   "base_mint": "AqoPZcUumKUBHrnfBsNtoNuneYEjoimaiWYq8GH8gpX9",
+   "quote_mint": "So11111111111111111111111111111111111111112",
+   "base_vault": "FSr3rtJ5tPMVuG7ePMmaZvp75c6Syg2hb2ZkNEa5N7z1",
+   "quote_vault": "9EC8qQGtw7wsBU5ySb9hQdYRcduhjiftSdPhW52WHmXc",
+   "base_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+   "quote_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+   "base_decimals": 6,
+   "quote_decimals": 9,
+   "base_is_token_0": false
+  }
+ },
+ "raw_stonkfun_trades_from_gettransaction.json": [
+  {
+   "label": "standard sell sol",
+   "signature": "uzuSemMhJ5x9eRGkhvFt43prZa3MLW8xmm19TtJBoLXHWZidhaY5MR6kBQ3WQqSK2F41KjQgp9Hy7jE3w69n7A4",
+   "launchlab instructions": {
+    "top 3": {
+     "instruction_name": "sell_exact_in",
+     "args": {
+      "amount_in": 11568986763999,
+      "minimum_amount_out": 891268501,
+      "share_fee_rate": 0
+     },
+     "accounts": {
+      "payer": "JfccLdWZnkPTtqheBoqiRMohLZuFxCBHuKyHgNxoXaNLrQJGSp9ovGWQTSY9",
+      "authority": "7RyvEjNvckZDegL8HRnRr3UPxKYViotJsVnwJYjuTiKXuqGqxVFmgjsN6B9",
+      "global_config": "JhpKTBTR6UZrSpQwetjcVt6bnZBc2k4QAaCj8hnKXzL6JfAcbc5CGFLVpjGK",
+      "platform_config": "HziNXQEWq21MQLAYH368XYxvMzcpeS5T22AT92TheFpAfD29DUMXEAsHUyzv",
+      "pool_state": "Nbyjfm9HK6Yz3q382GgG134FepwujLRTrmEiRsHf7rLatea5hhXJdSaH5rgk",
+      "user_base_token": "JP78bmkwVmk33b6hDAnpHfJCWWceAbrkKWaoMpL8jmXeSnhZ7E5C1j37ndn8",
+      "user_quote_token": "NYizYVuzEiQtss9k7MGqmten3j7QF43TopHzrmgf3fBKX5a73qVsQdpgKiFy",
+      "base_vault": "Hzo7SMf11CYuvsDPxc8N1L3Gaw8vRNKaXZQQuPKWYLhpYJ72a9ZD3ZEv2j5H",
+      "quote_vault": "R8i3C3BKatCuPvobuj5qPdN75mNyUoExfTKu27McD8596DZo1Br2c7n5UKU8",
+      "base_token_mint": "JMnaSiCsgaq42hjGsp1Fp43ozQMf8PZG6hvwncLbvssuAuLXQ4kmzaLVAKTn",
+      "quote_token_mint": "79UVHPFQm8gS75KHsFV5Mo7fT3FdjnzLDWs88zrxi9zwaWZmPxRgVxso3D3",
+      "base_token_program": "7DkWmNPFv3kUHALeCeNA4Euopob4EYCqeBtDpZgxe7JiecpQM6FG6JLav6M",
+      "quote_token_program": "7DkWmNPDi2C8XLo736dZR8PvYQokw5L7njUC15S3EP8PgavFpeeMegCNUNU",
+      "event_authority": "HLvyat8VsPMSW6ENtUq3AUQtM2btWxGns2KCNDF9t34je4LyXtVQnj2o85ZB",
+      "program": "6dLXeq88p6Un1D7netAqRtUJPYsserUvTVgq52MrhYTQe9zewVhEuPyUfr1"
+     }
+    }
+   },
+   "pool with fees": {
+    "virtual_base": 1073025605596382,
+    "virtual_quote": 30000852951,
+    "real_base": 0,
+    "real_quote": 0,
+    "base_decimals": 6,
+    "quote_decimals": 9,
+    "global_config": "6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX",
+    "platform_config": "4E876qZTE9FJMrBzgVtBrSrzz2TLivB5Y5QXPjB4gZL7",
+    "base_mint": "5cHHA3idGG1e7X1oMVuxTq2u8jWoY65iHvAC4Tc4H2ya",
+    "status": 0,
+    "price_per_token": 2.7959121193874663e-08,
+    "fee_rate": 12500,
+    "fee_fraction": 0.0125,
+    "transfer_fee_bps": 0,
+    "transfer_fee_max": 0,
+    "graduated": false
+   }
+  },
+  {
+   "label": "reward buy xstock",
+   "signature": "dLsNUswJ1kbzVyg29aZgE6Dqe3DpD981uxFiAm1u1heSyNpaiTR26oZU3JUkoiF6KwSZDzfrtPukioYNbXbk9dg",
+   "launchlab instructions": {
+    "top 6": {
+     "instruction_name": "buy_exact_in",
+     "args": {
+      "amount_in": 500440085,
+      "minimum_amount_out": 173300804646897,
+      "share_fee_rate": 0
+     },
+     "accounts": {
+      "payer": "K3CHfUsgJZTAR5stRAae1QtvkpS5Z3EQQcHGmfTUJ32gVfuUTq2rSmwMMyfj",
+      "authority": "7RyvEjNvckZDegL8HRnRr3UPxKYViotJsVnwJYjuTiKXuqGqxVFmgjsN6B9",
+      "global_config": "KfxrPADx1x6dsx2ZfYtJU4DxTM8U5ia4H7VcYxbZt1dsTRc2US1CGwZrm9AX",
+      "platform_config": "JeE8ZWy4XqpK5GTCyQWey1o3vZfAuC6T28mKZFFe2xbFL8NCFWxFZ79SBK2K",
+      "pool_state": "JJ6zzefKxUbEG1ZLCj99e761V4nGnUnhAgSSjtTm7ER8STv3WZdqjMAMuswo",
+      "user_base_token": "NXUKsnqiSYjjiMhcxi13th6NK53nSEL7CdRYQYaWZofGGxrBuCZQEndKXE3Q",
+      "user_quote_token": "JxCRX89HR4fWioEuCvXrevdfASowkBx5xyP7Zsu2S6uTTGA7m8Y6ymFk4WV2",
+      "base_vault": "HM1oJ9NpgPKWdQ1ySAvWh3oM3u9aDHj3PWzbcdxNnmoV7QNo4PGtqk8HGXtU",
+      "quote_vault": "K1t6jCe5QFc2V7BUHJ6znK8CKnNZ7sEzquTRS2RriZRXZCdUNfJKSjppL3Wv",
+      "base_token_mint": "7S11AUs8oC3joe5PQXkJjjuotwwyPrUW4XszViCLmXv5rMrYDmgHXPe1ut7",
+      "quote_token_mint": "7WuPwLVzcWmCc4SUYSzUbxxrwPEBuYNscmtixeiC984HatdeqBomKnpFGiK",
+      "base_token_program": "7DkWmNPFv3kUHALeCeNA4Euopob4EYCqeBtDpZgxe7JiecpQM6FG6JLav6M",
+      "quote_token_program": "7DkWmNPFv3kUHALeCeNA4Euopob4EYCqeBtDpZgxe7JiecpQM6FG6JLav6M",
+      "event_authority": "HLvyat8VsPMSW6ENtUq3AUQtM2btWxGns2KCNDF9t34je4LyXtVQnj2o85ZB",
+      "program": "6dLXeq88p6Un1D7netAqRtUJPYsserUvTVgq52MrhYTQe9zewVhEuPyUfr1"
+     }
+    }
+   },
+   "pool with fees": {
+    "virtual_base": 1073025605596382,
+    "virtual_quote": 30000852951,
+    "real_base": 0,
+    "real_quote": 0,
+    "base_decimals": 6,
+    "quote_decimals": 9,
+    "global_config": "9mfQRzhyaACD49VhrSwCWKjrHVLcNfhxSdhg2hDSwCd8",
+    "platform_config": "6BwHHDg3u1854jC8PDLXvR4spTcLNaoBxLJNGC4nTESt",
+    "base_mint": "WMgdN6XrdDxSamrZrKfEY6xe6QWD5bb9RaDuAbtwFPt",
+    "status": 0,
+    "price_per_token": 2.7959121193874663e-08,
+    "fee_rate": 12500,
+    "fee_fraction": 0.0125,
+    "transfer_fee_bps": 100,
+    "transfer_fee_max": 1000000000000000,
+    "graduated": false
+   }
+  },
+  {
+   "label": "reward sell xstock",
+   "signature": "37hc3CBzotq2sp26Eycb2NKWT1679NXZiugMZ74FZmNxSUkJ7GHnfQ5R1vJV2oQxRP5CvQdFSyPwNBSF3cN6q4XV",
+   "launchlab instructions": {
+    "top 2": {
+     "instruction_name": "sell_exact_in",
+     "args": {
+      "amount_in": 5861090092873,
+      "minimum_amount_out": 36647359,
+      "share_fee_rate": 0
+     },
+     "accounts": {
+      "payer": "JL2JauZdutWtLRU9EL6BfqNqxQ8yhzQoQZBEbqeetcRz8TPhSfcMC1knYDej",
+      "authority": "7RyvEjNvckZDegL8HRnRr3UPxKYViotJsVnwJYjuTiKXuqGqxVFmgjsN6B9",
+      "global_config": "KfxrPADx1x6dsx2ZfYtJU4DxTM8U5ia4H7VcYxbZt1dsTRc2US1CGwZrm9AX",
+      "platform_config": "JeE8ZWy4XqpK5GTCyQWey1o3vZfAuC6T28mKZFFe2xbFL8NCFWxFZ79SBK2K",
+      "pool_state": "94XW6kxcpCgsFj8xRrxs7istCyysSupmYUSQg5vMkdDfhi5QyKk6iCJfHRM",
+      "user_base_token": "K2Xy9Jn5UJNSteoJkbf7s6ctaXUbTmZ38RUUJDJchL1yhSYQH77ZEZgsjTn1",
+      "user_quote_token": "KLoYuvmfUKCVcTa8CXpXEY3VqbnMFLMMECzXod6qYW54MeijPJceLw5JzcXs",
+      "base_vault": "QVjqcJmrzHDEfCsveSspobPhNRmuRj5FQMNHazyUQVpw53mX13aG9dQNxtqb",
+      "quote_vault": "JLqKZyAdLhWaX9J851xu5jj2HyVBqJMfJSdjXcJemEzTVxEsXXHhNSP9CMT6",
+      "base_token_mint": "Jhccj1Z2HiTRSRUozeV9u21RarzhmTf6meLop4zGfavWWpyPrv9wMfnKksJL",
+      "quote_token_mint": "7WuPwLVzcWmCc4SUYSzUbxxrwPEBuYNscmtixeiC984HatdeqBomKnpFGiK",
+      "base_token_program": "7DkWmNPFv3kUHALeCeNA4Euopob4EYCqeBtDpZgxe7JiecpQM6FG6JLav6M",
+      "quote_token_program": "7DkWmNPFv3kUHALeCeNA4Euopob4EYCqeBtDpZgxe7JiecpQM6FG6JLav6M",
+      "event_authority": "HLvyat8VsPMSW6ENtUq3AUQtM2btWxGns2KCNDF9t34je4LyXtVQnj2o85ZB",
+      "program": "6dLXeq88p6Un1D7netAqRtUJPYsserUvTVgq52MrhYTQe9zewVhEuPyUfr1"
+     }
+    }
+   },
+   "pool with fees": {
+    "virtual_base": 1073025605596382,
+    "virtual_quote": 30000852951,
+    "real_base": 0,
+    "real_quote": 0,
+    "base_decimals": 6,
+    "quote_decimals": 9,
+    "global_config": "9mfQRzhyaACD49VhrSwCWKjrHVLcNfhxSdhg2hDSwCd8",
+    "platform_config": "6BwHHDg3u1854jC8PDLXvR4spTcLNaoBxLJNGC4nTESt",
+    "base_mint": "6ptLjeR4tVBRi93CD3fo3mE2nu4wFixjbAiLxYwugW3m",
+    "status": 0,
+    "price_per_token": 2.7959121193874663e-08,
+    "fee_rate": 12500,
+    "fee_fraction": 0.0125,
+    "transfer_fee_bps": 300,
+    "transfer_fee_max": 1000000000000000,
+    "graduated": false
+   }
+  },
+  {
+   "label": "standard buy any",
+   "signature": "oBSPVUUNqDUNbFVdu4oJf4bYPdZPP62Vm7WUXhrXf5oscgk6M2wXtV1MGxw5pKbHs5Y17zD2hKJs2etjoxUgokn",
+   "launchlab instructions": {
+    "top 3": {
+     "instruction_name": "buy_exact_in",
+     "args": {
+      "amount_in": 1701327164,
+      "minimum_amount_out": 112081707785,
+      "share_fee_rate": 0
+     },
+     "accounts": {
+      "payer": "JLXaXJkdXgRC5DjdAzgXbBq6U2u1rF9jrBBcuNAKxS9kua4DeoATEs65JQAB",
+      "authority": "7RyvEjNvckZDegL8HRnRr3UPxKYViotJsVnwJYjuTiKXuqGqxVFmgjsN6B9",
+      "global_config": "J1gcdho74dz9MEUoUkVtNdHmvyQxVQcsVxCMGwZFugDLccNR5q6fsucxmnbY",
+      "platform_config": "HziNXQEWq21MQLAYH368XYxvMzcpeS5T22AT92TheFpAfD29DUMXEAsHUyzv",
+      "pool_state": "PFuquBLKZo2WLYnnfhUA6ABZPeXwsB87uyMmfnmP1UBqCa11Kp1y4rHeR5Xi",
+      "user_base_token": "HiJKn1nEfq8Hwsw6BLkwsUovkLFMD9ZHi3RsuRtAyNNsiX3Yvx69mr1nQEXT",
+      "user_quote_token": "HipSs2A7QAFBdpdM2xrY4ksmKoAr5jwWsu3UEZsgeU8pGqEbPVVRhDn8smDq",
+      "base_vault": "NsWqJtw319p5GZbhcbd8ZwaYDCTQZCnfnNVvtXvRdSUjwdDZKkJruEG7ZWEm",
+      "quote_vault": "Q9zEvZRMxZFgMnBjjfeXDNQaYwiMdfUVkWR2tAFsrSXXnjEE4mV9uNqdE8HK",
+      "base_token_mint": "R8G8ndN2q74Mx3tP6ycJ4ZqwJUjaTfGM594cMFpLDPo7eWDHrk24RDs6sNh1",
+      "quote_token_mint": "JebKt8npWVT8TUzf2js38Hgqdz2RHT2KLBrS2rM6AXeaWSPJh2P23G4QdeCP",
+      "base_token_program": "7DkWmNPFv3kUHALeCeNA4Euopob4EYCqeBtDpZgxe7JiecpQM6FG6JLav6M",
+      "quote_token_program": "7DkWmNPDi2C8XLo736dZR8PvYQokw5L7njUC15S3EP8PgavFpeeMegCNUNU",
+      "event_authority": "HLvyat8VsPMSW6ENtUq3AUQtM2btWxGns2KCNDF9t34je4LyXtVQnj2o85ZB",
+      "program": "6dLXeq88p6Un1D7netAqRtUJPYsserUvTVgq52MrhYTQe9zewVhEuPyUfr1"
+     }
+    }
+   },
+   "pool with fees": {
+    "virtual_base": 1073025605596382,
+    "virtual_quote": 30000852951,
+    "real_base": 0,
+    "real_quote": 0,
+    "base_decimals": 6,
+    "quote_decimals": 9,
+    "global_config": "4Rb2joMnuDt9zRPuTYxUjQRGQ8oNBbKdXnCJSCojvBsW",
+    "platform_config": "4E876qZTE9FJMrBzgVtBrSrzz2TLivB5Y5QXPjB4gZL7",
+    "base_mint": "J32UdgMtSeEy5PHFswBi1gJkobDt3vho3gXcFG8t8Skd",
+    "status": 0,
+    "price_per_token": 2.7959121193874663e-08,
+    "fee_rate": 12500,
+    "fee_fraction": 0.0125,
+    "transfer_fee_bps": 0,
+    "transfer_fee_max": 0,
+    "graduated": false
+   }
+  }
+ ],
+ "raw_stonkfun_token_accounts_from_getaccountinfo.json": {
+  "without_transfer_fee_extension": 0,
+  "with_withheld_fee": 738227426836
+ },
+ "raw_launchlab_creates_from_deshred.json": [
+  {
+   "signature": "5sq4BK4DdpT6yJD7CZscASrEbcNxDyye5UQAdGaSCPCt2ruqaBY7ncuB3yKSsFSaZ4EJEuU3tVAp8TFdcAhiRHpQ",
+   "launchlab shreds": {
+    "name": "Dubai",
+    "symbol": "DXB",
+    "uri": "https://ipfs.io/ipfs/QmYXcH6gkgJtdoC9s6XRp9xJ2A8jLrNiK1EpLEP5SLvzs6",
+    "mint": "KvNoK516th8oBKfYP9gQQhaUaPH77bnWjtSsUXsspot",
+    "platform": "launchlab",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "XP3LGzJYkrpiUBjAZiAH11QJtEjL7Vt9uWtXoV2XEG3",
+    "base_vault": "633R8E7bwniQmFQbCqLbnXPUp1KXoFhmwnCSeYpwLB4q",
+    "quote_vault": "48esHNrPJLQfwdmmdE3jEXBaUsn3anrzQpJEvvRCrGiU",
+    "global_config": "6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX",
+    "platform_config": "5thqcDwKp5QQ8US4XRMoseGeGbmLKMmoKZmS6zHrQAsA",
+    "user": "51Z8wtWe6mDPrThUpww6h64ahSpNkr3hUGkG8m7TRxN",
+    "creator": "51Z8wtWe6mDPrThUpww6h64ahSpNkr3hUGkG8m7TRxN",
+    "creator_vault": null,
+    "token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": true,
+    "additional_data": null
+   },
+   "lets_bonk shreds": {
+    "name": "Dubai",
+    "symbol": "DXB",
+    "uri": "https://ipfs.io/ipfs/QmYXcH6gkgJtdoC9s6XRp9xJ2A8jLrNiK1EpLEP5SLvzs6",
+    "mint": "KvNoK516th8oBKfYP9gQQhaUaPH77bnWjtSsUXsspot",
+    "platform": "lets_bonk",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "XP3LGzJYkrpiUBjAZiAH11QJtEjL7Vt9uWtXoV2XEG3",
+    "base_vault": "633R8E7bwniQmFQbCqLbnXPUp1KXoFhmwnCSeYpwLB4q",
+    "quote_vault": "48esHNrPJLQfwdmmdE3jEXBaUsn3anrzQpJEvvRCrGiU",
+    "global_config": "6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX",
+    "platform_config": "5thqcDwKp5QQ8US4XRMoseGeGbmLKMmoKZmS6zHrQAsA",
+    "user": "51Z8wtWe6mDPrThUpww6h64ahSpNkr3hUGkG8m7TRxN",
+    "creator": "51Z8wtWe6mDPrThUpww6h64ahSpNkr3hUGkG8m7TRxN",
+    "creator_vault": null,
+    "token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": true,
+    "additional_data": null
+   },
+   "stonk_fun shreds": null
+  },
+  {
+   "signature": "2FFqEKPYpMQfMqJyT5QUopqZqtLNUKKub5LhdsRTwDussUSdVGBB11uGBFU2B3pveuRjQZGaE7bsHVr6eEWXWhcw",
+   "launchlab shreds": {
+    "name": "SpaceXSI",
+    "symbol": "XSI",
+    "uri": "https://gateway.irys.xyz/59ECgELpUeAVJGgQ9ey6wfuoXe8A6YWuKQXqbRjNj4jk",
+    "mint": "J2V7tRwJqwr9a1gpL3VMQRuJVbebcH2YbvNezfiMhGUr",
+    "platform": "launchlab",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "DgFe7zmq6x3AvJCVVgEJKQ97D73MRfdchLyQMEGhi6eT",
+    "base_vault": "3PXSXWnjmkEdmnFbakEw13QDpGzvs2mkxvTTgb7q5m3r",
+    "quote_vault": "kqnHSBPiWDYdE5FaQynUo5GxNzMEfGndJ5kP3rRFCRB",
+    "global_config": "6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX",
+    "platform_config": "4E876qZTE9FJMrBzgVtBrSrzz2TLivB5Y5QXPjB4gZL7",
+    "user": "9ePSmJyUxsXcWcjxeUpqJSxq3R65MvuFuLPkSWvU43TX",
+    "creator": "9ePSmJyUxsXcWcjxeUpqJSxq3R65MvuFuLPkSWvU43TX",
+    "creator_vault": null,
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": true,
+    "additional_data": null
+   },
+   "lets_bonk shreds": null,
+   "stonk_fun shreds": {
+    "name": "SpaceXSI",
+    "symbol": "XSI",
+    "uri": "https://gateway.irys.xyz/59ECgELpUeAVJGgQ9ey6wfuoXe8A6YWuKQXqbRjNj4jk",
+    "mint": "J2V7tRwJqwr9a1gpL3VMQRuJVbebcH2YbvNezfiMhGUr",
+    "platform": "stonk_fun",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "DgFe7zmq6x3AvJCVVgEJKQ97D73MRfdchLyQMEGhi6eT",
+    "base_vault": "3PXSXWnjmkEdmnFbakEw13QDpGzvs2mkxvTTgb7q5m3r",
+    "quote_vault": "kqnHSBPiWDYdE5FaQynUo5GxNzMEfGndJ5kP3rRFCRB",
+    "global_config": "6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX",
+    "platform_config": "4E876qZTE9FJMrBzgVtBrSrzz2TLivB5Y5QXPjB4gZL7",
+    "user": "9ePSmJyUxsXcWcjxeUpqJSxq3R65MvuFuLPkSWvU43TX",
+    "creator": "9ePSmJyUxsXcWcjxeUpqJSxq3R65MvuFuLPkSWvU43TX",
+    "creator_vault": null,
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": true,
+    "additional_data": null
+   }
+  },
+  {
+   "signature": "4FqXvdwKnch1JHoViWFqQra7vKHGV8h3XqkAV6dLVyWBN7pSM9ms4uRLqX8QDvyWKQiG9kdNbfruPXnnt8CsXBfE",
+   "launchlab shreds": {
+    "name": "ORE Party",
+    "symbol": "PARTY",
+    "uri": "http://201.78.143.16:3000/m/jGZAXvXJJK",
+    "mint": "E3myentprJHSWdUvD4LDS3A48QMnUNQVUaHwSmDNsm7k",
+    "platform": "launchlab",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "8S5qhNkfYHmFzhxDQhSPRxBcKgGTEh3oytRi8YDiXgd4",
+    "base_vault": "4q9JphKCvswFJNVNbXJrqx2w1Y9ixENUfQerqtWR6qhC",
+    "quote_vault": "F2vzerkGnvwRHhL3Gq8y9KDhCE2eYs8TDbiWnB8xTmKg",
+    "global_config": "7QV2swQrGvArbdrLFmg2861hdCZLEKBNiM77j4hvvE1g",
+    "platform_config": "4E876qZTE9FJMrBzgVtBrSrzz2TLivB5Y5QXPjB4gZL7",
+    "user": "FkKXAcfrso5t53QVxnKzHQaypDpCc7jQF2qpZENhYz2A",
+    "creator": "FkKXAcfrso5t53QVxnKzHQaypDpCc7jQF2qpZENhYz2A",
+    "creator_vault": null,
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": true,
+    "additional_data": null
+   },
+   "lets_bonk shreds": null,
+   "stonk_fun shreds": {
+    "name": "ORE Party",
+    "symbol": "PARTY",
+    "uri": "http://201.78.143.16:3000/m/jGZAXvXJJK",
+    "mint": "E3myentprJHSWdUvD4LDS3A48QMnUNQVUaHwSmDNsm7k",
+    "platform": "stonk_fun",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "8S5qhNkfYHmFzhxDQhSPRxBcKgGTEh3oytRi8YDiXgd4",
+    "base_vault": "4q9JphKCvswFJNVNbXJrqx2w1Y9ixENUfQerqtWR6qhC",
+    "quote_vault": "F2vzerkGnvwRHhL3Gq8y9KDhCE2eYs8TDbiWnB8xTmKg",
+    "global_config": "7QV2swQrGvArbdrLFmg2861hdCZLEKBNiM77j4hvvE1g",
+    "platform_config": "4E876qZTE9FJMrBzgVtBrSrzz2TLivB5Y5QXPjB4gZL7",
+    "user": "FkKXAcfrso5t53QVxnKzHQaypDpCc7jQF2qpZENhYz2A",
+    "creator": "FkKXAcfrso5t53QVxnKzHQaypDpCc7jQF2qpZENhYz2A",
+    "creator_vault": null,
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": true,
+    "additional_data": null
+   }
+  },
+  {
+   "signature": "2FG9RsWQ6Gz9JNT8K1rwTiypfkAjDFSe4xdGwp1uJYTnZu8tDCkNmpXyNX89S6b7iXZfJA4eTCgtrhSQkvfJmvPi",
+   "launchlab shreds": {
+    "name": "Scronkfinkle",
+    "symbol": "Scronkfinkle",
+    "uri": "https://metadata.j7tracker.io/metadata/Es4ZrcOFl9.json",
+    "mint": "H4Jz31z5JKrPKtbndUqvpj29KK6kMFdcnduwgmMu6BPE",
+    "platform": "launchlab",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "HDDws6cgVgwzWjNMZx2xtm6TX6WbCZv31UvTMWDxn7KP",
+    "base_vault": "GD4ML46x9M3QRtpWmAqh3y7dSyfNgZvdQg5rEJrvWHTe",
+    "quote_vault": "H8ovNygGe6HzZr5AcAsgWX3Z8pdJLsBrqXHHZE3k52dF",
+    "global_config": "9mfQRzhyaACD49VhrSwCWKjrHVLcNfhxSdhg2hDSwCd8",
+    "platform_config": "6BwHHDg3u1854jC8PDLXvR4spTcLNaoBxLJNGC4nTESt",
+    "user": "GpTXmkdvrTajqkzX1fBmC4BUjSboF9dHgfnqPqj8WAc4",
+    "creator": "GpTXmkdvrTajqkzX1fBmC4BUjSboF9dHgfnqPqj8WAc4",
+    "creator_vault": null,
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "Xs3oZwbHvqis4NYcf4YKWmEia2eC84wSiVrcYcTqpH8",
+    "quote_token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 100,
+    "state_from_event": true,
+    "additional_data": null
+   },
+   "lets_bonk shreds": null,
+   "stonk_fun shreds": {
+    "name": "Scronkfinkle",
+    "symbol": "Scronkfinkle",
+    "uri": "https://metadata.j7tracker.io/metadata/Es4ZrcOFl9.json",
+    "mint": "H4Jz31z5JKrPKtbndUqvpj29KK6kMFdcnduwgmMu6BPE",
+    "platform": "stonk_fun",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "HDDws6cgVgwzWjNMZx2xtm6TX6WbCZv31UvTMWDxn7KP",
+    "base_vault": "GD4ML46x9M3QRtpWmAqh3y7dSyfNgZvdQg5rEJrvWHTe",
+    "quote_vault": "H8ovNygGe6HzZr5AcAsgWX3Z8pdJLsBrqXHHZE3k52dF",
+    "global_config": "9mfQRzhyaACD49VhrSwCWKjrHVLcNfhxSdhg2hDSwCd8",
+    "platform_config": "6BwHHDg3u1854jC8PDLXvR4spTcLNaoBxLJNGC4nTESt",
+    "user": "GpTXmkdvrTajqkzX1fBmC4BUjSboF9dHgfnqPqj8WAc4",
+    "creator": "GpTXmkdvrTajqkzX1fBmC4BUjSboF9dHgfnqPqj8WAc4",
+    "creator_vault": null,
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "Xs3oZwbHvqis4NYcf4YKWmEia2eC84wSiVrcYcTqpH8",
+    "quote_token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 100,
+    "state_from_event": true,
+    "additional_data": null
+   }
+  },
+  {
+   "signature": "2G9qA28CncuSc45fuqw1MEPYT2GZGqipQsaVHhb1aQY7sZ43SedZZ4sLGytk3nksHK1BhHNJ3boyPBVuFCiDxV2X",
+   "launchlab shreds": {
+    "name": "RAY GUY",
+    "symbol": "RAYGUY",
+    "uri": "https://gateway.pinata.cloud/ipfs/QmTEnRjCMdprGvb9zLTnGaZ5dgsyNRS74hu5sHntgkdz8y",
+    "mint": "Gguq8P3UkdFK4hKFK3fwh9jTSdvKdqxEbHKHucgKM6Pr",
+    "platform": "launchlab",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "4wo8DsPm9auThzNbvpkzz1YUY2pzHV8Gtm7JGov2ZZ3v",
+    "base_vault": "8HzQxXH6sE7R4HaJo3oUFfWJujvqJkrM4tiWcYzXkqR6",
+    "quote_vault": "4L1yXf917KXqjMrb3gAdBHXh5hUALEP7GC2i1QwRMAE5",
+    "global_config": "FATRfLS8REmE8iSBDQG6yF77HV5qQiedPY146CZ4Ydk6",
+    "platform_config": "Vu2EhNNDkJfG4CKiRPPjf2iisN2J8DqzZeAHMyr4G6C",
+    "user": "3FtuFx4DkUjQGze5fSgcfRE8CBQQfGGufj8bAbhvfxN7",
+    "creator": "3FtuFx4DkUjQGze5fSgcfRE8CBQQfGGufj8bAbhvfxN7",
+    "creator_vault": null,
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": true,
+    "additional_data": null
+   },
+   "lets_bonk shreds": null,
+   "stonk_fun shreds": null
+  },
+  {
+   "signature": "36hnTWfLvi6qJofBgFgqfk9GbE12HEBBZepbPCist15Zj191QSE7qHeDzYbGEXNfQK3sQptrrroLnaHvWUKfKpWh",
+   "launchlab shreds": {
+    "name": "TEST123",
+    "symbol": "TEST",
+    "uri": "https://dev.myfilebase.com/ipfs/QmXFQFmEzXp7HAbxjKt4XaSnwEhnTvJTvNWuupRQG64u7C",
+    "mint": "qybd5qP1wk1s8TvQWoR6H1y8dwfCW8CykRzpF412Eco",
+    "platform": "launchlab",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "E6SS6QKrzFG1Jgar5FQJyjhdgS3LK6BKjwNDtMp81eHV",
+    "base_vault": "ANE1g2K1XBiXd83BBmfg5Vy3ymHsZraPbbRFvszpJcLZ",
+    "quote_vault": "91pLDYMe1ume6uUFaRfSdwSishLyg7WTAGtngbu4MCE8",
+    "global_config": "6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX",
+    "platform_config": "Jur4pn6aCzvoFgEFrnWLMdiYsospytZdymeueeCu2sm",
+    "user": "88tLauVMiYR78URzfpWycnrVx813TGKTd5DLn5qVyGA2",
+    "creator": "88tLauVMiYR78URzfpWycnrVx813TGKTd5DLn5qVyGA2",
+    "creator_vault": null,
+    "token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": true,
+    "additional_data": null
+   },
+   "lets_bonk shreds": null,
+   "stonk_fun shreds": null
+  },
+  {
+   "signature": "2XTN83tErDi2NiZRuFJFneWuPkWMPiJApPLj5wukpFtm18rs7FLR4bEY6wE8CNxuSR3JkYosdo5N33vusw5TQNye",
+   "launchlab shreds": null,
+   "lets_bonk shreds": null,
+   "stonk_fun shreds": null
+  }
+ ],
+ "raw_pumpswap_buys_from_gettransaction.json": {
+  "sol": {
+   "pump.fun curve": {
+    "virtual_token_reserves": 0,
+    "virtual_quote_reserves": 0,
+    "real_token_reserves": 0,
+    "real_quote_reserves": 0,
+    "token_total_supply": 1000000000000000,
+    "complete": true,
+    "graduated": true,
+    "creator": "9nhWtGsxWoovdE8qKYMjPwok2b3a9oQVzrE5LRWf6BCA",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "is_sol_paired": true,
+    "virtual_sol_reserves": 0,
+    "real_sol_reserves": 0,
+    "price_per_token": null
+   },
+   "PumpSwap market": {
+    "price_per_token": 1.9198997208223232e-08,
+    "fee_fraction": 0.003,
+    "pool": "ATbyCe9Lkse8Kk7Du6ZykM3ZAZgNGniEL785xxcDeAgh",
+    "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+   },
+   "PumpSwap pool": {
+    "address": "ATbyCe9Lkse8Kk7Du6ZykM3ZAZgNGniEL785xxcDeAgh",
+    "base_mint": "HjkX6rLUAsiKYZ1hwkD4TV1bsEoXgkSjVTF4gHSmpump",
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "base_account": "FTEjMJUYn4k1JHugN5QXhC2VFBYj3S4j5bdF3QrKMg81",
+    "quote_account": "8eqvypbJepcpdPdrGtutdGk5cRBHEqi2b1e6nEJzaaqk",
+    "base_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "quote_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "coin_creator": "9nhWtGsxWoovdE8qKYMjPwok2b3a9oQVzrE5LRWf6BCA",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false
+   }
+  },
+  "usdc": {
+   "pump.fun curve": {
+    "virtual_token_reserves": 0,
+    "virtual_quote_reserves": 0,
+    "real_token_reserves": 0,
+    "real_quote_reserves": 0,
+    "token_total_supply": 1000000000000000,
+    "complete": true,
+    "graduated": true,
+    "creator": "4dgXGf2RAoQtbkt29pqALcUzqYiLb8CzYrfGbT8tTLwi",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "is_sol_paired": false,
+    "virtual_sol_reserves": 0,
+    "real_sol_reserves": 0,
+    "price_per_token": null
+   },
+   "PumpSwap market": {
+    "price_per_token": 0.026633063874186406,
+    "fee_fraction": 0.003,
+    "pool": "FqVhbysCvxKvTP3C9YXdy63K7AQcVXis7HibJDn8F88r",
+    "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+   },
+   "PumpSwap pool": {
+    "address": "FqVhbysCvxKvTP3C9YXdy63K7AQcVXis7HibJDn8F88r",
+    "base_mint": "6XsU2ow3yCDzSZiBEsH2rfy91ez5AyCP8QfCrNXpump",
+    "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "base_account": "E2Wh17mbFRaYXusvNefcJVsUj9X6TekU6VcA1rGDrSXx",
+    "quote_account": "Ck9bkS7e1oaDqSDjVKkmXpdLgibMps6FabZkzeGNao28",
+    "base_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "quote_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "coin_creator": "4dgXGf2RAoQtbkt29pqALcUzqYiLb8CzYrfGbT8tTLwi",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false
+   }
+  },
+  "sol mayhem": {
+   "pump.fun curve": {
+    "virtual_token_reserves": 0,
+    "virtual_quote_reserves": 0,
+    "real_token_reserves": 0,
+    "real_quote_reserves": 0,
+    "token_total_supply": 1000000000000000,
+    "complete": true,
+    "graduated": true,
+    "creator": "FmzKdUEbbCDQwUQvKuBWH2E1Xq1MiKH8FGU9qocDyqKX",
+    "is_mayhem_mode": true,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "is_sol_paired": true,
+    "virtual_sol_reserves": 0,
+    "real_sol_reserves": 0,
+    "price_per_token": null
+   },
+   "PumpSwap market": {
+    "price_per_token": 1.5052176528830076e-07,
+    "fee_fraction": 0.003,
+    "pool": "5gMKcHPkkddhzNHFVWrrbtBt2jxgjdpbZSnQqepWVotf",
+    "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+   },
+   "PumpSwap pool": {
+    "address": "5gMKcHPkkddhzNHFVWrrbtBt2jxgjdpbZSnQqepWVotf",
+    "base_mint": "44EtsbhagyCSwT13tX334TVoDFbGEtbC9hoL1rXSpump",
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "base_account": "wjxEQkyLYaYK1UNFVk2erD1RQZZivGivgqeN3NSgZdK",
+    "quote_account": "GRNHacw4c5eXquxewvkjJCC5Bn3YCk1ecHT6bD3ZtmtF",
+    "base_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "quote_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "coin_creator": "FmzKdUEbbCDQwUQvKuBWH2E1Xq1MiKH8FGU9qocDyqKX",
+    "is_mayhem_mode": true,
+    "is_cashback_coin": false
+   }
+  }
+ },
+ "raw_cpmm_buys_from_gettransaction.json": {
+  "sol spl": {
+   "LaunchLab curve": {
+    "epoch": 1076,
+    "auth_bump": 250,
+    "status": 2,
+    "base_decimals": 6,
+    "quote_decimals": 9,
+    "migrate_type": 1,
+    "supply": 1000000000000000,
+    "total_base_sell": 793100000000000,
+    "virtual_base": 1073025605596382,
+    "virtual_quote": 30000852951,
+    "real_base": 793100000000000,
+    "real_quote": 85000000447,
+    "total_quote_fund_raising": 85000000000,
+    "quote_protocol_fee": 2442522776,
+    "platform_fee": 0,
+    "migrate_fee": 0,
+    "vesting_schedule": {
+     "total_locked_amount": 0,
+     "cliff_period": 0,
+     "unlock_period": 0,
+     "start_time": 0,
+     "allocated_share_amount": 0
+    },
+    "global_config": "6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX",
+    "platform_config": "4Bu96XjU84XjPDSpveTVf6LYGCkfW5FK7SNkREWcEfV4",
+    "base_mint": "9UjP7V9gq3Zj3i6JPpxPCNKXxZpvXpy97aHq8oVQQDQY",
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "base_vault": "CZkxkXRv45Eg5YRaD3uwxVUKoSiambFRP9J5n9nwF6gY",
+    "quote_vault": "ANesyN5ksNHREwY5YiYhDvYoxBbuwCXMjpRcjjvJvLcR",
+    "creator": "4utpGDdQbCtWqbptnGMjF2iUCjw91JJFi2mroZzoNEsd",
+    "token_program_flag": 0,
+    "amm_creator_fee_on": {
+     "variant": "QuoteToken"
+    },
+    "platform_vesting_share": 0,
+    "padding": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "price_per_token": 4.10826487819828e-07,
+    "fee_rate": 10500,
+    "fee_fraction": 0.0105,
+    "transfer_fee_bps": 0,
+    "transfer_fee_max": 0,
+    "graduated": true
+   },
+   "CPMM market": {
+    "price_per_token": 2.7437692754153455e-07,
+    "fee_fraction": 0.003,
+    "pool": "9m55XbhUUBQujSaxYZztmjvTupbGK4RppAwzwEtUwQ1h",
+    "token_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+   },
+   "CPMM pool": {
+    "address": "9m55XbhUUBQujSaxYZztmjvTupbGK4RppAwzwEtUwQ1h",
+    "amm_config": "D4FPEruKEHrG5TenZ2mpDGEfu1iUvTiqBxvpU8HLBvC2",
+    "observation": "7pBqQ1Up3Q4zkUyj9FsQGL8HHHRj5A4VFvfj1ua63NXa",
+    "base_mint": "9UjP7V9gq3Zj3i6JPpxPCNKXxZpvXpy97aHq8oVQQDQY",
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "base_vault": "4pKbPFhQojVgf7ZTtzzhxaLHadAPtU4s9naXZmgrfSN7",
+    "quote_vault": "GB7LWH1Mfn4kouuuL8seCLAq4wPcHcM12S3vrDLDFZgr",
+    "base_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "quote_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "base_decimals": 6,
+    "quote_decimals": 9,
+    "base_is_token_0": false
+   }
+  },
+  "sol token-2022": {
+   "LaunchLab curve": {
+    "epoch": 1076,
+    "auth_bump": 250,
+    "status": 2,
+    "base_decimals": 6,
+    "quote_decimals": 9,
+    "migrate_type": 1,
+    "supply": 1000000000000000,
+    "total_base_sell": 793100000000000,
+    "virtual_base": 1073025605596382,
+    "virtual_quote": 30000852951,
+    "real_base": 793100000000000,
+    "real_quote": 85000000082,
+    "total_quote_fund_raising": 85000000000,
+    "quote_protocol_fee": 451436377,
+    "platform_fee": 0,
+    "migrate_fee": 0,
+    "vesting_schedule": {
+     "total_locked_amount": 0,
+     "cliff_period": 0,
+     "unlock_period": 0,
+     "start_time": 0,
+     "allocated_share_amount": 0
+    },
+    "global_config": "6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX",
+    "platform_config": "4E876qZTE9FJMrBzgVtBrSrzz2TLivB5Y5QXPjB4gZL7",
+    "base_mint": "JCdE6KcCEUcgmhiCQfXTL11524wSgqJCnGtYDA757q4a",
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "base_vault": "C5A7tFDoWyRMp2ZkWzzEz6EB97mwTuHLWtsgfZaJkGR4",
+    "quote_vault": "3kNqT1wuEAaA65VVUeMZT8n5nVyS5uUy3xTCC381actu",
+    "creator": "7Yz8dNr8sapJ1Ma3owEKcDEfnrB7H6cMeD9VGqrDG5kg",
+    "token_program_flag": 1,
+    "amm_creator_fee_on": {
+     "variant": "QuoteToken"
+    },
+    "platform_vesting_share": 0,
+    "padding": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "price_per_token": 4.1082648651591013e-07,
+    "fee_rate": 12500,
+    "fee_fraction": 0.0125,
+    "transfer_fee_bps": 0,
+    "transfer_fee_max": 0,
+    "graduated": true
+   },
+   "CPMM market": {
+    "price_per_token": 5.527937537264175e-07,
+    "fee_fraction": 0.0125,
+    "pool": "DHpFy3CM4cxQmoR14cMA3wA2V5SB9yHfVPiLZCYrfakt",
+    "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+   },
+   "CPMM pool": {
+    "address": "DHpFy3CM4cxQmoR14cMA3wA2V5SB9yHfVPiLZCYrfakt",
+    "amm_config": "CRRS5ieQmBrZjWhcj99JuGrT5tyuWDaGAXLXLFjbAtjQ",
+    "observation": "Fw2Ewui8motdbpBBfHUQ27EZMLhSfz6z21ACD8NXs4Fi",
+    "base_mint": "JCdE6KcCEUcgmhiCQfXTL11524wSgqJCnGtYDA757q4a",
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "base_vault": "76SV94YrMzKc4pN58sZkcetNjREckbEjRnSzKHYz2b6b",
+    "quote_vault": "HKRQKKmDJE84Jw7BrPaMMgcwPJTvVV95PyW5Pb681bTT",
+    "base_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "quote_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "base_decimals": 6,
+    "quote_decimals": 9,
+    "base_is_token_0": false
+   }
+  },
+  "usdc": {
+   "LaunchLab curve": {
+    "epoch": 1076,
+    "auth_bump": 250,
+    "status": 2,
+    "base_decimals": 6,
+    "quote_decimals": 6,
+    "migrate_type": 1,
+    "supply": 1000000000000000,
+    "total_base_sell": 793100000000000,
+    "virtual_base": 1073045594776347,
+    "virtual_quote": 3529,
+    "real_base": 793100000000000,
+    "real_quote": 9998,
+    "total_quote_fund_raising": 10000,
+    "quote_protocol_fee": 26,
+    "platform_fee": 0,
+    "migrate_fee": 0,
+    "vesting_schedule": {
+     "total_locked_amount": 0,
+     "cliff_period": 0,
+     "unlock_period": 0,
+     "start_time": 0,
+     "allocated_share_amount": 0
+    },
+    "global_config": "8gj14w8vkNZjJTPak6e96Uf1sY438WKheH4s5dHyxiRw",
+    "platform_config": "4E876qZTE9FJMrBzgVtBrSrzz2TLivB5Y5QXPjB4gZL7",
+    "base_mint": "FAnDMGU5pXLjLNbChn4VigDgGzfcGZZASqvshrEZsCCq",
+    "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "base_vault": "7SbvnjUzq5xyCpVG6erwDZkgdGts4nQpD42KrCAFNoe7",
+    "quote_vault": "4YRkkBMhib8tGPpHRWLu2Nkjf3jyyim791UYmBb4B6Dj",
+    "creator": "6Lf3kUYnB2vJ3npvsuXMQPr5EfbavBrEjxkK1Lnaup3Z",
+    "token_program_flag": 1,
+    "amm_creator_fee_on": {
+     "variant": "QuoteToken"
+    },
+    "platform_vesting_share": 0,
+    "padding": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "price_per_token": 4.832010309291323e-11,
+    "fee_rate": 12500,
+    "fee_fraction": 0.0125,
+    "transfer_fee_bps": 0,
+    "transfer_fee_max": 0,
+    "graduated": true
+   },
+   "CPMM market": {
+    "price_per_token": 6.630840627283912e-08,
+    "fee_fraction": 0.0125,
+    "pool": "FUqjQxftdS9ic7mTpBWy1JtzQ54sgqaVL7nZ9uvoFn55",
+    "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+   },
+   "CPMM pool": {
+    "address": "FUqjQxftdS9ic7mTpBWy1JtzQ54sgqaVL7nZ9uvoFn55",
+    "amm_config": "CRRS5ieQmBrZjWhcj99JuGrT5tyuWDaGAXLXLFjbAtjQ",
+    "observation": "2UmEC4MprNZq7Aqe4jMKvZJviTnskWnMKRqzpVghGErh",
+    "base_mint": "FAnDMGU5pXLjLNbChn4VigDgGzfcGZZASqvshrEZsCCq",
+    "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "base_vault": "2Ej56PzLxwafSyWStxdmscK8NrRHrLYcR4idTjQzdvbk",
+    "quote_vault": "HBpcYMUgcopXNRjYkWufvmXYct3LnpVVrqawRBneMLVs",
+    "base_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "quote_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "base_decimals": 6,
+    "quote_decimals": 6,
+    "base_is_token_0": false
+   }
+  },
+  "transfer fee": {
+   "LaunchLab curve": {
+    "epoch": 1075,
+    "auth_bump": 250,
+    "status": 2,
+    "base_decimals": 6,
+    "quote_decimals": 8,
+    "migrate_type": 1,
+    "supply": 1000000000000000,
+    "total_base_sell": 793100000000000,
+    "virtual_base": 1073025605636625,
+    "virtual_quote": 239540458,
+    "real_base": 793100000000000,
+    "real_quote": 678679007,
+    "total_quote_fund_raising": 678678669,
+    "quote_protocol_fee": 11171502,
+    "platform_fee": 0,
+    "migrate_fee": 0,
+    "vesting_schedule": {
+     "total_locked_amount": 0,
+     "cliff_period": 0,
+     "unlock_period": 0,
+     "start_time": 0,
+     "allocated_share_amount": 0
+    },
+    "global_config": "E2fd24QycuwszEK8WyU8CgtCfp5bUkTMenUthzgShJxA",
+    "platform_config": "6BwHHDg3u1854jC8PDLXvR4spTcLNaoBxLJNGC4nTESt",
+    "base_mint": "66oamSkYoFAqEx5fv4vre1YXumFFkD2qSHLM89vjuuxX",
+    "quote_mint": "A7bdiYdS5GjqGFtxf17ppRHtDKPkkRqbKtR27dxvQXaS",
+    "base_vault": "65tHPoP3eyBkFtGe5wTLooNttoWFSqXhDvSrPmLccGQz",
+    "quote_vault": "86dWZRywGymqFpnNed9r6urV1oaxTDyC35ZVYcyb4D2M",
+    "creator": "FcQHth9XH3QvdyGPCoKjGwfYyByZEt1bL8wWz1aPW8Am",
+    "token_program_flag": 1,
+    "amm_creator_fee_on": {
+     "variant": "QuoteToken"
+    },
+    "platform_vesting_share": 0,
+    "padding": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "price_per_token": 3.280226769222221e-08,
+    "fee_rate": 12500,
+    "fee_fraction": 0.0125,
+    "transfer_fee_bps": 100,
+    "transfer_fee_max": 1000000000000000,
+    "graduated": true
+   },
+   "CPMM market": {
+    "price_per_token": 1.8407154982833968e-09,
+    "fee_fraction": 0.0125,
+    "pool": "gRiZY3skcDmVHgfJkg1vi2TDFV4JaqCboccSxdGmZyo",
+    "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+   },
+   "CPMM pool": {
+    "address": "gRiZY3skcDmVHgfJkg1vi2TDFV4JaqCboccSxdGmZyo",
+    "amm_config": "CRRS5ieQmBrZjWhcj99JuGrT5tyuWDaGAXLXLFjbAtjQ",
+    "observation": "Fjndmz1ky4yrLe2Tx4tXRWUuM7bBGp2dJggJ93k8gLni",
+    "base_mint": "66oamSkYoFAqEx5fv4vre1YXumFFkD2qSHLM89vjuuxX",
+    "quote_mint": "A7bdiYdS5GjqGFtxf17ppRHtDKPkkRqbKtR27dxvQXaS",
+    "base_vault": "gw7hpGrYwfDyKFwjfFHx9AkNnVyqQEW1rktJrrRHRaH",
+    "quote_vault": "9wnD5UXX2wuboghStTGLkguoVpknaM7UuhmNFaTTP1xF",
+    "base_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "quote_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "base_decimals": 6,
+    "quote_decimals": 8,
+    "base_is_token_0": true
+   }
+  }
+ },
+ "raw_pumpfun_migrations_from_gettransaction.json": [
+  {
+   "signature": "3L3WQbbdq8W7gDCPzRFrnWx8uDsG1Qp8FmeqE1s5o54ccwfQ81SC1w9g2afSLLprWHG3hScw8NM4v9GFMYzX2dRU",
+   "logs": [
+    {
+     "platform": "pump_fun",
+     "mint": "GkrKQM9iFH5VgpDP7Erkxtsxy1amaDDQnY6nPzV4pump",
+     "pool": "CwQNxHKXQaT4PH64uTh3jEBbTfFx6Lzc5tY9u8GHwtiS",
+     "quote_mint": "So11111111111111111111111111111111111111112",
+     "signature": "3L3WQbbdq8W7gDCPzRFrnWx8uDsG1Qp8FmeqE1s5o54ccwfQ81SC1w9g2afSLLprWHG3hScw8NM4v9GFMYzX2dRU",
+     "pre_execution": false
+    }
+   ],
+   "instructions": [
+    null,
+    null,
+    {
+     "platform": "pump_fun",
+     "mint": "GkrKQM9iFH5VgpDP7Erkxtsxy1amaDDQnY6nPzV4pump",
+     "pool": "CwQNxHKXQaT4PH64uTh3jEBbTfFx6Lzc5tY9u8GHwtiS",
+     "quote_mint": "So11111111111111111111111111111111111111112",
+     "signature": "3L3WQbbdq8W7gDCPzRFrnWx8uDsG1Qp8FmeqE1s5o54ccwfQ81SC1w9g2afSLLprWHG3hScw8NM4v9GFMYzX2dRU",
+     "pre_execution": true
+    }
+   ]
+  },
+  {
+   "signature": "2fheHqA6zjfxMP6WQMLNP6VidEdVuXNPo92VYHTsdhko6gQRFtJmf3rRV6rBhQvMszXpb6vofeWiffT2nxYuxMD8",
+   "logs": [
+    {
+     "platform": "pump_fun",
+     "mint": "1iciUXUNo7XDbua4rUq4QKreQCCN7kiUhVSjQFKpump",
+     "pool": "9D4fGkeXSN1urnhfxcuJG6jnNpguvWuq6iM7xxkVsWvh",
+     "quote_mint": "So11111111111111111111111111111111111111112",
+     "signature": "2fheHqA6zjfxMP6WQMLNP6VidEdVuXNPo92VYHTsdhko6gQRFtJmf3rRV6rBhQvMszXpb6vofeWiffT2nxYuxMD8",
+     "pre_execution": false
+    }
+   ],
+   "instructions": [
+    {
+     "platform": "pump_fun",
+     "mint": "1iciUXUNo7XDbua4rUq4QKreQCCN7kiUhVSjQFKpump",
+     "pool": "9D4fGkeXSN1urnhfxcuJG6jnNpguvWuq6iM7xxkVsWvh",
+     "quote_mint": "So11111111111111111111111111111111111111112",
+     "signature": "2fheHqA6zjfxMP6WQMLNP6VidEdVuXNPo92VYHTsdhko6gQRFtJmf3rRV6rBhQvMszXpb6vofeWiffT2nxYuxMD8",
+     "pre_execution": true
+    }
+   ]
+  },
+  {
+   "signature": "4CVUi1jRidtcYWQnW5Cqk1Db8NcYWzdySZK9Tf9ciZLe7tECoLw1cW3yX5cekgRN6iPMp3qtC6L5s7h84foD9Hgj",
+   "logs": [
+    {
+     "platform": "pump_fun",
+     "mint": "97qDm7TErZKa1jnGafGYUsCEyBmjkkEiqJauDTfTpump",
+     "pool": "Ba5k1tHkB5tmfHyZJqWnpwg1cRKdLnYuvEeiexwCJBYn",
+     "quote_mint": "So11111111111111111111111111111111111111112",
+     "signature": "4CVUi1jRidtcYWQnW5Cqk1Db8NcYWzdySZK9Tf9ciZLe7tECoLw1cW3yX5cekgRN6iPMp3qtC6L5s7h84foD9Hgj",
+     "pre_execution": false
+    }
+   ],
+   "instructions": [
+    null,
+    null,
+    {
+     "platform": "pump_fun",
+     "mint": "97qDm7TErZKa1jnGafGYUsCEyBmjkkEiqJauDTfTpump",
+     "pool": "Ba5k1tHkB5tmfHyZJqWnpwg1cRKdLnYuvEeiexwCJBYn",
+     "quote_mint": "So11111111111111111111111111111111111111112",
+     "signature": "4CVUi1jRidtcYWQnW5Cqk1Db8NcYWzdySZK9Tf9ciZLe7tECoLw1cW3yX5cekgRN6iPMp3qtC6L5s7h84foD9Hgj",
+     "pre_execution": true
+    }
+   ]
+  },
+  {
+   "signature": "46kDupQbYw9no4ZXcMfZygYtu6oAK1UxZA2QJeAbGdXNEyU3zGrCdnn5hS9PV2BznWx6EiiqyLbjZpd3hWBbTFV1",
+   "logs": [
+    {
+     "platform": "pump_fun",
+     "mint": "EjTyU3sKmE5Py9PFeZHf6Ef3pTCp7AwVByAN81T2pump",
+     "pool": "CA1pignAqtqUpajScjbUdwyaUg6yS24ysjS8fdTmNQ53",
+     "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+     "signature": "46kDupQbYw9no4ZXcMfZygYtu6oAK1UxZA2QJeAbGdXNEyU3zGrCdnn5hS9PV2BznWx6EiiqyLbjZpd3hWBbTFV1",
+     "pre_execution": false
+    }
+   ],
+   "instructions": [
+    null,
+    null,
+    {
+     "platform": "pump_fun",
+     "mint": "EjTyU3sKmE5Py9PFeZHf6Ef3pTCp7AwVByAN81T2pump",
+     "pool": "CA1pignAqtqUpajScjbUdwyaUg6yS24ysjS8fdTmNQ53",
+     "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+     "signature": "46kDupQbYw9no4ZXcMfZygYtu6oAK1UxZA2QJeAbGdXNEyU3zGrCdnn5hS9PV2BznWx6EiiqyLbjZpd3hWBbTFV1",
+     "pre_execution": true
+    }
+   ]
+  },
+  {
+   "signature": "5tf7GDbPmHKA8spczutx9XfbjQ2xAk7nUrqCtRX6Z5ZL1yrgcYVbx3tsJ7PmpkeccEqXp9wNxPWXbLkUrsheV7Vp",
+   "logs": [
+    {
+     "platform": "pump_fun",
+     "mint": "51Goj4ZFX48N9cmT7pb8xVkbCqrKWxvBkPM1UY76pump",
+     "pool": "9USS29gov9UCEfJrmtv6Gb4T6suibocrt7AsMwYNtiAo",
+     "quote_mint": "3fDmywEhaptHpUo6X5g5NEv2i3ohRgp2BT6meiPEpump",
+     "signature": "5tf7GDbPmHKA8spczutx9XfbjQ2xAk7nUrqCtRX6Z5ZL1yrgcYVbx3tsJ7PmpkeccEqXp9wNxPWXbLkUrsheV7Vp",
+     "pre_execution": false
+    }
+   ],
+   "instructions": [
+    null,
+    null,
+    {
+     "platform": "pump_fun",
+     "mint": "51Goj4ZFX48N9cmT7pb8xVkbCqrKWxvBkPM1UY76pump",
+     "pool": "9USS29gov9UCEfJrmtv6Gb4T6suibocrt7AsMwYNtiAo",
+     "quote_mint": "3fDmywEhaptHpUo6X5g5NEv2i3ohRgp2BT6meiPEpump",
+     "signature": "5tf7GDbPmHKA8spczutx9XfbjQ2xAk7nUrqCtRX6Z5ZL1yrgcYVbx3tsJ7PmpkeccEqXp9wNxPWXbLkUrsheV7Vp",
+     "pre_execution": true
+    }
+   ]
+  },
+  {
+   "signature": "KMk5nSbTNWhyBCxiHzNJFvqDzXvLeVoBaCUJw4f4iEgBHHZs9RRdaHcB35PWatD2CHuenP4Biu1QAovhYUX62ew",
+   "logs": [
+    {
+     "platform": "pump_fun",
+     "mint": "ARXb4cn4sE3sVDp2wK4aKW8D9VbsMACnY5sMSZ7upump",
+     "pool": "HqAwNHgYCxbZEkxXVgWdtKXA9SQJyVSo4iN98nRRawP7",
+     "quote_mint": "A7bdiYdS5GjqGFtxf17ppRHtDKPkkRqbKtR27dxvQXaS",
+     "signature": "KMk5nSbTNWhyBCxiHzNJFvqDzXvLeVoBaCUJw4f4iEgBHHZs9RRdaHcB35PWatD2CHuenP4Biu1QAovhYUX62ew",
+     "pre_execution": false
+    }
+   ],
+   "instructions": [
+    null,
+    null,
+    {
+     "platform": "pump_fun",
+     "mint": "ARXb4cn4sE3sVDp2wK4aKW8D9VbsMACnY5sMSZ7upump",
+     "pool": "HqAwNHgYCxbZEkxXVgWdtKXA9SQJyVSo4iN98nRRawP7",
+     "quote_mint": "A7bdiYdS5GjqGFtxf17ppRHtDKPkkRqbKtR27dxvQXaS",
+     "signature": "KMk5nSbTNWhyBCxiHzNJFvqDzXvLeVoBaCUJw4f4iEgBHHZs9RRdaHcB35PWatD2CHuenP4Biu1QAovhYUX62ew",
+     "pre_execution": true
+    }
+   ]
+  },
+  {
+   "signature": "5uXLGqHgKDqyL3zoBdCpmFiDzcLzzZwkpuVjjtea8XNysDSuRGKo3vSdAcmeaQVmQPsMpeEjSQXq4xqJXCrf7Ljn",
+   "logs": [
+    {
+     "platform": "pump_fun",
+     "mint": "Ea17SQuUXSV7wDv4kqbFPSjrVr5WmDXBFLJvKR1Mpump",
+     "pool": "Em7Df7NddnA3GE5TETidWUtRKrtqPuSMCf2EFHJ1ZFda",
+     "quote_mint": "So11111111111111111111111111111111111111112",
+     "signature": "5uXLGqHgKDqyL3zoBdCpmFiDzcLzzZwkpuVjjtea8XNysDSuRGKo3vSdAcmeaQVmQPsMpeEjSQXq4xqJXCrf7Ljn",
+     "pre_execution": false
+    }
+   ],
+   "instructions": [
+    {
+     "platform": "pump_fun",
+     "mint": "Ea17SQuUXSV7wDv4kqbFPSjrVr5WmDXBFLJvKR1Mpump",
+     "pool": "Em7Df7NddnA3GE5TETidWUtRKrtqPuSMCf2EFHJ1ZFda",
+     "quote_mint": "So11111111111111111111111111111111111111112",
+     "signature": "5uXLGqHgKDqyL3zoBdCpmFiDzcLzzZwkpuVjjtea8XNysDSuRGKo3vSdAcmeaQVmQPsMpeEjSQXq4xqJXCrf7Ljn",
+     "pre_execution": true
+    },
+    null,
+    null,
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "signature": "39hr3iCjQCX4aP22s3s9xaVQQocLRwHVXsrY7LZUrgFthqypjXTd8CAYrr68bnjZ5Mopxtv8gQ26e6pCvXMEdTij",
+   "logs": [],
+   "instructions": [
+    null,
+    null,
+    {
+     "platform": "pump_fun",
+     "mint": "GkrKQM9iFH5VgpDP7Erkxtsxy1amaDDQnY6nPzV4pump",
+     "pool": "CwQNxHKXQaT4PH64uTh3jEBbTfFx6Lzc5tY9u8GHwtiS",
+     "quote_mint": "So11111111111111111111111111111111111111112",
+     "signature": "39hr3iCjQCX4aP22s3s9xaVQQocLRwHVXsrY7LZUrgFthqypjXTd8CAYrr68bnjZ5Mopxtv8gQ26e6pCvXMEdTij",
+     "pre_execution": true
+    }
+   ]
+  },
+  {
+   "signature": "489GL4h9KCHFimuBJije55JtNEYT35eno3YtVJwXuPxbZPmMjBvcR4QNTPnKgQxbDaFVxGjZQpatve6jL9tn4B5J",
+   "logs": [],
+   "instructions": [
+    null,
+    null,
+    null,
+    {
+     "platform": "pump_fun",
+     "mint": "DmPFeFWN3eRDN3C2h5ETxFawzd3upKFmnEREy1aVpump",
+     "pool": "EtR5gPMdFNeAddDo3zkKEwJyJwB5BhLp7dq72PTKWgQQ",
+     "quote_mint": "So11111111111111111111111111111111111111112",
+     "signature": "489GL4h9KCHFimuBJije55JtNEYT35eno3YtVJwXuPxbZPmMjBvcR4QNTPnKgQxbDaFVxGjZQpatve6jL9tn4B5J",
+     "pre_execution": true
+    },
+    null
+   ]
+  }
+ ],
+ "raw_launchlab_migrations_from_gettransaction.json": [
+  {
+   "signature": "29zAuzMscakqirMiMfdhoaNELcqMH4rRczPXJJ4npoqQ8bEr2Yfr8tequZje5hhbF9E5kjisFHTsLckRwkageNRA",
+   "launchlab block": [
+    {
+     "platform": "launchlab",
+     "mint": "8Jz7NgcjEMsWNPAXF3AvUHuHfN1bJ9nYZFHKiKkZUBeV",
+     "pool": "2HSDj1k6zkwwZvdGiZikLRBAqsj6SZZX4e9ha15knvSh",
+     "quote_mint": "So11111111111111111111111111111111111111112",
+     "signature": "",
+     "pre_execution": false
+    }
+   ],
+   "launchlab geyser": [
+    {
+     "platform": "launchlab",
+     "mint": "8Jz7NgcjEMsWNPAXF3AvUHuHfN1bJ9nYZFHKiKkZUBeV",
+     "pool": "2HSDj1k6zkwwZvdGiZikLRBAqsj6SZZX4e9ha15knvSh",
+     "quote_mint": "So11111111111111111111111111111111111111112",
+     "signature": "",
+     "pre_execution": false
+    }
+   ],
+   "launchlab instructions": [
+    null,
+    null,
+    {
+     "platform": "launchlab",
+     "mint": "8Jz7NgcjEMsWNPAXF3AvUHuHfN1bJ9nYZFHKiKkZUBeV",
+     "pool": "2HSDj1k6zkwwZvdGiZikLRBAqsj6SZZX4e9ha15knvSh",
+     "quote_mint": "So11111111111111111111111111111111111111112",
+     "signature": "29zAuzMscakqirMiMfdhoaNELcqMH4rRczPXJJ4npoqQ8bEr2Yfr8tequZje5hhbF9E5kjisFHTsLckRwkageNRA",
+     "pre_execution": true
+    }
+   ],
+   "stonkfun block": [],
+   "stonkfun geyser": [],
+   "stonkfun instructions": [
+    null,
+    null,
+    null
+   ],
+   "letsbonk block": [],
+   "letsbonk geyser": [],
+   "letsbonk instructions": [
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "signature": "43LoHnqzoPYUArbFpxENiFJtnJCZHLX26q16eEGbT6MbZo6kAFchquPRwPChZgq1AnALQ4Uyb9ngiB9LKLEgvC4o",
+   "launchlab block": [
+    {
+     "platform": "launchlab",
+     "mint": "JCdE6KcCEUcgmhiCQfXTL11524wSgqJCnGtYDA757q4a",
+     "pool": "DHpFy3CM4cxQmoR14cMA3wA2V5SB9yHfVPiLZCYrfakt",
+     "quote_mint": "So11111111111111111111111111111111111111112",
+     "signature": "",
+     "pre_execution": false
+    }
+   ],
+   "launchlab geyser": [
+    {
+     "platform": "launchlab",
+     "mint": "JCdE6KcCEUcgmhiCQfXTL11524wSgqJCnGtYDA757q4a",
+     "pool": "DHpFy3CM4cxQmoR14cMA3wA2V5SB9yHfVPiLZCYrfakt",
+     "quote_mint": "So11111111111111111111111111111111111111112",
+     "signature": "",
+     "pre_execution": false
+    }
+   ],
+   "launchlab instructions": [
+    null,
+    null,
+    {
+     "platform": "launchlab",
+     "mint": "JCdE6KcCEUcgmhiCQfXTL11524wSgqJCnGtYDA757q4a",
+     "pool": "DHpFy3CM4cxQmoR14cMA3wA2V5SB9yHfVPiLZCYrfakt",
+     "quote_mint": "So11111111111111111111111111111111111111112",
+     "signature": "43LoHnqzoPYUArbFpxENiFJtnJCZHLX26q16eEGbT6MbZo6kAFchquPRwPChZgq1AnALQ4Uyb9ngiB9LKLEgvC4o",
+     "pre_execution": true
+    }
+   ],
+   "stonkfun block": [
+    {
+     "platform": "stonk_fun",
+     "mint": "JCdE6KcCEUcgmhiCQfXTL11524wSgqJCnGtYDA757q4a",
+     "pool": "DHpFy3CM4cxQmoR14cMA3wA2V5SB9yHfVPiLZCYrfakt",
+     "quote_mint": "So11111111111111111111111111111111111111112",
+     "signature": "",
+     "pre_execution": false
+    }
+   ],
+   "stonkfun geyser": [
+    {
+     "platform": "stonk_fun",
+     "mint": "JCdE6KcCEUcgmhiCQfXTL11524wSgqJCnGtYDA757q4a",
+     "pool": "DHpFy3CM4cxQmoR14cMA3wA2V5SB9yHfVPiLZCYrfakt",
+     "quote_mint": "So11111111111111111111111111111111111111112",
+     "signature": "",
+     "pre_execution": false
+    }
+   ],
+   "stonkfun instructions": [
+    null,
+    null,
+    {
+     "platform": "stonk_fun",
+     "mint": "JCdE6KcCEUcgmhiCQfXTL11524wSgqJCnGtYDA757q4a",
+     "pool": "DHpFy3CM4cxQmoR14cMA3wA2V5SB9yHfVPiLZCYrfakt",
+     "quote_mint": "So11111111111111111111111111111111111111112",
+     "signature": "43LoHnqzoPYUArbFpxENiFJtnJCZHLX26q16eEGbT6MbZo6kAFchquPRwPChZgq1AnALQ4Uyb9ngiB9LKLEgvC4o",
+     "pre_execution": true
+    }
+   ],
+   "letsbonk block": [],
+   "letsbonk geyser": [],
+   "letsbonk instructions": [
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "signature": "3k1ua8tt2kvjK4xzMGwsEsjo6U83pdtKDGFuciV1EDKQoSEMer2z7QLkM2ifUijGMUigAvPJbBsazEJiBRgQkvTi",
+   "launchlab block": [
+    {
+     "platform": "launchlab",
+     "mint": "FAnDMGU5pXLjLNbChn4VigDgGzfcGZZASqvshrEZsCCq",
+     "pool": "FUqjQxftdS9ic7mTpBWy1JtzQ54sgqaVL7nZ9uvoFn55",
+     "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+     "signature": "",
+     "pre_execution": false
+    }
+   ],
+   "launchlab geyser": [
+    {
+     "platform": "launchlab",
+     "mint": "FAnDMGU5pXLjLNbChn4VigDgGzfcGZZASqvshrEZsCCq",
+     "pool": "FUqjQxftdS9ic7mTpBWy1JtzQ54sgqaVL7nZ9uvoFn55",
+     "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+     "signature": "",
+     "pre_execution": false
+    }
+   ],
+   "launchlab instructions": [
+    null,
+    null,
+    {
+     "platform": "launchlab",
+     "mint": "FAnDMGU5pXLjLNbChn4VigDgGzfcGZZASqvshrEZsCCq",
+     "pool": "FUqjQxftdS9ic7mTpBWy1JtzQ54sgqaVL7nZ9uvoFn55",
+     "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+     "signature": "3k1ua8tt2kvjK4xzMGwsEsjo6U83pdtKDGFuciV1EDKQoSEMer2z7QLkM2ifUijGMUigAvPJbBsazEJiBRgQkvTi",
+     "pre_execution": true
+    }
+   ],
+   "stonkfun block": [
+    {
+     "platform": "stonk_fun",
+     "mint": "FAnDMGU5pXLjLNbChn4VigDgGzfcGZZASqvshrEZsCCq",
+     "pool": "FUqjQxftdS9ic7mTpBWy1JtzQ54sgqaVL7nZ9uvoFn55",
+     "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+     "signature": "",
+     "pre_execution": false
+    }
+   ],
+   "stonkfun geyser": [
+    {
+     "platform": "stonk_fun",
+     "mint": "FAnDMGU5pXLjLNbChn4VigDgGzfcGZZASqvshrEZsCCq",
+     "pool": "FUqjQxftdS9ic7mTpBWy1JtzQ54sgqaVL7nZ9uvoFn55",
+     "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+     "signature": "",
+     "pre_execution": false
+    }
+   ],
+   "stonkfun instructions": [
+    null,
+    null,
+    {
+     "platform": "stonk_fun",
+     "mint": "FAnDMGU5pXLjLNbChn4VigDgGzfcGZZASqvshrEZsCCq",
+     "pool": "FUqjQxftdS9ic7mTpBWy1JtzQ54sgqaVL7nZ9uvoFn55",
+     "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+     "signature": "3k1ua8tt2kvjK4xzMGwsEsjo6U83pdtKDGFuciV1EDKQoSEMer2z7QLkM2ifUijGMUigAvPJbBsazEJiBRgQkvTi",
+     "pre_execution": true
+    }
+   ],
+   "letsbonk block": [],
+   "letsbonk geyser": [],
+   "letsbonk instructions": [
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "signature": "2Lv6dZKVTQCNGvRSgcekrADpuBbtFshtqcf9r2n8PQLhbLzi1uK1zFKbhp8LFgm1PdiYEhswM7HCcvtspKbE6qLi",
+   "launchlab block": [
+    {
+     "platform": "launchlab",
+     "mint": "6gnB2H2hbTVvKUWCzNuqjWY8Rod6EVBmfHi7YxZpTWa7",
+     "pool": "9VjkGqSgKcPG3rYgMAt9GrC6EotvdMmUCD4oeArJVogd",
+     "quote_mint": "WXMRyRZhsa19ety5erZhHg4N3xj3EVN92u94422teJp",
+     "signature": "",
+     "pre_execution": false
+    }
+   ],
+   "launchlab geyser": [
+    {
+     "platform": "launchlab",
+     "mint": "6gnB2H2hbTVvKUWCzNuqjWY8Rod6EVBmfHi7YxZpTWa7",
+     "pool": "9VjkGqSgKcPG3rYgMAt9GrC6EotvdMmUCD4oeArJVogd",
+     "quote_mint": "WXMRyRZhsa19ety5erZhHg4N3xj3EVN92u94422teJp",
+     "signature": "",
+     "pre_execution": false
+    }
+   ],
+   "launchlab instructions": [
+    null,
+    null,
+    {
+     "platform": "launchlab",
+     "mint": "6gnB2H2hbTVvKUWCzNuqjWY8Rod6EVBmfHi7YxZpTWa7",
+     "pool": "9VjkGqSgKcPG3rYgMAt9GrC6EotvdMmUCD4oeArJVogd",
+     "quote_mint": "WXMRyRZhsa19ety5erZhHg4N3xj3EVN92u94422teJp",
+     "signature": "2Lv6dZKVTQCNGvRSgcekrADpuBbtFshtqcf9r2n8PQLhbLzi1uK1zFKbhp8LFgm1PdiYEhswM7HCcvtspKbE6qLi",
+     "pre_execution": true
+    }
+   ],
+   "stonkfun block": [
+    {
+     "platform": "stonk_fun",
+     "mint": "6gnB2H2hbTVvKUWCzNuqjWY8Rod6EVBmfHi7YxZpTWa7",
+     "pool": "9VjkGqSgKcPG3rYgMAt9GrC6EotvdMmUCD4oeArJVogd",
+     "quote_mint": "WXMRyRZhsa19ety5erZhHg4N3xj3EVN92u94422teJp",
+     "signature": "",
+     "pre_execution": false
+    }
+   ],
+   "stonkfun geyser": [
+    {
+     "platform": "stonk_fun",
+     "mint": "6gnB2H2hbTVvKUWCzNuqjWY8Rod6EVBmfHi7YxZpTWa7",
+     "pool": "9VjkGqSgKcPG3rYgMAt9GrC6EotvdMmUCD4oeArJVogd",
+     "quote_mint": "WXMRyRZhsa19ety5erZhHg4N3xj3EVN92u94422teJp",
+     "signature": "",
+     "pre_execution": false
+    }
+   ],
+   "stonkfun instructions": [
+    null,
+    null,
+    {
+     "platform": "stonk_fun",
+     "mint": "6gnB2H2hbTVvKUWCzNuqjWY8Rod6EVBmfHi7YxZpTWa7",
+     "pool": "9VjkGqSgKcPG3rYgMAt9GrC6EotvdMmUCD4oeArJVogd",
+     "quote_mint": "WXMRyRZhsa19ety5erZhHg4N3xj3EVN92u94422teJp",
+     "signature": "2Lv6dZKVTQCNGvRSgcekrADpuBbtFshtqcf9r2n8PQLhbLzi1uK1zFKbhp8LFgm1PdiYEhswM7HCcvtspKbE6qLi",
+     "pre_execution": true
+    }
+   ],
+   "letsbonk block": [],
+   "letsbonk geyser": [],
+   "letsbonk instructions": [
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "signature": "5wXWXt78nMnRbcyvxtEkN2Upjk5byHnoDGjExvE1VReNDexty9Uj8fQsNY1EFU7FDfM1SGMdko6KwfVGyEdgX16B",
+   "launchlab block": [
+    {
+     "platform": "launchlab",
+     "mint": "ExoA74hEH7Bjby9X5VPsj3xtUgVzZCLXr1AvJMMRKVj1",
+     "pool": "H5pcHwVXDiCjYU8vciUYE7PSzBC6wVt8MJjdSEF6sCrG",
+     "quote_mint": "XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp",
+     "signature": "",
+     "pre_execution": false
+    }
+   ],
+   "launchlab geyser": [
+    {
+     "platform": "launchlab",
+     "mint": "ExoA74hEH7Bjby9X5VPsj3xtUgVzZCLXr1AvJMMRKVj1",
+     "pool": "H5pcHwVXDiCjYU8vciUYE7PSzBC6wVt8MJjdSEF6sCrG",
+     "quote_mint": "XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp",
+     "signature": "",
+     "pre_execution": false
+    }
+   ],
+   "launchlab instructions": [
+    null,
+    null,
+    {
+     "platform": "launchlab",
+     "mint": "ExoA74hEH7Bjby9X5VPsj3xtUgVzZCLXr1AvJMMRKVj1",
+     "pool": "H5pcHwVXDiCjYU8vciUYE7PSzBC6wVt8MJjdSEF6sCrG",
+     "quote_mint": "XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp",
+     "signature": "5wXWXt78nMnRbcyvxtEkN2Upjk5byHnoDGjExvE1VReNDexty9Uj8fQsNY1EFU7FDfM1SGMdko6KwfVGyEdgX16B",
+     "pre_execution": true
+    }
+   ],
+   "stonkfun block": [],
+   "stonkfun geyser": [],
+   "stonkfun instructions": [
+    null,
+    null,
+    null
+   ],
+   "letsbonk block": [],
+   "letsbonk geyser": [],
+   "letsbonk instructions": [
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "signature": "65THNtJkBSe1EEgxeVaKADuUTkyBpTeCgV5K7MyZWUhjT2g29cKRsL5TbP4cLPiTpxRncTHVvRDssZtRmBX77MjY",
+   "launchlab block": [
+    {
+     "platform": "launchlab",
+     "mint": "4LT4uDp694w7soJerjRjSEVr2884J33EjLNG1WGzcash",
+     "pool": "G7rqBQRsLXJrLvA1dTw5jdYHxtzD8C498quhfHUmYqMr",
+     "quote_mint": "A7bdiYdS5GjqGFtxf17ppRHtDKPkkRqbKtR27dxvQXaS",
+     "signature": "",
+     "pre_execution": false
+    }
+   ],
+   "launchlab geyser": [
+    {
+     "platform": "launchlab",
+     "mint": "4LT4uDp694w7soJerjRjSEVr2884J33EjLNG1WGzcash",
+     "pool": "G7rqBQRsLXJrLvA1dTw5jdYHxtzD8C498quhfHUmYqMr",
+     "quote_mint": "A7bdiYdS5GjqGFtxf17ppRHtDKPkkRqbKtR27dxvQXaS",
+     "signature": "",
+     "pre_execution": false
+    }
+   ],
+   "launchlab instructions": [
+    null,
+    null,
+    {
+     "platform": "launchlab",
+     "mint": "4LT4uDp694w7soJerjRjSEVr2884J33EjLNG1WGzcash",
+     "pool": "G7rqBQRsLXJrLvA1dTw5jdYHxtzD8C498quhfHUmYqMr",
+     "quote_mint": "A7bdiYdS5GjqGFtxf17ppRHtDKPkkRqbKtR27dxvQXaS",
+     "signature": "65THNtJkBSe1EEgxeVaKADuUTkyBpTeCgV5K7MyZWUhjT2g29cKRsL5TbP4cLPiTpxRncTHVvRDssZtRmBX77MjY",
+     "pre_execution": true
+    }
+   ],
+   "stonkfun block": [],
+   "stonkfun geyser": [],
+   "stonkfun instructions": [
+    null,
+    null,
+    null
+   ],
+   "letsbonk block": [],
+   "letsbonk geyser": [],
+   "letsbonk instructions": [
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "signature": "5yyuPwvqr5MkDHATC1RY9v8o8JQ8osdj3mDnD7gDXkU2PR8qDKPH1r93p5y69erLuYrwPm1THEN4pb5zRtF6qbDy",
+   "launchlab block": [],
+   "launchlab geyser": [],
+   "launchlab instructions": [
+    null,
+    null,
+    {
+     "platform": "launchlab",
+     "mint": "JCdE6KcCEUcgmhiCQfXTL11524wSgqJCnGtYDA757q4a",
+     "pool": "DHpFy3CM4cxQmoR14cMA3wA2V5SB9yHfVPiLZCYrfakt",
+     "quote_mint": "So11111111111111111111111111111111111111112",
+     "signature": "5yyuPwvqr5MkDHATC1RY9v8o8JQ8osdj3mDnD7gDXkU2PR8qDKPH1r93p5y69erLuYrwPm1THEN4pb5zRtF6qbDy",
+     "pre_execution": true
+    }
+   ],
+   "stonkfun block": [],
+   "stonkfun geyser": [],
+   "stonkfun instructions": [
+    null,
+    null,
+    {
+     "platform": "stonk_fun",
+     "mint": "JCdE6KcCEUcgmhiCQfXTL11524wSgqJCnGtYDA757q4a",
+     "pool": "DHpFy3CM4cxQmoR14cMA3wA2V5SB9yHfVPiLZCYrfakt",
+     "quote_mint": "So11111111111111111111111111111111111111112",
+     "signature": "5yyuPwvqr5MkDHATC1RY9v8o8JQ8osdj3mDnD7gDXkU2PR8qDKPH1r93p5y69erLuYrwPm1THEN4pb5zRtF6qbDy",
+     "pre_execution": true
+    }
+   ],
+   "letsbonk block": [],
+   "letsbonk geyser": [],
+   "letsbonk instructions": [
+    null,
+    null,
+    null
+   ]
+  }
+ ],
+ "raw_migrated_coins_from_getmultipleaccounts.json": [
+  {
+   "label": "pump.fun, migrate_v2, SOL quote, Token-2022 coin, v0",
+   "token": {
+    "name": "WINTER IS LOADING",
+    "symbol": "Frost",
+    "uri": "https://ipfs.io/ipfs/QmUTts1pDFbZeNDY31uHr6Ls7CaW6KXqzkMcxLZ1HDGgrj",
+    "mint": "GkrKQM9iFH5VgpDP7Erkxtsxy1amaDDQnY6nPzV4pump",
+    "platform": "pump_fun",
+    "bonding_curve": "JCkKJW2DFpYQD8XXfMCmmsPaL539WQ7UxvjhZL7UrvFg",
+    "associated_bonding_curve": "6bDNHdgMwi8WinfH1pFMAdmsaAv3PSLpzeQAB3m7EZhF",
+    "pool_state": null,
+    "base_vault": null,
+    "quote_vault": null,
+    "global_config": null,
+    "platform_config": null,
+    "user": null,
+    "creator": "DHvDE4oWxWFbEWyCSZ9BkYbjCmoL5dF71BuVyJqkBeL5",
+    "creator_vault": "8QtGUYBXekeGrarg2ZmjbWCCnsxyUA2mQ2waw5YXFKR4",
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": true,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": false,
+    "additional_data": {
+     "entry": "migration",
+     "pool": "CwQNxHKXQaT4PH64uTh3jEBbTfFx6Lzc5tY9u8GHwtiS",
+     "migration_signature": "3L3WQbbdq8W7gDCPzRFrnWx8uDsG1Qp8FmeqE1s5o54ccwfQ81SC1w9g2afSLLprWHG3hScw8NM4v9GFMYzX2dRU"
+    }
+   }
+  },
+  {
+   "label": "pump.fun, legacy migrate, SOL quote, Token-2022 coin",
+   "token": {
+    "name": "ESOL",
+    "symbol": "$ESOL",
+    "uri": "https://ipfs.io/ipfs/QmSr9bgFgxrKx9aQWLAMTfPBuqhTNrVifiJVvNcrCfgPx4",
+    "mint": "97qDm7TErZKa1jnGafGYUsCEyBmjkkEiqJauDTfTpump",
+    "platform": "pump_fun",
+    "bonding_curve": "Afah1oYyc75Xs9wSD3hdMap3eebUq1vc79sFAw64EUN5",
+    "associated_bonding_curve": "4vJ4BqjZNUfXJRyggfZPwAStvn4mXJrj34pFLbvLYWRC",
+    "pool_state": null,
+    "base_vault": null,
+    "quote_vault": null,
+    "global_config": null,
+    "platform_config": null,
+    "user": null,
+    "creator": "HpmUFT8SpbHt44pcAfpH15Xqyp2Lr3m81A9NjdVTD2u6",
+    "creator_vault": "41bEcZmhk7onXtWzfic3nYPpdR9MdFa5G6v7epbFbShP",
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": true,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": false,
+    "additional_data": {
+     "entry": "migration",
+     "pool": "Ba5k1tHkB5tmfHyZJqWnpwg1cRKdLnYuvEeiexwCJBYn",
+     "migration_signature": "4CVUi1jRidtcYWQnW5Cqk1Db8NcYWzdySZK9Tf9ciZLe7tECoLw1cW3yX5cekgRN6iPMp3qtC6L5s7h84foD9Hgj"
+    }
+   }
+  },
+  {
+   "label": "pump.fun, migrate_v2, USDC quote",
+   "token": {
+    "name": "GooberCoin",
+    "symbol": "GOOB",
+    "uri": "https://ipfs.io/ipfs/bafkreib2zwljuc6zf2hixpae6d7w2fdj7mhrmr5j3ihvmyspkvm7ic4kue",
+    "mint": "EjTyU3sKmE5Py9PFeZHf6Ef3pTCp7AwVByAN81T2pump",
+    "platform": "pump_fun",
+    "bonding_curve": "7GSaSgYrtuouHref8uFTntGuDtuaYMipQVHbj1p1ZaBt",
+    "associated_bonding_curve": "DumuTA5ZuLvRqaMbMAayFHQ1jSCFFn5asb3QU8jNqcmC",
+    "pool_state": null,
+    "base_vault": null,
+    "quote_vault": null,
+    "global_config": null,
+    "platform_config": null,
+    "user": null,
+    "creator": "GWSyB6AKkMHRgm7E43M3ngoKgnsTAnChS4d6qjrbK8dN",
+    "creator_vault": "ESLJHGquYTW7b4jq6a3y2NoYuxMMH3RHJPztxZ9yj5S8",
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": true,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": false,
+    "additional_data": {
+     "entry": "migration",
+     "pool": "CA1pignAqtqUpajScjbUdwyaUg6yS24ysjS8fdTmNQ53",
+     "migration_signature": "46kDupQbYw9no4ZXcMfZygYtu6oAK1UxZA2QJeAbGdXNEyU3zGrCdnn5hS9PV2BznWx6EiiqyLbjZpd3hWBbTFV1"
+    }
+   }
+  },
+  {
+   "label": "LaunchLab, SOL quote, SPL Token coin, another launchpad",
+   "token": {
+    "name": "UNI",
+    "symbol": "UNI",
+    "uri": "https://xdjhygayncqyeqfvctaz.supabase.co/storage/v1/object/public/rl-coins/4e5526d7-de2f-4330-83fe-744737f73b9a/metadata.json",
+    "mint": "8Jz7NgcjEMsWNPAXF3AvUHuHfN1bJ9nYZFHKiKkZUBeV",
+    "platform": "launchlab",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "7dPyKwGHWYGzRxV18dqaTJ35PWxNssY8V1S8y4irfKQw",
+    "base_vault": "13iR4ejdesvjB94mog2QQeu3PZcZJapMufeE8s9AVFQ3",
+    "quote_vault": "4RKmZ4t12DLAT6G6wBndB8L4bf2YJtHnr9APDKHJ1bJc",
+    "global_config": "6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX",
+    "platform_config": "BDTgTEvMyGXjJSDHnCdVG4zRgBufvREVrfAksYgTNjHW",
+    "user": null,
+    "creator": "9aEeyk4FS7gUudcPceXvZtR3vLRctbdmUmSCVVP8JpKB",
+    "creator_vault": null,
+    "token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": false,
+    "additional_data": {
+     "entry": "migration",
+     "pool": "2HSDj1k6zkwwZvdGiZikLRBAqsj6SZZX4e9ha15knvSh",
+     "migration_signature": "29zAuzMscakqirMiMfdhoaNELcqMH4rRczPXJJ4npoqQ8bEr2Yfr8tequZje5hhbF9E5kjisFHTsLckRwkageNRA"
+    }
+   }
+  },
+  {
+   "label": "LaunchLab, SOL quote, Token-2022 coin, StonkFun standard",
+   "token": {
+    "name": "MIDTURDS",
+    "symbol": "MIDTURDS",
+    "uri": "https://gateway.irys.xyz/7NTgjeTrPJxZieCUJrY8LLuJUbvxLeny86knQ2juRzNq",
+    "mint": "JCdE6KcCEUcgmhiCQfXTL11524wSgqJCnGtYDA757q4a",
+    "platform": "launchlab",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "CwdAVEVv5uLq1SBH4kt2Gv4wy8xMg1VND5Yz3fMVEHtL",
+    "base_vault": "C5A7tFDoWyRMp2ZkWzzEz6EB97mwTuHLWtsgfZaJkGR4",
+    "quote_vault": "3kNqT1wuEAaA65VVUeMZT8n5nVyS5uUy3xTCC381actu",
+    "global_config": "6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX",
+    "platform_config": "4E876qZTE9FJMrBzgVtBrSrzz2TLivB5Y5QXPjB4gZL7",
+    "user": null,
+    "creator": "7Yz8dNr8sapJ1Ma3owEKcDEfnrB7H6cMeD9VGqrDG5kg",
+    "creator_vault": null,
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "So11111111111111111111111111111111111111112",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": false,
+    "additional_data": {
+     "entry": "migration",
+     "pool": "DHpFy3CM4cxQmoR14cMA3wA2V5SB9yHfVPiLZCYrfakt",
+     "migration_signature": "43LoHnqzoPYUArbFpxENiFJtnJCZHLX26q16eEGbT6MbZo6kAFchquPRwPChZgq1AnALQ4Uyb9ngiB9LKLEgvC4o"
+    }
+   }
+  },
+  {
+   "label": "LaunchLab, USDC quote, Token-2022 coin, StonkFun standard",
+   "token": {
+    "name": "zkSNARK",
+    "symbol": "ZKSNARK",
+    "uri": "https://ipfs.io/ipfs/bafkreiddthy5ok4m3kgxtqmgpa2q74legleqd6lijqs3wkgoxgv2erhpjy",
+    "mint": "FAnDMGU5pXLjLNbChn4VigDgGzfcGZZASqvshrEZsCCq",
+    "platform": "launchlab",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "8J6V1momSoHuQJ9z2y6gyMXXWxdqFz2CPe5dqWkPZ7we",
+    "base_vault": "7SbvnjUzq5xyCpVG6erwDZkgdGts4nQpD42KrCAFNoe7",
+    "quote_vault": "4YRkkBMhib8tGPpHRWLu2Nkjf3jyyim791UYmBb4B6Dj",
+    "global_config": "8gj14w8vkNZjJTPak6e96Uf1sY438WKheH4s5dHyxiRw",
+    "platform_config": "4E876qZTE9FJMrBzgVtBrSrzz2TLivB5Y5QXPjB4gZL7",
+    "user": null,
+    "creator": "6Lf3kUYnB2vJ3npvsuXMQPr5EfbavBrEjxkK1Lnaup3Z",
+    "creator_vault": null,
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 0,
+    "state_from_event": false,
+    "additional_data": {
+     "entry": "migration",
+     "pool": "FUqjQxftdS9ic7mTpBWy1JtzQ54sgqaVL7nZ9uvoFn55",
+     "migration_signature": "3k1ua8tt2kvjK4xzMGwsEsjo6U83pdtKDGFuciV1EDKQoSEMer2z7QLkM2ifUijGMUigAvPJbBsazEJiBRgQkvTi"
+    }
+   }
+  },
+  {
+   "label": "LaunchLab, xStock quote, Token-2022 coin, StonkFun reward",
+   "token": {
+    "name": "MEOWNERO",
+    "symbol": "MEOWNERO",
+    "uri": "https://gateway.irys.xyz/9MkCuwBRvFVYsnkuBfdeymNhqKAzp8u5nVMLkQYXP5s8",
+    "mint": "6gnB2H2hbTVvKUWCzNuqjWY8Rod6EVBmfHi7YxZpTWa7",
+    "platform": "launchlab",
+    "bonding_curve": null,
+    "associated_bonding_curve": null,
+    "pool_state": "ApUs8SDDp57sjQ7KtSjnwJsqwY2KLJzKwFvEScr2vj7y",
+    "base_vault": "BbcVKDtdrzXJi3tTjAhV5NRFVoUTf7qPm8WqbmrtRRXp",
+    "quote_vault": "42Xevj7nUd5VM29hkVYJ3X4fM8EYELZYuLJXKduVuHuV",
+    "global_config": "GC1ZWMKnnPBGmTkoNNKnR17SbqZwMN9coSWgW3UH5JSr",
+    "platform_config": "6BwHHDg3u1854jC8PDLXvR4spTcLNaoBxLJNGC4nTESt",
+    "user": null,
+    "creator": "9JbKHqJtGUjsoPmrVV6zQCNVyXhLHai2BQB2b3Wy6Nud",
+    "creator_vault": null,
+    "token_program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "is_mayhem_mode": false,
+    "is_cashback_coin": false,
+    "is_holder_reward": false,
+    "creator_fee_bps": 0,
+    "quote_mint": "WXMRyRZhsa19ety5erZhHg4N3xj3EVN92u94422teJp",
+    "quote_token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "virtual_quote_reserves": null,
+    "transfer_fee_bps": 300,
+    "state_from_event": false,
+    "additional_data": {
+     "entry": "migration",
+     "pool": "9VjkGqSgKcPG3rYgMAt9GrC6EotvdMmUCD4oeArJVogd",
+     "migration_signature": "2Lv6dZKVTQCNGvRSgcekrADpuBbtFshtqcf9r2n8PQLhbLzi1uK1zFKbhp8LFgm1PdiYEhswM7HCcvtspKbE6qLi"
+    }
+   }
+  }
+ ]
+}

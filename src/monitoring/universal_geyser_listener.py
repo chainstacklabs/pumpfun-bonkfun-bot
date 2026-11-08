@@ -3,12 +3,15 @@
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 
+import base58
 import grpc
+from solders.pubkey import Pubkey
 
 from geyser.generated import geyser_pb2, geyser_pb2_grpc
-from interfaces.core import Platform, TokenInfo
-from monitoring.base_listener import BaseTokenListener
+from interfaces.core import Platform, PoolReady, TokenInfo
+from monitoring.base_listener import BaseTokenListener, PoolCallback
 from platforms import platform_factory
 from utils.logger import get_logger
 
@@ -79,8 +82,13 @@ class UniversalGeyserListener(BaseTokenListener):
         geyser_api_token: str,
         geyser_auth_type: str,
         platforms: list[Platform] | None = None,
+        platform_configs: frozenset[Pubkey] | None = None,
     ):
-        """Initialize universal Geyser listener."""
+        """Initialize universal Geyser listener.
+
+        Args:
+            platform_configs: Narrows a LaunchLab platform to these configs
+        """
         super().__init__()
         self.geyser_endpoint = geyser_endpoint
         self.geyser_api_token = geyser_api_token
@@ -120,7 +128,7 @@ class UniversalGeyserListener(BaseTokenListener):
                 dummy_client = DummyClient()
 
                 implementations = platform_factory.create_for_platform(
-                    platform, dummy_client
+                    platform, dummy_client, platform_configs=platform_configs
                 )
                 parser = implementations.event_parser
                 self.platform_parsers[platform] = parser
@@ -174,8 +182,14 @@ class UniversalGeyserListener(BaseTokenListener):
         token_callback: Callable[[TokenInfo], Awaitable[None]],
         match_string: str | None = None,
         creator_address: str | None = None,
+        pool_callback: PoolCallback | None = None,
     ) -> None:
-        """Listen for new token creations using Geyser subscription."""
+        """Listen for new token creations using Geyser subscription.
+
+        Args:
+            pool_callback: Called once per migrated mint; see BaseTokenListener
+        """
+        self.pool_callback = pool_callback
         if not self.platform_parsers:
             logger.error("No platform parsers available. Cannot listen for tokens.")
             return
@@ -195,32 +209,14 @@ class UniversalGeyserListener(BaseTokenListener):
 
                 try:
                     async for update in stub.Subscribe(iter([request])):
+                        await self._emit_pools(self._pools_from_update(update))
                         token_info = await self._process_update(update)
                         if not token_info:
                             continue
-
-                        logger.info(
-                            f"New token detected: {token_info.name} ({token_info.symbol}) on {token_info.platform.value}"
-                        )
                         _log_envelope(update)
-
-                        # Apply filters
-                        if match_string and not (
-                            match_string.lower() in token_info.name.lower()
-                            or match_string.lower() in token_info.symbol.lower()
-                        ):
-                            logger.info(
-                                f"Token does not match filter '{match_string}'. Skipping..."
-                            )
-                            continue
-
-                        if creator_address and str(token_info.user) != creator_address:
-                            logger.info(
-                                f"Token not created by {creator_address}. Skipping..."
-                            )
-                            continue
-
-                        await token_callback(token_info)
+                        await self._deliver(
+                            token_info, token_callback, match_string, creator_address
+                        )
 
                 except Exception as e:
                     if isinstance(e, grpc.aio.AioRpcError):
@@ -261,3 +257,28 @@ class UniversalGeyserListener(BaseTokenListener):
         except Exception:
             logger.exception("Error processing Geyser update")
             return None
+
+    def _pools_from_update(self, update: geyser_pb2.SubscribeUpdate) -> list[PoolReady]:
+        """Pools a successful migration in this update created.
+
+        Empty without a pool callback: nothing is parsed then.
+        """
+        if self.pool_callback is None or not update.HasField("transaction"):
+            return []
+        info = update.transaction.transaction
+        if info.meta.HasField("err") or not info.meta.log_messages:
+            return []
+        pools = []
+        try:
+            # Every trade arrives here and almost none is a migration: the
+            # parsers reject them on a first pass over the logs, so the
+            # signature is encoded only for a pool they found.
+            for parser in self.platform_parsers.values():
+                pools += parser.parse_pools_ready_from_geyser(update)
+            if pools:
+                signature = base58.b58encode(info.signature).decode()
+                pools = [replace(pool, signature=signature) for pool in pools]
+        except Exception:
+            logger.exception("Error reading a migration from a Geyser update")
+            return []
+        return pools

@@ -36,7 +36,7 @@ from core.client import SolanaClient  # noqa: E402
 from core.priority_fee.manager import PriorityFeeManager  # noqa: E402
 from core.pubkeys import USDC_MINT  # noqa: E402
 from core.wallet import Wallet  # noqa: E402
-from interfaces.core import Platform, TokenInfo  # noqa: E402
+from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E402
 from monitoring.listener_factory import ListenerFactory  # noqa: E402
 from trading.platform_aware import PlatformAwareBuyer  # noqa: E402
 
@@ -183,11 +183,13 @@ async def install_simulation_hook(client: SolanaClient) -> dict:
         )
         return SimpleNamespace(value=Signature.default())
 
-    async def never_confirm(_signature, **_kwargs):
-        return False
+    async def never_confirm(
+        _signature: object, **_kwargs: object
+    ) -> ConfirmationStatus:
+        return ConfirmationStatus.UNCONFIRMED
 
     rpc.send_transaction = simulate_instead
-    client.confirm_transaction = never_confirm
+    client.confirm_transaction_detailed = never_confirm
     return outcome
 
 

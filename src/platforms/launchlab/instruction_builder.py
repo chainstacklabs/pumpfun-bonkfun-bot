@@ -7,7 +7,7 @@ from solders.pubkey import Pubkey
 from spl.token.instructions import create_idempotent_associated_token_account
 
 from core.quote_account import quote_settlement_account
-from interfaces.core import InstructionBuilder, TokenInfo
+from interfaces.core import InstructionBuilder, Platform, TokenInfo
 from platforms.launchlab.address_provider import LaunchLabAddressProvider
 from utils.idl_parser import IDLParser
 
@@ -39,7 +39,7 @@ _SWAP_ACCOUNTS: list[tuple[str, bool]] = [
 
 
 class LaunchLabInstructionBuilder(InstructionBuilder):
-    """Builds LaunchLab trades. Subclasses only name their platform.
+    """Builds LaunchLab trades, the same for every platform config.
 
     A SOL-quoted pool settles through a throwaway wrapped-SOL account created,
     used and closed inside the transaction. Any other quote is paid from, and
@@ -51,6 +51,11 @@ class LaunchLabInstructionBuilder(InstructionBuilder):
         discriminators = idl_parser.get_instruction_discriminators()
         self._buy_exact_in = discriminators["buy_exact_in"]
         self._sell_exact_in = discriminators["sell_exact_in"]
+
+    @property
+    def platform(self) -> Platform:
+        """Every launchpad on LaunchLab."""
+        return Platform.LAUNCHLAB
 
     @property
     def spends_exact_amount_in(self) -> bool:
