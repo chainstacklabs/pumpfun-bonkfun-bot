@@ -35,7 +35,7 @@ from core.keystore import (
     keypair_from_secret,
     keystore_pubkey,
     load_keystore,
-    password_from_env,
+    new_keystore_variable,
     unlock_from_env,
     write_keystore,
 )
@@ -44,7 +44,7 @@ _PROMPT = "the prompt"
 _COMMANDS = ("create", "import", "show")
 # A Solana CLI keypair file is a few hundred bytes.
 _MAX_KEYPAIR_FILE = 4096
-_SHORT_PASSWORD = 8
+_ADVISED_LENGTH = 8
 # Typed values this short are not hidden in usage errors: they would match
 # inside the message's own words, and no secret is that short.
 _MIN_HIDDEN = 4
@@ -131,8 +131,9 @@ def _key_shaped(text: str) -> bool:
 
 
 def _new_password(path: Path) -> str:
-    password, variable = password_from_env(path)
-    if password:
+    variable = new_keystore_variable(path)
+    if variable:
+        password = os.environ[variable]
         _note(f"password from {variable}")
     else:
         password = getpass.getpass("Keystore password: ")
@@ -140,8 +141,8 @@ def _new_password(path: Path) -> str:
             _stop("the password is empty")
         if getpass.getpass("Repeat the password: ") != password:
             _stop("the passwords do not match")
-    if len(password) < _SHORT_PASSWORD:
-        _note(f"warning: the password is shorter than {_SHORT_PASSWORD} characters")
+    if len(password) < _ADVISED_LENGTH:
+        _note(f"warning: the password is shorter than {_ADVISED_LENGTH} characters")
     return password
 
 
