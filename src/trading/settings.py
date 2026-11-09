@@ -95,6 +95,9 @@ class TraderSettings:
     wait_time_after_buy: int = 15
     wait_time_before_new_token: int = 15
     max_token_age: int | float = 0.001
+    # What `max_token_age` counts from: "detection" (when the listener saw the
+    # coin) or "chain" (the slot its create landed in).
+    age_from: str = "detection"
     token_wait_timeout: int = 30
 
     cleanup_mode: str = "disabled"

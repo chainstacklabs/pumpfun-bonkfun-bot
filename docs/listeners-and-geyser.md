@@ -82,6 +82,13 @@ start on the rest. `geyser` stays the default; pick `shreds` deliberately.
 stream; `tests/regression/verify_shreds_listener.py` pins the listener on
 pump.fun and `verify_launchlab_shreds.py` on LaunchLab.
 
+## Create slot
+
+Every listener sets `TokenInfo.creation_slot` from the frame the create came in:
+`context.slot` (logs), `value.slot` (blocks), `transaction.slot` (geyser),
+`deshred_transaction.slot` (shreds). `filters.age_from: chain` reads it, so
+a listener that drops it makes every coin count from detection instead.
+
 ## Migrations
 
 `listen_for_tokens` takes an optional `pool_callback`. With it set, every

@@ -12,6 +12,7 @@ from time import monotonic
 from solders.pubkey import Pubkey
 
 from core.pubkeys import normalize_quote_mint
+from core.slot_clock import SlotClock
 from interfaces.core import PoolReady, TokenInfo
 from monitoring.base_listener import BaseTokenListener
 from trading.migration import MigrationResolver, PoolNotTradable
@@ -26,18 +27,25 @@ TokenHandler = Callable[[TokenInfo], Awaitable[None]]
 class TokenIntake:
     """Turns the listener's detections into coins worth handing to the buyer."""
 
-    def __init__(
+    #: Set under `filters.age_from: chain`; None counts from detection.
+    slot_clock: SlotClock | None = None
+
+    def __init__(  # noqa: PLR0913
         self,
         settings: TraderSettings,
         token_listener: BaseTokenListener,
         quote_amounts: dict[Pubkey, float],
         allowed_quote_mints: set[Pubkey] | None,
+        *,
         pool_resolver: MigrationResolver | None = None,
+        slot_clock: SlotClock | None = None,
     ) -> None:
         """Set up the intake.
 
         Args:
             pool_resolver: Required with `trade.entry: migration`; unused otherwise
+            slot_clock: Required with `filters.age_from: chain`, where a
+                launch's age counts from the slot its create landed in
         """
         self.token_listener = token_listener
         self.entry = settings.entry
@@ -47,6 +55,9 @@ class TokenIntake:
         self.match_string = settings.match_string
         self.bro_address = settings.bro_address
         self.max_token_age = settings.max_token_age
+        self.slot_clock = slot_clock if settings.age_from == "chain" else None
+        if settings.age_from == "chain" and slot_clock is None:
+            raise ValueError("filters.age_from: chain needs a slot clock")  # noqa: TRY003
         self.token_wait_timeout = settings.token_wait_timeout
         self.quote_amounts = quote_amounts
         self.allowed_quote_mints = allowed_quote_mints
@@ -101,7 +112,7 @@ class TokenIntake:
             if token_key in self.processed_tokens:
                 return
             self.processed_tokens.add(token_key)
-            skip_reason = self.skip_reason(token)
+            skip_reason = self.skip_reason(token) or self._too_old(token, monotonic())
             if skip_reason:
                 logger.info(f"Skipping {token.symbol} - {skip_reason}; still waiting")
                 return
@@ -110,6 +121,7 @@ class TokenIntake:
             found_token = token
             token_found.set()
 
+        self._start_slot_clock()
         listener_task = asyncio.create_task(
             self.token_listener.listen_for_tokens(
                 token_callback,
@@ -138,6 +150,7 @@ class TokenIntake:
                 await listener_task
             except asyncio.CancelledError:
                 pass
+            await self._stop_slot_clock()
 
     async def run(self, handle_token: TokenHandler) -> None:
         """Queue every detection and hand each fresh one to `handle_token`, one at a time.
@@ -145,6 +158,7 @@ class TokenIntake:
         Returns when the listener stops; the queue processor is cancelled then.
         """
         processor_task = asyncio.create_task(self._process_token_queue(handle_token))
+        self._start_slot_clock()
 
         try:
             await self.token_listener.listen_for_tokens(
@@ -161,6 +175,39 @@ class TokenIntake:
                 await processor_task
             except asyncio.CancelledError:
                 pass
+            await self._stop_slot_clock()
+
+    def _start_slot_clock(self) -> None:
+        if self.slot_clock is not None:
+            self.slot_clock.start()
+
+    async def _stop_slot_clock(self) -> None:
+        if self.slot_clock is not None:
+            await self.slot_clock.stop()
+
+    def _too_old(self, token_info: TokenInfo, detected_at: float) -> str | None:
+        """Why the coin is past `max_token_age`, or None while it is fresh.
+
+        Under `age_from: chain` the age counts from the slot its create
+        landed in; a coin whose slot is unknown, or read before the clock has
+        a current slot, counts from when it was detected.
+        """
+        if self.slot_clock is not None:
+            age = self.slot_clock.age(token_info.creation_slot)
+            if age is not None:
+                if age > self.max_token_age:
+                    return (
+                        f"too old ({age:.1f}s since created on chain > "
+                        f"max_token_age {self.max_token_age}s)"
+                    )
+                return None
+        age = monotonic() - detected_at
+        if age > self.max_token_age:
+            return (
+                f"too old ({age:.1f}s since detected > max_token_age "
+                f"{self.max_token_age}s)"
+            )
+        return None
 
     def forget_unprocessed(self) -> None:
         """Drop discovery times of coins that were queued but never processed."""
@@ -207,22 +254,17 @@ class TokenIntake:
 
                 # Check if token is still "fresh"
                 current_time = monotonic()
-                token_age = current_time - self.token_timestamps.get(
-                    token_key, current_time
-                )
-
-                if token_age > self.max_token_age:
-                    logger.info(
-                        f"Skipping token {token_info.symbol} - too old "
-                        f"({token_age:.1f}s since detected > max_token_age "
-                        f"{self.max_token_age}s)"
-                    )
+                detected_at = self.token_timestamps.get(token_key, current_time)
+                too_old = self._too_old(token_info, detected_at)
+                if too_old:
+                    logger.info(f"Skipping token {token_info.symbol} - {too_old}")
                     continue
 
                 self.processed_tokens.add(token_key)
 
                 logger.info(
-                    f"Processing fresh token: {token_info.symbol} (age: {token_age:.1f}s)"
+                    f"Processing fresh token: {token_info.symbol} "
+                    f"(age: {current_time - detected_at:.1f}s since detected)"
                 )
                 await handle_token(token_info)
 

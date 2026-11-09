@@ -29,6 +29,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": true,
+    "creation_slot": null,
     "additional_data": null
    },
    "stonkfun geyser": {
@@ -57,6 +58,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": true,
+    "creation_slot": null,
     "additional_data": null
    },
    "letsbonk block": null,
@@ -166,6 +168,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": true,
+    "creation_slot": null,
     "additional_data": null
    },
    "stonkfun geyser": {
@@ -194,6 +197,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": true,
+    "creation_slot": null,
     "additional_data": null
    },
    "letsbonk block": null,
@@ -303,6 +307,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 100,
     "state_from_event": true,
+    "creation_slot": null,
     "additional_data": null
    },
    "stonkfun geyser": {
@@ -331,6 +336,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 100,
     "state_from_event": true,
+    "creation_slot": null,
     "additional_data": null
    },
    "letsbonk block": null,
@@ -445,6 +451,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": true,
+    "creation_slot": null,
     "additional_data": null
    },
    "launchlab geyser": {
@@ -473,6 +480,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": true,
+    "creation_slot": null,
     "additional_data": null
    },
    "stonkfun block": null,
@@ -559,6 +567,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": true,
+    "creation_slot": null,
     "additional_data": null
    },
    "launchlab geyser": {
@@ -587,6 +596,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": true,
+    "creation_slot": null,
     "additional_data": null
    },
    "stonkfun block": null,
@@ -1071,6 +1081,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": true,
+    "creation_slot": 374917113,
     "additional_data": null
    },
    "lets_bonk shreds": {
@@ -1099,6 +1110,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": true,
+    "creation_slot": 374917113,
     "additional_data": null
    },
    "stonk_fun shreds": null
@@ -1131,6 +1143,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": true,
+    "creation_slot": 453217184,
     "additional_data": null
    },
    "lets_bonk shreds": null,
@@ -1160,6 +1173,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": true,
+    "creation_slot": 453217184,
     "additional_data": null
    }
   },
@@ -1191,6 +1205,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": true,
+    "creation_slot": 453223655,
     "additional_data": null
    },
    "lets_bonk shreds": null,
@@ -1220,6 +1235,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": true,
+    "creation_slot": 453223655,
     "additional_data": null
    }
   },
@@ -1251,6 +1267,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 100,
     "state_from_event": true,
+    "creation_slot": 453238203,
     "additional_data": null
    },
    "lets_bonk shreds": null,
@@ -1280,6 +1297,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 100,
     "state_from_event": true,
+    "creation_slot": 453238203,
     "additional_data": null
    }
   },
@@ -1311,6 +1329,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": true,
+    "creation_slot": 464261424,
     "additional_data": null
    },
    "lets_bonk shreds": null,
@@ -1344,6 +1363,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": true,
+    "creation_slot": 372508275,
     "additional_data": null
    },
    "lets_bonk shreds": null,
@@ -2616,6 +2636,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": false,
+    "creation_slot": null,
     "additional_data": {
      "entry": "migration",
      "pool": "CwQNxHKXQaT4PH64uTh3jEBbTfFx6Lzc5tY9u8GHwtiS",
@@ -2651,6 +2672,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": false,
+    "creation_slot": null,
     "additional_data": {
      "entry": "migration",
      "pool": "Ba5k1tHkB5tmfHyZJqWnpwg1cRKdLnYuvEeiexwCJBYn",
@@ -2686,6 +2708,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": false,
+    "creation_slot": null,
     "additional_data": {
      "entry": "migration",
      "pool": "CA1pignAqtqUpajScjbUdwyaUg6yS24ysjS8fdTmNQ53",
@@ -2721,6 +2744,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": false,
+    "creation_slot": null,
     "additional_data": {
      "entry": "migration",
      "pool": "2HSDj1k6zkwwZvdGiZikLRBAqsj6SZZX4e9ha15knvSh",
@@ -2756,6 +2780,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": false,
+    "creation_slot": null,
     "additional_data": {
      "entry": "migration",
      "pool": "DHpFy3CM4cxQmoR14cMA3wA2V5SB9yHfVPiLZCYrfakt",
@@ -2791,6 +2816,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 0,
     "state_from_event": false,
+    "creation_slot": null,
     "additional_data": {
      "entry": "migration",
      "pool": "FUqjQxftdS9ic7mTpBWy1JtzQ54sgqaVL7nZ9uvoFn55",
@@ -2826,6 +2852,7 @@
     "virtual_quote_reserves": null,
     "transfer_fee_bps": 300,
     "state_from_event": false,
+    "creation_slot": null,
     "additional_data": {
      "entry": "migration",
      "pool": "9VjkGqSgKcPG3rYgMAt9GrC6EotvdMmUCD4oeArJVogd",

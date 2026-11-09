@@ -28,6 +28,7 @@ from core.pubkeys import (
     resolve_quote_mint,
     resolve_quote_token_program,
 )
+from core.slot_clock import SlotClock
 from core.wallet import Wallet
 from interfaces.core import Platform, TokenInfo, TradeFailureReason
 from monitoring.listener_factory import ListenerFactory
@@ -248,6 +249,11 @@ class UniversalTrader:
                     ),
                 )
                 if self.entry == "migration"
+                else None
+            ),
+            slot_clock=(
+                SlotClock(self.solana_client)
+                if settings.age_from == "chain"
                 else None
             ),
         )
