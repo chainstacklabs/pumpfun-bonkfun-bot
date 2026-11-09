@@ -185,28 +185,24 @@ class TokenIntake:
         if self.slot_clock is not None:
             await self.slot_clock.stop()
 
-    def _too_old(self, token_info: TokenInfo, detected_at: float) -> str | None:
-        """Why the coin is past `max_token_age`, or None while it is fresh.
+    def _age(self, token_info: TokenInfo, detected_at: float) -> tuple[float, str]:
+        """The coin's age in seconds, and what it counts from.
 
-        Under `age_from: chain` the age counts from the slot its create
-        landed in; a coin whose slot is unknown, or read before the clock has
-        a current slot, counts from when it was detected.
+        Under `age_from: chain` it counts from the slot its create landed in;
+        a coin whose slot is unknown, or read before the clock has a current
+        slot, counts from when it was detected.
         """
         if self.slot_clock is not None:
             age = self.slot_clock.age(token_info.creation_slot)
             if age is not None:
-                if age > self.max_token_age:
-                    return (
-                        f"too old ({age:.1f}s since created on chain > "
-                        f"max_token_age {self.max_token_age}s)"
-                    )
-                return None
-        age = monotonic() - detected_at
+                return age, "since created on chain"
+        return monotonic() - detected_at, "since detected"
+
+    def _too_old(self, token_info: TokenInfo, detected_at: float) -> str | None:
+        """Why the coin is past `max_token_age`, or None while it is fresh."""
+        age, since = self._age(token_info, detected_at)
         if age > self.max_token_age:
-            return (
-                f"too old ({age:.1f}s since detected > max_token_age "
-                f"{self.max_token_age}s)"
-            )
+            return f"too old ({age:.1f}s {since} > max_token_age {self.max_token_age}s)"
         return None
 
     def forget_unprocessed(self) -> None:
@@ -262,9 +258,10 @@ class TokenIntake:
 
                 self.processed_tokens.add(token_key)
 
+                age, since = self._age(token_info, detected_at)
                 logger.info(
                     f"Processing fresh token: {token_info.symbol} "
-                    f"(age: {current_time - detected_at:.1f}s since detected)"
+                    f"(age: {age:.1f}s {since})"
                 )
                 await handle_token(token_info)
 

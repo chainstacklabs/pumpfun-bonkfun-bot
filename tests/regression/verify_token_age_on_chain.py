@@ -11,7 +11,8 @@ Offline machine checks, no network and no funds moved:
      the last reading when a read fails, and makes no RPC call itself.
   B. Under `chain` the intake skips a coin whose create is older than
      `max_token_age`, however fresh its detection, in continuous and in
-     single-token mode, saying "since created on chain"; a coin whose slot is
+     single-token mode, saying "since created on chain", and logs a coin it
+     takes with that age; a coin whose slot is
      unknown counts from detection. Under `detection` (the default) the slot
      is ignored and no clock runs. The clock runs only while the intake
      listens.
@@ -194,6 +195,14 @@ async def _intake_problems() -> list[str]:
             )
         if not any("since created on chain" in line for line in logs.lines):
             problems.append("the skip does not say the age is on chain")
+        fresh_lines = [
+            line
+            for line in logs.lines
+            if line.startswith("Processing fresh token")
+            and "since created on chain" in line
+        ]
+        if len(fresh_lines) != 1:
+            problems.append(f"the fresh coin's line: {fresh_lines}")
         if not client.calls:
             problems.append("the clock never read the current slot while listening")
         if intake.slot_clock._task is None or not intake.slot_clock._task.done():  # noqa: SLF001
