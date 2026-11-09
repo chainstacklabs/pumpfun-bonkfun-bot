@@ -550,6 +550,10 @@ class UniversalTrader:
         mint's, and burns nothing in them.
         """
         settings = self.settings
+        try:
+            await self.positions.burn_given_up()
+        except Exception:
+            logger.exception("Could not burn the coins given up on")
         kept = self.positions.stored_mints()
         mints_list = [mint for mint in self.traded_mints if str(mint) not in kept]
         post_session = settings.cleanup_mode == "post_session"

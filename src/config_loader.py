@@ -317,6 +317,9 @@ CLEANUP_PRIORITY_FEE_NOT_BOOL = (
 def validate_cleanup_config(config: dict) -> None:
     """`cleanup.with_priority_fee` is a bool or left out (null counts as left out).
 
+    `cleanup.burn_given_up_below` is a positive number of SOL or left out, and
+    needs a cleanup mode that runs at the end of a session.
+
     A quoted "false" or a 0 would read as true, sending closes with a fee the
     config meant to turn off, so both are refused.
     """
@@ -326,6 +329,17 @@ def validate_cleanup_config(config: dict) -> None:
     fee = cleanup.get("with_priority_fee")
     if fee is not None and not isinstance(fee, bool):
         raise ValueError(CLEANUP_PRIORITY_FEE_NOT_BOOL)
+    below = cleanup.get("burn_given_up_below")
+    if below is None:
+        return
+    if isinstance(below, bool) or not isinstance(below, (int, float)) or below <= 0:
+        raise ValueError(  # noqa: TRY003
+            "cleanup.burn_given_up_below must be a number of SOL above 0, or null"
+        )
+    if cleanup.get("mode", "disabled") not in ("post_session", "after_sell"):
+        raise ValueError(  # noqa: TRY003
+            "cleanup.burn_given_up_below needs cleanup.mode post_session or after_sell"
+        )
 
 
 def validate_checks_config(config: dict) -> None:

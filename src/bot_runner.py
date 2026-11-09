@@ -265,6 +265,7 @@ def build_trader_settings(
         # On unless explicitly false: a missing key or null sends closes with it.
         cleanup_with_priority_fee=cfg.get("cleanup", {}).get("with_priority_fee")
         is not False,
+        cleanup_burn_given_up_below=cfg.get("cleanup", {}).get("burn_given_up_below"),
         # Trading filters
         match_string=cfg["filters"].get("match_string"),
         bro_address=cfg["filters"].get("bro_address"),

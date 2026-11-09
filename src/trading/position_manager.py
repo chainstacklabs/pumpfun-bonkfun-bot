@@ -16,12 +16,14 @@ from types import MappingProxyType
 
 from solders.pubkey import Pubkey
 
+from cleanup.manager import AccountCleanupManager
 from cleanup.modes import handle_cleanup_after_sell, handle_cleanup_cleared
 from core import session
 from core.client import SolanaClient
 from core.priority_fee.manager import PriorityFeeManager
 from core.pubkeys import (
     TOKEN_DECIMALS,
+    WSOL_MINT,
     normalize_quote_mint,
     quote_symbol,
     quote_units_per_token,
@@ -130,6 +132,9 @@ class PositionManager:
     #: Coins whose exit this session gave up on while still holding them, by
     #: mint. Rebound, never mutated, like `_closes`.
     _given_up: Mapping[Pubkey, TokenInfo] = MappingProxyType({})
+    #: SOL below which a given-up coin is burned at the end of the session;
+    #: None burns nothing.
+    cleanup_burn_given_up_below: float | None = None
 
     # Sales this session, how many were read back with their slot, and the
     # latest such slot: cleanup reads from a node that has reached it.
@@ -176,6 +181,7 @@ class PositionManager:
         self.cleanup_mode = settings.cleanup_mode
         self.cleanup_force_close_with_burn = settings.cleanup_force_close_with_burn
         self.cleanup_with_priority_fee = settings.cleanup_with_priority_fee
+        self.cleanup_burn_given_up_below = settings.cleanup_burn_given_up_below
 
         # Coins whose graduation has been logged, so it is said once.
         self._graduated_mints: set[Pubkey] = set()
@@ -849,6 +855,49 @@ class PositionManager:
         if self.store is None:
             return set()
         return {m for m in self._given_up if str(m) in self.store.mints()}
+
+    async def burn_given_up(self) -> None:
+        """Burn and close each given-up coin worth less than `burn_given_up_below`.
+
+        Only coins this session gave up on that are still in the file, quoted in
+        SOL and priced above zero; anything that can't be priced is kept. A coin
+        whose burn and close landed leaves the positions file.
+        """
+        below = self.cleanup_burn_given_up_below
+        if below is None or self.cleanup_mode not in ("post_session", "after_sell"):
+            return
+        stored = PositionStore.peek(self.store.path) if self.store else []
+        held = {p.token_info.mint: p for p in stored}
+        cleanup = AccountCleanupManager(
+            self.solana_client,
+            self.wallet,
+            self.priority_fee_manager,
+            self.cleanup_with_priority_fee,
+            force_burn=True,
+        )
+        for mint in self.given_up_mints:
+            stored = held.get(mint)
+            if stored is None:
+                continue
+            token_info = stored.token_info
+            if normalize_quote_mint(token_info.quote_mint) != WSOL_MINT:
+                continue
+            try:
+                price = await self._read_price(token_info)
+            except Exception:  # noqa: BLE001 - unpriced is kept, never burned
+                logger.warning(f"Not burning {token_info.symbol}: no price to value it")
+                continue
+            worth = price * stored.buy_result.amount
+            if price <= 0 or worth >= below:
+                continue
+            logger.info(
+                f"Burning {stored.buy_result.amount} {token_info.symbol}, worth "
+                f"{worth:.9f} SOL, below cleanup.burn_given_up_below {below} SOL"
+            )
+            if await cleanup.cleanup_ata(
+                mint, token_info.token_program_id, settle=False
+            ):
+                self.store.remove(mint)
 
     async def read_given_up_rent(self) -> None:
         """Record the rent each given-up coin's token account holds, for the summary.

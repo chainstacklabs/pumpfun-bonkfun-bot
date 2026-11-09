@@ -112,6 +112,10 @@ class AccountCleanupManager:
     #: 5,600 with the budget instructions; the rest is headroom.
     COMPUTE_UNITS = 20_000
 
+    #: Accounts found not to exist, so there is nothing left to close.
+    #: Rebound, never mutated, so a manager built without `__init__` has it.
+    _gone: frozenset[Pubkey] = frozenset()
+
     def __init__(
         self,
         client: SolanaClient,
@@ -139,10 +143,11 @@ class AccountCleanupManager:
         *,
         settle: bool = True,
         after_slot: int | None = None,
-    ) -> None:
+    ) -> bool:
         """Wait for the RPC node to settle, then burn what is left if asked and close the ATA.
 
         Skips an account that doesn't exist, or holds tokens without force burn.
+        True once the account is closed or does not exist.
 
         Args:
             token_program_id: TOKEN or TOKEN_2022; None means TOKEN_2022
@@ -152,7 +157,7 @@ class AccountCleanupManager:
         """
         if settle and after_slot is None:
             await self._settle()
-        await self._close_ata(mint, token_program_id, after_slot)
+        return await self._close_ata(mint, token_program_id, after_slot)
 
     async def cleanup_atas(
         self,
@@ -255,13 +260,16 @@ class AccountCleanupManager:
         mint: Pubkey,
         token_program_id: Pubkey | None,
         after_slot: int | None = None,
-    ) -> None:
-        """Burn what is left if asked and close the ATA; never raises."""
+    ) -> bool:
+        """Burn what is left if asked and close the ATA; never raises.
+
+        True once the account is closed or does not exist.
+        """
         if token_program_id is None:
             token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
         try:
             ata = self.wallet.get_associated_token_address(mint, token_program_id)
-            await self._close(
+            return await self._close(
                 mint,
                 ata,
                 token_program_id,
@@ -270,6 +278,7 @@ class AccountCleanupManager:
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Cleanup failed for the token account of {mint}: {e!s}")
+            return False
 
     async def _close_swept(
         self, mint: Pubkey, account: Pubkey, token_program_id: Pubkey
@@ -289,8 +298,10 @@ class AccountCleanupManager:
         burn: bool,
         swept: bool = False,
         after_slot: int | None = None,
-    ) -> None:
+    ) -> bool:
         """Burn what is left if `burn` and close `account`, until it lands.
+
+        True once it is closed, or when it does not exist.
 
         A close is sent again only once the block height is past its
         blockhash's last valid height and its signature is not known to have
@@ -316,15 +327,15 @@ class AccountCleanupManager:
                 min_context_slot=slot,
             )
             if instructions is None:
-                return
+                return account in self._gone
             outcome, signature, slot = await self._send(account, instructions)
             if outcome is ConfirmationStatus.SUCCESS:
                 logger.info(f"Closed successfully: {account}")
                 session.current().add_close(self._lamports.pop(account, None))
-                return
+                return True
             if outcome is ConfirmationStatus.REVERTED:
                 logger.error(f"Failed to close token account {account}: {signature}")
-                return
+                return False
             if outcome is ConfirmationStatus.UNCONFIRMED:
                 logger.warning(
                     f"Could not tell within {self.MAX_WAIT:g}s whether the close of "
@@ -332,7 +343,7 @@ class AccountCleanupManager:
                     f"the account is still open, reclaim its rent with "
                     f"tools/cleanup_accounts.py {mint}"
                 )
-                return
+                return False
             if attempt < self.CLOSE_ATTEMPTS:
                 logger.info(
                     f"Close of {account} did not land; sending it again "
@@ -343,6 +354,7 @@ class AccountCleanupManager:
             f"{self.CLOSE_ATTEMPTS} attempts landed. Reclaim its rent with "
             f"tools/cleanup_accounts.py {mint}"
         )
+        return False
 
     async def _close_instructions(  # noqa: PLR0913
         self,
@@ -364,6 +376,7 @@ class AccountCleanupManager:
             info = await self._read_account(account, min_context_slot)
         except ValueError:
             logger.info(f"{label} {account} does not exist or already closed.")
+            self._gone = self._gone | {account}
             return None
         # What its close returns to the wallet, for the session summary.
         self._lamports[account] = getattr(info, "lamports", None)

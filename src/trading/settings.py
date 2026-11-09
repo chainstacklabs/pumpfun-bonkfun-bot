@@ -103,6 +103,9 @@ class TraderSettings:
     cleanup_mode: str = "disabled"
     cleanup_force_close_with_burn: bool = False
     cleanup_with_priority_fee: bool = True
+    # SOL below which a coin the bot gave up on is burned at session end;
+    # None burns none.
+    cleanup_burn_given_up_below: float | None = None
 
     match_string: str | None = None
     bro_address: str | None = None

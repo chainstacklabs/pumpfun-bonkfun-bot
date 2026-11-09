@@ -69,7 +69,9 @@ monitored, and no cleanup runs, counting the part in `parts_sold` and its PnL in
 gave up or could not be resolved, still holds its coin. An exit that gives up
 (`PositionManager._give_up`) marks the record `given_up` and the session lists
 it; resuming clears the mark. `bot_runner` holds `<positions file>.lock`
-(`trading/run_lock.py`) while a bot runs.
+(`trading/run_lock.py`) while a bot runs. `cleanup.burn_given_up_below` burns,
+at the start of shutdown cleanup, only coins given up this session, SOL-quoted,
+priced above zero and worth less than it (`verify_burn_given_up.py`).
 On start `PositionManager.resume` reads the wallet's balance before holding a
 position again; a coin no longer held is cleared, never sold. A position
 another wallet bought (each record names its wallet) is kept and skipped.
