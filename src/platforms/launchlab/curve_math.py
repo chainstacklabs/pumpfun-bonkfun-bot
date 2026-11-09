@@ -24,16 +24,13 @@ def _ceil_div(numerator: int, denominator: int) -> int:
     return -(-numerator // denominator)
 
 
-def mint_transfer_fee(mint_data: bytes) -> tuple[int, int] | None:
-    """A Token-2022 mint's transfer fee, as (basis points, maximum fee raw).
+def mint_transfer_fee(mint_data: bytes) -> tuple[tuple[int, int], ...]:
+    """A Token-2022 mint's scheduled transfer fees, each (basis points, maximum fee raw).
 
-    Returns the higher of the scheduled older and newer fees. A rate change only
-    takes effect two epochs after it is set, and taking the higher one avoids an
-    epoch read while never underestimating what a transfer loses.
-
-    Returns:
-        None when the mint has no TransferFeeConfig extension — then a transfer
-        loses nothing and there is nothing withheld to harvest.
+    Both the older and the newer fee: a rate change only takes effect two epochs
+    after it is set, and `withheld_fee` charges whichever withholds more on the
+    amount, so nothing is underestimated without an epoch read. Empty when the
+    mint has no TransferFeeConfig extension.
     """
     offset = _EXTENSIONS_OFFSET
     while offset + 4 <= len(mint_data):
@@ -48,16 +45,29 @@ def mint_transfer_fee(mint_data: bytes) -> tuple[int, int] | None:
             _, newer_max, newer_bps = struct.unpack_from(
                 "<QQH", body, _NEWER_FEE_OFFSET
             )
-            return max((older_bps, older_max), (newer_bps, newer_max))
+            return tuple(
+                dict.fromkeys(((older_bps, older_max), (newer_bps, newer_max)))
+            )
         offset += 4 + length
-    return None
+    return ()
 
 
-def withheld_fee(amount: int, transfer_fee_bps: int, maximum_fee: int) -> int:
-    """What Token-2022 withholds from a transfer of `amount`, rounded up and capped."""
-    if not transfer_fee_bps:
-        return 0
-    return min(_ceil_div(amount * transfer_fee_bps, BASIS_POINTS), maximum_fee)
+def transfer_fee_bps(fees: tuple[tuple[int, int], ...]) -> int:
+    """The highest scheduled rate, for filters and logs."""
+    return max((bps for bps, _ in fees), default=0)
+
+
+def withheld_fee(amount: int, fees: tuple[tuple[int, int], ...]) -> int:
+    """What Token-2022 withholds from a transfer of `amount`: rounded up, capped,
+    and the larger of the scheduled fees."""
+    return max(
+        (
+            min(_ceil_div(amount * bps, BASIS_POINTS), maximum)
+            for bps, maximum in fees
+            if bps
+        ),
+        default=0,
+    )
 
 
 def spot_price_raw(pool: dict) -> float:
@@ -78,7 +88,7 @@ def buy_amount_out(
     pool: dict,
     amount_in: int,
     fee_rate: int,
-    transfer_fee: tuple[int, int] = (0, 0),
+    transfer_fee: tuple[tuple[int, int], ...] = (),
 ) -> int:
     """Raw base tokens delivered to the buyer for exactly `amount_in` raw quote.
 
@@ -87,27 +97,27 @@ def buy_amount_out(
 
     Args:
         fee_rate: Total curve fee, parts per million (trade + platform + creator)
-        transfer_fee: (basis points, maximum fee raw) of the base mint
+        transfer_fee: The base mint's scheduled fees, from `mint_transfer_fee`
     """
     net_in = amount_in - _ceil_div(amount_in * fee_rate, FEE_RATE_DENOMINATOR)
     base_reserve = pool["virtual_base"] - pool["real_base"]
     quote_reserve = pool["virtual_quote"] + pool["real_quote"]
     out = base_reserve * net_in // (quote_reserve + net_in)
-    return out - withheld_fee(out, *transfer_fee)
+    return out - withheld_fee(out, transfer_fee)
 
 
 def sell_amount_out(
     pool: dict,
     amount_in: int,
     fee_rate: int,
-    transfer_fee: tuple[int, int] = (0, 0),
+    transfer_fee: tuple[tuple[int, int], ...] = (),
 ) -> int:
     """Raw quote paid to the seller for sending `amount_in` raw base tokens.
 
     The transfer fee is withheld on the way into the pool, so the curve trades
     on what arrives, and the curve fee then comes off the quote side.
     """
-    arrived = amount_in - withheld_fee(amount_in, *transfer_fee)
+    arrived = amount_in - withheld_fee(amount_in, transfer_fee)
     base_reserve = pool["virtual_base"] - pool["real_base"]
     quote_reserve = pool["virtual_quote"] + pool["real_quote"]
     gross = quote_reserve * arrived // (base_reserve + arrived)

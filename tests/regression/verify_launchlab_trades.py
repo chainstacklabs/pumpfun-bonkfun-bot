@@ -31,6 +31,9 @@ Offline machine checks, no network and no funds moved:
   F. Single-token mode passes over a coin its filters refuse — an unconfigured
      quote asset, a transfer fee above `max_transfer_fee_bps` — and waits for
      one it can buy, instead of exiting on the first launch it sees.
+  G. A mint with a fee change scheduled keeps both fees, and a transfer loses
+     whichever withholds more on its amount: a lower rate with a higher cap
+     wins on a large transfer, the higher rate on a small one.
 
 Usage:
     uv run tests/regression/verify_launchlab_trades.py
@@ -58,7 +61,9 @@ from platforms import PlatformImplementations  # noqa: E402
 from platforms.launchlab import LAUNCHLAB_PROGRAM  # noqa: E402
 from platforms.launchlab.curve_math import (  # noqa: E402
     buy_amount_out,
+    mint_transfer_fee,
     sell_amount_out,
+    transfer_fee_bps,
     withheld_fee,
 )
 from platforms.launchlab.instruction_builder import _SWAP_ACCOUNTS  # noqa: E402
@@ -203,14 +208,14 @@ def check_a_math_reproduces_trades() -> bool:
         trade = _trade(entry)
         event = trade["event"]
         pool = asyncio.run(_priced_pool(entry, event))
-        tax = (pool["transfer_fee_bps"], pool["transfer_fee_max"])
+        tax = pool["transfer_fees"]
         is_buy = trade["swap"]["data"][:8] == BUY_EXACT_IN
         if is_buy:
             predicted = buy_amount_out(pool, event["amount_in"], pool["fee_rate"], tax)
             good = (
                 predicted
                 == trade["base_delta"]
-                == event["amount_out"] - withheld_fee(event["amount_out"], *tax)
+                == event["amount_out"] - withheld_fee(event["amount_out"], tax)
             )
             detail = f"predicted {predicted}, delivered {trade['base_delta']}"
         else:
@@ -218,7 +223,7 @@ def check_a_math_reproduces_trades() -> bool:
             predicted = sell_amount_out(pool, sent, pool["fee_rate"], tax)
             good = predicted == event["amount_out"] and event[
                 "amount_in"
-            ] == sent - withheld_fee(sent, *tax)
+            ] == sent - withheld_fee(sent, tax)
             detail = f"predicted {predicted}, paid {event['amount_out']}"
         print(
             f"    {entry['label']}: fee {pool['fee_rate']} ppm, tax "
@@ -474,6 +479,33 @@ def check_f_single_token_mode_waits_past_refused_coins() -> bool:
     return ok
 
 
+def _mint_with_fees(older: tuple[int, int], newer: tuple[int, int]) -> bytes:
+    """A Token-2022 mint whose TransferFeeConfig schedules (bps, max) twice."""
+    body = bytes(72)
+    for bps, maximum in (older, newer):
+        body += struct.pack("<QQH", 0, maximum, bps)
+    return bytes(166) + struct.pack("<HH", 1, len(body)) + body
+
+
+def check_g_scheduled_fee_change() -> bool:
+    """G: both scheduled fees kept; the larger withholding wins per amount."""
+    fees = mint_transfer_fee(_mint_with_fees((100, 1_000), (50, 10**15)))
+    large = withheld_fee(10**9, fees)
+    small = withheld_fee(10_000, fees)
+    ok = (
+        fees == ((100, 1_000), (50, 10**15))
+        and large == 5_000_000
+        and small == 100
+        and transfer_fee_bps(fees) == 100
+        and mint_transfer_fee(_mint_with_fees((100, 10**15), (100, 10**15)))
+        == ((100, 10**15),)
+        and mint_transfer_fee(bytes(166)) == ()
+    )
+    if not ok:
+        print(f"  fees {fees}, withheld on 1e9 {large}, on 1e4 {small}")
+    return ok
+
+
 def main() -> int:
     """Run every check and report."""
     checks = [
@@ -485,6 +517,10 @@ def main() -> int:
         (
             "F: single-token mode waits past refused coins",
             check_f_single_token_mode_waits_past_refused_coins,
+        ),
+        (
+            "G: a scheduled fee change withholds the larger fee",
+            check_g_scheduled_fee_change,
         ),
     ]
     passed = 0

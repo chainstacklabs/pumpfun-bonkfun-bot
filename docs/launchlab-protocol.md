@@ -101,6 +101,9 @@ StonkFun reward coins are Token-2022 mints with a 1% or 3% transfer fee.
 - A buy delivers its output less the fee, and **`minimum_amount_out` is checked
   against what arrives**. A floor computed without the fee reverts `6004`.
 - A sell sends its amount and the pool trades on what arrives, less the fee.
+- The mint schedules two fees, each a rate and a cap: a change takes effect two
+  epochs after it is set. The bot charges whichever withholds more on the
+  amount, so it needs no epoch read and never underestimates the fee.
 - The fee is withheld **inside the receiving account**: the bot's own account,
   on a buy. Token-2022 refuses to close an account holding withheld fees
   (`0x23`), so cleanup runs the permissionless `HarvestWithheldTokensToMint`
