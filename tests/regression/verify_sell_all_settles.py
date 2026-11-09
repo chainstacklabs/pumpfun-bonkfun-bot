@@ -21,6 +21,8 @@ Offline machine checks, no network and no funds moved:
      transaction is read back: a broken pipe or a cancellation then loses
      nothing.
   7. The last sale of a position sold in parts reports the whole position.
+  8. A balance read asks a node that has reached the position's last trade:
+     one behind it fails the read and the record stays.
 
 Usage:
     uv run tests/regression/verify_sell_all_settles.py
@@ -45,6 +47,7 @@ from spl.token.instructions import get_associated_token_address  # noqa: E402
 
 import positions_cli  # noqa: E402
 from core.pubkeys import WSOL_MINT, SystemAddresses, quote_units_per_token  # noqa: E402
+from core.trade_deltas import TradeDeltas  # noqa: E402
 from interfaces.core import (  # noqa: E402
     ConfirmationStatus,
     Platform,
@@ -73,11 +76,21 @@ class _Client:
         self.outcomes: dict[str, ConfirmationStatus | None] = {}
         self.height = 0
         self.deltas_raise: BaseException | None = None
+        self.node_slot: int | None = None  # None: the node is never behind
 
     async def get_account_info(
-        self, key: Pubkey, commitment: str | None = None
+        self,
+        key: Pubkey,
+        commitment: str | None = None,
+        min_context_slot: int | None = None,
     ) -> SimpleNamespace:
         assert commitment == "confirmed"  # noqa: S101
+        if (
+            min_context_slot is not None
+            and self.node_slot is not None
+            and self.node_slot < min_context_slot
+        ):
+            raise RuntimeError("node behind")  # noqa: TRY003
         if key in self.quote_mints:  # a mint with 6 decimals at offset 44
             return SimpleNamespace(owner=SPL, data=bytes(44) + bytes([6]) + bytes(37))
         if key in self.programs:
@@ -285,9 +298,10 @@ async def check_unconfirmed_resolved() -> bool:
         _check(
             "one still unknown is kept, and not sold again while unknown",
             unknown.mint in first
-            and "sig-unknown" in (first[unknown.mint].given_up or "")
+            and getattr(first[unknown.mint].unresolved, "signature", None)
+            == "sig-unknown"
             and unknown.mint not in second_calls,
-            f"{first.get(unknown.mint) and first[unknown.mint].given_up!r}, "
+            f"{first.get(unknown.mint) and first[unknown.mint].unresolved!r}, "
             f"second run sold {second_calls}",
         ),
     ]
@@ -307,6 +321,7 @@ async def check_record_until_closed() -> bool:
         tools.seller.calls.clear()
         code_again = await _sell_all(store, tools)
         gone = coin.mint not in _records(store)
+    closes = [m for m, _p in tools.cleanup.calls if m == coin.mint]
     ok = (
         code == 1
         and kept is not None
@@ -314,6 +329,7 @@ async def check_record_until_closed() -> bool:
         and code_again == 0
         and gone
         and not tools.seller.calls
+        and len(closes) == 2  # noqa: PLR2004 - the failed close, then its retry
     )
     return _check(
         "a record stays, sold, until its close lands; the next run closes it",
@@ -373,15 +389,59 @@ async def check_settled_before_print_and_readback() -> bool:
             except (BrokenPipeError, asyncio.CancelledError):
                 pass
             record = _records(store).get(coin.mint)
-        ok = record is not None and record.buy_result.amount_raw == AMOUNT_RAW * 3 // 4
+        ok = (
+            record is not None
+            and record.buy_result.amount_raw == AMOUNT_RAW * 3 // 4
+            and record.realised is not None
+            and record.realised.sales == 1
+        )
         results.append(
             _check(
-                f"{label} loses no settled sale",
+                f"{label} loses no settled sale or its PnL",
                 ok,
-                str(record and record.buy_result.amount_raw),
+                str(record and (record.buy_result.amount_raw, record.realised)),
             )
         )
     return all(results)
+
+
+async def check_reads_reach_the_buy() -> bool:
+    tools = _tools()
+    coin = _coin()
+    with tempfile.TemporaryDirectory() as tmp:
+        store = PositionStore(Path(tmp) / "positions" / "bot.json")
+        tools.client.programs[coin.mint] = T22
+        store.add(
+            coin,
+            TradeResult(
+                success=True,
+                platform=coin.platform,
+                tx_signature="buy",
+                amount=AMOUNT_RAW / 1e6,
+                amount_raw=AMOUNT_RAW,
+                price=1.0e-6,
+                deltas=TradeDeltas(
+                    tokens_raw=AMOUNT_RAW,
+                    quote_raw=-1_000_000,
+                    network_fee_lamports=5_000,
+                    slot=1_000,
+                ),
+            ),
+            datetime.now(UTC).replace(tzinfo=None),
+            WALLET,
+        )
+        tools.client.node_slot = 900  # behind the buy
+        out = io.StringIO()
+        await _sell_all(store, tools, out)
+        kept = coin.mint in _records(store) and not tools.seller.calls
+        tools.client.node_slot = 1_100
+        await _sell_all(store, tools)
+        sold = tools.seller.calls == [coin.mint]
+    return _check(
+        "a node behind the buy can't drop the record; one past it sells",
+        kept and sold and "unreadable" in out.getvalue(),
+        f"kept {kept}, sold {sold}",
+    )
 
 
 async def check_whole_position_reported() -> bool:
@@ -411,6 +471,7 @@ async def main() -> int:
         await check_close_uses_mint_program(),
         await check_settled_before_print_and_readback(),
         await check_whole_position_reported(),
+        await check_reads_reach_the_buy(),
     ]
     if all(results):
         print("\nAll checks passed.")

@@ -35,7 +35,8 @@ class RunLock:
     """The lock on one positions file."""
 
     def __init__(self, positions_file: Path | str) -> None:
-        self.path = Path(f"{positions_file}.lock")
+        # Resolved, so a symlink to the file meets the same lock.
+        self.path = Path(f"{Path(positions_file).resolve()}.lock")
         self._file: IO | None = None
 
     def acquire(self) -> bool:

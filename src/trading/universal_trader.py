@@ -9,6 +9,7 @@ previous run left open are resumed first and count toward that limit.
 """
 
 import asyncio
+import contextlib
 import sys
 
 from solders.pubkey import Pubkey
@@ -619,7 +620,10 @@ class UniversalTrader:
         """Handle the first coin every check accepts, within `token_wait_timeout`.
 
         A coin a chain-reading check refuses is passed over, and the wait goes
-        on for what is left of the timeout.
+        on for what is left of the timeout. With chain-reading checks, the next
+        wait starts as soon as a coin is found, so a coin launched while one is
+        checked is not missed; one found then is taken up only while still
+        within `max_token_age`.
 
         Returns:
             The coin handled, or None when none was accepted in time
@@ -627,18 +631,38 @@ class UniversalTrader:
         intake = self.intake
         loop = asyncio.get_running_loop()
         deadline = loop.time() + intake.token_wait_timeout
-        while (remaining := deadline - loop.time()) > 0:
-            token_info = await (
+
+        def wait() -> asyncio.Task:
+            remaining = max(0.0, deadline - loop.time())
+            return asyncio.create_task(
                 intake.wait_for_migrated_token(timeout=remaining)
                 if self.entry == "migration"
                 else intake.wait_for_token(timeout=remaining)
             )
-            if token_info is None:
-                return None
-            if await self._handle_token(token_info):
-                return token_info
-            logger.info("Still waiting for a coin every check accepts")
-        return None
+
+        waiting = wait()
+        try:
+            while True:
+                token_info = await waiting
+                waiting = None
+                if token_info is None:
+                    return None
+                if self._has_chain_checks:
+                    waiting = wait()
+                    stale = intake.stale_reason(token_info)
+                    if stale:
+                        logger.info(f"Skipping {token_info.symbol} - {stale}")
+                        continue
+                if await self._handle_token(token_info):
+                    return token_info
+                logger.info("Still waiting for a coin every check accepts")
+                if waiting is None:
+                    waiting = wait()
+        finally:
+            if waiting is not None and not waiting.done():
+                waiting.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await waiting
 
     async def _handle_token(self, token_info: TokenInfo) -> bool:
         """Handle a new token creation event.

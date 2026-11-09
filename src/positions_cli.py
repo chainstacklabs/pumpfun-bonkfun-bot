@@ -55,13 +55,14 @@ from interfaces.core import (
     TradeFailureReason,
 )
 from platforms import get_platform_implementations
-from trading import trade_log
+from trading import trade_log, unresolved
 from trading.base import TradeResult
 from trading.platform_aware import PlatformAwareSeller, landed_sale, read_deltas
 from trading.pnl import CostBasis, Realised, SalePnl, cost_basis, pnl_text, sale_pnl
 from trading.position_store import PositionStore, StoredPosition
 from trading.pricing import read_price
 from trading.run_lock import RunLock
+from trading.unresolved import SALE, Earlier, Unresolved
 from utils import console
 from utils.logger import get_logger, install_secret_redaction
 
@@ -192,35 +193,49 @@ async def status(positions: Path, tools: Tools, out: TextIO) -> int:
 
 
 #: Seconds between the reads that must agree before a zero balance is believed,
-#: and between looks at an unconfirmed sale.
+#: and between looks at an unresolved trade.
 _RECHECK_SECONDS = 1.0
 #: Reads of a zero balance, all of which must find nothing.
 _ZERO_READS = 3
-#: How a record names a sale `sell-all` could not resolve; the signature follows.
-_UNRESOLVED = "sale unconfirmed: "
 
 
-async def _read_held(coin: TokenInfo, tools: Tools) -> tuple[int, bool, Pubkey]:
+def _fresh_from(position: StoredPosition) -> int | None:
+    """The slot a balance read must have reached: the position's last trade's."""
+    if position.sold:
+        return position.sold_slot
+    deltas = position.buy_result.deltas
+    return deltas.slot if deltas is not None else None
+
+
+async def _read_held(
+    coin: TokenInfo, tools: Tools, *, min_slot: int | None = None
+) -> tuple[int, bool, Pubkey]:
     """Raw amount in the wallet's account, whether it exists, and its program.
 
-    Read at "confirmed". An account that does not exist (closed after a sale by
-    hand) holds none. A record with no token program takes the mint's owner.
-    Zero is read again, `_ZERO_READS` times in all, since a node behind a
-    fresh buy shows none; every read must agree.
+    Read at "confirmed", from a node at least at `min_slot` when given: a node
+    behind it fails the read, which keeps the record. An account that does not
+    exist (closed after a sale by hand) holds none. A record with no token
+    program takes the mint's owner. Zero is read again, `_ZERO_READS` times in
+    all, since a node behind a fresh buy shows none; every read must agree.
 
     Raises:
         Exception: A read failed; nothing can be said
     """
+    at_slot = {} if min_slot is None else {"min_context_slot": min_slot}
     program = coin.token_program_id
     if program is None:
-        mint = await tools.client.get_account_info(coin.mint, commitment="confirmed")
+        mint = await tools.client.get_account_info(
+            coin.mint, commitment="confirmed", **at_slot
+        )
         program = mint.owner
     account = tools.wallet.get_associated_token_address(coin.mint, program)
     for read in range(_ZERO_READS):
         if read:
             await asyncio.sleep(_RECHECK_SECONDS)
         try:
-            info = await tools.client.get_account_info(account, commitment="confirmed")
+            info = await tools.client.get_account_info(
+                account, commitment="confirmed", **at_slot
+            )
         except ValueError:
             exists, held = False, 0
         else:
@@ -231,65 +246,75 @@ async def _read_held(coin: TokenInfo, tools: Tools) -> tuple[int, bool, Pubkey]:
     return 0, exists, program
 
 
-async def _resolve_sale(tools: Tools, sale: TradeResult) -> ConfirmationStatus | None:
-    """What became of a sale whose confirmation never came.
-
-    SUCCESS or REVERTED once a node says so; None once its blockhash has
-    expired with no node knowing it, so it can no longer land; UNCONFIRMED
-    when neither could be told before giving up.
-    """
-    signature = sale.tx_signature
-    last_valid = sale.last_valid_block_height
-    for look in range(60):
-        if look:
-            await asyncio.sleep(_RECHECK_SECONDS)
-        try:
-            status, _slot = await tools.client.get_signature_outcome(
-                signature, search_history=look == 0, quiet=True
-            )
-            if status in (ConfirmationStatus.SUCCESS, ConfirmationStatus.REVERTED):
-                return status
-            if status is None and last_valid is not None:
-                height, _slot = await tools.client.get_block_height_and_slot()
-                if height > last_valid:
-                    return None
-        except Exception:
-            logger.debug("Looking up a sale failed", exc_info=True)
-    return ConfirmationStatus.UNCONFIRMED
-
-
 def _realised(
     position: StoredPosition, sale: TradeResult, price: float, quote_mint: Pubkey
 ) -> tuple[Realised, SalePnl]:
     """The position's realised PnL with this sale added, and the sale's own.
 
-    Priced at the seller's figures; the bot reads its own sales back from the
-    chain, `sell-all` does not.
+    The stored total is copied, not changed, so an estimate can be replaced.
     """
     buy = position.buy_result
     cost = cost_basis(buy, quote_mint) or CostBasis(
         buy.price or price, from_chain=False
     )
     pnl = sale_pnl(cost, sale, quote_mint, price)
-    realised = position.realised or Realised()
+    realised = (
+        dataclasses.replace(position.realised) if position.realised else Realised()
+    )
     realised.add(pnl)
     return realised, pnl
 
 
-async def _earlier_sale_unknown(
-    position: StoredPosition, tools: Tools, label: str, out: TextIO
-) -> bool:
-    """Whether an earlier run's unconfirmed sale of this coin is still unknown."""
-    if not (position.given_up and position.given_up.startswith(_UNRESOLVED)):
-        return False
-    earlier = position.given_up.removeprefix(_UNRESOLVED).split(";")[0]
-    status = await _resolve_sale(
-        tools, TradeResult(success=False, tx_signature=earlier)
+async def _settle_earlier(
+    position: StoredPosition, store: PositionStore, tools: Tools, out: TextIO
+) -> StoredPosition | None:
+    """Resolve a sale or burn of the position left unresolved, before selling.
+
+    Returns:
+        The position to go on with, net of a sale that landed; None when
+        nothing more is done with it this run
+    """
+    trade = position.unresolved
+    if trade is None:
+        return position
+    coin, buy = position.token_info, position.buy_result
+    label = f"{coin.symbol} ({coin.mint})"
+    earlier, sold, slot = await unresolved.resolve(
+        tools.client,
+        tools.wallet.pubkey,
+        coin,
+        trade,
+        looks=unresolved.LOOKS_BEFORE_GIVING_UP,
+        pause=_RECHECK_SECONDS,
     )
-    if status is ConfirmationStatus.UNCONFIRMED:
-        print(f"{label}: its last sale {earlier} is still unknown; kept", file=out)
-        return True
-    return False
+    if earlier in (Earlier.UNKNOWN, Earlier.UNREADABLE):
+        print(f"{label}: its last {trade.kind} {earlier.value}; kept", file=out)
+        return None
+    store.clear_unresolved(coin.mint)
+    if earlier is Earlier.NOT_LANDED:
+        return dataclasses.replace(position, unresolved=None)
+    if earlier is Earlier.BURNED:
+        store.remove(coin.mint)
+        print(f"{label}: its burn landed; dropped from the file", file=out)
+        return None
+    recorded = buy.amount_raw
+    if recorded is None:
+        recorded = round(buy.amount * 10**TOKEN_DECIMALS)
+    left = recorded - sold
+    print(
+        f"{label}: its last sale landed, {sold / 10**TOKEN_DECIMALS:g} sold", file=out
+    )
+    if left <= 0:
+        store.mark_sold(coin.mint, slot=slot)
+        return dataclasses.replace(position, unresolved=None, sold=True, sold_slot=slot)
+    store.reduce(coin.mint, left / 10**TOKEN_DECIMALS, left, sold=True)
+    return dataclasses.replace(
+        position,
+        unresolved=None,
+        buy_result=dataclasses.replace(
+            buy, amount=left / 10**TOKEN_DECIMALS, amount_raw=left
+        ),
+    )
 
 
 def _nothing_to_sell(  # noqa: PLR0913
@@ -316,7 +341,7 @@ def _nothing_to_sell(  # noqa: PLR0913
         store.remove(coin.mint)
         return None
     # Empty: kept, marked sold, until its account is closed.
-    store.mark_sold(coin.mint)
+    store.mark_sold(coin.mint, slot=position.sold_slot)
     return program
 
 
@@ -331,22 +356,27 @@ async def _sell_one(
     """
     coin = position.token_info
     label = f"{coin.symbol} ({coin.mint})"
-    if await _earlier_sale_unknown(position, tools, label, out):
-        return False, None
+    settled = await _settle_earlier(position, store, tools, out)
+    if settled is None:
+        # Gone from the file when its burn landed; else kept for a later run.
+        return str(coin.mint) not in store.mints(), None
+    position = settled
     try:
-        held, exists, program = await _read_held(coin, tools)
+        balance, exists, program = await _read_held(
+            coin, tools, min_slot=_fresh_from(position)
+        )
     except Exception as e:  # noqa: BLE001 - the message may carry the endpoint
         print(f"{label}: balance unreadable ({type(e).__name__}); kept", file=out)
         return False, None
-    if position.sold or held == 0:
+    if position.sold or balance == 0:
         return True, _nothing_to_sell(
-            position, store, held=held, exists=exists, program=program, out=out
+            position, store, held=balance, exists=exists, program=program, out=out
         )
     # Never more than the record: coins bought by hand stay, as with the bot.
     recorded = position.buy_result.amount_raw
     if recorded is None:
         recorded = round(position.buy_result.amount * 10**TOKEN_DECIMALS)
-    held = min(held, recorded)
+    held = min(balance, recorded)
     priced = await _priced(position, tools)
     if priced is None:
         store.mark_given_up(coin.mint, "sell-all could not price it")
@@ -378,19 +408,24 @@ async def _sell_one(
                 store=store,
                 out=out,
             )
-            if result is None and reason == _UNRESOLVED:
+            if result is None and reason == _STILL_UNKNOWN:
                 return False, None
-    gone = await _settle(
+    gone, closes = await _settle(
         position,
         store,
         result,
         reason=reason,
         held=held,
+        balance=balance,
         price=price,
         tools=tools,
         out=out,
     )
-    return gone, program if gone else None
+    return gone, program if closes else None
+
+
+#: `_resolved`'s reason for a sale it could not resolve.
+_STILL_UNKNOWN = "still unknown"
 
 
 async def _resolved(  # noqa: PLR0913
@@ -405,10 +440,16 @@ async def _resolved(  # noqa: PLR0913
 ) -> tuple[TradeResult | None, str]:
     """An unconfirmed sale, once resolved: landed, failed, or still unknown.
 
-    Still unknown, the record says so with the signature, and the next run
-    looks it up before it sells again.
+    Still unknown, it is recorded with its signature and expiry height, and the
+    next run, or the bot, resolves it before the coin moves again.
     """
-    status = await _resolve_sale(tools, result)
+    trade = Unresolved(SALE, str(result.tx_signature), result.last_valid_block_height)
+    status = await unresolved.look_up(
+        tools.client,
+        trade,
+        looks=unresolved.LOOKS_BEFORE_GIVING_UP,
+        pause=_RECHECK_SECONDS,
+    )
     if status is ConfirmationStatus.SUCCESS:
         return dataclasses.replace(
             result,
@@ -418,13 +459,12 @@ async def _resolved(  # noqa: PLR0913
             amount=(result.amount_raw or held) / 10**TOKEN_DECIMALS,
         ), ""
     if status is ConfirmationStatus.UNCONFIRMED:
-        store.mark_given_up(
-            mint, f"{_UNRESOLVED}{result.tx_signature}; looked up before selling again"
-        )
+        store.mark_unresolved(mint, trade)
+        store.mark_given_up(mint, "its last sale is unresolved")
         print(
             f"{label}: its sale {result.tx_signature} is still unknown; kept", file=out
         )
-        return None, _UNRESOLVED
+        return None, _STILL_UNKNOWN
     return None, "it did not land"
 
 
@@ -435,15 +475,24 @@ async def _settle(  # noqa: PLR0913
     *,
     reason: str,
     held: int,
+    balance: int,
     price: float,
     tools: Tools,
     out: TextIO,
-) -> bool:
-    """Record what one sale did; True when nothing of the position is left.
+) -> tuple[bool, bool]:
+    """Record what one sale did.
 
-    The file is written first, then the sale is read back and reported: a
-    cancellation or a failed print after the sale landed loses nothing but the
-    report.
+    The file is written first, PnL included as an estimate; then the sale is
+    read back, its PnL replaced with the chain's, and reported. A cancellation
+    or a failed print after the sale landed loses nothing but the report.
+
+    Args:
+        held: Raw tokens the sale was asked to sell
+        balance: Raw tokens the wallet held, coins bought by hand included
+
+    Returns:
+        Whether nothing of the position is left, and whether its account is
+        to be closed (not when coins bought by hand remain in it)
     """
     coin = position.token_info
     label = f"{coin.symbol} ({coin.mint})"
@@ -451,31 +500,41 @@ async def _settle(  # noqa: PLR0913
     if result is not None and result.curve_short:
         store.mark_given_up(coin.mint, "the curve can't pay for it now")
         print(f"{label}: the curve can't pay for it now; kept", file=out)
-        return False
+        return False, False
     if result is None or not result.success:
         store.mark_given_up(coin.mint, "sell-all could not sell it")
         print(f"{label}: sale failed ({reason}); kept", file=out)
-        return False
+        return False, False
     sold = result.amount_raw if result.amount_raw is not None else held
     left = held - sold
+    extra = left <= 0 and balance > sold
     if left > 0:
         store.reduce(coin.mint, left / 10**TOKEN_DECIMALS, left, sold=True)
         store.mark_given_up(coin.mint, "sell-all could not sell all of it")
+        store.set_realised(
+            coin.mint,
+            _realised(
+                position, dataclasses.replace(result, deltas=None), price, quote_mint
+            )[0],
+        )
+    elif extra:
+        # Coins bought by hand remain: the account stays open and is not the
+        # bot's to close, so the record goes now.
+        store.remove(coin.mint)
     else:
         # Kept, marked sold, until its account is closed.
         store.mark_sold(coin.mint)
     # Read back like the bot's own sales, so the PnL is the chain's.
-    sale = landed_sale(
-        coin,
-        result.tx_signature,
-        sold,
-        price,
-        await read_deltas(tools.client, result.tx_signature, tools.wallet.pubkey, coin),
+    deltas = await read_deltas(
+        tools.client, result.tx_signature, tools.wallet.pubkey, coin
     )
+    sale = landed_sale(coin, result.tx_signature, sold, price, deltas)
     sale.venue = result.venue
     realised, pnl = _realised(position, sale, price, quote_mint)
     if left > 0:
         store.set_realised(coin.mint, realised)
+    elif not extra and deltas is not None and deltas.slot is not None:
+        store.mark_sold(coin.mint, slot=deltas.slot)
     trade_log.log_trade(
         "sell",
         coin,
@@ -493,13 +552,13 @@ async def _settle(  # noqa: PLR0913
             f"pay for the rest\n{pnl_line}",
             file=out,
         )
-        return False
+        return False, False
     print(
         f"{label}: sold {sold / 10**TOKEN_DECIMALS:g} ({result.tx_signature})\n"
         f"{pnl_line}{realised.suffix(quote_label)}",
         file=out,
     )
-    return True
+    return True, not extra
 
 
 def _print_left(positions: Path, mints: set, tools: Tools, out: TextIO) -> None:

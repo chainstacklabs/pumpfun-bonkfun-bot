@@ -41,7 +41,7 @@ from platforms.pumpfun.curve_manager import (
     max_sell_within_real_reserves,
     sell_quote_out,
 )
-from trading import trade_log
+from trading import trade_log, unresolved
 from trading.base import PendingBuy, TradeResult
 from trading.platform_aware import (
     PlatformAwareSeller,
@@ -61,6 +61,7 @@ from trading.position import ExitReason, Position
 from trading.position_store import PositionStore, StoredPosition
 from trading.pricing import read_price
 from trading.settings import TraderSettings
+from trading.unresolved import BURN, SALE, Earlier, Unresolved
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -799,39 +800,16 @@ class PositionManager:
             return False
         if stored.pending is not None:
             return await self._resume_pending(stored, label)
-        held = await self._held_raw(token_info)
-        if held is None:
-            logger.error(
-                f"Could not confirm the wallet's balance of {label}; its position "
-                f"stays in {self.store.path} and is not monitored this run"
-            )
-            return False
-        if held == 0:
-            logger.info(
-                f"Clearing position in {label}: the wallet no longer holds it, "
-                f"so it was sold or moved while the bot was down"
-            )
-            self._clear(token_info)
-            return False
-        if not await self._quote_resolved(token_info, label):
+        if stored.unresolved is not None:
+            settled = await self._settle_unresolved(stored, label)
+            if settled is None:
+                return False
+            stored, buy = settled, settled.buy_result
+        held = await self._held_to_resume(token_info, label)
+        if held is None or not await self._quote_resolved(token_info, label):
             return False
 
-        bought_raw = (
-            buy.amount_raw
-            if buy.amount_raw is not None
-            else round(buy.amount * 10**TOKEN_DECIMALS)
-        )
-        if held < bought_raw:
-            logger.warning(
-                f"The wallet holds {held} raw of {label}, less than the "
-                f"{bought_raw} bought; the position sells what is held"
-            )
-            # The buy's deltas stay: its cost per token is unchanged. The file
-            # keeps the smaller amount, so a later start never sells more.
-            buy = dataclasses.replace(
-                buy, amount=held / 10**TOKEN_DECIMALS, amount_raw=held
-            )
-            self.store.reduce(token_info.mint, buy.amount, held)
+        buy = self._what_is_held(token_info, buy, held, label)
         logger.info(
             f"Resuming position in {label}: {buy.amount} tokens bought at "
             f"{buy.price} on {stored.entry_time.isoformat()} UTC"
@@ -845,15 +823,132 @@ class PositionManager:
         self.open(token_info, buy, entry_time=stored.entry_time)
         return True
 
+    async def _held_to_resume(self, token_info: TokenInfo, label: str) -> int | None:
+        """What the wallet holds of a position to resume; None when there is none.
+
+        None also when the balance can't be read: the position stays in the
+        file, unmonitored this run. Nothing held clears it.
+        """
+        held = await self._held_raw(token_info)
+        if held is None:
+            logger.error(
+                f"Could not confirm the wallet's balance of {label}; its position "
+                f"stays in {self.store.path} and is not monitored this run"
+            )
+            return None
+        if held == 0:
+            logger.info(
+                f"Clearing position in {label}: the wallet no longer holds it, "
+                f"so it was sold or moved while the bot was down"
+            )
+            self._clear(token_info)
+            return None
+        return held
+
+    def _what_is_held(
+        self, token_info: TokenInfo, buy: TradeResult, held: int, label: str
+    ) -> TradeResult:
+        """The buy as resumed: no more than the wallet holds, and the file says so."""
+        bought_raw = (
+            buy.amount_raw
+            if buy.amount_raw is not None
+            else round(buy.amount * 10**TOKEN_DECIMALS)
+        )
+        if held >= bought_raw:
+            return buy
+        logger.warning(
+            f"The wallet holds {held} raw of {label}, less than the "
+            f"{bought_raw} bought; the position sells what is held"
+        )
+        # The buy's deltas stay: its cost per token is unchanged. The file
+        # keeps the smaller amount, so a later start never sells more.
+        buy = dataclasses.replace(
+            buy, amount=held / 10**TOKEN_DECIMALS, amount_raw=held
+        )
+        self.store.reduce(token_info.mint, buy.amount, held)
+        return buy
+
+    async def _settle_unresolved(
+        self, stored: StoredPosition, label: str
+    ) -> StoredPosition | None:
+        """Resolve a sale or burn of the position left unresolved, before resuming it.
+
+        Returns:
+            The position to resume, net of a sale that landed; None when there is
+            nothing to resume this run (still unknown, unreadable, or gone)
+        """
+        trade, mint = stored.unresolved, stored.token_info.mint
+        earlier, sold, _slot = await unresolved.resolve(
+            self.solana_client,
+            self.wallet.pubkey,
+            stored.token_info,
+            trade,
+            looks=1,
+            pause=0,
+        )
+        if earlier in (Earlier.UNKNOWN, Earlier.UNREADABLE):
+            logger.warning(
+                f"The last {trade.kind} of {label} ({trade.signature}) "
+                f"{earlier.value}; it stays in {self.store.path} and is not "
+                f"monitored this run"
+            )
+            return None
+        self.store.clear_unresolved(mint)
+        if earlier is Earlier.NOT_LANDED:
+            logger.info(f"The last {trade.kind} of {label} did not land")
+            return dataclasses.replace(stored, unresolved=None)
+        if earlier is Earlier.BURNED:
+            logger.info(f"The burn of {label} landed; it leaves {self.store.path}")
+            self.store.remove(mint)
+            return None
+        buy = stored.buy_result
+        recorded = (
+            buy.amount_raw
+            if buy.amount_raw is not None
+            else round(buy.amount * 10**TOKEN_DECIMALS)
+        )
+        left = recorded - sold
+        logger.info(f"The last sale of {label} landed after all: {sold} raw sold")
+        if left <= 0:
+            # Sold in full; what the wallet holds now is not the bot's.
+            self.store.remove(mint)
+            return None
+        self.store.reduce(mint, left / 10**TOKEN_DECIMALS, left, sold=True)
+        return dataclasses.replace(
+            stored,
+            unresolved=None,
+            buy_result=dataclasses.replace(
+                buy, amount=left / 10**TOKEN_DECIMALS, amount_raw=left
+            ),
+        )
+
     def _give_up(
-        self, token_info: TokenInfo, reason: str, amount_raw: int | None
+        self,
+        token_info: TokenInfo,
+        reason: str,
+        amount_raw: int | None,
+        unresolved_sale: TradeResult | None = None,
     ) -> None:
-        """Mark a position the exit stopped monitoring while the coin is still held."""
+        """Mark a position the exit stopped monitoring while the coin is still held.
+
+        Args:
+            unresolved_sale: The sale whose outcome is unknown, when that is why;
+                recorded so it is resolved before the coin moves again
+        """
         self._given_up = MappingProxyType(
             {**self._given_up, token_info.mint: token_info}
         )
         if self.store is not None:
             self.store.mark_given_up(token_info.mint, reason)
+            if unresolved_sale is not None and unresolved_sale.tx_signature:
+                self.store.mark_unresolved(
+                    token_info.mint,
+                    Unresolved(
+                        SALE,
+                        str(unresolved_sale.tx_signature),
+                        unresolved_sale.last_valid_block_height,
+                    ),
+                )
         session.current().add_given_up(token_info, amount_raw, reason)
 
     @property
@@ -891,6 +986,14 @@ class PositionManager:
             stored = held.get(mint)
             if stored is None:
                 continue
+            if stored.unresolved is not None:
+                # Its last sale or burn may still land: both could take the
+                # recorded amount, the second out of coins bought by hand.
+                logger.info(
+                    f"Not burning {stored.token_info.symbol}: its last "
+                    f"{stored.unresolved.kind} is unresolved"
+                )
+                continue
             if normalize_quote_mint(stored.token_info.quote_mint) != WSOL_MINT:
                 continue
             await self._burn_if_below(stored, below, cleanup)
@@ -912,36 +1015,36 @@ class PositionManager:
         recorded = stored.buy_result.amount_raw
         if recorded is None:
             recorded = round(stored.buy_result.amount * 10**TOKEN_DECIMALS)
-        balance = await self._held_raw(token_info)
-        if balance is None:
-            logger.warning(f"Not burning {token_info.symbol}: balance unreadable")
-            return
         logger.info(
             f"Burning {stored.buy_result.amount} {token_info.symbol}, worth "
             f"{worth:.9f} SOL, below cleanup.burn_given_up_below {below} SOL"
         )
-        # Only what the bot bought: coins bought by hand stay.
-        done = await cleanup.cleanup_ata(
-            mint, token_info.token_program_id, settle=False, burn_at_most=recorded
-        )
-        extra = balance > recorded
-        if extra:
-            # The account stays open around the coins bought by hand, and the
-            # record goes even when the burn's outcome is unknown: kept, a
-            # later sale could take those coins as the bot's.
-            self._spared = self._spared | {mint}
-            if not done:
-                logger.warning(
-                    f"The burn of {token_info.symbol} is not known to have landed; "
-                    f"its record is dropped all the same, since the wallet holds "
-                    f"more of it than the bot bought"
-                )
-        if done or extra:
+        # Only what the bot bought: coins bought by hand stay, and whether any
+        # are there is what the burn itself found.
+        result = await cleanup.burn_down(mint, token_info.token_program_id, recorded)
+        if result.status is ConfirmationStatus.SUCCESS:
+            if not result.closes:
+                # The account stays open around coins bought by hand.
+                self._spared = self._spared | {mint}
             self.store.remove(mint)
             self._given_up = MappingProxyType(
                 {m: c for m, c in self._given_up.items() if m != mint}
             )
             session.current().drop_given_up(mint)
+        elif result.status is ConfirmationStatus.UNCONFIRMED and result.signature:
+            # It may still land: recorded, and resolved before the coin moves.
+            self._spared = self._spared | {mint}
+            self.store.mark_unresolved(
+                mint, Unresolved(BURN, result.signature, result.last_valid_block_height)
+            )
+            logger.warning(
+                f"The burn of {token_info.symbol} is not known to have landed; its "
+                f"position stays in {self.store.path} until it is resolved"
+            )
+        else:
+            logger.warning(
+                f"The burn of {token_info.symbol} did not land; its position stays"
+            )
 
     async def _worth_sol(self, stored: StoredPosition) -> float | None:
         """What selling a SOL-quoted position now would pay, in SOL; None if unknown.
@@ -1310,7 +1413,10 @@ class PositionManager:
                     f"resolved. Position stays open and is no longer monitored."
                 )
                 self._give_up(
-                    token_info, "the last sale could not be resolved", held.amount_raw
+                    token_info,
+                    "the last sale could not be resolved",
+                    held.amount_raw,
+                    unresolved_sale=sell_result,
                 )
             if verdict is not ExitSellVerdict.LATE_SUCCESS:
                 return verdict, 0
@@ -1762,6 +1868,7 @@ class PositionManager:
                         token_info,
                         "the last sale could not be resolved",
                         position.quantity_raw,
+                        unresolved_sale=sell_result,
                     )
                 return verdict
             # The sell landed, only its confirmation was late.

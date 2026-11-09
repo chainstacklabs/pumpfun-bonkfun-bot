@@ -12,6 +12,7 @@ Offline machine checks, no network and no funds moved:
      same process and from another process.
   2. It succeeds once the holder releases it, and once the holding process
      has been killed.
+  2b. A symlink to the positions file meets the same lock.
   3. A lock file that can't be created leaves the bot unstarted with one
      line, not a traceback.
   4. On Windows, without `flock`, `msvcrt` keeps a second holder out the
@@ -187,6 +188,25 @@ def check_windows_lock() -> bool:
     )
 
 
+def check_symlink_same_lock() -> bool:
+    with tempfile.TemporaryDirectory() as tmp:
+        real = Path(tmp) / "positions" / "bot.json"
+        real.parent.mkdir()
+        real.write_text("{}")
+        link = Path(tmp) / "elsewhere.json"
+        link.symlink_to(real)
+        bot, other = RunLock(real), RunLock(link)
+        got = bot.acquire()
+        refused = not other.acquire()
+        bot.release()
+        other.release()
+    return _check(
+        "a symlink to a locked file meets the same lock",
+        got and refused,
+        f"first {got}, refused {refused}",
+    )
+
+
 def check_lock_file_unwritable() -> bool:
     with tempfile.TemporaryDirectory() as tmp:
         blocker = Path(tmp) / "positions"
@@ -219,6 +239,7 @@ def main() -> int:
         check_other_process(),
         check_start_bot_refuses(),
         check_lock_file_unwritable(),
+        check_symlink_same_lock(),
         check_windows_lock(),
     ]
     if all(results):

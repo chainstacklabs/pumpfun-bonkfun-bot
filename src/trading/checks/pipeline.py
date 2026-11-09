@@ -73,11 +73,18 @@ class CheckPipeline:
     async def _run(self, configured: ConfiguredCheck, coin: TokenInfo) -> str | None:
         check = configured.check
         budget = asyncio.timeout(configured.budget)
+        loop = asyncio.get_running_loop()
+        started = loop.time()
         try:
             async with budget:
                 result = await check.check(coin, self.ctx)
-            if budget.expired():
-                # It hid its own cancellation and answered after the budget.
+            late = (
+                configured.budget is not None
+                and loop.time() - started > configured.budget
+            )
+            if budget.expired() or late:
+                # It hid its own cancellation, or held the event loop so the
+                # timeout could not fire, and answered after the budget.
                 failure = f"ran past its {configured.budget}s budget"
             elif result is None or isinstance(result, str):
                 return result

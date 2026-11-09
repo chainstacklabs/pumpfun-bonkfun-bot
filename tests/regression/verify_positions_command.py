@@ -474,10 +474,16 @@ async def check_sell_all_sells() -> bool:
                 coins["plain"].mint,
                 coins["gaveup"].mint,
                 coins["noprog"].mint,
-                coins["extra"].mint,
                 coins["gone"].mint,
             },
             str(tools.cleanup.closed),
+        ),
+        _check(
+            "after a full sale, coins bought by hand keep their account; "
+            "the record goes",
+            coins["extra"].mint not in tools.cleanup.closed
+            and coins["extra"].mint not in left,
+            str(left.get(coins["extra"].mint)),
         ),
         _check("exit 1 while anything is left", code == 1, str(code)),
     ]

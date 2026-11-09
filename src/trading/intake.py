@@ -224,6 +224,17 @@ class TokenIntake:
                 return age, "since created on chain"
         return monotonic() - detected_at, "since detected"
 
+    def stale_reason(self, token_info: TokenInfo) -> str | None:
+        """Why a coin found a while ago is too old to take up now; None while fresh.
+
+        For a coin found by `wait_for_token`, which recorded when; a coin with
+        no such record counts as fresh.
+        """
+        detected_at = self.token_timestamps.get(str(token_info.mint))
+        if detected_at is None:
+            return None
+        return self._too_old(token_info, detected_at)
+
     def _too_old(self, token_info: TokenInfo, detected_at: float) -> str | None:
         """Why the coin is past `max_token_age`, or None while it is fresh."""
         age, since = self._age(token_info, detected_at)

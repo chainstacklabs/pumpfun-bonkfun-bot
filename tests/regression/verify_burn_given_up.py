@@ -19,9 +19,11 @@ Offline machine checks, no network and no funds moved:
      and one whose burn did not land.
   3. With the setting off nothing is burned. A burn takes no more than the
      position's recorded amount: coins bought by hand stay, and the account
-     stays open around them. Such a position leaves the file whether or not
-     its burn is known to have landed, so its coins are never later sold as
-     the bot's, and session-end cleanup spares the account.
+     stays open around them, and session-end cleanup spares it. The decision
+     rests on the balance the burn was built from. A burn that landed drops
+     the position; one whose outcome is unknown stays recorded with its
+     signature, to be resolved before the coin moves again; one that surely
+     failed keeps the position as it was.
   4. The config is refused under `cleanup.mode: disabled`, and for zero, a
      negative number or text.
 
@@ -43,12 +45,12 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from _fakes import _check  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
-from cleanup.manager import AccountCleanupManager  # noqa: E402
+from cleanup.manager import AccountCleanupManager, BurnResult  # noqa: E402
 from config_loader import validate_cleanup_config  # noqa: E402
 from core import session  # noqa: E402
 from core.client import TransactionNotSent  # noqa: E402
 from core.pubkeys import USDC_MINT, WSOL_MINT, SystemAddresses  # noqa: E402
-from interfaces.core import Platform, TokenInfo  # noqa: E402
+from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E402
 from trading import position_manager, universal_trader  # noqa: E402
 from trading.base import TradeResult  # noqa: E402
 from trading.position_manager import PositionManager  # noqa: E402
@@ -91,21 +93,30 @@ class _Curves:
 
 
 class _Cleanup:
-    """Stands in for AccountCleanupManager; records each burn-and-close."""
+    """Stands in for AccountCleanupManager; records each burn it is asked for.
+
+    The burn closes the account when the wallet holds no more than it burns
+    (`HELD`), and ends as `status` says.
+    """
 
     burned: list[Pubkey] = []  # noqa: RUF012 - reset per run
-    lands = True
+    status: ConfirmationStatus | None = ConfirmationStatus.SUCCESS
 
     def __init__(self, *_args: object, force_burn: bool = False, **_kw: object) -> None:
         self.force_burn = force_burn
 
-    async def cleanup_ata(
-        self, mint: Pubkey, _program: Pubkey | None = None, **kw: object
-    ) -> bool:
-        if not self.force_burn or kw.get("burn_at_most") != AMOUNT_RAW:
-            return False
+    async def burn_down(
+        self, mint: Pubkey, _program: Pubkey | None, amount: int
+    ) -> BurnResult:
+        if not self.force_burn or amount != AMOUNT_RAW:
+            return BurnResult(None, closes=True)
         _Cleanup.burned.append(mint)
-        return _Cleanup.lands
+        return BurnResult(
+            _Cleanup.status,
+            closes=HELD.get(mint, AMOUNT_RAW) <= amount,
+            signature="burn-sig",
+            last_valid_block_height=50,
+        )
 
 
 def _coin(quote: Pubkey = WSOL_MINT) -> TokenInfo:
@@ -170,7 +181,10 @@ async def _run(
 ) -> tuple[dict[str, bool], PositionManager]:
     """Burn over one coin per case; True where the coin was burned and dropped."""
     session.start("verify")
-    _Cleanup.burned, _Cleanup.lands = [], lands
+    _Cleanup.burned = []
+    _Cleanup.status = (
+        ConfirmationStatus.SUCCESS if lands else ConfirmationStatus.REVERTED
+    )
     # label: (coin, curve state, pool spot price, given up, should burn)
     cases = {
         "curve pays little": (_coin(), SHORT, None, True, True),
@@ -237,28 +251,46 @@ async def check_failed_burn_kept() -> bool:
 
 async def check_extra_coins_spared() -> bool:
     results = []
-    for lands in (True, False):
+    cases = {
+        # label: (burn status, record kept, unresolved burn kept, spared)
+        "landed": (ConfirmationStatus.SUCCESS, False, False, True),
+        "outcome unknown": (ConfirmationStatus.UNCONFIRMED, True, True, True),
+        "reverted": (ConfirmationStatus.REVERTED, True, False, False),
+        "never sent": (None, True, False, False),
+    }
+    for label, (status, want_kept, want_unresolved, want_spared) in cases.items():
         session.start("verify")
-        _Cleanup.burned, _Cleanup.lands = [], lands
+        _Cleanup.burned, _Cleanup.status = [], status
         token = _coin()
         HELD[token.mint] = AMOUNT_RAW * 3  # coins bought by hand besides
         with tempfile.TemporaryDirectory() as tmp:
             manager = _manager(tmp, {token.bonding_curve: SHORT}, {}, THRESHOLD)
             _hold(manager, token, given_up=True)
             await manager.burn_given_up()
-            dropped = str(token.mint) not in manager.store.mints()
+            records = {
+                p.token_info.mint: p for p in PositionStore.peek(manager.store.path)
+            }
+        record = records.get(token.mint)
+        kept = record is not None
+        unresolved_burn = (
+            kept and record.unresolved is not None and record.unresolved.kind == "burn"
+        )
         spared = token.mint in manager.spared_mints
-        listed = token.mint in {g.mint for g in session.current().given_up}
-        ok = token.mint in _Cleanup.burned and dropped and spared and not listed
-        label = "landed" if lands else "outcome unknown"
+        ok = (kept, unresolved_burn, spared) == (
+            want_kept,
+            want_unresolved,
+            want_spared,
+        )
         results.append(
             _check(
-                f"extra coins ({label}): record dropped, account spared",
+                f"extra coins, burn {label}: kept {want_kept}, recorded "
+                f"{want_unresolved}, spared {want_spared}",
                 ok,
-                f"dropped {dropped}, spared {spared}, listed {listed}",
+                f"kept {kept}, recorded {unresolved_burn}, spared {spared}",
             )
         )
     HELD.clear()
+    _Cleanup.status = ConfirmationStatus.SUCCESS
     return all(results)
 
 
@@ -398,11 +430,11 @@ async def _burned_and_closed(
         get_associated_token_address=lambda _mint, _program: account,
     )
     manager = AccountCleanupManager(client, wallet, None, force_burn=True)
-    done = await manager.cleanup_ata(
-        Pubkey.new_unique(),
-        SystemAddresses.TOKEN_PROGRAM,
-        settle=False,
-        burn_at_most=AMOUNT_RAW,
+    result = await manager.burn_down(
+        Pubkey.new_unique(), SystemAddresses.TOKEN_PROGRAM, AMOUNT_RAW
+    )
+    done = result.status is ConfirmationStatus.SUCCESS and result.closes == (
+        balance <= AMOUNT_RAW
     )
     # (instruction id, amount for a burn)
     sent = [

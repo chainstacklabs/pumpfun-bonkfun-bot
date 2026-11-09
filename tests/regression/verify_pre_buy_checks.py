@@ -163,6 +163,14 @@ class SwallowsTimeout(PreBuyCheck):
         return None
 
 
+class BlocksTheLoop(PreBuyCheck):
+    name = "blocks"
+
+    async def check(self, _coin: TokenInfo, _ctx: CheckContext) -> str | None:
+        time.sleep(BUDGET + CANCEL_SLACK)  # never yields, so no timeout can fire
+        return None
+
+
 class ReturnsJunk(PreBuyCheck):
     name = "junk"
 
@@ -233,6 +241,14 @@ async def check_late_result_refused() -> bool:
     ).reason(COIN, reads_chain=False)
     ok = reason is not None and "budget" in reason
     return _check("a result after the budget ran out is not taken", ok, repr(reason))
+
+
+async def check_blocking_check_refused() -> bool:
+    reason = await _pipeline(
+        ConfiguredCheck(BlocksTheLoop(), required=True, budget=BUDGET)
+    ).reason(COIN, reads_chain=False)
+    ok = reason is not None and "budget" in reason
+    return _check("a check that blocks past its budget is not taken", ok, repr(reason))
 
 
 async def check_budget() -> bool:
@@ -576,12 +592,18 @@ async def check_free_checks_cost_no_rpc() -> bool:
 
 async def check_single_token_waits_past_refusal() -> bool:
     events: list[str] = []
-    first, second = _coin(symbol="FIRST"), _coin(symbol="SECOND")
-    offered = [first, second]
+    first, second, stale = (
+        _coin(symbol="FIRST"),
+        _coin(symbol="SECOND"),
+        _coin(symbol="STALE"),
+    )
+    offered = [first, stale, second]
     timeouts: list[float] = []
 
     async def wait_for_token(*, timeout: float | None = None) -> TokenInfo | None:
         timeouts.append(timeout)
+        events.append("listening")
+        await asyncio.sleep(0)
         return offered.pop(0) if offered else None
 
     class _RefusesFirst(PreBuyCheck):
@@ -589,6 +611,9 @@ async def check_single_token_waits_past_refusal() -> bool:
         reads_chain = True
 
         async def check(self, coin: TokenInfo, _ctx: CheckContext) -> str | None:
+            events.append(f"checking {coin.symbol}")
+            await asyncio.sleep(0)  # its RPC read: the listener runs meanwhile
+            events.append(f"checked {coin.symbol}")
             return "too concentrated" if coin.symbol == "FIRST" else None
 
     trader = _trader(events, [ConfiguredCheck(_RefusesFirst())], fast=True)
@@ -597,19 +622,26 @@ async def check_single_token_waits_past_refusal() -> bool:
         wait_for_token=wait_for_token,
         skip_reason=real_intake.skip_reason,
         token_wait_timeout=30,
+        # Found while FIRST was checked, and too old by the time it is taken up.
+        stale_reason=lambda coin: "too old" if coin is stale else None,
     )
     trader.entry = "new_launch"
     taken = await trader._take_one_token()  # noqa: SLF001
+    listening_before_check = events.index("listening", 1) < events.index(
+        "checked FIRST"
+    )
     ok = (
         taken is second
-        and events == ["buy"]
-        and len(timeouts) == 2  # noqa: PLR2004
+        and events.count("buy") == 1
+        and "checking STALE" not in events
+        and listening_before_check
         and all(t is not None and t <= 30 for t in timeouts)  # noqa: PLR2004
     )
     return _check(
-        "single-token mode waits on past a coin a chain check refuses",
+        "single-token mode keeps listening while a coin is checked, and waits "
+        "on past one a chain check refuses",
         ok,
-        f"took {taken and taken.symbol}, events {events}, timeouts {timeouts}",
+        f"took {taken and taken.symbol}, events {events}",
     )
 
 
@@ -1014,6 +1046,7 @@ async def main() -> int:
         await check_failures(),
         await check_own_timeout(),
         await check_late_result_refused(),
+        await check_blocking_check_refused(),
         await check_budget(),
         await check_module_loading(),
         check_config_validation(),

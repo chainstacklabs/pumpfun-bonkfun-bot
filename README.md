@@ -280,11 +280,13 @@ nothing: what it can't sell, such as the part of a coin its curve can't pay
 for, stays in the wallet and in the file, marked given up. Pending buys and
 positions another wallet or platform bought are left alone. It never sells
 more than a position's recorded amount, closes the empty account of a coin the
-wallet no longer holds, and prints each sale's PnL from its transaction, which
-a part sale also adds to the position's total. A position stays in the file
-until its account is closed, and a sale whose confirmation never came is
-looked up before anything is sold again, so running `sell-all` again picks
-up whatever a run left unfinished. When two bots in the folder share a
+wallet no longer holds, and prints each sale's PnL from its transaction (an
+estimate at the seller's price, and said to be one, when the transaction can't
+be read), which a part sale also adds to the position's total. A position
+stays in the file until its account is closed. A sale or burn whose
+confirmation never came is recorded with its signature and looked up, by
+`sell-all` and by the bot on its next start, before the coin is sold again, so
+running `sell-all` again picks up whatever a run left unfinished. When two bots in the folder share a
 name, pass the file with `--positions`.
 
 ### Encrypted keystore
