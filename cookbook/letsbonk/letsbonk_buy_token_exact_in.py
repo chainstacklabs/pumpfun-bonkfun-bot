@@ -109,14 +109,11 @@ def derive_event_authority_pda() -> Pubkey:
     return event_authority_pda
 
 
-def derive_pool_state_for_token(base_token_mint: Pubkey) -> Pubkey | None:
-    """Derive the pool state account for a given base token mint.
+def derive_pool_state_for_token(base_token_mint: Pubkey) -> Pubkey:
+    """The address of the coin's WSOL-quoted LaunchLab pool.
 
-    Args:
-        base_token_mint: The token mint address to search for
-
-    Returns:
-        Pubkey of the pool state account, or None if not found
+    The account exists only when the coin is paired with WSOL; a coin quoted
+    in another token has its pool at another address.
     """
     seeds = [b"pool", bytes(base_token_mint), bytes(WSOL_MINT)]
     pool_state_pda, _ = Pubkey.find_program_address(seeds, RAYDIUM_LAUNCHLAB_PROGRAM_ID)
@@ -188,7 +185,11 @@ async def get_pool_state_data(client: AsyncClient, pool_state: Pubkey) -> dict |
     try:
         account_info = await client.get_account_info(pool_state)
         if not account_info.value:
-            print("Pool state account not found")
+            print(
+                f"No WSOL-quoted LaunchLab pool at {pool_state}: the coin is quoted "
+                f"in another token, or did not launch on LaunchLab. This script "
+                f"trades against WSOL only."
+            )
             return None
 
         return decode_pool_state(account_info.value.data)
