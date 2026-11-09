@@ -15,6 +15,7 @@ Deeper notes, kept out of this file so they load only when needed:
 | [docs/listeners-and-geyser.md](docs/listeners-and-geyser.md) | changing a listener, the geyser stubs or a decoder |
 | [docs/cookbook-conventions.md](docs/cookbook-conventions.md) | adding or changing anything under `cookbook/` |
 | [docs/regression-tests.md](docs/regression-tests.md) | picking which verifiers your change needs |
+| [docs/pre-buy-checks.md](docs/pre-buy-checks.md) | adding or changing a pre-buy check (`src/trading/checks/`) |
 
 ## Ground rules
 

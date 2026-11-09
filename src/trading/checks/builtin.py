@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from core.pubkeys import normalize_quote_mint
 from trading.checks.base import CheckContext, PreBuyCheck
+from trading.checks.top_holders import TopHoldersCheck
 
 if TYPE_CHECKING:
     from solders.pubkey import Pubkey
@@ -108,4 +109,7 @@ class MayhemCheck(PreBuyCheck):
 
 
 #: Checks `filters.checks` can list by name.
-BUILTINS: dict[str, type[PreBuyCheck]] = {MayhemCheck.name: MayhemCheck}
+BUILTINS: dict[str, type[PreBuyCheck]] = {
+    MayhemCheck.name: MayhemCheck,
+    TopHoldersCheck.name: TopHoldersCheck,
+}

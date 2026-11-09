@@ -24,6 +24,10 @@ Offline machine checks, no network and no funds moved:
      and sending its buy.
  14. A chain-reading check runs after the creation wait and its skip stops
      the buy.
+ 15. The top-holders check skips a coin whose top wallets hold too much, and
+     leaves out accounts that programs own (the curve, a pool's vaults).
+ 16. A failed or empty read leaves the top-holders check unable to decide.
+ 17. The top-holders check reads the chain and refuses a share outside (0, 1].
 
 Usage:
     uv run tests/regression/verify_pre_buy_checks.py
@@ -43,6 +47,8 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import yaml  # noqa: E402
 from _fakes import _check  # noqa: E402
+from solders.account import Account  # noqa: E402
+from solders.keypair import Keypair  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
 from config_loader import validate_checks_config  # noqa: E402
@@ -59,6 +65,7 @@ from trading.checks import (  # noqa: E402
     load_checks,
 )
 from trading.checks.builtin import BUILTINS, MayhemCheck  # noqa: E402
+from trading.checks.top_holders import TopHoldersCheck  # noqa: E402
 from trading.intake import TokenIntake  # noqa: E402
 from trading.settings import TraderSettings  # noqa: E402
 from trading.universal_trader import UniversalTrader  # noqa: E402
@@ -519,6 +526,129 @@ async def check_chain_check_after_wait() -> bool:
     return _check("chain check runs after the wait and stops the buy", ok, str(events))
 
 
+SUPPLY = 1_000_000
+
+
+class _HoldersClient:
+    """Serves the largest token accounts, the supply and each account's owner."""
+
+    def __init__(
+        self, holders: list[tuple[int, Pubkey]], *, fail: bool = False
+    ) -> None:
+        self.accounts = {Pubkey.new_unique(): h for h in holders}
+        self.fail = fail
+
+    async def post_rpc(self, body: dict, **_kwargs: object) -> dict | None:
+        if self.fail:
+            return None
+        if body["method"] == "getTokenSupply":
+            return {"result": {"value": {"amount": str(SUPPLY), "decimals": 6}}}
+        if body["method"] == "getTokenLargestAccounts":
+            value = [
+                {"address": str(a), "amount": str(amount), "decimals": 6}
+                for a, (amount, _owner) in self.accounts.items()
+            ]
+            return {"result": {"value": value}}
+        return None
+
+    async def get_multiple_accounts(
+        self, pubkeys: list[Pubkey], commitment: str | None = None
+    ) -> list[Account | None]:
+        self.commitment = commitment
+        out = []
+        for key in pubkeys:
+            _amount, owner = self.accounts[key]
+            data = bytes(32) + bytes(owner) + bytes(165 - 64)
+            out.append(
+                Account(
+                    lamports=2_039_280,
+                    data=data,
+                    owner=Pubkey.new_unique(),
+                    executable=False,
+                    rent_epoch=0,
+                )
+            )
+        return out
+
+
+def _wallet() -> Pubkey:
+    return Keypair().pubkey()
+
+
+def _program_address() -> Pubkey:
+    return Pubkey.find_program_address([b"vault"], Pubkey.new_unique())[0]
+
+
+async def check_top_holders() -> bool:
+    check = TopHoldersCheck(top=2, max_share=0.3)
+    concentrated = _HoldersClient([(200_000, _wallet()), (150_000, _wallet())])
+    vaulted = _HoldersClient([(900_000, _program_address()), (50_000, _wallet())])
+    skip = await check.check(_coin(), CheckContext(client=concentrated))
+    ok_pass = await check.check(_coin(), CheckContext(client=vaulted))
+    a = _check("top holders: concentrated wallets skip", skip is not None, repr(skip))
+    b = _check(
+        "top holders: program-owned vault is left out", ok_pass is None, repr(ok_pass)
+    )
+    c = _check(
+        "top holders: owners read at confirmed",
+        concentrated.commitment == "confirmed",
+        repr(concentrated.commitment),
+    )
+    return a and b and c
+
+
+async def check_top_holders_unavailable() -> bool:
+    results = []
+    for label, client in (
+        ("failed read", _HoldersClient([(1, _wallet())], fail=True)),
+        ("no accounts", _HoldersClient([])),
+    ):
+        try:
+            await TopHoldersCheck(max_share=0.5).check(_coin(), CheckContext(client))
+        except CheckUnavailable:
+            results.append(
+                _check(
+                    f"top holders: {label} can't decide",
+                    passed=True,
+                    detail="CheckUnavailable",
+                )
+            )
+        else:
+            results.append(
+                _check(
+                    f"top holders: {label} can't decide", passed=False, detail="decided"
+                )
+            )
+    return all(results)
+
+
+def check_top_holders_contract() -> bool:
+    results = [
+        _check(
+            "top holders reads the chain",
+            TopHoldersCheck.reads_chain is True,
+            str(TopHoldersCheck.reads_chain),
+        ),
+        _check(
+            "top holders is a listable built-in",
+            BUILTINS.get("top_holders") is TopHoldersCheck,
+            str(sorted(BUILTINS)),
+        ),
+    ]
+    for share in (0, -0.1, 1.5):
+        try:
+            TopHoldersCheck(max_share=share)
+        except ValueError:
+            results.append(
+                _check(f"max_share {share} refused", passed=True, detail="ok")
+            )
+        else:
+            results.append(
+                _check(f"max_share {share} refused", passed=False, detail="accepted")
+            )
+    return all(results)
+
+
 async def main() -> int:
     print("Pre-buy check pipeline")
     results = [
@@ -535,6 +665,9 @@ async def main() -> int:
         check_shipped_configs(),
         await check_free_checks_cost_no_rpc(),
         await check_chain_check_after_wait(),
+        await check_top_holders(),
+        await check_top_holders_unavailable(),
+        check_top_holders_contract(),
     ]
     if all(results):
         print("\nAll checks passed.")
