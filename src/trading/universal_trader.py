@@ -410,6 +410,7 @@ class UniversalTrader:
             # position task to end, so cleanup never races a sell.
             await positions.stop()
             await self._cleanup_without_interruption()
+            await self._read_given_up_rent()
             self._report_session()
             logger.info("Universal Trader has shut down")
 
@@ -471,6 +472,17 @@ class UniversalTrader:
                 f"buying again"
             )
         self._below_min_balance = below
+
+    async def _read_given_up_rent(self) -> None:
+        """The rent the coins given up on still lock, for the summary; bounded."""
+        if not self.positions.given_up_mints:
+            return
+        try:
+            await asyncio.wait_for(self.positions.read_given_up_rent(), timeout=10)
+        except (Exception, asyncio.CancelledError):  # noqa: BLE001
+            # Already the terminal path, like cleanup: a cancellation arriving
+            # here must not cost the summary that follows.
+            logger.warning("Could not read the rent of the coins given up on")
 
     def _report_session(self) -> None:
         """Print the session summary and append it to `trades/sessions.log`."""

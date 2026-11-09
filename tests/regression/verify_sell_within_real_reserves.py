@@ -41,6 +41,10 @@ curve; the curve takes each landed sell off its reserves:
      file with no cleanup, and a refilled curve takes the rest.
   I. A capped sale whose confirmation came late is settled the same way in
      both strategies: the rest stays held, no cleanup.
+  J. A capped SOL sale whose payout is below its network fee (base fee plus
+     priority fee) sends nothing and reports the curve short; the same sale
+     with a fee below its payout goes out. A curve that can pay nothing also
+     reports the curve short.
 
 Usage:
     uv run tests/regression/verify_sell_within_real_reserves.py
@@ -170,6 +174,7 @@ def _sell(
     price: float,
     curve_data: bytes = CURVE_DATA,
     status: ConfirmationStatus = ConfirmationStatus.REVERTED,
+    priority_fee: int | None = None,
 ) -> tuple[tuple[int, int] | None, object]:
     """Run the seller; return the sent sell_v2 (amount, min_sol_output) and the result."""
     client = _Client(curve_data, status)
@@ -181,10 +186,14 @@ def _sell(
             event_parser=None,
         )
     )
+
+    async def fee(_accounts: list) -> int | None:
+        return priority_fee
+
     seller = PlatformAwareSeller(
         client,
         SimpleNamespace(pubkey=TRADER, keypair=None),
-        SimpleNamespace(calculate_priority_fee=_no_fee),
+        SimpleNamespace(calculate_priority_fee=fee),
         slippage=SLIPPAGE,
         max_retries=1,
     )
@@ -625,6 +634,34 @@ def check_i_late_capped_sale() -> bool:
     return all(held)
 
 
+def check_j_worthless_partial_sale() -> bool:
+    """J: a capped sale worth less than its fee sends nothing; a cheap fee sends it."""
+    price = _spot_price(CURVE_DATA)
+    _, _, real_quote = _reserves(CURVE_DATA)
+    # Microlamports per compute unit; any sell's limit makes this cost more
+    # lamports than the curve holds.
+    costly = real_quote * 1_000_000
+    sent_costly, result_costly = _sell(POSITION, price, priority_fee=costly)
+    sent_cheap, _ = _sell(POSITION, price, priority_fee=1)
+    data = bytearray(CURVE_DATA)
+    struct.pack_into("<Q", data, REAL_QUOTE, 0)
+    _, result_empty = _sell(POSITION, price, bytes(data))
+    ok = (
+        sent_costly is None
+        and not result_costly.success
+        and result_costly.curve_short
+        and sent_cheap is not None
+        and result_empty.curve_short
+    )
+    if not ok:
+        print(
+            f"    costly fee sent {sent_costly} (curve_short "
+            f"{result_costly.curve_short}); cheap fee sent {sent_cheap}; empty "
+            f"curve_short {result_empty.curve_short}"
+        )
+    return ok
+
+
 def main() -> int:
     """Run every check and report."""
     checks = [
@@ -647,6 +684,10 @@ def main() -> int:
         ),
         ("H: time_based keeps the rest, sells it on a refill", check_h_time_based),
         ("I: a late-confirmed capped sale keeps the rest", check_i_late_capped_sale),
+        (
+            "J: a capped sale worth less than its fee is not sent",
+            check_j_worthless_partial_sale,
+        ),
     ]
     failed = 0
     for label, check in checks:

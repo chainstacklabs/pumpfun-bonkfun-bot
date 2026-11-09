@@ -43,6 +43,7 @@ from core.client import rpc_endpoint_problem
 from core.keystore import KeystoreError, unlock_from_env
 from interfaces.core import Platform
 from trading.position_store import holds_positions
+from trading.run_lock import RunLock
 from trading.settings import DEFAULT_MAX_EXIT_SELL_ATTEMPTS, TraderSettings
 from trading.universal_trader import UniversalTrader
 from utils import console
@@ -343,7 +344,28 @@ async def start_bot(config_path: str, positions_file: str | None = None) -> bool
 
 
 async def _start_loaded(cfg: dict, positions_file: str | None) -> bool:
-    """`start_bot` once the config has loaded and the bot's log file is set up."""
+    """`start_bot` once the config has loaded and the bot's log file is set up.
+
+    A bot whose positions file another bot or `pump_bot_positions sell-all` is
+    using is not started.
+    """
+    path = positions_file or positions_file_for(cfg.get("name"))
+    if path is None:
+        return await _start_unlocked(cfg, positions_file)
+    lock = RunLock(path)
+    if not lock.acquire():
+        logger.error(
+            f"Bot '{cfg['name']}' not started: its positions file {path} is in "
+            f"use by another bot or pump_bot_positions"
+        )
+        return False
+    try:
+        return await _start_unlocked(cfg, positions_file)
+    finally:
+        lock.release()
+
+
+async def _start_unlocked(cfg: dict, positions_file: str | None) -> bool:
     print_config_summary(cfg)
     session.start(cfg["name"])
 

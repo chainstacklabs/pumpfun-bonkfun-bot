@@ -230,6 +230,11 @@ less than was bought sells what is held. The bot clears a position only when thr
 reads, a second apart, all find nothing, since an RPC node lagging behind may
 not show a fresh buy yet. A position whose balance cannot be read stays in the
 file and is tried again on the next start, and so does one whose exit gave up.
+A position the bot gives up on (its sale ran out of attempts or could not be
+resolved) is marked `given_up` in the file with the reason, and the session
+summary lists it with the amount held and the rent its account still locks.
+When the curve can pay nothing for a coin, or less than the sale's network
+fee, nothing is sent and the next attempt waits `price_check_interval`.
 Each position names the wallet that bought it: a bot started with another
 wallet leaves it in the file, neither sold nor cleared, until that wallet trades
 again. Entries written before positions named their wallet resume for any
@@ -249,6 +254,10 @@ leaves its old file behind; rename the file too. A position bought on another
 `platform` than the bot's current one stays in the file and is not monitored.
 No coin in the file is bought again, monitored or not. A file the bot cannot
 read is moved aside to `<name>.json.unreadable`.
+
+Only one process uses a positions file at a time: a bot whose file another bot
+or `pump_bot_positions sell-all` holds is not started, and says so. The lock is
+`<name>.json.lock` next to the file; the system drops it when its holder exits.
 
 ### Encrypted keystore
 

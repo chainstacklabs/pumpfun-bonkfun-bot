@@ -9,9 +9,10 @@ buy is sent until its sell, and `resume` picks those up again after a restart.
 import asyncio
 import dataclasses
 import struct
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Mapping
 from datetime import UTC, datetime
 from enum import Enum
+from types import MappingProxyType
 
 from solders.pubkey import Pubkey
 
@@ -126,6 +127,9 @@ class PositionManager:
     #: Rebound, never mutated, so the class default serves a manager built
     #: without `__init__` too.
     _closes: frozenset[asyncio.Task] = frozenset()
+    #: Coins whose exit this session gave up on while still holding them, by
+    #: mint. Rebound, never mutated, like `_closes`.
+    _given_up: Mapping[Pubkey, TokenInfo] = MappingProxyType({})
 
     # Sales this session, how many were read back with their slot, and the
     # latest such slot: cleanup reads from a node that has reached it.
@@ -819,12 +823,57 @@ class PositionManager:
             f"Resuming position in {label}: {buy.amount} tokens bought at "
             f"{buy.price} on {stored.entry_time.isoformat()} UTC"
         )
+        if stored.given_up is not None:
+            self.store.clear_given_up(token_info.mint)
         if stored.realised is not None:
             if self._resumed_realised is None:
                 self._resumed_realised = {}
             self._resumed_realised[token_info.mint] = stored.realised
         self.open(token_info, buy, entry_time=stored.entry_time)
         return True
+
+    def _give_up(
+        self, token_info: TokenInfo, reason: str, amount_raw: int | None
+    ) -> None:
+        """Mark a position the exit stopped monitoring while the coin is still held."""
+        self._given_up = MappingProxyType(
+            {**self._given_up, token_info.mint: token_info}
+        )
+        if self.store is not None:
+            self.store.mark_given_up(token_info.mint, reason)
+        session.current().add_given_up(token_info, amount_raw, reason)
+
+    @property
+    def given_up_mints(self) -> set[Pubkey]:
+        """Coins this session gave up on that are still in the positions file."""
+        if self.store is None:
+            return set()
+        return {m for m in self._given_up if str(m) in self.store.mints()}
+
+    async def read_given_up_rent(self) -> None:
+        """Record the rent each given-up coin's token account holds, for the summary.
+
+        One read for all of them; a failed read leaves the rent unknown.
+        """
+        coins = list(self._given_up.values())
+        if not coins:
+            return
+        accounts = [
+            self.wallet.get_associated_token_address(c.mint, c.token_program_id)
+            for c in coins
+        ]
+        try:
+            read = await self.solana_client.get_multiple_accounts(
+                accounts, commitment="confirmed"
+            )
+        except Exception:  # noqa: BLE001 - the summary says unknown instead
+            logger.warning("Could not read the rent of the coins given up on")
+            return
+        current = session.current()
+        for coin, account in zip(coins, read, strict=True):
+            current.set_given_up_rent(
+                coin.mint, account.lamports if account is not None else None
+            )
 
     def _clear(self, token_info: TokenInfo) -> None:
         """Drop a position the wallet no longer holds, and close its account.
@@ -1085,6 +1134,9 @@ class PositionManager:
                 attempt, curve_short = 0, True
             elif attempt >= self.max_exit_sell_attempts:
                 break
+            elif sell_result.curve_short:
+                # The curve pays out only what it holds: wait for it to refill.
+                curve_short = True
             if curve_short:
                 await asyncio.sleep(self.price_check_interval)
             # The seller turns token_price into the slippage floor, and a revert
@@ -1096,6 +1148,11 @@ class PositionManager:
             f"Giving up on selling {token_info.symbol} after "
             f"{self.max_exit_sell_attempts} attempts. Position stays open "
             f"and is no longer monitored - tokens are still held."
+        )
+        self._give_up(
+            token_info,
+            f"no sale after {self.max_exit_sell_attempts} attempts",
+            buy_result.amount_raw,
         )
 
     async def _settle_time_based_sell(  # noqa: PLR0913
@@ -1133,6 +1190,9 @@ class PositionManager:
                     f"Stopping exit attempts for {token_info.symbol} after "
                     f"{attempt} attempt(s) - the last sell could not be "
                     f"resolved. Position stays open and is no longer monitored."
+                )
+                self._give_up(
+                    token_info, "the last sale could not be resolved", held.amount_raw
                 )
             if verdict is not ExitSellVerdict.LATE_SUCCESS:
                 return verdict, 0
@@ -1534,6 +1594,9 @@ class PositionManager:
                 f"{attempt} attempts. Position stays open "
                 f"and is no longer monitored - tokens are still held."
             )
+            self._give_up(
+                token_info, f"no sale after {attempt} attempts", position.quantity_raw
+            )
             return None
         return attempt
 
@@ -1581,6 +1644,11 @@ class PositionManager:
                         f"Stopping exit attempts for {token_info.symbol} - the "
                         f"last sell could not be resolved. Position stays open "
                         f"and is no longer monitored."
+                    )
+                    self._give_up(
+                        token_info,
+                        "the last sale could not be resolved",
+                        position.quantity_raw,
                     )
                 return verdict
             # The sell landed, only its confirmation was late.

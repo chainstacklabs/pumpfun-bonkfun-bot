@@ -66,7 +66,10 @@ runs, and keeps it in the store (`set_price`). Balance reads on resume are at
 (a sale the curve could pay for only in part leaves the rest in the file, still
 monitored, and no cleanup runs, counting the part in `parts_sold` and its PnL in
 `realised`, so a restart totals the whole position): a position stopped at shutdown, or whose exit
-gave up or could not be resolved, still holds its coin.
+gave up or could not be resolved, still holds its coin. An exit that gives up
+(`PositionManager._give_up`) marks the record `given_up` and the session lists
+it; resuming clears the mark. `bot_runner` holds `<positions file>.lock`
+(`trading/run_lock.py`) while a bot runs.
 On start `PositionManager.resume` reads the wallet's balance before holding a
 position again; a coin no longer held is cleared, never sold. A position
 another wallet bought (each record names its wallet) is kept and skipped.

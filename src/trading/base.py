@@ -37,6 +37,9 @@ class TradeResult:
     #: For a trade whose outcome is unknown: the block height past which its
     #: transaction can no longer land. None when the signer did not report it.
     last_valid_block_height: int | None = None
+    #: Nothing was sent because the curve can pay nothing for the coin now, or
+    #: less than the sale's network fee; it may refill.
+    curve_short: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/serialization.

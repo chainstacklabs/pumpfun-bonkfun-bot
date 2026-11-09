@@ -241,6 +241,9 @@ class StoredPosition:
     realised: Realised | None = None
     #: All of it was sold, and only its account close is left to do.
     sold: bool = False
+    #: Why the bot stopped monitoring it while still holding it; None while
+    #: it is monitored, or was never given up on.
+    given_up: str | None = None
 
 
 def _decode(mint: str, record: dict) -> StoredPosition:
@@ -268,6 +271,9 @@ def _decode(mint: str, record: dict) -> StoredPosition:
         pending=_pending_of(record),
         realised=_realised_of(record),
         sold=record.get("sold") is True,
+        given_up=given_up
+        if isinstance(given_up := record.get("given_up"), str)
+        else None,
     )
 
 
@@ -484,6 +490,43 @@ class PositionStore:
             return
         record["buy"]["price"] = price
         self._write()
+
+    def mark_given_up(self, mint: Pubkey, reason: str) -> None:
+        """Record that the bot stopped monitoring a position it still holds."""
+        record = self._records.get(str(mint))
+        if record is None:
+            return
+        record["given_up"] = reason
+        self._write()
+
+    def clear_given_up(self, mint: Pubkey) -> None:
+        """Drop the mark once the position is monitored again."""
+        record = self._records.get(str(mint))
+        if record is None or record.pop("given_up", None) is None:
+            return
+        self._write()
+
+    @staticmethod
+    def peek(path: Path | str) -> list[StoredPosition]:
+        """The positions in a file, read only: nothing written, moved or logged.
+
+        For reading a file another process may be using. Records that do not
+        decode are left out.
+
+        Raises:
+            OSError, ValueError, KeyError, TypeError: The file can't be read
+        """
+        try:
+            text = Path(path).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return []
+        positions = []
+        for record in _records_in(json.loads(text)):
+            try:
+                positions.append(_decode(record["mint"], record))
+            except (ValueError, KeyError, TypeError, AttributeError):
+                continue
+        return positions
 
     def remove(self, mint: Pubkey) -> None:
         """Drop a position that has been sold; a mint not in the file is a no-op."""
