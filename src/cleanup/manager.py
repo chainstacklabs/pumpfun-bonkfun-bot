@@ -342,7 +342,7 @@ class AccountCleanupManager:
             instructions, closes = built
             outcome, signature, slot = await self._send(account, instructions)
             if outcome is ConfirmationStatus.SUCCESS:
-                self._report_done(account, closes, burn_at_most)
+                self._report_done(account, closes=closes, burned=burn_at_most)
                 return True
             if outcome is ConfirmationStatus.REVERTED or not closes:
                 logger.error(
@@ -372,7 +372,9 @@ class AccountCleanupManager:
         )
         return False
 
-    def _report_done(self, account: Pubkey, closes: bool, burned: int | None) -> None:
+    def _report_done(
+        self, account: Pubkey, *, closes: bool, burned: int | None
+    ) -> None:
         if not closes:
             logger.info(
                 f"Burned {burned} raw tokens from {account}; it holds more, so it "
