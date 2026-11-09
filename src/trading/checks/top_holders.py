@@ -82,7 +82,7 @@ class TopHoldersCheck(PreBuyCheck):
         share = held / total
         if share > self.max_share:
             return (
-                f"top {self.top} wallets hold {share:.0%} of the supply, above "
-                f"max_share {self.max_share:.0%}"
+                f"top {self.top} wallets hold {share:.2%} of the supply, above "
+                f"max_share {self.max_share:.2%}"
             )
         return None

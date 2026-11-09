@@ -594,7 +594,12 @@ async def check_top_holders() -> bool:
     vaulted = _HoldersClient([(900_000, _program_address()), (50_000, _wallet())])
     skip = await check.check(_coin(), CheckContext(client=concentrated))
     ok_pass = await check.check(_coin(), CheckContext(client=vaulted))
-    a = _check("top holders: concentrated wallets skip", skip is not None, repr(skip))
+    # 350,000 of 1,000,000 against a 30% limit, said precisely enough to compare.
+    a = _check(
+        "top holders: concentrated wallets skip",
+        skip is not None and "35.00%" in skip and "30.00%" in skip,
+        repr(skip),
+    )
     b = _check(
         "top holders: program-owned vault is left out", ok_pass is None, repr(ok_pass)
     )
