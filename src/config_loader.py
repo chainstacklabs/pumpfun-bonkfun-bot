@@ -50,6 +50,13 @@ CONFIG_VALIDATION_RULES = [
         "trade.max_open_positions must be between 1 and 100",
     ),
     (
+        "trade.min_wallet_balance",
+        (int, float),
+        0,
+        float("inf"),
+        "trade.min_wallet_balance must be a non-negative number of SOL",
+    ),
+    (
         "filters.max_transfer_fee_bps",
         int,
         0,

@@ -77,6 +77,7 @@ FULL_CONFIG = {
         "price_check_interval": 7,
         "max_exit_sell_attempts": 4,
         "max_open_positions": 6,
+        "min_wallet_balance": 0.75,
     },
     "filters": {
         "listener_type": "blocks",
@@ -146,6 +147,7 @@ EXPECTED_FULL = {
     "price_check_interval": 7,
     "max_exit_sell_attempts": 4,
     "max_open_positions": 6,
+    "min_wallet_balance": 0.75,
     "enable_dynamic_priority_fee": True,
     "enable_fixed_priority_fee": False,
     "fixed_priority_fee": 123_456,
@@ -200,6 +202,7 @@ EXPECTED_DEFAULTS = {
     "price_check_interval": 10,
     "max_exit_sell_attempts": 3,
     "max_open_positions": 1,
+    "min_wallet_balance": None,
     "enable_dynamic_priority_fee": False,
     "enable_fixed_priority_fee": True,
     "fixed_priority_fee": 500_000,
@@ -366,6 +369,7 @@ def check_c_parts_get_their_settings() -> bool:
             trader.yolo_mode,
             trader.quote_amounts,
             trader.settings is settings,
+            trader.min_wallet_balance,
         ),
     }
     expected = {
@@ -425,7 +429,7 @@ def check_c_parts_get_their_settings() -> bool:
             True,
             "positions/wired-bot.json",
         ),
-        "coordinator": (True, 3, 5, True, quote_amounts, True),
+        "coordinator": (True, 3, 5, True, quote_amounts, True, 0.75),
     }
     problems = _mismatches(got, expected)
     for problem in problems:

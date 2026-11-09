@@ -199,5 +199,6 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
   Adding a listener means updating `PLATFORM_LISTENER_COMPATIBILITY` there too.
 - Bots with `separate_process: true` run in their own process, one log file each.
 - `pump_bot` runs **every** `bots/*.yaml` in the current folder (four of five
-  committed configs ship `enabled: false`). Exit 0 only when every enabled bot
+  committed configs ship `enabled: false`); `--config <file>` runs only that
+  one, whatever its `enabled` says. Exit 0 only when every enabled bot
   ran without an error; 1 otherwise, with one line saying why.

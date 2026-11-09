@@ -84,8 +84,11 @@ Set `enabled: false` to keep a config around without running it; such a file is 
 ```bash
 pump_bot                   # as an installed package
 pump_bot --verbose         # every log line on the terminal, not only events
+pump_bot --config bots/bot-sniper-2-logs.yaml   # only this bot, even if it says enabled: false
 uv run src/bot_runner.py   # or directly
 ```
+
+Each bot logs the address of the wallet it trades from when it starts, whether the config gives `private_key` or `keystore`.
 
 Logs land in `logs/{bot_name}_{timestamp}.log`, every line in full.
 
@@ -103,6 +106,7 @@ The YAML files are commented inline. The sections that matter most:
 
 - **`private_key`** or **`keystore`** — the trading wallet: a raw key, or the path of an [encrypted keystore](#encrypted-keystore).
 - **`trade`** — `buy_amount` (in SOL), slippage, `exit_strategy` (`time_based`, `tp_sl`, `manual`), [`entry`](#migration-entry), [`max_open_positions`](#several-positions-at-once) and [`extreme_fast_mode`](#extreme-fast-mode).
+  - `min_wallet_balance` (SOL, optional): below it the bot buys nothing more and logs one warning; positions it holds still run to their exit. The balance is read at start and after each buy is sent, never before a buy; while it is low it is read again at most every 10 seconds, and buying resumes once a sale brings it back above.
 - **`priority_fees`** — fixed or dynamic. Dynamic costs an extra RPC call, which slows the buy.
 - **`filters`** — `listener_type`, `max_token_age` (checked once, when the bot takes a coin up: seconds since it detected the coin, not its age on chain, so a slow listener lets older coins through), name/creator matching, `marry_mode` (buy only, never sell), `yolo_mode` (trade continuously).
 - **`retries`** — attempts and the wait windows around creation, buy, and the next token.

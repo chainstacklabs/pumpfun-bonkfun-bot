@@ -229,7 +229,7 @@ def check_a_help_starts_nothing(tmp: str) -> bool:
             for word in ("bots/*.yaml", "logs/", "trades/", "positions/")
             if word not in run.stdout
         ]
-    for args in (["--config", "bots/live.yaml"], ["start"]):
+    for args in (["--configs", "bots/live.yaml"], ["start"]):
         run = _run(folder, *args)
         if run.returncode != 2:  # noqa: PLR2004 - argparse's usage error
             problems.append(f"{args}: exit {run.returncode}, expected 2")
@@ -439,7 +439,7 @@ def check_e_probe_names_the_cause(_tmp: str) -> bool:
 def _main_exit(outcome: object) -> object:
     """`main`'s exit status when `run_all_bots` returns or raises `outcome`."""
 
-    def run_all() -> bool:
+    def run_all(_config: str | None = None) -> bool:
         if isinstance(outcome, BaseException):
             raise outcome
         return outcome
