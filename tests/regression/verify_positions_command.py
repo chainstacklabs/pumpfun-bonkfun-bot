@@ -56,6 +56,7 @@ from spl.token.instructions import get_associated_token_address  # noqa: E402
 
 import positions_cli  # noqa: E402
 from core.pubkeys import WSOL_MINT, SystemAddresses  # noqa: E402
+from core.trade_deltas import TradeDeltas  # noqa: E402
 from interfaces.core import Platform, TokenInfo, TradeFailureReason  # noqa: E402
 from trading import trade_log  # noqa: E402
 from trading.base import PendingBuy, TradeResult  # noqa: E402
@@ -95,6 +96,13 @@ class _Client:
     def __init__(self, balances: dict) -> None:
         self.balances = balances
         self.mints: set[Pubkey] = set()
+        # mint -> what its sale did to the wallet, as read back from the chain
+        self.sales: dict[Pubkey, TradeDeltas] = {}
+
+    async def get_trade_deltas(
+        self, _signature: str, _wallet: Pubkey, mint: Pubkey, *_a: object
+    ) -> TradeDeltas | None:
+        return self.sales.get(mint)
 
     async def get_account_info(
         self, key: Pubkey, commitment: str | None = None
@@ -246,6 +254,10 @@ def _tools(
     prices = {coins["unpriced"].mint: None}
     client = _Client(balances or {})
     client.mints = {c.mint for c in coins.values()}
+    # The plain coin's sale is read back: 500 tokens for 0.002 SOL, 5000 fee.
+    client.sales[coins["plain"].mint] = TradeDeltas(
+        tokens_raw=-(AMOUNT_RAW // 2), quote_raw=2_000_000, network_fee_lamports=5_000
+    )
     return SimpleNamespace(
         client=client,
         wallet=_Wallet(),
@@ -341,6 +353,20 @@ async def check_sell_all_refuses() -> bool:
     )
 
 
+def _line(text: str, coin: TokenInfo) -> str:
+    """The PnL line printed for `coin`'s sale."""
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if (
+            str(coin.mint) in line
+            and "sold" in line
+            and i + 1 < len(lines)
+            and "PnL" in lines[i + 1]
+        ):
+            return lines[i + 1]
+    return ""
+
+
 async def check_sell_all_sells() -> bool:
     trade_log.log_trade = lambda *_a, **_k: None
     with tempfile.TemporaryDirectory() as tmp:
@@ -388,6 +414,12 @@ async def check_sell_all_sells() -> bool:
             and coins["otherplat"].mint in left
             and "other platform" in text,
             str(list(sold)),
+        ),
+        _check(
+            "a sale read back from the chain is priced from it",
+            "sell's transaction could not be read" not in _line(text, coins["plain"])
+            and "sell's transaction could not be read" in _line(text, coins["extra"]),
+            f"{_line(text, coins['plain'])!r}",
         ),
         _check(
             "a partial sale counts in the position's realised PnL",

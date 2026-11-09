@@ -50,7 +50,7 @@ from interfaces.core import Platform, TokenInfo
 from platforms import get_platform_implementations
 from trading import trade_log
 from trading.base import TradeResult
-from trading.platform_aware import PlatformAwareSeller
+from trading.platform_aware import PlatformAwareSeller, landed_sale, read_deltas
 from trading.pnl import CostBasis, Realised, SalePnl, cost_basis, pnl_text, sale_pnl
 from trading.position_store import PositionStore, StoredPosition
 from trading.pricing import read_price
@@ -260,12 +260,19 @@ async def _sell_one(
     else:
         # The reason, not the message: a message can quote an RPC error.
         reason = result.failure_reason.value if result.failure_reason else "failed"
-    return _settle(
-        position, store, result, reason=reason, held=held, price=price, out=out
+    return await _settle(
+        position,
+        store,
+        result,
+        reason=reason,
+        held=held,
+        price=price,
+        tools=tools,
+        out=out,
     )
 
 
-def _settle(  # noqa: PLR0913
+async def _settle(  # noqa: PLR0913
     position: StoredPosition,
     store: PositionStore,
     result: TradeResult | None,
@@ -273,6 +280,7 @@ def _settle(  # noqa: PLR0913
     reason: str,
     held: int,
     price: float,
+    tools: Tools,
     out: TextIO,
 ) -> tuple[bool, bool]:
     """Record what one sale did; (all of it gone from the wallet, account to close)."""
@@ -288,16 +296,26 @@ def _settle(  # noqa: PLR0913
         print(f"{label}: sale failed ({reason}); kept", file=out)
         return False, False
     sold = result.amount_raw if result.amount_raw is not None else held
+    # Read back like the bot's own sales, so the PnL is the chain's, not an estimate.
+    sale = landed_sale(
+        coin,
+        result.tx_signature,
+        sold,
+        price,
+        await read_deltas(tools.client, result.tx_signature, tools.wallet.pubkey, coin),
+    )
+    sale.venue = result.venue
     trade_log.log_trade(
         "sell",
         coin,
-        result.price,
-        result.amount,
-        result.tx_signature,
-        venue=result.venue,
+        sale.price,
+        sale.amount,
+        sale.tx_signature,
+        deltas=sale.deltas,
+        venue=sale.venue,
     )
-    realised = _realised(position, result, price, quote_mint)
-    print(f"  {pnl_text('PnL', realised[1], quote_symbol(quote_mint))}", file=out)
+    realised = _realised(position, sale, price, quote_mint)
+    pnl_line = f"  {pnl_text('PnL', realised[1], quote_symbol(quote_mint))}"
     left = held - sold
     if left > 0:
         store.reduce(coin.mint, left / 10**TOKEN_DECIMALS, left, sold=True)
@@ -305,13 +323,15 @@ def _settle(  # noqa: PLR0913
         store.mark_given_up(coin.mint, "sell-all could not sell all of it")
         print(
             f"{label}: sold {sold / 10**TOKEN_DECIMALS:g}, the curve could not "
-            f"pay for the rest",
+            f"pay for the rest\n{pnl_line}",
             file=out,
         )
         return False, False
     store.remove(coin.mint)
     print(
-        f"{label}: sold {sold / 10**TOKEN_DECIMALS:g} ({result.tx_signature})", file=out
+        f"{label}: sold {sold / 10**TOKEN_DECIMALS:g} ({result.tx_signature})\n"
+        f"{pnl_line}",
+        file=out,
     )
     return True, True
 
