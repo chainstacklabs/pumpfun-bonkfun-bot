@@ -728,7 +728,7 @@ def check_k_report_failure_keeps_settlement() -> bool:
     closes: list = []
     out: dict = {}
 
-    async def close(*args: object) -> None:
+    async def close(*args: object, **_k: object) -> None:
         closes.append(args)
 
     def broken(*_a: object, **_k: object) -> None:

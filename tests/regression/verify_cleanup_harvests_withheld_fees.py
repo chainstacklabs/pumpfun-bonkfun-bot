@@ -52,17 +52,15 @@ def _accounts() -> dict:
 
 
 class _CleanupClient:
-    """Serves one token account and records what cleanup sends."""
+    """Serves one token account, emptied as by a sale, and records what cleanup sends."""
 
     def __init__(self, data: bytes) -> None:
-        self.data = data
+        # The recorded account still holds tokens; cleanup runs after the sale.
+        self.data = data[:64] + bytes(8) + data[72:]
         self.sent: list = []
 
-    async def get_account_info(self, _address: Pubkey) -> SimpleNamespace:
+    async def get_account_info(self, _address: Pubkey, **_k: object) -> SimpleNamespace:
         return SimpleNamespace(data=self.data, owner=SystemAddresses.TOKEN_2022_PROGRAM)
-
-    async def get_token_account_balance(self, _address: Pubkey) -> int:
-        return 0
 
     async def build_and_send_transaction(self, instructions: list, *_a, **_k) -> str:
         self.sent.append(instructions)

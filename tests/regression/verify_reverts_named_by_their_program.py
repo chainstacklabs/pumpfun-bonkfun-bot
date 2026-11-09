@@ -32,7 +32,7 @@ Offline machine checks, no network and no funds moved:
      longer than that.
   D. When that transaction cannot be read, the code is named from the venue the
      caller sent its trade to, hedged ("PumpSwap IDL, if PumpSwap raised it:
-     ..."), and not at all for CPMM, an unknown program or none.
+     ..."), CPMM included, and not at all for an unknown program or none.
   E. Each venue hands its program: the pump.fun and LaunchLab curves, PumpSwap
      and CPMM; a pending buy's venue resolves to its program, and to none when
      the record names no venue of the platform.
@@ -114,7 +114,10 @@ FROM_VENUE = (
         PumpFunAddresses.FEE_PROGRAM,
         "pump fees IDL, if pump fees raised it: 6004 OffsetNotContinuous",
     ),
-    (CPMM_PROGRAM, None),
+    (
+        CPMM_PROGRAM,
+        "Raydium CPMM IDL, if Raydium CPMM raised it: 6004 IncorrectLpMint",
+    ),
     (UNKNOWN_PROGRAM, None),
     (None, None),
 )

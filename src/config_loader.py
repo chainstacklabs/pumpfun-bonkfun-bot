@@ -157,34 +157,56 @@ def load_bot_config(path: str) -> dict:
     return config
 
 
-def resolve_env_vars(config: dict) -> None:
-    """Recursively resolve environment variables in the configuration.
+# The on/off settings. A `${VAR}` that resolves to `true` or `false`, in any
+# case, becomes a bool only here; every other setting keeps the text, so
+# `match_string: ${MATCH}` with `MATCH=true` filters on the word "true".
+SWITCHES = frozenset(
+    {
+        "enabled",
+        "separate_process",
+        "trade.extreme_fast_mode",
+        "trade.trust_create_event",
+        "priority_fees.enable_dynamic",
+        "priority_fees.enable_fixed",
+        "filters.marry_mode",
+        "filters.yolo_mode",
+        "cleanup.force_close_with_burn",
+        "cleanup.with_priority_fee",
+    }
+)
 
-    A value that is `true` or `false` in any case becomes a bool, so a switch
-    set from the environment means what it says; every other value stays a
-    string.
+
+def resolve_env_vars(config: dict) -> None:
+    """Replace each `${VAR}` value with the variable's value, in place.
+
+    A setting in `SWITCHES` set to `true` or `false` becomes a bool; anything
+    else stays a string.
+
+    Raises:
+        ValueError: A referenced variable is not set
     """
 
-    def resolve_env(value):
+    def resolve_env(path: str, value):
         if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
             env_var = value[2:-1]
             env_value = os.getenv(env_var)
             if env_value is None:
                 raise ValueError(f"Environment variable '{env_var}' not found")
             switch = env_value.strip().lower()
-            if switch in ("true", "false"):
+            if path in SWITCHES and switch in ("true", "false"):
                 return switch == "true"
             return env_value
         return value
 
-    def resolve_all(d):
+    def resolve_all(d: dict, prefix: str) -> None:
         for k, v in d.items():
+            path = f"{prefix}{k}"
             if isinstance(v, dict):
-                resolve_all(v)
+                resolve_all(v, f"{path}.")
             else:
-                d[k] = resolve_env(v)
+                d[k] = resolve_env(path, v)
 
-    resolve_all(config)
+    resolve_all(config, "")
 
 
 def get_nested_value(config: dict, path: str) -> Any:

@@ -50,6 +50,13 @@ landed but missed by the wait, reverted, refused by the node):
      nothing at all.
   F. A sold position's after-sell close holds no position slot, and
      `wait_all` and shutdown wait for it.
+  G. A close after a sale whose slot is known does not wait `SETTLE_SECONDS`:
+     it reads the account at confirmed from a node at that slot, asking again
+     while the node is behind, and sends nothing when no node reaches it in
+     time. Without the slot it waits first, then reads at confirmed. The
+     after-sell close gets the slot its sale's transaction landed in; the
+     post-session one gets the session's latest, and none once any sale's
+     slot is unknown.
 
 Usage:
     uv run tests/regression/verify_cleanup_closes_what_it_leaves.py
@@ -92,6 +99,7 @@ from core.wallet import Wallet  # noqa: E402
 from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E402
 from trading import position_manager, universal_trader  # noqa: E402
 from trading.base import PendingBuy, TradeResult  # noqa: E402
+from trading.pnl import Realised  # noqa: E402
 from trading.position_manager import PositionManager  # noqa: E402
 from trading.position_store import PositionStore  # noqa: E402
 from trading.settings import TraderSettings  # noqa: E402
@@ -927,7 +935,9 @@ async def _slot_free_while_closing() -> list[str]:
     release = asyncio.Event()
     closed: list[Pubkey] = []
 
-    async def slow_close(_c: object, _w: object, mint: Pubkey, *_a: object) -> None:
+    async def slow_close(
+        _c: object, _w: object, mint: Pubkey, *_a: object, **_k: object
+    ) -> None:
         await release.wait()
         closed.append(mint)
 
@@ -984,6 +994,152 @@ async def _slot_free_while_closing() -> list[str]:
 
 def check_f_close_holds_no_slot() -> list[str]:
     return asyncio.run(_slot_free_while_closing())
+
+
+SALE_SLOT = 7_777
+
+
+class _BehindChain(_Chain):
+    """A chain whose nodes are behind `SALE_SLOT` for the first `behind` reads."""
+
+    def __init__(self, behind: int) -> None:
+        super().__init__()
+        self.behind = behind
+
+    async def get_account_info(
+        self,
+        address: Pubkey,
+        commitment: str | None = None,
+        min_context_slot: int | None = None,
+    ) -> SimpleNamespace:
+        if min_context_slot is not None and self.behind > 0:
+            self.behind -= 1
+            self.reads.append((address, commitment, min_context_slot))
+            raise RuntimeError("Minimum context slot has not been reached")  # noqa: TRY003
+        return await super().get_account_info(address, commitment, min_context_slot)
+
+
+def _pinned_close(
+    after_slot: int | None, behind: int = 0, settle_seconds: float = 1.0
+) -> tuple[_Chain, int, Pubkey]:
+    """The after-sell close of one empty account; returns the chain, the
+    settle waits it made and the account."""
+    chain = _BehindChain(behind)
+    mint = Pubkey.new_unique()
+    ata = chain.add(mint, TOKEN_PROGRAM)
+    settles = []
+
+    async def settle(_self: AccountCleanupManager) -> None:
+        settles.append(1)
+
+    original = AccountCleanupManager._settle  # noqa: SLF001
+    AccountCleanupManager._settle = settle  # noqa: SLF001
+    AccountCleanupManager.SETTLE_SECONDS = settle_seconds
+    try:
+        asyncio.run(
+            asyncio.wait_for(
+                handle_cleanup_after_sell(
+                    chain,
+                    WALLET,
+                    mint,
+                    TOKEN_PROGRAM,
+                    _fees(),
+                    "after_sell",
+                    cleanup_with_prior_fee=True,
+                    force_burn=False,
+                    after_slot=after_slot,
+                ),
+                5.0,
+            )
+        )
+    finally:
+        AccountCleanupManager._settle = original  # noqa: SLF001
+        AccountCleanupManager.SETTLE_SECONDS = 0.0
+    return chain, len(settles), ata
+
+
+async def _sale_slots() -> list[str]:
+    """The slot each sale's read hands its close, and the session's latest."""
+    calls: list[int | None] = []
+
+    async def close(*_a: object, after_slot: int | None = None, **_k: object) -> None:
+        calls.append(after_slot)
+
+    manager = PositionManager(
+        _settings(cleanup_mode="after_sell"),
+        seller=SimpleNamespace(),
+        solana_client=_Chain(),
+        wallet=WALLET,
+        priority_fee_manager=_fees(),
+        platform_implementations=SimpleNamespace(
+            curve_market=None, graduated_market=None
+        ),
+    )
+    problems = []
+    if manager.last_sale_slot is not None:
+        problems.append("a session with no sale reports a sale slot")
+    original = position_manager.handle_cleanup_after_sell
+    position_manager.handle_cleanup_after_sell = close
+    try:
+        for slot, deltas in (
+            (SALE_SLOT, TradeDeltas(-1, 1, 5_000, slot=SALE_SLOT)),
+            (SALE_SLOT - 5, TradeDeltas(-1, 1, 5_000, slot=SALE_SLOT - 5)),
+            (None, None),
+        ):
+            sale = TradeResult(success=True, tx_signature="S", deltas=deltas)
+
+            async def read(*_a: object, _sale: TradeResult = sale) -> TradeResult:
+                return _sale
+
+            manager._read_sale = read  # noqa: SLF001
+            manager._after_sale(  # noqa: SLF001
+                _token(),
+                sale,
+                (1.0, 1_000_000),
+                cost=None,
+                price=1.0,
+                realised=Realised(),
+                last=True,
+            )
+            await manager.wait_all()
+            if calls[-1] != slot:
+                problems.append(f"the close got slot {calls[-1]}, not {slot}")
+            want = None if slot is None else SALE_SLOT
+            if manager.last_sale_slot != want:
+                problems.append(
+                    f"after a sale at {slot}, the session's sale slot is "
+                    f"{manager.last_sale_slot}, not {want}"
+                )
+    finally:
+        position_manager.handle_cleanup_after_sell = original
+    return problems
+
+
+def check_g_close_pinned_to_sale_slot() -> list[str]:
+    problems = []
+    chain, settles, ata = _pinned_close(SALE_SLOT)
+    if settles or chain.reads[:1] != [(ata, "confirmed", SALE_SLOT)]:
+        problems.append(
+            f"known slot: {settles} settle wait(s), first read {chain.reads[:1]}"
+        )
+    if chain.closes() != [ata]:
+        problems.append(f"known slot: closed {chain.closes()}")
+    chain, settles, ata = _pinned_close(SALE_SLOT, behind=2)
+    pinned = [r for r in chain.reads if r == (ata, "confirmed", SALE_SLOT)]
+    if len(pinned) < 3 or chain.closes() != [ata]:  # noqa: PLR2004
+        problems.append(
+            f"node behind: {len(pinned)} pinned read(s), closed {chain.closes()}"
+        )
+    chain, settles, ata = _pinned_close(SALE_SLOT, behind=10**6, settle_seconds=0.0)
+    if chain.sent:
+        problems.append("a node that never reaches the slot still got a close sent")
+    chain, settles, ata = _pinned_close(None)
+    if settles != 1 or chain.reads[:1] != [(ata, "confirmed", None)]:
+        problems.append(
+            f"unknown slot: {settles} settle wait(s), first read {chain.reads[:1]}"
+        )
+    problems += asyncio.run(_sale_slots())
+    return problems
 
 
 def _build_trader(**overrides: object) -> universal_trader.UniversalTrader:
@@ -1154,6 +1310,10 @@ def main() -> int:
         (
             "F: an after-sell close holds no position slot, and is waited for",
             check_f_close_holds_no_slot,
+        ),
+        (
+            "G: a close after a sale reads at the sale's slot instead of waiting",
+            check_g_close_pinned_to_sale_slot,
         ),
     ]
     failed = 0

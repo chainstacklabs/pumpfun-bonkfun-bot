@@ -126,6 +126,15 @@ class PositionManager:
     #: without `__init__` too.
     _closes: frozenset[asyncio.Task] = frozenset()
 
+    # Sales this session, how many were read back with their slot, and the
+    # latest such slot: cleanup reads from a node that has reached it.
+    _sales = 0
+    _sales_slotted = 0
+    _last_sale_slot = 0
+    # What resumed positions sold before the restart, by mint, until their
+    # exit takes it over; set on the first resume that has some.
+    _resumed_realised: dict[Pubkey, Realised] | None = None
+
     def __init__(  # noqa: PLR0913
         self,
         settings: TraderSettings,
@@ -176,6 +185,23 @@ class PositionManager:
     def monitors(self) -> bool:
         """Whether positions are held to an exit; not under manual or marry mode."""
         return not self.marry_mode and self.exit_strategy in ("tp_sl", "time_based")
+
+    def _earlier_sales(self, token_info: TokenInfo) -> Realised:
+        """The PnL of the parts sold before a restart; empty for a new position."""
+        if not self._resumed_realised:
+            return Realised()
+        return self._resumed_realised.pop(token_info.mint, None) or Realised()
+
+    @property
+    def last_sale_slot(self) -> int | None:
+        """The latest slot this session's sales landed in.
+
+        None when nothing was sold, or any sale's slot is unknown (its read
+        failed or was stopped): cleanup then waits a fixed time instead.
+        """
+        if not self._sales or self._sales_slotted < self._sales:
+            return None
+        return self._last_sale_slot
 
     @property
     def open_count(self) -> int:
@@ -457,8 +483,7 @@ class PositionManager:
                 f"Clearing position in {label}: its buy landed but the wallet no "
                 f"longer holds it, so it was sold or moved while the bot was down"
             )
-            self.store.remove(token_info.mint)
-            self._close_cleared(token_info)
+            self._clear(token_info)
             return None
         tokens_raw = min(tokens_raw, held)
         amount = tokens_raw / 10**TOKEN_DECIMALS
@@ -507,8 +532,7 @@ class PositionManager:
                 f"Clearing position in {label}: the wallet holds none, so its "
                 f"buy {sent.tx_signature} never landed"
             )
-            self.store.remove(token_info.mint)
-            self._close_cleared(token_info)
+            self._clear(token_info)
             return None
         cap = pending.max_amount_raw
         amount_raw = held if cap is None else min(held, cap)
@@ -628,8 +652,8 @@ class PositionManager:
     def _give_up_stopping(self, tasks: set[asyncio.Task]) -> None:
         """Log what `stop` leaves running, and cancel the account closes.
 
-        A close still running would race the client closing at shutdown; the
-        rent it leaves is reclaimed by `tools/cleanup_accounts.py <MINT>`.
+        A close still running would race the client closing at shutdown; its
+        record stays in the store, marked sold, and the next start closes it.
         """
         closes = {t for t in tasks & self._closes if not t.done()}
         for task in closes:
@@ -638,8 +662,7 @@ class PositionManager:
         if len(closes) > reports:
             logger.warning(
                 f"{len(closes) - reports} token account close(s) did not finish "
-                f"within {self._STOP_BUDGET}s; reclaim the rent with "
-                f"tools/cleanup_accounts.py <MINT>"
+                f"within {self._STOP_BUDGET}s; the next start closes them"
             )
         if reports:
             logger.warning(
@@ -699,6 +722,16 @@ class PositionManager:
                 resumed.append(position.token_info)
         return resumed
 
+    def _close_sold(self, stored: StoredPosition, label: str) -> bool:
+        """Close the account of a position sold before the restart; False if unsold."""
+        if not stored.sold:
+            return False
+        logger.info(
+            f"Closing the token account of {label}: it was sold before the restart"
+        )
+        self._clear(stored.token_info)
+        return True
+
     def _not_ours(self, stored: StoredPosition, label: str) -> bool:
         """Whether another platform or wallet holds the position (logged)."""
         token_info = stored.token_info
@@ -732,7 +765,7 @@ class PositionManager:
     async def _resume_one(self, stored: StoredPosition) -> bool:
         token_info, buy = stored.token_info, stored.buy_result
         label = f"{token_info.symbol} ({token_info.mint})"
-        if self._not_ours(stored, label):
+        if self._not_ours(stored, label) or self._close_sold(stored, label):
             return False
         if stored.pending is not None:
             return await self._resume_pending(stored, label)
@@ -748,8 +781,7 @@ class PositionManager:
                 f"Clearing position in {label}: the wallet no longer holds it, "
                 f"so it was sold or moved while the bot was down"
             )
-            self.store.remove(token_info.mint)
-            self._close_cleared(token_info)
+            self._clear(token_info)
             return False
         if not await self._quote_resolved(token_info, label):
             return False
@@ -774,19 +806,27 @@ class PositionManager:
             f"Resuming position in {label}: {buy.amount} tokens bought at "
             f"{buy.price} on {stored.entry_time.isoformat()} UTC"
         )
+        if stored.realised is not None:
+            if self._resumed_realised is None:
+                self._resumed_realised = {}
+            self._resumed_realised[token_info.mint] = stored.realised
         self.open(token_info, buy, entry_time=stored.entry_time)
         return True
 
-    def _close_cleared(self, token_info: TokenInfo) -> None:
-        """Close the account of a cleared position's coin, under `after_sell`.
+    def _clear(self, token_info: TokenInfo) -> None:
+        """Drop a position the wallet no longer holds, and close its account.
 
         The wallet holds none of the coin, so its account is empty, or gone.
-        It closes in its own task, which `stop` lets finish like the close
-        after a sell; nothing is burned. Under `post_session` the sweep at the
-        end of the session closes it with every other empty account.
+        Under `after_sell` it closes in its own task, which `stop` lets finish
+        like the close after a sell; nothing is burned, and the record stays
+        in the store, marked sold, until the close is done, so a stop before
+        then leaves it for the next start. Under `post_session` the sweep at
+        the end of the session closes it with every other empty account.
         """
         if self.cleanup_mode != "after_sell":
+            self.store.remove(token_info.mint)
             return
+        self.store.mark_sold(token_info.mint)
         self._start_close(self._close_cleared_account(token_info), token_info)
 
     def _start_close(
@@ -830,6 +870,7 @@ class PositionManager:
                 f"Could not close the token account of {token_info.symbol} "
                 f"({token_info.mint}): {e!s}"
             )
+        self.store.remove(token_info.mint)
 
     async def _quote_resolved(self, token_info: TokenInfo, label: str) -> bool:
         """Resolve the coin's quote mint; False (logged) when it cannot be."""
@@ -942,6 +983,7 @@ class PositionManager:
         )
         if entry_time is not None:
             position.entry_time = entry_time
+        position.realised = self._earlier_sales(token_info)
         position.cost = cost_basis(
             buy_result, normalize_quote_mint(token_info.quote_mint)
         ) or CostBasis(entry_price, from_chain=False)
@@ -994,7 +1036,7 @@ class PositionManager:
         cost = cost_basis(
             buy_result, normalize_quote_mint(token_info.quote_mint)
         ) or CostBasis(token_price, from_chain=False)
-        realised = Realised()
+        realised = self._earlier_sales(token_info)
 
         # Set once part of it sold: the curve paid out all it had, so later
         # attempts on the rest wait `price_check_interval` for it to refill.
@@ -1573,6 +1615,7 @@ class PositionManager:
                 the whole position's total, and the account closes after it
         """
         earlier = list(realised.reports)
+        self._sales += 1
         task = self._start_close(
             self._report_sale(
                 token_info,
@@ -1603,8 +1646,13 @@ class PositionManager:
     ) -> None:
         quote_mint = normalize_quote_mint(token_info.quote_mint)
         pnl = None
+        slot = None
         try:
             sale = await self._read_sale(token_info, sell_result, price, *asked)
+            slot = sale.deltas.slot if sale.deltas is not None else None
+            if slot is not None:
+                self._sales_slotted += 1
+                self._last_sale_slot = max(self._last_sale_slot, slot)
             pnl = sale_pnl(cost, sale, quote_mint, price)
         except Exception:
             logger.exception(
@@ -1617,6 +1665,8 @@ class PositionManager:
             realised.missing += 1
         else:
             realised.add(pnl)
+        if not last and self.store is not None:
+            self.store.set_realised(token_info.mint, realised)
         try:
             quote_label = quote_symbol(quote_mint)
             if pnl is not None:
@@ -1643,7 +1693,7 @@ class PositionManager:
                 f"Could not report the sale of {token_info.symbol}; it is settled"
             )
         if last:
-            await self._close_after_sale(token_info)
+            await self._close_after_sale(token_info, slot)
 
     async def _read_sale(
         self,
@@ -1738,7 +1788,9 @@ class PositionManager:
             f"and sells them on a later attempt"
         )
         if self.store is not None:
-            self.store.reduce(token_info.mint, left / 10**TOKEN_DECIMALS, left)
+            self.store.reduce(
+                token_info.mint, left / 10**TOKEN_DECIMALS, left, sold=True
+            )
         return left
 
     def _forget(self, token_info: TokenInfo) -> None:
@@ -1746,16 +1798,28 @@ class PositionManager:
 
         Only a sale does: a position stopped at shutdown, or one whose exit
         gave up or could not be resolved, still holds its coin and stays for
-        the next run, which checks the wallet before selling.
+        the next run, which checks the wallet before selling. Under
+        `after_sell` the record stays, marked sold, until its account is
+        closed (`_close_after_sale`), so a stop before then leaves the close
+        to the next start.
         """
-        if self.store is not None:
+        if self.store is None:
+            return
+        if self.cleanup_mode == "after_sell":
+            self.store.mark_sold(token_info.mint)
+        else:
             self.store.remove(token_info.mint)
 
-    async def _close_after_sale(self, token_info: TokenInfo) -> None:
+    async def _close_after_sale(
+        self, token_info: TokenInfo, slot: int | None = None
+    ) -> None:
         """Run the configured post-sell cleanup for a position all sold.
 
         Part of the sale's own task (`_after_sale`), so the position's slot is
         free however long a dropped close takes.
+
+        Args:
+            slot: The slot the sale landed in; None waits a fixed time first
         """
         if self.cleanup_mode != "after_sell":
             return
@@ -1768,4 +1832,7 @@ class PositionManager:
             self.cleanup_mode,
             self.cleanup_with_priority_fee,
             self.cleanup_force_close_with_burn,
+            after_slot=slot,
         )
+        if self.store is not None:
+            self.store.remove(token_info.mint)

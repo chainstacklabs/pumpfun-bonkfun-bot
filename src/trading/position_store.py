@@ -22,6 +22,7 @@ from solders.pubkey import Pubkey
 from core.trade_deltas import TradeDeltas
 from interfaces.core import Platform, TokenInfo
 from trading.base import PendingBuy, TradeResult
+from trading.pnl import Realised
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -147,6 +148,42 @@ def _pending_of(record: dict) -> PendingBuy | None:
     return found
 
 
+# The `Realised` fields a record keeps, and their types.
+_REALISED_FIELDS = {
+    "pnl": (int, float),
+    "sales": int,
+    "from_chain": bool,
+    "sol_quote": bool,
+    "sol_costs": (int, float),
+    "missing": int,
+}
+
+
+def _realised_of(record: dict) -> Realised | None:
+    """The PnL of the parts sold so far; None if none sold; TypeError if malformed.
+
+    `parts_sold` counts every part taken off the position, `realised` the ones
+    whose sale was reported; the difference is missing from the total.
+    """
+    parts = record.get("parts_sold", 0)
+    stored = record.get("realised") or {}
+    if not _count(parts) or not isinstance(stored, dict):
+        raise TypeError
+    values = {}
+    for name, kinds in _REALISED_FIELDS.items():
+        if name not in stored:
+            continue
+        value = stored[name]
+        if not isinstance(value, kinds) or (kinds is int and isinstance(value, bool)):
+            raise TypeError
+        values[name] = value
+    realised = Realised(**values)
+    realised.missing += max(0, parts - realised.sales - realised.missing)
+    if not realised.sales and not realised.missing:
+        return None
+    return realised
+
+
 def _deltas_of(buy: dict) -> TradeDeltas | None:
     """The buy's transaction deltas, None if not recorded; TypeError if malformed."""
     deltas = buy.get("deltas")
@@ -155,7 +192,7 @@ def _deltas_of(buy: dict) -> TradeDeltas | None:
     if not isinstance(deltas, dict):
         raise TypeError
     found = TradeDeltas(**deltas)
-    nullable = {"quote_raw", "venue_quote_raw"}
+    nullable = {"quote_raw", "venue_quote_raw", "slot"}
     for name, value in dataclasses.asdict(found).items():
         if not _whole(value) or (value is None and name not in nullable):
             raise TypeError
@@ -199,6 +236,11 @@ class StoredPosition:
     #: Set while the buy was sent but its outcome is not resolved:
     #: `buy_result` then holds the signature and the expected amount and price.
     pending: PendingBuy | None = None
+    #: The PnL of the parts sold before, for the whole position's total; a
+    #: part sold but never reported counts as missing. None: nothing sold yet.
+    realised: Realised | None = None
+    #: All of it was sold, and only its account close is left to do.
+    sold: bool = False
 
 
 def _decode(mint: str, record: dict) -> StoredPosition:
@@ -224,6 +266,8 @@ def _decode(mint: str, record: dict) -> StoredPosition:
         entry_time=datetime.fromisoformat(record["entry_time"]),
         wallet=_wallet_of(record),
         pending=_pending_of(record),
+        realised=_realised_of(record),
+        sold=record.get("sold") is True,
     )
 
 
@@ -383,18 +427,41 @@ class PositionStore:
         self._records[mint] = record
         self._write()
 
-    def reduce(self, mint: Pubkey, amount: float, amount_raw: int) -> None:
-        """Keep only what is left of a position after part of it sold.
+    def reduce(
+        self, mint: Pubkey, amount: float, amount_raw: int, *, sold: bool = False
+    ) -> None:
+        """Keep only what is left of a position.
 
         Args:
             amount: Whole tokens still held
             amount_raw: The same in raw token units
+            sold: A sale took the rest off: count it as a part sold
         """
         record = self._records.get(str(mint))
         if record is None:
             return
         record["buy"]["amount"] = amount
         record["buy"]["amount_raw"] = amount_raw
+        if sold:
+            record["parts_sold"] = record.get("parts_sold", 0) + 1
+        self._write()
+
+    def mark_sold(self, mint: Pubkey) -> None:
+        """Keep a position sold in full until its account is closed."""
+        record = self._records.get(str(mint))
+        if record is None:
+            return
+        record["sold"] = True
+        self._write()
+
+    def set_realised(self, mint: Pubkey, realised: Realised) -> None:
+        """Record the PnL of the parts of a position sold so far."""
+        record = self._records.get(str(mint))
+        if record is None:
+            return
+        record["realised"] = {
+            name: getattr(realised, name) for name in _REALISED_FIELDS
+        }
         self._write()
 
     def set_price(self, mint: Pubkey, price: float) -> None:

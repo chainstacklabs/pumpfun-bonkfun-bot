@@ -162,7 +162,9 @@ class CpmmMarket(Market):
     async def _platform_config(self, token_info: TokenInfo) -> Pubkey:
         if token_info.platform_config:
             return token_info.platform_config
-        pool = await self.client.get_account_info(token_info.pool_state)
+        pool = await self.client.get_account_info(
+            token_info.pool_state, commitment="confirmed"
+        )
         offset = _LAUNCHLAB_PLATFORM_CONFIG_OFFSET
         return Pubkey.from_bytes(pool.data[offset : offset + 32])
 
@@ -174,13 +176,15 @@ class CpmmMarket(Market):
         platform_config = await self._platform_config(token_info)
         amm_config = self._cpswap_configs.get(platform_config)
         if amm_config is None:
-            config = await self.client.get_account_info(platform_config)
+            config = await self.client.get_account_info(
+                platform_config, commitment="confirmed"
+            )
             offset = _PLATFORM_CPSWAP_CONFIG_OFFSET
             amm_config = Pubkey.from_bytes(config.data[offset : offset + 32])
             self._cpswap_configs[platform_config] = amm_config
         quote_mint = normalize_quote_mint(token_info.quote_mint)
         address = cpmm_pool_address(amm_config, token_info.mint, quote_mint)
-        account = await self.client.get_account_info(address)
+        account = await self.client.get_account_info(address, commitment="confirmed")
         pool = decode_pool(address, account.data, token_info.mint)
         self._pools[token_info.mint] = pool
         return pool
@@ -190,7 +194,9 @@ class CpmmMarket(Market):
         if not token_info.pool_state:
             return False
         try:
-            pool = await self.client.get_account_info(token_info.pool_state)
+            pool = await self.client.get_account_info(
+                token_info.pool_state, commitment="confirmed"
+            )
         except ValueError:
             return False
         return pool.data[_LAUNCHLAB_MIGRATE_TYPE_OFFSET] == _MIGRATE_TO_AMM_V4
@@ -213,7 +219,8 @@ class CpmmMarket(Market):
                 f"No CPMM pool for {token_info.mint} yet: {e}"
             ) from e
         accounts = await self.client.get_multiple_accounts(
-            [pool.address, pool.amm_config, pool.base_vault, pool.quote_vault]
+            [pool.address, pool.amm_config, pool.base_vault, pool.quote_vault],
+            commitment="confirmed",
         )
         if any(account is None for account in accounts):
             raise ValueError(f"CPMM pool {pool.address} accounts unreadable")  # noqa: TRY003
