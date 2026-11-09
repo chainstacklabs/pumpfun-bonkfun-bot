@@ -474,7 +474,7 @@ def _exit_run(
     )
     cleanups: list = []
 
-    async def _cleanup(*args: object) -> None:
+    async def _cleanup(*args: object, **_k: object) -> None:
         cleanups.append(args)
 
     position_manager.handle_cleanup_after_sell = _cleanup

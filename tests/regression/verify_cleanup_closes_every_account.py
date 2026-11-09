@@ -32,6 +32,7 @@ Usage:
 """
 
 import asyncio
+import struct
 import sys
 import tempfile
 import time
@@ -105,10 +106,12 @@ class _Client:
         finally:
             self.in_flight -= 1
 
-    async def get_account_info(self, address: Pubkey) -> SimpleNamespace:
+    async def get_account_info(self, address: Pubkey, **_k: object) -> SimpleNamespace:
         await self._call(RPC_DELAY)
         self.events.append(("read", address))
-        return SimpleNamespace(data=bytes(165), owner=SystemAddresses.TOKEN_PROGRAM)
+        data = bytearray(165)
+        struct.pack_into("<Q", data, 64, self.balances.get(address, 0))
+        return SimpleNamespace(data=bytes(data), owner=SystemAddresses.TOKEN_PROGRAM)
 
     async def get_token_account_balance(self, address: Pubkey) -> int:
         await self._call(RPC_DELAY)

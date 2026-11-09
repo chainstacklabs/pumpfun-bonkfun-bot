@@ -480,6 +480,7 @@ class UniversalTrader:
                     settings.cleanup_with_priority_fee,
                     force_burn,
                     self._quote_mints | _pubkeys(kept),
+                    after_slot=self.positions.last_sale_slot,
                 )
             except Exception:
                 logger.exception("Error during cleanup")

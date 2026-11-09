@@ -402,7 +402,7 @@ For faster execution, Chainstack offers [Solana Trader nodes](https://docs.chain
 
 ## IDLs
 
-The IDLs under [`idl/`](idl/) are vendored from [pump-fun/pump-public-docs](https://github.com/pump-fun/pump-public-docs) — currently upstream commit `8109141`. To refresh, copy `pump.json`, `pump_amm.json`, and `pump_fees.json` into `pump_fun_idl.json`, `pump_swap_idl.json`, and `pump_fees.json`, and note the upstream commit in your commit message. Don't hand-edit them.
+The IDLs under [`idl/`](idl/) are vendored from [pump-fun/pump-public-docs](https://github.com/pump-fun/pump-public-docs) — currently upstream commit `8109141`. To refresh, copy `pump.json`, `pump_amm.json`, and `pump_fees.json` into `pump_fun_idl.json`, `pump_swap_idl.json`, and `pump_fees.json`, and note the upstream commit in your commit message. Don't hand-edit them. `raydium_launchlab_idl.json` is LaunchLab's on-chain IDL account, and `raydium_cpmm_idl.json` is `raydium_cpmm/raydium_cp_swap.json` from [raydium-io/raydium-idl](https://github.com/raydium-io/raydium-idl), commit `e7e0c96`; the bot reads Raydium CPMM's only to name its errors.
 
 The `buy_v2` / `sell_v2` account lists are complete in the IDL. The **legacy** `buy` / `sell` lists are not — the IDL omits PDAs the on-chain program requires, so cross-check anything outside v2 against a recent successful on-chain transaction.
 

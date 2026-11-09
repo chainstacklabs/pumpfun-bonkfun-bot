@@ -50,6 +50,11 @@ its buy until its sell, and the next start resumes it:
      none of its coin; one written before positions named a wallet resumes as
      before. A record whose `mint` is not its coin's stays in the file and is
      not resumed.
+  P. A position sold in parts keeps the PnL of the parts sold in the file: a
+     restart reads it back, a part sold but never reported counts as missing,
+     a smaller balance found on start is no part sold, and a malformed total
+     keeps the record from resuming. A resumed position's last sale totals
+     the parts sold before the restart too, under `tp_sl` and `time_based`.
 
 Offline: the RPC client, seller and prices are stubs; the position manager, its
 store and the trader are the real ones. Runs in a temporary directory.
@@ -93,6 +98,7 @@ from interfaces.core import (  # noqa: E402
 )
 from trading import universal_trader  # noqa: E402
 from trading.base import PendingBuy, TradeResult  # noqa: E402
+from trading.pnl import Realised  # noqa: E402
 from trading.position_manager import PositionManager  # noqa: E402
 from trading.position_store import PositionStore  # noqa: E402
 from trading.settings import TraderSettings  # noqa: E402
@@ -1378,6 +1384,92 @@ def check_l_runner_and_gitignore(tmp: Path) -> bool:
     return _report(problems)
 
 
+def _check_p_store(tmp: Path) -> list[str]:
+    """The parts sold and their PnL round-trip through the file."""
+    problems = []
+    path = tmp / "p-store.json"
+    coin, short, bad = _token("PARTS"), _token("SHORT"), _token("BAD")
+    store = PositionStore(path)
+    for token in (coin, short, bad):
+        store.add(token, _buy(), _now())
+    store.reduce(coin.mint, 0.5, 500_000, sold=True)
+    store.set_realised(coin.mint, Realised(pnl=0.25, sales=1, from_chain=False))
+    store.reduce(short.mint, 0.4, 400_000)
+    store.reduce(bad.mint, 0.5, 500_000, sold=True)
+    store.set_realised(bad.mint, Realised(pnl=0.1, sales=1))
+    data = json.loads(path.read_text())
+    for record in data["positions"]:
+        if record["mint"] == str(bad.mint):
+            record["realised"]["pnl"] = "0.1"
+    path.write_text(json.dumps(data))
+    loaded = {p.token_info.symbol: p for p in PositionStore(path).load()}
+    got = loaded.get("PARTS")
+    if got is None or got.realised is None or (
+        (got.realised.pnl, got.realised.sales, got.realised.missing,
+         got.realised.from_chain) != (0.25, 1, 0, False)
+    ):  # fmt: skip
+        problems.append(f"PARTS read back as {got and got.realised}")
+    if "SHORT" not in loaded or loaded["SHORT"].realised is not None:
+        problems.append("a smaller balance on start counted as a part sold")
+    if "BAD" in loaded:
+        problems.append("a malformed total still resumes")
+    store = PositionStore(path)
+    store.load()
+    store.reduce(coin.mint, 0.25, 250_000, sold=True)
+    got = {p.token_info.symbol: p for p in PositionStore(path).load()}["PARTS"]
+    if got.realised is None or (got.realised.sales, got.realised.missing) != (1, 1):
+        problems.append(f"an unreported part is not missing: {got.realised}")
+    return problems
+
+
+async def _check_p_resume(tmp: Path, exit_strategy: str) -> list[str]:
+    """A resumed position's last sale totals the parts sold before."""
+    path = tmp / f"p-{exit_strategy}.json"
+    coin = _token("REST")
+    store = PositionStore(path)
+    store.add(coin, _buy(), _now() - timedelta(seconds=120))
+    store.reduce(coin.mint, 1.0, BOUGHT_RAW, sold=True)
+    store.set_realised(coin.mint, Realised(pnl=0.25, sales=1))
+    rig = _Rig(path, exit_strategy=exit_strategy, wait_time_after_buy=0)
+    rig.client.hold(coin, BOUGHT_RAW)
+    with _Records() as records:
+        await rig.pm.resume()
+        await _until(lambda: rig.pm.open_count == 0, 2)
+        await rig.pm.wait_all()
+    totals = [m for m in records.messages if "whole position over 2 sales" in m]
+    if not totals:
+        finals = [m for m in records.messages if "Final PnL" in m]
+        return [f"{exit_strategy}: no two-sale total; final lines {finals}"]
+    return []
+
+
+class _Records(logging.Handler):
+    """The messages logged while installed."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.INFO)
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.messages.append(record.getMessage())
+
+    def __enter__(self) -> "_Records":
+        logging.getLogger().addHandler(self)
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        logging.getLogger().removeHandler(self)
+
+
+def check_p_parts_sold_survive(tmp: Path) -> bool:
+    async def resumes() -> list[str]:
+        return await _check_p_resume(tmp, "tp_sl") + await _check_p_resume(
+            tmp, "time_based"
+        )
+
+    return _report(_check_p_store(tmp) + asyncio.run(resumes()))
+
+
 def main() -> None:
     print("=" * 72)
     print("Verifying open positions survive a restart")
@@ -1403,6 +1495,7 @@ def main() -> None:
                 ("M: a position from another platform is kept", lambda: check_m_other_platform_is_kept(tmp)),
                 ("N: clearing needs every spaced read empty", lambda: check_n_clearing_needs_every_read_empty(tmp)),
                 ("O: positions name their wallet", lambda: check_o_positions_name_their_wallet(tmp)),
+                ("P: the PnL of parts sold survives a restart", lambda: check_p_parts_sold_survive(tmp)),
             ]  # fmt: skip
             results = []
             for name, check in checks:

@@ -42,6 +42,8 @@ Offline machine checks, no network and no funds moved:
      its fee and buyback recipients and its LP fee change, the next trade names
      recipients from the new sets and prices with the new fee, and a build of a
      known pool makes that one read and no other.
+  H. The market reads the pool, GlobalConfig and the vaults at confirmed, for
+     a buy, a sell and a price.
 
 Usage:
     uv run tests/regression/verify_pumpswap_buy.py
@@ -127,13 +129,15 @@ class _FixtureClient:
             for k, v in accounts.items()
         }
         self.calls: list[str] = []
+        self.commitments: list[str | None] = []
 
     async def get_account_info(
         self,
         address: Pubkey,
-        commitment: str | None = None,  # noqa: ARG002
+        commitment: str | None = None,
     ) -> SimpleNamespace:
         self.calls.append("get_account_info")
+        self.commitments.append(commitment)
         if address not in self.accounts:
             raise ValueError(f"Account {address} not found")  # noqa: TRY003
         return self.accounts[address]
@@ -141,9 +145,10 @@ class _FixtureClient:
     async def get_multiple_accounts(
         self,
         addresses: list,
-        commitment: str | None = None,  # noqa: ARG002
+        commitment: str | None = None,
     ) -> list:
         self.calls.append("get_multiple_accounts")
+        self.commitments.append(commitment)
         return [self.accounts.get(a) for a in addresses]
 
 
@@ -692,6 +697,23 @@ def _global_config_change(
     results["new LP fee"] = abs(after - before - 100 / 10_000) < 1e-12  # noqa: PLR2004
 
 
+def check_h_reads_at_confirmed() -> bool:
+    """H: every read the market makes is at confirmed."""
+    bad = {}
+    for label, case in CASES.items():
+        client = _FixtureClient(case["accounts"])
+        market = PumpSwapMarket(client)
+        token = _token(case)
+        asyncio.run(market.build_buy_instruction(token, USER, AMOUNT_IN, MIN_OUT))
+        asyncio.run(market.build_sell_instruction(token, USER, AMOUNT_IN, MIN_OUT))
+        asyncio.run(market.get_market_state(token))
+        if not client.commitments or set(client.commitments) != {"confirmed"}:
+            bad[label] = client.commitments
+    if bad:
+        print(f"    {bad}")
+    return not bad
+
+
 def main() -> int:
     """Run every check and report."""
     checks = [
@@ -702,6 +724,7 @@ def main() -> int:
         ("E: buyer buys a graduated coin in its pool", check_e_buyer_routes_to_pool),
         ("F: every trade fits one transaction", check_f_fits_one_transaction),
         ("G: the pool is read again for every trade", check_g_pool_reread_every_trade),
+        ("H: the pool is read at confirmed", check_h_reads_at_confirmed),
     ]
     passed = 0
     for label, check in checks:
