@@ -377,6 +377,16 @@ class PositionStore:
         except (ValueError, KeyError, TypeError, AttributeError):
             return None
 
+    def held_mints(self) -> set[str]:
+        """Mints still held: bought, neither pending nor sold."""
+        return {
+            mint
+            for mint, record in self._records.items()
+            if isinstance(record, dict)
+            and record.get("pending") is None
+            and record.get("sold") is not True
+        }
+
     def pending_mints(self) -> set[str]:
         """Mints whose buy was sent and never confirmed."""
         return {

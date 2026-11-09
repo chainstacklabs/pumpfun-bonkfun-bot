@@ -4,7 +4,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from core.pubkeys import normalize_quote_mint, quote_units_per_token
+from core import session
+from core.pubkeys import normalize_quote_mint, quote_symbol, quote_units_per_token
 from core.trade_deltas import TradeDeltas
 from interfaces.core import TokenInfo
 from trading.pnl import SalePnl, lamports_to_sol
@@ -79,15 +80,27 @@ def log_trade(  # noqa: PLR0913
     fee, and rent put into or back from the wallet's token accounts, in SOL.
     `from_chain` is false when the transaction was not read: then `price` and
     `amount` are estimates and those fields are null. A sell row with `pnl`
-    carries that sale's realised PnL.
+    carries that sale's realised PnL. `bot` names the bot that traded, null
+    outside a bot's session. Every row also counts towards the session summary.
     """
     try:
         trades_dir = Path("trades")
         trades_dir.mkdir(exist_ok=True)
 
         quote_mint = normalize_quote_mint(token_info.quote_mint)
+        chain = _chain_fields(deltas, quote_mint)
+        session.current().add_trade(
+            action,
+            network_fee_sol=chain["network_fee_sol"],
+            rent_deposit_sol=chain["rent_deposit_sol"],
+            rent_refund_sol=chain["rent_refund_sol"],
+            quote_label=quote_symbol(quote_mint),
+            pnl=pnl.pnl if pnl is not None else None,
+            pnl_from_chain=pnl.from_chain if pnl is not None else True,
+        )
         log_entry = {
             "timestamp": datetime.utcnow().isoformat(),
+            "bot": session.current().bot,
             "action": action,
             "platform": token_info.platform.value,
             "venue": venue,
@@ -97,7 +110,7 @@ def log_trade(  # noqa: PLR0913
             "amount": amount,
             "tx_hash": str(tx_hash) if tx_hash else None,
             "quote_mint": str(quote_mint),
-            **_chain_fields(deltas, quote_mint),
+            **chain,
         }
         if pnl is not None:
             log_entry["pnl"] = pnl.pnl
