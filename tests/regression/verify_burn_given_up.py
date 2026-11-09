@@ -17,7 +17,9 @@ Offline machine checks, no network and no funds moved:
      still monitored), one worth the threshold or more, one quoted in another
      asset, one whose curve can't be read or whose pool prices it at zero,
      and one whose burn did not land.
-  3. With the setting off nothing is burned.
+  3. With the setting off nothing is burned. A burn takes no more than the
+     position's recorded amount: coins bought by hand stay, and the account
+     stays open around them.
   4. The config is refused under `cleanup.mode: disabled`, and for zero, a
      negative number or text.
 
@@ -26,6 +28,7 @@ Usage:
 """
 
 import asyncio
+import struct
 import sys
 import tempfile
 from datetime import UTC, datetime
@@ -38,6 +41,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from _fakes import _check  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
+from cleanup.manager import AccountCleanupManager  # noqa: E402
 from config_loader import validate_cleanup_config  # noqa: E402
 from core import session  # noqa: E402
 from core.pubkeys import USDC_MINT, WSOL_MINT, SystemAddresses  # noqa: E402
@@ -50,6 +54,8 @@ from trading.position_store import PositionStore  # noqa: E402
 THRESHOLD = 0.001  # SOL
 AMOUNT = 1_000.0  # whole tokens held
 AMOUNT_RAW = int(AMOUNT * 1e6)
+# SPL Token instruction ids.
+BURN, CLOSE = 8, 9
 
 # A pump.fun curve whose price says the coin is worth 0.01 SOL, ten times the
 # threshold, while its real reserves can pay far less.
@@ -88,9 +94,9 @@ class _Cleanup:
         self.force_burn = force_burn
 
     async def cleanup_ata(
-        self, mint: Pubkey, _program: Pubkey | None = None, **_kw: object
+        self, mint: Pubkey, _program: Pubkey | None = None, **kw: object
     ) -> bool:
-        if not self.force_burn:
+        if not self.force_burn or kw.get("burn_at_most") != AMOUNT_RAW:
             return False
         _Cleanup.burned.append(mint)
         return _Cleanup.lands
@@ -262,6 +268,76 @@ def check_config() -> bool:
     return all(results)
 
 
+class _AccountClient:
+    """Serves one token account holding `balance` and records what is sent."""
+
+    def __init__(self, balance: int) -> None:
+        self.data = bytes(64) + struct.pack("<Q", balance) + bytes(165 - 72)
+        self.sent: list = []
+
+    async def get_account_info(self, _address: Pubkey, **_k: object) -> SimpleNamespace:
+        return SimpleNamespace(
+            data=self.data, owner=SystemAddresses.TOKEN_PROGRAM, lamports=2_039_280
+        )
+
+    async def build_and_send_transaction(
+        self, instructions: list, *_a: object, **_k: object
+    ) -> str:
+        self.sent.append(instructions)
+        return "STUB_SIGNATURE"
+
+    async def confirm_transaction(self, *_a: object, **_k: object) -> bool:
+        return True
+
+
+async def _burned_and_closed(
+    balance: int,
+) -> tuple[bool, list[tuple[int, int | None]]]:
+    client = _AccountClient(balance)
+    account = Pubkey.new_unique()
+    wallet = SimpleNamespace(
+        pubkey=Pubkey.new_unique(),
+        keypair=None,
+        get_associated_token_address=lambda _mint, _program: account,
+    )
+    manager = AccountCleanupManager(client, wallet, None, force_burn=True)
+    done = await manager.cleanup_ata(
+        Pubkey.new_unique(),
+        SystemAddresses.TOKEN_PROGRAM,
+        settle=False,
+        burn_at_most=AMOUNT_RAW,
+    )
+    # (instruction id, amount for a burn)
+    sent = [
+        (
+            bytes(ix.data)[0],
+            struct.unpack_from("<Q", bytes(ix.data), 1)[0]
+            if bytes(ix.data)[0] == BURN
+            else None,
+        )
+        for tx in client.sent
+        for ix in tx
+    ]
+    return done, sent
+
+
+async def check_burn_limited_to_record() -> bool:
+    session.start("verify")
+    more_done, more = await _burned_and_closed(AMOUNT_RAW * 3)
+    exact_done, exact = await _burned_and_closed(AMOUNT_RAW)
+    a = _check(
+        "coins beyond the record are kept: burn the record, leave the account",
+        more_done and more == [(BURN, AMOUNT_RAW)],
+        str(more),
+    )
+    b = _check(
+        "no more than the record: burn it all and close",
+        exact_done and exact == [(BURN, AMOUNT_RAW), (CLOSE, None)],
+        str(exact),
+    )
+    return a and b
+
+
 async def main() -> int:
     print("Burn given-up leftovers")
     position_manager.AccountCleanupManager = _Cleanup
@@ -269,6 +345,7 @@ async def main() -> int:
         await check_burns_only_cheap_given_up(),
         await check_failed_burn_kept(),
         await check_off(),
+        await check_burn_limited_to_record(),
         check_config(),
     ]
     if all(results):

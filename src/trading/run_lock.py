@@ -62,15 +62,6 @@ class RunLock:
         self._file.close()
         self._file = None
 
-    @staticmethod
-    def held(positions_file: Path | str) -> bool:
-        """Whether another holder has the lock right now."""
-        lock = RunLock(positions_file)
-        if not lock.acquire():
-            return True
-        lock.release()
-        return False
-
     def __enter__(self) -> bool:
         return self.acquire()
 

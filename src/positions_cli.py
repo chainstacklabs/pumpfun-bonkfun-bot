@@ -22,6 +22,9 @@ from pathlib import Path
 from typing import Any, TextIO
 
 import yaml
+from solders.keypair import Keypair
+from solders.pubkey import Pubkey
+from spl.token.instructions import get_associated_token_address
 
 from bot_runner import (
     _one_line,
@@ -33,19 +36,22 @@ from bot_runner import (
 from cleanup.manager import AccountCleanupManager
 from config_loader import get_platform_from_config, load_bot_config
 from core.client import SolanaClient
-from core.keystore import KeystoreError
+from core.keystore import KeystoreError, keystore_pubkey
 from core.priority_fee.manager import PriorityFeeManager
 from core.pubkeys import (
     TOKEN_DECIMALS,
+    SystemAddresses,
     normalize_quote_mint,
     quote_symbol,
     resolve_quote_token_program,
 )
 from core.wallet import Wallet
-from interfaces.core import TokenInfo
+from interfaces.core import Platform, TokenInfo
 from platforms import get_platform_implementations
 from trading import trade_log
+from trading.base import TradeResult
 from trading.platform_aware import PlatformAwareSeller
+from trading.pnl import CostBasis, Realised, SalePnl, cost_basis, pnl_text, sale_pnl
 from trading.position_store import PositionStore, StoredPosition
 from trading.pricing import read_price
 from trading.run_lock import RunLock
@@ -64,6 +70,8 @@ class Tools:
     seller: Any
     implementations: Any
     cleanup: Any
+    #: The bot's platform; positions bought on another are left alone.
+    platform: Platform = Platform.PUMP_FUN
 
 
 def resolve_positions_file(config_path: Path, cfg: dict, override: str | None) -> Path:
@@ -95,9 +103,15 @@ def _ours(stored: StoredPosition, tools: Tools) -> bool:
     return stored.wallet is None or stored.wallet == str(tools.wallet.pubkey)
 
 
+def _other_platform(stored: StoredPosition, tools: Tools) -> bool:
+    return stored.token_info.platform != tools.platform
+
+
 def _flag(stored: StoredPosition, tools: Tools) -> str:
     if not _ours(stored, tools):
         return "other wallet"
+    if _other_platform(stored, tools):
+        return f"other platform ({stored.token_info.platform.value})"
     if stored.pending is not None:
         return "pending"
     if stored.sold:
@@ -140,7 +154,9 @@ async def status(positions: Path, tools: Tools, out: TextIO) -> int:
     for position in stored:
         coin, buy = position.token_info, position.buy_result
         label = quote_symbol(normalize_quote_mint(coin.quote_mint))
-        priced = await _priced(position, tools)
+        priced = (
+            None if _other_platform(position, tools) else await _priced(position, tools)
+        )
         entry = f"{buy.price:.4e}" if buy.price else "n/a"
         if priced is None:
             venue, now, pnl = "n/a", "n/a", "n/a"
@@ -161,11 +177,11 @@ async def status(positions: Path, tools: Tools, out: TextIO) -> int:
     return 0
 
 
-async def _held_raw(coin: TokenInfo, tools: Tools) -> int:
-    """Raw amount of the coin in the wallet's account, read at "confirmed".
+async def _held_raw(coin: TokenInfo, tools: Tools) -> tuple[int, bool]:
+    """Raw amount of the coin in the wallet's account, and whether it exists.
 
-    An account that does not exist (closed after a sale by hand) holds none. A
-    record with no token program takes the mint's owner.
+    Read at "confirmed". An account that does not exist (closed after a sale by
+    hand) holds none. A record with no token program takes the mint's owner.
 
     Raises:
         Exception: The read failed; nothing can be said
@@ -178,9 +194,27 @@ async def _held_raw(coin: TokenInfo, tools: Tools) -> int:
     try:
         info = await tools.client.get_account_info(account, commitment="confirmed")
     except ValueError:
-        return 0
+        return 0, False
     # SPL token account: mint (32), owner (32), amount (u64).
-    return struct.unpack_from("<Q", bytes(info.data), 64)[0]
+    return struct.unpack_from("<Q", bytes(info.data), 64)[0], True
+
+
+def _realised(
+    position: StoredPosition, sale: TradeResult, price: float, quote_mint: Pubkey
+) -> tuple[Realised, SalePnl]:
+    """The position's realised PnL with this sale added, and the sale's own.
+
+    Priced at the seller's figures; the bot reads its own sales back from the
+    chain, `sell-all` does not.
+    """
+    buy = position.buy_result
+    cost = cost_basis(buy, quote_mint) or CostBasis(
+        buy.price or price, from_chain=False
+    )
+    pnl = sale_pnl(cost, sale, quote_mint, price)
+    realised = position.realised or Realised()
+    realised.add(pnl)
+    return realised, pnl
 
 
 async def _sell_one(
@@ -190,7 +224,7 @@ async def _sell_one(
     coin = position.token_info
     label = f"{coin.symbol} ({coin.mint})"
     try:
-        held = await _held_raw(coin, tools)
+        held, exists = await _held_raw(coin, tools)
     except Exception as e:  # noqa: BLE001 - the message may carry the endpoint
         print(f"{label}: balance unreadable ({type(e).__name__}); kept", file=out)
         return False, False
@@ -198,11 +232,11 @@ async def _sell_one(
     recorded = position.buy_result.amount_raw
     if recorded is None:
         recorded = round(position.buy_result.amount * 10**TOKEN_DECIMALS)
-    held = min(held, recorded)
     if held == 0:
         print(f"{label}: the wallet holds none; dropped from the file", file=out)
         store.remove(coin.mint)
-        return True, False
+        return True, exists
+    held = min(held, recorded)
     priced = await _priced(position, tools)
     if priced is None:
         store.mark_given_up(coin.mint, "sell-all could not price it")
@@ -226,6 +260,29 @@ async def _sell_one(
     else:
         # The reason, not the message: a message can quote an RPC error.
         reason = result.failure_reason.value if result.failure_reason else "failed"
+    return _settle(
+        position, store, result, reason=reason, held=held, price=price, out=out
+    )
+
+
+def _settle(  # noqa: PLR0913
+    position: StoredPosition,
+    store: PositionStore,
+    result: TradeResult | None,
+    *,
+    reason: str,
+    held: int,
+    price: float,
+    out: TextIO,
+) -> tuple[bool, bool]:
+    """Record what one sale did; (all of it gone from the wallet, account to close)."""
+    coin = position.token_info
+    label = f"{coin.symbol} ({coin.mint})"
+    quote_mint = normalize_quote_mint(coin.quote_mint)
+    if result is not None and result.curve_short:
+        store.mark_given_up(coin.mint, "the curve can't pay for it now")
+        print(f"{label}: the curve can't pay for it now; kept", file=out)
+        return False, False
     if result is None or not result.success:
         store.mark_given_up(coin.mint, "sell-all could not sell it")
         print(f"{label}: sale failed ({reason}); kept", file=out)
@@ -239,9 +296,12 @@ async def _sell_one(
         result.tx_signature,
         venue=result.venue,
     )
+    realised = _realised(position, result, price, quote_mint)
+    print(f"  {pnl_text('PnL', realised[1], quote_symbol(quote_mint))}", file=out)
     left = held - sold
     if left > 0:
         store.reduce(coin.mint, left / 10**TOKEN_DECIMALS, left, sold=True)
+        store.set_realised(coin.mint, realised[0])
         store.mark_given_up(coin.mint, "sell-all could not sell all of it")
         print(
             f"{label}: sold {sold / 10**TOKEN_DECIMALS:g}, the curve could not "
@@ -278,7 +338,12 @@ async def _sell_listed(
 ) -> int:
     stored = store.load()
     to_sell = [
-        p for p in stored if _ours(p, tools) and p.pending is None and not p.sold
+        p
+        for p in stored
+        if _ours(p, tools)
+        and not _other_platform(p, tools)
+        and p.pending is None
+        and not p.sold
     ]
     left = {p.token_info.mint for p in stored if p not in to_sell}
     if not to_sell:
@@ -334,9 +399,54 @@ async def sell_all(
         lock.release()
 
 
-async def _tools(cfg: dict) -> Tools:
-    settings = build_trader_settings(cfg, get_platform_from_config(cfg))
+class _Watcher:
+    """A wallet known by its public key only: enough to read, not to sign."""
+
+    def __init__(self, pubkey: Pubkey) -> None:
+        self.pubkey = pubkey
+
+    def get_associated_token_address(
+        self, mint: Pubkey, token_program_id: Pubkey | None = None
+    ) -> Pubkey:
+        return get_associated_token_address(
+            self.pubkey, mint, token_program_id or SystemAddresses.TOKEN_2022_PROGRAM
+        )
+
+
+def _pubkey(cfg: dict) -> Pubkey:
+    """The bot's wallet address, without unlocking a keystore.
+
+    Raises:
+        ValueError: The config names no readable wallet
+    """
+    if "keystore" in cfg:
+        pubkey = keystore_pubkey(Path(cfg["keystore"]))
+        if pubkey is None:
+            raise ValueError(f"keystore {cfg['keystore']} names no public key")  # noqa: TRY003
+        return Pubkey.from_string(pubkey)
+    return Keypair.from_base58_string(cfg["private_key"]).pubkey()
+
+
+async def _tools(cfg: dict, *, selling: bool = True) -> Tools:
+    """What the commands need; `selling` False builds no signer or seller.
+
+    With `selling`, a keystore must be unlocked first (`private_key` set).
+    """
+    platform = get_platform_from_config(cfg)
+    if not selling:
+        cfg = {**cfg, "private_key": cfg.get("private_key") or "unused"}
+    settings = build_trader_settings(cfg, platform)
     client = SolanaClient(settings.rpc_endpoint, max_rps=settings.max_rps)
+    implementations = get_platform_implementations(platform, client)
+    if not selling:
+        return Tools(
+            client=client,
+            wallet=_Watcher(_pubkey(cfg)),
+            seller=None,
+            implementations=implementations,
+            cleanup=None,
+            platform=platform,
+        )
     wallet = Wallet(settings.private_key)
     fees = PriorityFeeManager(
         client=client,
@@ -357,12 +467,11 @@ async def _tools(cfg: dict) -> Tools:
             settings.max_retries,
             compute_units=settings.compute_units or {},
         ),
-        implementations=get_platform_implementations(
-            get_platform_from_config(cfg), client
-        ),
+        implementations=implementations,
         cleanup=AccountCleanupManager(
             client, wallet, fees, settings.cleanup_with_priority_fee, force_burn=False
         ),
+        platform=platform,
     )
 
 
@@ -399,14 +508,15 @@ async def _run(args: argparse.Namespace) -> int:
         return 1
     mask_endpoints(cfg)
     positions = resolve_positions_file(config_path, cfg, args.positions)
-    if "keystore" in cfg:
+    selling = args.command == "sell-all"
+    if selling and "keystore" in cfg:
         try:
             unlock_keystore(cfg)
         except KeystoreError as e:
             logger.error(f"Could not unlock the wallet: {e}")  # noqa: TRY400
             return 1
     try:
-        tools = await _tools(cfg)
+        tools = await _tools(cfg, selling=selling)
     except Exception as e:  # noqa: BLE001 - logged, so the endpoint is redacted
         logger.error(f"Could not set up: {_one_line(e)}")  # noqa: TRY400
         return 1

@@ -143,21 +143,25 @@ class AccountCleanupManager:
         *,
         settle: bool = True,
         after_slot: int | None = None,
+        burn_at_most: int | None = None,
     ) -> bool:
         """Wait for the RPC node to settle, then burn what is left if asked and close the ATA.
 
         Skips an account that doesn't exist, or holds tokens without force burn.
-        True once the account is closed or does not exist.
+        True once the account is closed or does not exist, or with
+        `burn_at_most`, once that much is burned.
 
         Args:
             token_program_id: TOKEN or TOKEN_2022; None means TOKEN_2022
             settle: Wait first; only needed right after a sell
             after_slot: The slot the sell landed in: instead of waiting, the
                 account is read from a node that has reached it
+            burn_at_most: Raw tokens a force burn may take; an account holding
+                more keeps the rest and stays open. None burns all of it
         """
         if settle and after_slot is None:
             await self._settle()
-        return await self._close_ata(mint, token_program_id, after_slot)
+        return await self._close_ata(mint, token_program_id, after_slot, burn_at_most)
 
     async def cleanup_atas(
         self,
@@ -260,6 +264,7 @@ class AccountCleanupManager:
         mint: Pubkey,
         token_program_id: Pubkey | None,
         after_slot: int | None = None,
+        burn_at_most: int | None = None,
     ) -> bool:
         """Burn what is left if asked and close the ATA; never raises.
 
@@ -275,6 +280,7 @@ class AccountCleanupManager:
                 token_program_id,
                 burn=self.close_with_force_burn,
                 after_slot=after_slot,
+                burn_at_most=burn_at_most,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Cleanup failed for the token account of {mint}: {e!s}")
@@ -298,6 +304,7 @@ class AccountCleanupManager:
         burn: bool,
         swept: bool = False,
         after_slot: int | None = None,
+        burn_at_most: int | None = None,
     ) -> bool:
         """Burn what is left if `burn` and close `account`, until it lands.
 
@@ -315,26 +322,35 @@ class AccountCleanupManager:
             swept: Found by the post-session sweep, not traded: an account
                 holding tokens is skipped as not empty
             after_slot: The slot the sell before this close landed in
+            burn_at_most: Raw tokens the burn may take; holding more, the
+                account is burned down by that much, stays open, and the burn
+                is sent once only, since a resent one would take more
         """
         slot = after_slot
         for attempt in range(1, self.CLOSE_ATTEMPTS + 1):
-            instructions = await self._close_instructions(
+            built = await self._close_instructions(
                 mint,
                 account,
                 token_program_id,
                 burn=burn,
                 swept=swept,
                 min_context_slot=slot,
+                burn_at_most=burn_at_most,
             )
-            if instructions is None:
+            if built is None:
                 return account in self._gone
+            instructions, closes = built
             outcome, signature, slot = await self._send(account, instructions)
             if outcome is ConfirmationStatus.SUCCESS:
-                logger.info(f"Closed successfully: {account}")
-                session.current().add_close(self._lamports.pop(account, None))
+                self._report_done(account, closes, burn_at_most)
                 return True
-            if outcome is ConfirmationStatus.REVERTED:
-                logger.error(f"Failed to close token account {account}: {signature}")
+            if outcome is ConfirmationStatus.REVERTED or not closes:
+                logger.error(
+                    f"Failed to close token account {account}: {signature}"
+                    if outcome is ConfirmationStatus.REVERTED
+                    else f"The burn from {account} ({signature}) did not confirm; "
+                    f"not sent again, since the account holds more than it burns"
+                )
                 return False
             if outcome is ConfirmationStatus.UNCONFIRMED:
                 logger.warning(
@@ -356,6 +372,16 @@ class AccountCleanupManager:
         )
         return False
 
+    def _report_done(self, account: Pubkey, closes: bool, burned: int | None) -> None:
+        if not closes:
+            logger.info(
+                f"Burned {burned} raw tokens from {account}; it holds more, so it "
+                f"stays open"
+            )
+            return
+        logger.info(f"Closed successfully: {account}")
+        session.current().add_close(self._lamports.pop(account, None))
+
     async def _close_instructions(  # noqa: PLR0913
         self,
         mint: Pubkey,
@@ -365,11 +391,14 @@ class AccountCleanupManager:
         burn: bool,
         swept: bool,
         min_context_slot: int | None,
-    ) -> list | None:
-        """The burn (if any) and close for `account`; None when there is nothing to do.
+        burn_at_most: int | None = None,
+    ) -> tuple[list, bool] | None:
+        """The burn (if any) and close for `account`, and whether they close it.
 
-        The account is read at "confirmed", its balance from the same read,
-        from a node at least at `min_context_slot` when given.
+        None when there is nothing to do. The account is read at "confirmed",
+        its balance from the same read, from a node at least at
+        `min_context_slot` when given. Holding more than `burn_at_most`, it is
+        only burned down by that much.
         """
         label = "token account" if swept else "ATA"
         try:
@@ -395,20 +424,21 @@ class AccountCleanupManager:
             )
 
         elif balance > 0 and burn:
-            logger.info(
-                f"Burning {balance} tokens from ATA {account} (mint: {mint})..."
-            )
+            amount = balance if burn_at_most is None else min(balance, burn_at_most)
+            logger.info(f"Burning {amount} tokens from ATA {account} (mint: {mint})...")
             instructions.append(
                 burn_instruction(
                     BurnParams(
                         account=account,
                         mint=mint,
                         owner=self.wallet.pubkey,
-                        amount=balance,
+                        amount=amount,
                         program_id=token_program_id,
                     )
                 )
             )
+            if amount < balance:
+                return instructions, False
 
         elif balance > 0 and swept:
             logger.info(
@@ -442,7 +472,7 @@ class AccountCleanupManager:
                 )
             )
         )
-        return instructions
+        return instructions, True
 
     async def _read_account(
         self, account: Pubkey, min_context_slot: int | None

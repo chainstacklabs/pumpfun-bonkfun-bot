@@ -72,14 +72,20 @@ class CheckPipeline:
 
     async def _run(self, configured: ConfiguredCheck, coin: TokenInfo) -> str | None:
         check = configured.check
+        budget = asyncio.timeout(configured.budget)
         try:
-            async with asyncio.timeout(configured.budget):
+            async with budget:
                 result = await check.check(coin, self.ctx)
             if result is None or isinstance(result, str):
                 return result
             failure = f"returned {type(result).__name__}, not None or a reason"
-        except TimeoutError:
-            failure = f"ran past its {configured.budget}s budget"
+        except TimeoutError as e:
+            # The budget ran out, or the check timed out on its own.
+            failure = (
+                f"ran past its {configured.budget}s budget"
+                if budget.expired()
+                else f"failed ({type(e).__name__})"
+            )
         except Exception as e:  # noqa: BLE001 - a check must never stop the trader
             # The class only: an exception's text can carry an endpoint URL.
             failure = f"failed ({type(e).__name__})"
@@ -94,9 +100,11 @@ def _class_from_module(path: str) -> type:
     module_name, sep, class_name = path.partition(":")
     if not sep or not module_name or not class_name:
         raise ValueError(f"check module {path!r} must look like 'package.module:Class'")  # noqa: TRY003
-    # User checks live beside the bot YAMLs, in the folder pump_bot runs from.
+    # User checks live beside the bot YAMLs, in the folder pump_bot runs from;
+    # that folder is on the path only while the check imports.
     cwd = str(Path.cwd())
-    if cwd not in sys.path:
+    added = cwd not in sys.path
+    if added:
         sys.path.insert(0, cwd)
     try:
         module = importlib.import_module(module_name)
@@ -104,6 +112,9 @@ def _class_from_module(path: str) -> type:
         raise ValueError(  # noqa: TRY003
             f"check module {module_name!r} does not import: {type(e).__name__}: {e}"
         ) from e
+    finally:
+        if added:
+            sys.path.remove(cwd)
     try:
         return getattr(module, class_name)
     except AttributeError:

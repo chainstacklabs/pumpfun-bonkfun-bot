@@ -24,6 +24,11 @@ Offline machine checks, no network and no funds moved:
   8. Nothing printed carries the RPC endpoint or its host, even when a read,
      a sale or the setup fails with it in the error; that last exits 1.
   9. A bot name another config in the folder shares needs `--positions`.
+ 10. A sale the curve can't pay for now says so; a coin on another platform
+     than the bot's is listed, never sold; an empty account is closed when
+     its record is dropped; a partial sale counts in the realised PnL the bot
+     totals later; `status` reads a keystore's public key without its
+     password.
 
 Usage:
     uv run tests/regression/verify_positions_command.py
@@ -31,6 +36,7 @@ Usage:
 
 import asyncio
 import io
+import json
 import logging
 import struct
 import sys
@@ -59,6 +65,7 @@ from utils.logger import install_secret_redaction  # noqa: E402
 
 RPC = "https://secret-host.example/abc123key"
 CLOSED = object()
+SHORT = object()
 ENTRY = 1.0e-6
 NOW_PRICE = 2.0e-6
 AMOUNT_RAW = 1_000_000_000  # 1000 tokens
@@ -135,6 +142,14 @@ class _Seller:
     ) -> TradeResult:
         self.calls.append((token.mint, token_amount_raw))
         sold = self.sells.get(token.mint, token_amount_raw)
+        if sold is SHORT:
+            return TradeResult(
+                success=False,
+                platform=token.platform,
+                error_message="the curve can pay nothing",
+                failure_reason=TradeFailureReason.SUBMIT_FAILED,
+                curve_short=True,
+            )
         if sold is None:
             return TradeResult(
                 success=False,
@@ -207,9 +222,12 @@ def _file(tmp: str) -> tuple[Path, dict[str, TokenInfo]]:
             "closed",
             "noprog",
             "extra",
+            "short",
+            "otherplat",
         )
     }
     coins["noprog"].token_program_id = None
+    coins["otherplat"].platform = Platform.STONK_FUN
     for key, token in coins.items():
         wallet = Keypair().pubkey() if key == "other" else WALLET
         pending = (
@@ -236,6 +254,7 @@ def _tools(
             curve_market=_Market(prices), graduated_market=None
         ),
         cleanup=_Cleanup(),
+        platform=Platform.PUMP_FUN,
     )
 
 
@@ -293,6 +312,7 @@ async def check_status_flags() -> bool:
         and "pending" in row("pending")
         and "other wallet" in row("other")
         and "n/a" in row("unpriced")
+        and "other platform" in row("otherplat")
         and "+100" in row("plain")  # price doubled
     )
     return _check("status flags and prices each position", ok, text)
@@ -334,7 +354,7 @@ async def check_sell_all_sells() -> bool:
                 coins["closed"].mint: CLOSED,
                 coins["extra"].mint: AMOUNT_RAW * 3,
             },
-            sells={coins["part"].mint: AMOUNT_RAW // 4},
+            sells={coins["part"].mint: AMOUNT_RAW // 4, coins["short"].mint: SHORT},
         )
         out = io.StringIO()
         code = await positions_cli.sell_all(
@@ -354,6 +374,28 @@ async def check_sell_all_sells() -> bool:
             "a coin held in part sells what is held",
             sold.get(coins["plain"].mint) == half and coins["plain"].mint not in left,
             str(sold.get(coins["plain"].mint)),
+        ),
+        _check(
+            "a curve that can't pay now is said so, kept, given up",
+            coins["short"].mint in left
+            and "curve can't pay" in text
+            and "curve can't pay" in (left[coins["short"].mint].given_up or ""),
+            f"{left.get(coins['short'].mint) and left[coins['short'].mint].given_up!r}",
+        ),
+        _check(
+            "a coin on another platform is not sold, kept and listed",
+            coins["otherplat"].mint not in sold
+            and coins["otherplat"].mint in left
+            and "other platform" in text,
+            str(list(sold)),
+        ),
+        _check(
+            "a partial sale counts in the position's realised PnL",
+            part is not None
+            and part.realised is not None
+            and part.realised.sales == 1
+            and part.realised.pnl != 0,
+            f"{part and part.realised!r}",
         ),
         _check(
             "a coin whose account is closed is dropped unsold",
@@ -394,13 +436,14 @@ async def check_sell_all_sells() -> bool:
             str(list(sold)),
         ),
         _check(
-            "sold coins' accounts are closed",
+            "sold and emptied accounts are closed, a closed one is not",
             set(tools.cleanup.closed)
             == {
                 coins["plain"].mint,
                 coins["gaveup"].mint,
                 coins["noprog"].mint,
                 coins["extra"].mint,
+                coins["gone"].mint,
             },
             str(tools.cleanup.closed),
         ),
@@ -542,6 +585,35 @@ async def check_errors_redacted() -> bool:
     )
 
 
+async def check_status_needs_no_password() -> bool:
+    with tempfile.TemporaryDirectory() as tmp:
+        keystore = Path(tmp) / "wallet.json"
+        keystore.write_text(json.dumps({"pubkey": str(WALLET)}))
+        cfg = yaml.safe_load(
+            (PROJECT_ROOT / "bots" / "bot-sniper-1-geyser.yaml").read_text()
+        )
+        cfg.pop("private_key", None)
+        cfg.update(
+            rpc_endpoint=RPC,
+            wss_endpoint="wss://secret-host.example/x",
+            keystore=str(keystore),
+        )
+        unlocked = []
+        original = positions_cli.unlock_keystore
+        positions_cli.unlock_keystore = lambda _cfg: unlocked.append(1)
+        try:
+            tools = await positions_cli._tools(cfg, selling=False)  # noqa: SLF001
+            await tools.client.close()
+        finally:
+            positions_cli.unlock_keystore = original
+    ok = tools.wallet.pubkey == WALLET and tools.seller is None and not unlocked
+    return _check(
+        "status reads the keystore's public key, no password",
+        ok,
+        f"wallet {tools.wallet.pubkey}, seller {tools.seller}, unlocked {unlocked}",
+    )
+
+
 async def main() -> int:
     print("pump_bot_positions")
     results = [
@@ -554,6 +626,7 @@ async def main() -> int:
         check_shared_name(),
         await check_cleanup_never_burns(),
         await check_errors_redacted(),
+        await check_status_needs_no_password(),
     ]
     if all(results):
         print("\nAll checks passed.")

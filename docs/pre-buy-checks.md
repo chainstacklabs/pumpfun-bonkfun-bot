@@ -69,6 +69,8 @@ class SymbolDenylist(PreBuyCheck):
 ```
 
 Then list it under `filters.checks` with `module: my_checks:SymbolDenylist`.
+Your folder is on the import path only while the bot loads the check, at
+startup, so import what it needs at the top of the file.
 `coin` is the bot's `TokenInfo` (`src/interfaces/core.py`): `mint`, `name`,
 `symbol`, `creator`, `quote_mint`, `is_mayhem_mode` and the rest.
 

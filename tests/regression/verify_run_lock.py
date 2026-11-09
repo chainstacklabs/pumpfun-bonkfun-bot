@@ -12,8 +12,7 @@ Offline machine checks, no network and no funds moved:
      same process and from another process.
   2. It succeeds once the holder releases it, and once the holding process
      has been killed.
-  3. `RunLock.held` answers without leaving a lock behind.
-  4. `start_bot` does not start a bot whose positions file is locked, and
+  3. `start_bot` does not start a bot whose positions file is locked, and
      says why in one line.
 
 Usage:
@@ -53,17 +52,17 @@ def check_same_process() -> bool:
         first, second = RunLock(path), RunLock(path)
         got_first = first.acquire()
         refused = not second.acquire()
-        held = RunLock.held(path)
         first.release()
         after = second.acquire()
         second.release()
-        free = not RunLock.held(path)
-    ok = got_first and refused and held and after and free
+        third = RunLock(path)
+        free = third.acquire()
+        third.release()
+    ok = got_first and refused and after and free
     return _check(
         "a second lock in one process waits for release",
         ok,
-        f"first {got_first}, refused {refused}, held {held}, after {after}, "
-        f"free {free}",
+        f"first {got_first}, refused {refused}, after {after}, free {free}",
     )
 
 

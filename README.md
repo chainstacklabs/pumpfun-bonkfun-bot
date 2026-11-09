@@ -118,7 +118,7 @@ The YAML files are commented inline. The sections that matter most:
   - `after_sell` closes each coin's account once it is sold, and the empty account of a position cleared because the wallet no longer holds its coin (sold by hand while the bot was down).
   - `post_session` closes, when the session ends, the accounts of the coins it traded, then every other empty token account in the wallet, under SPL Token and Token-2022. It never closes a quote mint's account (wSOL, USDC, any configured quote), or that of a coin still in the positions file, pending buys included: those positions are kept for the next start (see [Positions survive a restart](#positions-survive-a-restart)), and their accounts are cleaned up at the end of the session that sells them.
   - `force_close_with_burn` burns what is left in a traded coin's account before closing it. It never burns anything in the other accounts `post_session` closes, and under `exit_strategy: manual` or `marry_mode` post-session cleanup burns nothing, since those coins are meant to be held.
-  - `burn_given_up_below` (SOL, optional, needs `post_session` or `after_sell`): at the end of a session, burns a coin the bot gave up selling this session when it is worth less than this, closes its account and drops it from the positions file. A pump.fun coin on its curve is valued at what the curve's real reserves can pay for it now, so a drained curve makes it worthless; a graduated coin at its pool price. Only SOL-quoted coins are burned; a coin that can't be valued is kept.
+  - `burn_given_up_below` (SOL, optional, needs `post_session` or `after_sell`): at the end of a session, burns a coin the bot gave up selling this session when it is worth less than this, closes its account and drops it from the positions file. It burns no more than the position's recorded amount: coins bought by hand stay, and so does their account. A pump.fun coin on its curve is valued at what the curve's real reserves can pay for it now, so a drained curve makes it worthless; a graduated coin at its pool price. Only SOL-quoted coins are burned; a coin that can't be valued is kept.
   - Closes and burns go out with the bot's priority fee unless `with_priority_fee` is `false` (it must be `true` or `false`; left out, it is `true`). A close is sent again once the block height is past its blockhash's last valid height and its signature is not known to have landed (no node knows it, or the lookup failed; one seen but not yet confirmed is waited on), at most 3 attempts in total; then the bot logs one warning naming `tools/cleanup_accounts.py`.
   - Cleanup closes only token accounts the wallet owns. A buy can also pay rent for an account another program owns, such as pump.fun's creator fee vault for a coin's quote asset the first time that vault is needed. The wallet can never close such an account, so its rent is a one-time cost of the trade that no cleanup mode returns. The trade's figures count it: in `quote_amount` for a SOL quote, and among the SOL costs shown beside the PnL for any other quote.
 - **`node.max_rps`** — cap requests per second to match your provider's plan.
@@ -269,15 +269,19 @@ pump_bot_positions sell-all bots/bot-sniper-1-geyser.yaml
 
 `status` lists each position in the bot's positions file: venue, amount held,
 entry price, price now and unrealised profit or loss, flagging positions the
-bot gave up on, buys still pending and positions another wallet bought. It only
-reads, so it runs while the bot does.
+bot gave up on, buys still pending and positions another wallet or platform
+bought. It only reads, so it runs while the bot does, and needs no keystore
+password.
 
 `sell-all` sells every position this wallet holds through the bot's own seller,
 closes each emptied account and drops it from the file. It asks first unless
 given `--yes`, and refuses to run while the bot uses the file. It burns
 nothing: what it can't sell, such as the part of a coin its curve can't pay
 for, stays in the wallet and in the file, marked given up. Pending buys and
-other wallets' positions are left alone. When two bots in the folder share a
+positions another wallet or platform bought are left alone. It never sells
+more than a position's recorded amount, closes the empty account of a coin the
+wallet no longer holds, and prints each sale's PnL, which a part sale also
+adds to the position's total. When two bots in the folder share a
 name, pass the file with `--positions`.
 
 ### Encrypted keystore

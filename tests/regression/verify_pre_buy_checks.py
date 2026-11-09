@@ -14,7 +14,9 @@ Offline machine checks, no network and no funds moved:
   5. A check that raises refuses the coin when required, passes it otherwise.
   6. A check slower than its budget is cut off at the budget, as in 5.
   7. A check that returns neither None nor a str counts as in 5.
-  8. A module path loads a user check; bad entries fail with one line.
+  8. A module path loads a user check, leaving `sys.path` as it was; bad
+     entries fail with one line. A check's own TimeoutError is a failure, not
+     its budget running out.
   9. The config validation refuses a malformed `filters.checks`.
  10. With no `filters.checks` the existing filters refuse the same coins with
      the same text as before they became checks.
@@ -140,6 +142,13 @@ class Slow(PreBuyCheck):
         await asyncio.sleep(5)
 
 
+class OwnTimeout(PreBuyCheck):
+    name = "own_timeout"
+
+    async def check(self, _coin: TokenInfo, _ctx: CheckContext) -> str | None:
+        raise TimeoutError
+
+
 class ReturnsJunk(PreBuyCheck):
     name = "junk"
 
@@ -192,6 +201,16 @@ async def check_failures() -> bool:
             )
         )
     return all(results)
+
+
+async def check_own_timeout() -> bool:
+    reason = await _pipeline(
+        ConfiguredCheck(OwnTimeout(), required=True, budget=5.0)
+    ).reason(COIN, reads_chain=False)
+    ok = reason is not None and "failed (TimeoutError)" in reason
+    return _check(
+        "a check's own timeout is a failure, not its budget", ok, repr(reason)
+    )
 
 
 async def check_budget() -> bool:
@@ -261,8 +280,16 @@ async def check_module_loading() -> bool:
         (Path(tmp) / "user_checks_mod.py").write_text(MODULE_SOURCE)
         os.chdir(tmp)
         try:
+            before = list(sys.path)
             loaded = load_checks(
                 [{"module": "user_checks_mod:Denylist", "symbols": ["TST"]}], {}
+            )
+            results.append(
+                _check(
+                    "loading leaves sys.path as it was",
+                    sys.path == before,
+                    str(sys.path[:2]),
+                )
             )
             reason = await CheckPipeline(loaded, CTX).reason(COIN, reads_chain=False)
             results.append(
@@ -800,6 +827,7 @@ async def main() -> int:
         check_disabled_not_loaded(),
         check_entry_fields(),
         await check_failures(),
+        await check_own_timeout(),
         await check_budget(),
         await check_module_loading(),
         check_config_validation(),

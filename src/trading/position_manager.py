@@ -899,8 +899,12 @@ class PositionManager:
                 f"Burning {stored.buy_result.amount} {token_info.symbol}, worth "
                 f"{worth:.9f} SOL, below cleanup.burn_given_up_below {below} SOL"
             )
+            recorded = stored.buy_result.amount_raw
+            if recorded is None:
+                recorded = round(stored.buy_result.amount * 10**TOKEN_DECIMALS)
+            # Only what the bot bought: coins bought by hand stay.
             if await cleanup.cleanup_ata(
-                mint, token_info.token_program_id, settle=False
+                mint, token_info.token_program_id, settle=False, burn_at_most=recorded
             ):
                 self.store.remove(mint)
                 self._given_up = MappingProxyType(
