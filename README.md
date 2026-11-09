@@ -17,7 +17,7 @@ A Solana trading bot for **pump.fun** and for **letsbonk.fun**, **StonkFun** and
 For the full walkthrough, see [Solana: Creating a trading and sniping pump.fun bot](https://docs.chainstack.com/docs/solana-creating-a-pumpfun-bot). It lags behind the code, so treat this README as the source of truth for setup and configuration.
 
 > **Also by Chainstack** — if you prefer a terminal interface or want to give an AI agent trading capabilities:
-> - [**pumpfun-cli**](https://github.com/chainstacklabs/pumpfun-cli) — CLI for trading, launching, and managing tokens on pump.fun; buy, sell, wallet management, and smart routing between the bonding curve and PumpSwap AMM.
+> - [**pumpfun-cli**](https://github.com/chainstacklabs/pumpfun-cli) — CLI for trading on pump.fun and Raydium LaunchLab launchpads (letsbonk.fun, StonkFun) and launching pump.fun coins; routes each trade to the bonding curve, PumpSwap or Raydium CPMM.
 > - [**pumpclaw**](https://github.com/chainstacklabs/pumpclaw) — agent skill that equips AI assistants (OpenClaw, Claude Code, Cursor, Codex) with the ability to operate pumpfun-cli.
 
 ---
