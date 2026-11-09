@@ -229,6 +229,8 @@ class UniversalLogsListener(BaseTokenListener):
             for platform, parser in self.platform_parsers.items():
                 token_info = parser.parse_token_creation_from_logs(logs, signature)
                 if token_info:
+                    context = data["params"]["result"].get("context") or {}
+                    token_info.creation_slot = context.get("slot")
                     return token_info
 
             return None

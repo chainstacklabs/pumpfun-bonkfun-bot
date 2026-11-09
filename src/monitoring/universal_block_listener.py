@@ -29,6 +29,13 @@ logger = get_logger(__name__)
 WEBSOCKET_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
 
 
+def _at_slot(tokens: list[TokenInfo], slot: int | None) -> list[TokenInfo]:
+    """Stamp each coin with the slot of the block it came in."""
+    for token_info in tokens or ():
+        token_info.creation_slot = slot
+    return tokens
+
+
 class UniversalBlockListener(BaseTokenListener):
     """Universal block listener that works with any platform."""
 
@@ -263,7 +270,8 @@ class UniversalBlockListener(BaseTokenListener):
         """
         try:
             response = await asyncio.wait_for(websocket.recv(), timeout=30)
-            transactions = self._transactions_from_frame(json.loads(response))
+            data = json.loads(response)
+            transactions = self._transactions_from_frame(data)
             if transactions is None:
                 return []
 
@@ -271,7 +279,10 @@ class UniversalBlockListener(BaseTokenListener):
                 await self._emit_pools(self._pools_from_block(transactions))
 
             # Process all transactions in the block for token creations
-            return self._process_block_transactions(transactions)
+            return _at_slot(
+                self._process_block_transactions(transactions),
+                data["params"]["result"].get("value", {}).get("slot"),
+            )
 
         except TimeoutError:
             logger.debug("No data received for 30 seconds")

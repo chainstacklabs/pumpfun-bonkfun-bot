@@ -253,6 +253,7 @@ def build_trader_settings(
             "wait_before_new_token", 15
         ),
         max_token_age=cfg.get("filters", {}).get("max_token_age", 0.001),
+        age_from=cfg.get("filters", {}).get("age_from", "detection"),
         token_wait_timeout=cfg.get("timing", {}).get("token_wait_timeout", 120),
         # Cleanup settings
         cleanup_mode=cfg.get("cleanup", {}).get("mode", "disabled"),

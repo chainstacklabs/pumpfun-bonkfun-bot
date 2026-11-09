@@ -115,6 +115,8 @@ class TokenInfo:
 
     # Metadata
     creation_timestamp: float | None = None
+    # The slot the create landed in, as the listener saw it; None when unknown.
+    creation_slot: int | None = None
     additional_data: dict[str, Any] | None = None
 
 

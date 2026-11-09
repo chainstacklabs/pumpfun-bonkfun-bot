@@ -250,6 +250,7 @@ class UniversalGeyserListener(BaseTokenListener):
             for parser in self.platform_parsers.values():
                 token_info = parser.parse_token_creation_from_geyser(update)
                 if token_info:
+                    token_info.creation_slot = update.transaction.slot or None
                     return token_info
 
             return None

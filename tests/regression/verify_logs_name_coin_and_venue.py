@@ -37,7 +37,7 @@ Offline machine checks, no network and no funds moved:
      geyser, shreds; launchlab, lets_bonk, stonk_fun: blocks, geyser, shreds)
      logs each coin it reports in one INFO line naming the mint, the platform
      and the creator; for pump.fun also the curve, for LaunchLab the platform
-     config and the quote.
+     config and the quote. Each coin carries the slot its frame gives.
   B. On every stream, pump.fun's and LaunchLab's alike, no INFO line but that
      one names the coin and no parser logs at INFO: the pump.fun parser's
      per-coin detail is at DEBUG.
@@ -269,6 +269,7 @@ def _block_frame(tx: dict) -> dict:
 def _geyser_frame(tx: dict) -> geyser_pb2.SubscribeUpdate:
     """The executed transaction as geyser's Subscribe stream carries it."""
     update = geyser_pb2.SubscribeUpdate()
+    update.transaction.slot = tx.get("slot", 1)
     info = update.transaction.transaction
     info.signature = base58.b58decode(tx["transaction"]["signatures"][0])
     message = info.transaction.message
@@ -456,15 +457,33 @@ def _detection_problems(where: str, token: TokenInfo, line: str) -> list[str]:
     return bad
 
 
+def _frame_slots(kind: str, frames: list) -> set[int]:
+    """The slots the frames say their transactions landed in."""
+    if kind == "logs":
+        return {f["params"]["result"]["context"]["slot"] for f in frames}
+    if kind == "blocks":
+        return {f["params"]["result"]["value"]["slot"] for f in frames}
+    if kind == "shreds":
+        return {f.deshred_transaction.slot for f in frames}
+    return {f.transaction.slot for f in frames}
+
+
 def check_a_one_line_names_the_coin() -> bool:
     """A: each listener logs a coin in one INFO line naming mint, platform and more."""
     bad = []
     for platform, kind in _streams():
         where = f"{platform.value}/{kind}"
-        run = _play(platform, kind, _frames(platform, kind))
+        frames = _frames(platform, kind)
+        run = _play(platform, kind, frames)
         if not run.tokens:
             bad.append(f"{where}: no coin detected from the fixtures")
+        slots = _frame_slots(kind, frames) - {0}
         for token in run.tokens:
+            if token.creation_slot is None or token.creation_slot not in slots:
+                bad.append(
+                    f"{where}: {token.mint} reported at slot {token.creation_slot}, "
+                    f"not one its frames give"
+                )
             lines = [
                 r.getMessage()
                 for r in run.records.info()
