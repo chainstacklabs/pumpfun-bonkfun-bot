@@ -42,7 +42,10 @@ from core import session
 from core.client import rpc_endpoint_problem
 from core.keystore import KeystoreError, unlock_from_env
 from interfaces.core import Platform
+from trading.checks import load_checks
+from trading.checks.builtin import BUILTINS
 from trading.position_store import holds_positions
+from trading.run_lock import RunLock
 from trading.settings import DEFAULT_MAX_EXIT_SELL_ATTEMPTS, TraderSettings
 from trading.universal_trader import UniversalTrader
 from utils import console
@@ -264,9 +267,11 @@ def build_trader_settings(
         # On unless explicitly false: a missing key or null sends closes with it.
         cleanup_with_priority_fee=cfg.get("cleanup", {}).get("with_priority_fee")
         is not False,
+        cleanup_burn_given_up_below=cfg.get("cleanup", {}).get("burn_given_up_below"),
         # Trading filters
         match_string=cfg["filters"].get("match_string"),
         bro_address=cfg["filters"].get("bro_address"),
+        checks=cfg["filters"].get("checks"),
         marry_mode=cfg["filters"].get("marry_mode", False),
         yolo_mode=cfg["filters"].get("yolo_mode", False),
         # Compute unit configuration
@@ -342,7 +347,36 @@ async def start_bot(config_path: str, positions_file: str | None = None) -> bool
 
 
 async def _start_loaded(cfg: dict, positions_file: str | None) -> bool:
-    """`start_bot` once the config has loaded and the bot's log file is set up."""
+    """`start_bot` once the config has loaded and the bot's log file is set up.
+
+    A bot whose positions file another bot or `pump_bot_positions sell-all` is
+    using is not started.
+    """
+    path = positions_file or positions_file_for(cfg.get("name"))
+    if path is None:
+        return await _start_unlocked(cfg, positions_file)
+    lock = RunLock(path)
+    try:
+        acquired = lock.acquire()
+    except OSError as e:
+        logger.error(  # noqa: TRY400
+            f"Bot '{cfg['name']}' not started: could not lock its positions file "
+            f"{path}: {_one_line(e)}"
+        )
+        return False
+    if not acquired:
+        logger.error(
+            f"Bot '{cfg['name']}' not started: its positions file {path} is in "
+            f"use by another bot or pump_bot_positions"
+        )
+        return False
+    try:
+        return await _start_unlocked(cfg, positions_file)
+    finally:
+        lock.release()
+
+
+async def _start_unlocked(cfg: dict, positions_file: str | None) -> bool:
     print_config_summary(cfg)
     session.start(cfg["name"])
 
@@ -350,6 +384,15 @@ async def _start_loaded(cfg: dict, positions_file: str | None) -> bool:
         platform = _startable_platform(cfg)
     except Exception as e:  # noqa: BLE001 - any cause gets the same one line
         logger.error(f"Bot '{cfg['name']}' not started: {_one_line(e)}")  # noqa: TRY400
+        return False
+    # Loaded before the wallet or the node: a check that does not load is a
+    # config error, said in one line.
+    try:
+        checks = load_checks((cfg.get("filters") or {}).get("checks"), BUILTINS)
+    except Exception as e:  # noqa: BLE001 - any cause gets the same one line
+        logger.error(  # noqa: TRY400
+            f"Bot '{cfg['name']}' not started: filters.checks: {_one_line(e)}"
+        )
         return False
 
     if "keystore" in cfg:
@@ -370,7 +413,10 @@ async def _start_loaded(cfg: dict, positions_file: str | None) -> bool:
 
     # Initialize universal trader with platform-specific configuration
     try:
-        trader = UniversalTrader(build_trader_settings(cfg, platform, positions_file))
+        # The checks built above, so a check is built once.
+        trader = UniversalTrader(
+            build_trader_settings(cfg, platform, positions_file), checks=checks
+        )
 
         await trader.start()
 

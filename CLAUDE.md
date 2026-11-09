@@ -15,6 +15,7 @@ Deeper notes, kept out of this file so they load only when needed:
 | [docs/listeners-and-geyser.md](docs/listeners-and-geyser.md) | changing a listener, the geyser stubs or a decoder |
 | [docs/cookbook-conventions.md](docs/cookbook-conventions.md) | adding or changing anything under `cookbook/` |
 | [docs/regression-tests.md](docs/regression-tests.md) | picking which verifiers your change needs |
+| [docs/pre-buy-checks.md](docs/pre-buy-checks.md) | adding or changing a pre-buy check (`src/trading/checks/`) |
 
 ## Ground rules
 
@@ -64,6 +65,8 @@ coordinates `trading/intake.py`, `platform_aware.py` and `position_manager.py`.
 uv sync                      # install runtime deps + the dev group (ruff)
 uv pip install -e .          # editable install (required for the imports above)
 pump_bot                     # run all enabled bots
+pump_bot_positions status <bot yaml>     # what a bot holds; read only
+pump_bot_positions sell-all <bot yaml>   # sell it all; refuses while the bot runs
 uv run src/bot_runner.py     # same, without the console script
 uv run tests/regression/run_all.py   # every offline verifier; moves no funds
 ```

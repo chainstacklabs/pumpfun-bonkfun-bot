@@ -488,7 +488,7 @@ def check_f_transfer_fee() -> bool:
                 f"{label}: transfer fee {got.transfer_fee_bps} bps, the mint's {want}"
             )
         intake = _intake([], object(), max_transfer_fee_bps=want - 1)
-        if not intake.migration_skip_reason(got):
+        if not asyncio.run(intake.migration_skip_reason(got)):
             problems.append(f"{label}: max_transfer_fee_bps {want - 1} let it through")
     for problem in problems:
         print(f"    {problem}")

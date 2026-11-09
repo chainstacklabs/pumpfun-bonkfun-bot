@@ -77,6 +77,7 @@ from platforms.stonkfun import (  # noqa: E402
 from trading import platform_aware  # noqa: E402
 from trading.intake import TokenIntake  # noqa: E402
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller  # noqa: E402
+from trading.settings import TraderSettings  # noqa: E402
 from utils.idl_manager import get_idl_manager  # noqa: E402
 
 FIXTURE = Path(__file__).with_name("raw_stonkfun_trades_from_gettransaction.json")
@@ -473,7 +474,26 @@ def check_f_single_token_mode_waits_past_refused_coins() -> bool:
         quote_amounts={WSOL_MINT: 0.001},
         max_transfer_fee_bps=100,
     )
+    # The filters exactly as TokenIntake builds them from these settings.
+    intake._launch_checks = TokenIntake(  # noqa: SLF001
+        TraderSettings(
+            rpc_endpoint="",
+            wss_endpoint="",
+            private_key="",
+            buy_amount=0.001,
+            buy_slippage=0.1,
+            sell_slippage=0.1,
+            max_transfer_fee_bps=intake.max_transfer_fee_bps,
+        ),
+        None,
+        intake.quote_amounts,
+        intake.allowed_quote_mints,
+    )._launch_checks  # noqa: SLF001
     intake.skip_reason = lambda token: TokenIntake.skip_reason(intake, token)
+    intake._verdicts = {}  # noqa: SLF001
+    intake._verdict = lambda pipeline, token: TokenIntake._verdict(  # noqa: SLF001
+        intake, pipeline, token
+    )
     intake.max_token_age = 60
     intake.slot_clock = None
     intake._too_old = lambda token, at: TokenIntake._too_old(intake, token, at)  # noqa: SLF001

@@ -1,0 +1,177 @@
+"""Run the configured pre-buy checks in order, and load them from the bot YAML."""
+
+from __future__ import annotations
+
+import asyncio
+import importlib
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from trading.checks.base import CheckContext, PreBuyCheck
+from utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from interfaces.core import TokenInfo
+
+logger = get_logger(__name__)
+
+#: Seconds a listed check may take when its entry sets no `budget`.
+DEFAULT_BUDGET = 2.0
+
+# Keys of a check entry the pipeline reads; the rest go to the check's __init__.
+_ENTRY_KEYS = ("name", "module", "enabled", "required", "budget")
+
+
+@dataclass(frozen=True)
+class ConfiguredCheck:
+    """A check as configured.
+
+    Args:
+        required: When the check can't decide (it raised, ran past its budget
+            or returned something other than None or a str), True refuses the
+            coin and False lets it through
+        budget: Seconds the check may take; None is no limit, which only the
+            `filters` settings get
+        named: Prefix its reason with the check's name; off for the `filters`
+            settings, whose reasons name the setting already
+    """
+
+    check: PreBuyCheck
+    required: bool = True
+    budget: float | None = None
+    named: bool = True
+
+
+class CheckPipeline:
+    """The configured checks, run in order; the first skip wins."""
+
+    def __init__(self, checks: list[ConfiguredCheck], ctx: CheckContext) -> None:
+        self.checks = checks
+        self.ctx = ctx
+
+    def has(self, *, reads_chain: bool) -> bool:
+        """Whether any check of that kind is configured."""
+        return any(c.check.reads_chain is reads_chain for c in self.checks)
+
+    async def reason(self, coin: TokenInfo, *, reads_chain: bool) -> str | None:
+        """Why a check refuses the coin, as "<check name>: <reason>", or None.
+
+        Runs only the checks whose `reads_chain` matches.
+        """
+        for configured in self.checks:
+            if configured.check.reads_chain is not reads_chain:
+                continue
+            reason = await self._run(configured, coin)
+            if reason is not None:
+                return (
+                    f"{configured.check.name}: {reason}" if configured.named else reason
+                )
+        return None
+
+    async def _run(self, configured: ConfiguredCheck, coin: TokenInfo) -> str | None:
+        check = configured.check
+        budget = asyncio.timeout(configured.budget)
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        try:
+            async with budget:
+                result = await check.check(coin, self.ctx)
+            late = (
+                configured.budget is not None
+                and loop.time() - started > configured.budget
+            )
+            if budget.expired() or late:
+                # It hid its own cancellation, or held the event loop so the
+                # timeout could not fire, and answered after the budget.
+                failure = f"ran past its {configured.budget}s budget"
+            elif result is None or isinstance(result, str):
+                return result
+            else:
+                failure = f"returned {type(result).__name__}, not None or a reason"
+        except TimeoutError as e:
+            # The budget ran out, or the check timed out on its own.
+            failure = (
+                f"ran past its {configured.budget}s budget"
+                if budget.expired()
+                else f"failed ({type(e).__name__})"
+            )
+        except Exception as e:  # noqa: BLE001 - a check must never stop the trader
+            # The class only: an exception's text can carry an endpoint URL.
+            failure = f"failed ({type(e).__name__})"
+        if configured.required:
+            logger.warning(f"Check {check.name} {failure}; skipping {coin.symbol}")
+            return f"could not decide: {failure}"
+        logger.warning(f"Check {check.name} {failure}; letting {coin.symbol} through")
+        return None
+
+
+def _class_from_module(path: str) -> type:
+    module_name, sep, class_name = path.partition(":")
+    if not sep or not module_name or not class_name:
+        raise ValueError(f"check module {path!r} must look like 'package.module:Class'")  # noqa: TRY003
+    # User checks live beside the bot YAMLs, in the folder pump_bot runs from;
+    # that folder is on the path only while the check imports.
+    cwd = str(Path.cwd())
+    added = cwd not in sys.path
+    if added:
+        sys.path.insert(0, cwd)
+    try:
+        module = importlib.import_module(module_name)
+    except Exception as e:
+        raise ValueError(  # noqa: TRY003
+            f"check module {module_name!r} does not import: {type(e).__name__}: {e}"
+        ) from e
+    finally:
+        if added:
+            sys.path.remove(cwd)
+    try:
+        return getattr(module, class_name)
+    except AttributeError:
+        raise ValueError(f"check module {module_name!r} has no {class_name}") from None  # noqa: TRY003
+
+
+def load_checks(
+    entries: list[dict] | None, builtins: dict[str, type[PreBuyCheck]]
+) -> list[ConfiguredCheck]:
+    """Build the checks a `filters.checks` list names, leaving out disabled ones.
+
+    Raises:
+        ValueError: An entry names no check, both a builtin and a module, an
+            unknown builtin, or a module or class that does not load, or its
+            options don't fit the check; the message is one line naming it
+    """
+    loaded = []
+    for entry in entries or []:
+        if not entry.get("enabled", True):
+            continue
+        has_name, has_module = "name" in entry, "module" in entry
+        if has_name == has_module:
+            raise ValueError(f"check {entry!r} needs either name or module")  # noqa: TRY003
+        if has_name:
+            cls = builtins.get(entry["name"])
+            if cls is None:
+                raise ValueError(  # noqa: TRY003
+                    f"unknown check {entry['name']!r}; built-in checks: "
+                    f"{sorted(builtins)}"
+                )
+        else:
+            cls = _class_from_module(entry["module"])
+            if not (isinstance(cls, type) and issubclass(cls, PreBuyCheck)):
+                raise ValueError(f"{entry['module']} is not a PreBuyCheck subclass")  # noqa: TRY003
+            if not isinstance(getattr(cls, "name", None), str):
+                raise ValueError(f"{entry['module']} has no name")  # noqa: TRY003
+        options = {k: v for k, v in entry.items() if k not in _ENTRY_KEYS}
+        try:
+            check = cls(**options)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"check {entry!r}: {e}") from e  # noqa: TRY003
+        loaded.append(
+            ConfiguredCheck(
+                check,
+                required=entry.get("required", cls.required_by_default),
+                budget=entry.get("budget", DEFAULT_BUDGET),
+            )
+        )
+    return loaded

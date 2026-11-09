@@ -111,12 +111,14 @@ The YAML files are commented inline. The sections that matter most:
   - `min_wallet_balance` (SOL, optional): below it the bot buys nothing more and logs one warning; positions it holds still run to their exit. The balance is read at start and after each buy is sent, never before a buy; while it is low it is read again at most every 10 seconds, and buying resumes once a sale brings it back above.
 - **`priority_fees`** — fixed or dynamic. Dynamic costs an extra RPC call, which slows the buy.
 - **`filters`** — `listener_type`, `max_token_age` (checked once, when the bot takes a coin up: seconds since it detected the coin, not its age on chain, so a slow listener lets older coins through; set `age_from: chain` to count a launch's age from the slot its create landed in instead, estimated from the newest slot seen, the node's (read every 2 seconds in the background) or the listener's own, so the buy makes no extra call; a coin whose slot the listener did not give still counts from detection, and migrations always do), name/creator matching, `marry_mode` (buy only, never sell), `yolo_mode` (trade continuously).
+  - `checks` (optional): more checks a coin must pass before the buy, built-in (`mayhem`, `top_holders`) or your own class. See [Pre-buy checks](docs/pre-buy-checks.md).
 - **`retries`** — attempts and the wait windows around creation, buy, and the next token.
 - **`timing.token_wait_timeout`** — with `yolo_mode: false` the bot trades one coin and exits; this is how long it waits for a coin the filters accept (a migration, with `entry: migration`) before exiting without one. Default 120 seconds.
 - **`cleanup`** — when to close leftover token accounts: `disabled`, `on_fail`, `after_sell`, `post_session`.
   - `after_sell` closes each coin's account once it is sold, and the empty account of a position cleared because the wallet no longer holds its coin (sold by hand while the bot was down).
   - `post_session` closes, when the session ends, the accounts of the coins it traded, then every other empty token account in the wallet, under SPL Token and Token-2022. It never closes a quote mint's account (wSOL, USDC, any configured quote), or that of a coin still in the positions file, pending buys included: those positions are kept for the next start (see [Positions survive a restart](#positions-survive-a-restart)), and their accounts are cleaned up at the end of the session that sells them.
   - `force_close_with_burn` burns what is left in a traded coin's account before closing it. It never burns anything in the other accounts `post_session` closes, and under `exit_strategy: manual` or `marry_mode` post-session cleanup burns nothing, since those coins are meant to be held.
+  - `burn_given_up_below` (SOL, optional, needs `post_session` or `after_sell`): at the end of a session, burns a coin the bot gave up selling this session when it is worth less than this, closes its account and drops it from the positions file. It burns no more than the position's recorded amount: coins bought by hand stay, and so does their account. A pump.fun coin on its curve is valued at what the curve's real reserves can pay for it now, so a drained curve makes it worthless; a graduated coin at its pool price. Only SOL-quoted coins are burned; a coin that can't be valued is kept.
   - Closes and burns go out with the bot's priority fee unless `with_priority_fee` is `false` (it must be `true` or `false`; left out, it is `true`). A close is sent again once the block height is past its blockhash's last valid height and its signature is not known to have landed (no node knows it, or the lookup failed; one seen but not yet confirmed is waited on), at most 3 attempts in total; then the bot logs one warning naming `tools/cleanup_accounts.py`.
   - Cleanup closes only token accounts the wallet owns. A buy can also pay rent for an account another program owns, such as pump.fun's creator fee vault for a coin's quote asset the first time that vault is needed. The wallet can never close such an account, so its rent is a one-time cost of the trade that no cleanup mode returns. The trade's figures count it: in `quote_amount` for a SOL quote, and among the SOL costs shown beside the PnL for any other quote.
 - **`node.max_rps`** — cap requests per second to match your provider's plan.
@@ -229,6 +231,11 @@ less than was bought sells what is held. The bot clears a position only when thr
 reads, a second apart, all find nothing, since an RPC node lagging behind may
 not show a fresh buy yet. A position whose balance cannot be read stays in the
 file and is tried again on the next start, and so does one whose exit gave up.
+A position the bot gives up on (its sale ran out of attempts or could not be
+resolved) is marked `given_up` in the file with the reason, and the session
+summary lists it with the amount held and the rent its account still locks.
+When the curve can pay nothing for a coin, or less than the sale's network
+fee, nothing is sent and the next attempt waits `price_check_interval`.
 Each position names the wallet that bought it: a bot started with another
 wallet leaves it in the file, neither sold nor cleared, until that wallet trades
 again. Entries written before positions named their wallet resume for any
@@ -248,6 +255,39 @@ leaves its old file behind; rename the file too. A position bought on another
 `platform` than the bot's current one stays in the file and is not monitored.
 No coin in the file is bought again, monitored or not. A file the bot cannot
 read is moved aside to `<name>.json.unreadable`.
+
+Only one process uses a positions file at a time: a bot whose file another bot
+or `pump_bot_positions sell-all` holds is not started, and says so. The lock is
+`<name>.json.lock` next to the file; the system drops it when its holder exits.
+
+### Check and close positions
+
+```bash
+pump_bot_positions status bots/bot-sniper-1-geyser.yaml
+pump_bot_positions sell-all bots/bot-sniper-1-geyser.yaml
+```
+
+`status` lists each position in the bot's positions file: venue, amount held,
+entry price, price now and unrealised profit or loss, flagging positions the
+bot gave up on, buys still pending and positions another wallet or platform
+bought. It only reads, so it runs while the bot does, and needs no keystore
+password.
+
+`sell-all` sells every position this wallet holds through the bot's own seller,
+closes each emptied account and drops it from the file. It asks first unless
+given `--yes`, and refuses to run while the bot uses the file. It burns
+nothing: what it can't sell, such as the part of a coin its curve can't pay
+for, stays in the wallet and in the file, marked given up. Pending buys and
+positions another wallet or platform bought are left alone. It never sells
+more than a position's recorded amount, closes the empty account of a coin the
+wallet no longer holds, and prints each sale's PnL from its transaction (an
+estimate at the seller's price, and said to be one, when the transaction can't
+be read), which a part sale also adds to the position's total. A position
+stays in the file until its account is closed. A sale or burn whose
+confirmation never came is recorded with its signature and looked up, by
+`sell-all` and by the bot on its next start, before the coin is sold again, so
+running `sell-all` again picks up whatever a run left unfinished. When two bots in the folder share a
+name, pass the file with `--positions`.
 
 ### Encrypted keystore
 

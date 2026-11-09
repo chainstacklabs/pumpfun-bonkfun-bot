@@ -94,6 +94,13 @@ compute_units:
 filters:
   match_string: null # Only process tokens with this string in name/symbol
   bro_address: null # Only trade tokens created by this user address
+  # Checks a coin must pass before the buy, after the filters above; see
+  # docs/pre-buy-checks.md to write your own.
+  #checks:
+  #  - name: mayhem # skip pump.fun mayhem-mode coins; reads nothing
+  #  - name: top_holders # reads the chain; best for entry: migration
+  #    max_share: 0.3
+  #    required: false
   # Restrict which quote assets to trade. Omit (or set null) to allow any quote
   # mint that has an amount configured under trade.quote_amounts.
   # Accepts "sol"/"usdc" aliases or raw mint addresses.
@@ -137,6 +144,9 @@ cleanup:
   mode: "post_session"
   force_close_with_burn: false # Burn what is left in a traded coin's account before closing it; post_session burns nothing under manual or marry_mode, and nothing in the other empty accounts it closes
   with_priority_fee: true # true or false: send closes with the priority fee above. A close not confirmed is sent again once its blockhash expired, at most 3 attempts in total
+  # SOL: burn a coin the bot gave up selling, worth less than this, and close
+  # its account at session end. Needs mode post_session or after_sell. null: never
+  burn_given_up_below: null
 
 # Node provider configuration
 node:

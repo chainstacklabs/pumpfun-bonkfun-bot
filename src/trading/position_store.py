@@ -23,6 +23,7 @@ from core.trade_deltas import TradeDeltas
 from interfaces.core import Platform, TokenInfo
 from trading.base import PendingBuy, TradeResult
 from trading.pnl import Realised
+from trading.unresolved import BURN, SALE, Unresolved
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -241,6 +242,31 @@ class StoredPosition:
     realised: Realised | None = None
     #: All of it was sold, and only its account close is left to do.
     sold: bool = False
+    #: Why the bot stopped monitoring it while still holding it; None while
+    #: it is monitored, or was never given up on.
+    given_up: str | None = None
+    #: A sale or burn of it whose outcome is unknown; resolved before the coin
+    #: moves again.
+    unresolved: Unresolved | None = None
+    #: The slot the sale that sold all of it landed in; None when unknown.
+    sold_slot: int | None = None
+
+
+def _unresolved_of(record: dict) -> Unresolved | None:
+    """The record's unresolved trade; None when it has none or it is malformed."""
+    found = record.get("unresolved")
+    if not isinstance(found, dict):
+        return None
+    kind, signature = found.get("kind"), found.get("signature")
+    last_valid, marked_at = found.get("last_valid_block_height"), found.get("marked_at")
+    if kind not in (SALE, BURN) or not isinstance(signature, str):
+        return None
+    return Unresolved(
+        kind,
+        signature,
+        last_valid if _whole(last_valid) else None,
+        marked_at if isinstance(marked_at, (int, float)) else 0.0,
+    )
 
 
 def _decode(mint: str, record: dict) -> StoredPosition:
@@ -268,6 +294,11 @@ def _decode(mint: str, record: dict) -> StoredPosition:
         pending=_pending_of(record),
         realised=_realised_of(record),
         sold=record.get("sold") is True,
+        given_up=given_up
+        if isinstance(given_up := record.get("given_up"), str)
+        else None,
+        unresolved=_unresolved_of(record),
+        sold_slot=slot if _whole(slot := record.get("sold_slot")) else None,
     )
 
 
@@ -456,12 +487,19 @@ class PositionStore:
             record["parts_sold"] = record.get("parts_sold", 0) + 1
         self._write()
 
-    def mark_sold(self, mint: Pubkey) -> None:
-        """Keep a position sold in full until its account is closed."""
+    def mark_sold(self, mint: Pubkey, slot: int | None = None) -> None:
+        """Keep a position sold in full until its account is closed.
+
+        Args:
+            slot: The slot the sale landed in, so a later balance read can ask
+                a node that has reached it
+        """
         record = self._records.get(str(mint))
         if record is None:
             return
         record["sold"] = True
+        if slot is not None:
+            record["sold_slot"] = slot
         # Its buy is settled: a pending record cleared as never landed is not
         # pending any more either.
         record.pop("pending", None)
@@ -484,6 +522,58 @@ class PositionStore:
             return
         record["buy"]["price"] = price
         self._write()
+
+    def mark_given_up(self, mint: Pubkey, reason: str) -> None:
+        """Record that the bot stopped monitoring a position it still holds."""
+        record = self._records.get(str(mint))
+        if record is None:
+            return
+        record["given_up"] = reason
+        self._write()
+
+    def mark_unresolved(self, mint: Pubkey, trade: Unresolved) -> None:
+        """Record a sale or burn of the position whose outcome is unknown."""
+        record = self._records.get(str(mint))
+        if record is None:
+            return
+        record["unresolved"] = dataclasses.asdict(trade)
+        self._write()
+
+    def clear_unresolved(self, mint: Pubkey) -> None:
+        """Drop the record of a trade now resolved."""
+        record = self._records.get(str(mint))
+        if record is None or record.pop("unresolved", None) is None:
+            return
+        self._write()
+
+    def clear_given_up(self, mint: Pubkey) -> None:
+        """Drop the mark once the position is monitored again."""
+        record = self._records.get(str(mint))
+        if record is None or record.pop("given_up", None) is None:
+            return
+        self._write()
+
+    @staticmethod
+    def peek(path: Path | str) -> list[StoredPosition]:
+        """The positions in a file, read only: nothing written, moved or logged.
+
+        For reading a file another process may be using. Records that do not
+        decode are left out.
+
+        Raises:
+            OSError, ValueError, KeyError, TypeError: The file can't be read
+        """
+        try:
+            text = Path(path).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return []
+        positions = []
+        for record in _records_in(json.loads(text)):
+            try:
+                positions.append(_decode(record["mint"], record))
+            except (ValueError, KeyError, TypeError, AttributeError):
+                continue
+        return positions
 
     def remove(self, mint: Pubkey) -> None:
         """Drop a position that has been sold; a mint not in the file is a no-op."""

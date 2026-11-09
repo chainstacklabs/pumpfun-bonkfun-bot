@@ -1,6 +1,8 @@
 import asyncio
+import dataclasses
 import struct
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from functools import partial
 
 from solders.account import Account
@@ -85,6 +87,42 @@ def _closable_empty(data: bytes, owner: Pubkey) -> tuple[Pubkey, bool]:
     )
 
 
+def _failure_text(
+    account: Pubkey,
+    signature: Signature | None,
+    outcome: ConfirmationStatus | None,
+    closes: bool,  # noqa: FBT001
+) -> str:
+    """Why a close, or a burn that leaves the account open, stops here."""
+    what = "close token account" if closes else "burn from"
+    if outcome is ConfirmationStatus.REVERTED:
+        return f"Failed to {what} {account}: {signature} reverted"
+    return (
+        f"The burn from {account} ({signature}) did not confirm; not sent again, "
+        f"since the account holds more than it burns"
+    )
+
+
+@dataclass(frozen=True)
+class BurnResult:
+    """What a burn, or a close, came to.
+
+    Args:
+        status: SUCCESS once it landed, or there was nothing to do; REVERTED
+            when it failed on chain; UNCONFIRMED when it was sent and may
+            still land; None when it surely did not land (never sent, or
+            expired unseen)
+        closes: It closed the account too, which held no more than it burned
+        signature: The last transaction sent; None when none was
+        last_valid_block_height: Its blockhash's last valid height
+    """
+
+    status: ConfirmationStatus | None
+    closes: bool
+    signature: str | None = None
+    last_valid_block_height: int | None = None
+
+
 class AccountCleanupManager:
     """Handles safe cleanup of token accounts (ATA) after trading sessions."""
 
@@ -111,6 +149,10 @@ class AccountCleanupManager:
     #: a transfer-fee Token-2022 account, the most cleanup sends, uses about
     #: 5,600 with the budget instructions; the rest is headroom.
     COMPUTE_UNITS = 20_000
+
+    #: Accounts found not to exist, so there is nothing left to close.
+    #: Rebound, never mutated, so a manager built without `__init__` has it.
+    _gone: frozenset[Pubkey] = frozenset()
 
     def __init__(
         self,
@@ -139,10 +181,11 @@ class AccountCleanupManager:
         *,
         settle: bool = True,
         after_slot: int | None = None,
-    ) -> None:
+    ) -> bool:
         """Wait for the RPC node to settle, then burn what is left if asked and close the ATA.
 
         Skips an account that doesn't exist, or holds tokens without force burn.
+        True once the account is closed or does not exist.
 
         Args:
             token_program_id: TOKEN or TOKEN_2022; None means TOKEN_2022
@@ -152,7 +195,27 @@ class AccountCleanupManager:
         """
         if settle and after_slot is None:
             await self._settle()
-        await self._close_ata(mint, token_program_id, after_slot)
+        return await self._close_ata(mint, token_program_id, after_slot)
+
+    async def burn_down(
+        self, mint: Pubkey, token_program_id: Pubkey | None, amount: int
+    ) -> BurnResult:
+        """Burn at most `amount` raw tokens from the ATA, closing it when that empties it.
+
+        An account holding more keeps the rest and stays open; that burn is
+        sent again only when the node refused it, since a resent one that had
+        landed would take more. Never raises: a failure is a result.
+        """
+        if token_program_id is None:
+            token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
+        try:
+            ata = self.wallet.get_associated_token_address(mint, token_program_id)
+            return await self._close(
+                mint, ata, token_program_id, burn=True, burn_at_most=amount
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Burning from the token account of {mint} failed: {e!s}")
+            return BurnResult(None, closes=True)
 
     async def cleanup_atas(
         self,
@@ -255,13 +318,16 @@ class AccountCleanupManager:
         mint: Pubkey,
         token_program_id: Pubkey | None,
         after_slot: int | None = None,
-    ) -> None:
-        """Burn what is left if asked and close the ATA; never raises."""
+    ) -> bool:
+        """Burn what is left if asked and close the ATA; never raises.
+
+        True once the account is closed or does not exist.
+        """
         if token_program_id is None:
             token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
         try:
             ata = self.wallet.get_associated_token_address(mint, token_program_id)
-            await self._close(
+            result = await self._close(
                 mint,
                 ata,
                 token_program_id,
@@ -270,6 +336,8 @@ class AccountCleanupManager:
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Cleanup failed for the token account of {mint}: {e!s}")
+            return False
+        return result.status is ConfirmationStatus.SUCCESS
 
     async def _close_swept(
         self, mint: Pubkey, account: Pubkey, token_program_id: Pubkey
@@ -289,8 +357,12 @@ class AccountCleanupManager:
         burn: bool,
         swept: bool = False,
         after_slot: int | None = None,
-    ) -> None:
+        burn_at_most: int | None = None,
+    ) -> BurnResult:
         """Burn what is left if `burn` and close `account`, until it lands.
+
+        SUCCESS once it is closed (or burned down, with `burn_at_most`), and
+        when it does not exist.
 
         A close is sent again only once the block height is past its
         blockhash's last valid height and its signature is not known to have
@@ -304,27 +376,48 @@ class AccountCleanupManager:
             swept: Found by the post-session sweep, not traded: an account
                 holding tokens is skipped as not empty
             after_slot: The slot the sell before this close landed in
+            burn_at_most: Raw tokens the burn may take; holding more, the
+                account is burned down by that much, stays open, and the burn
+                is sent again only when the node refused it, since a resent one
+                that had landed would take more
         """
         slot = after_slot
+        closes, signature, last_valid = True, None, None
         for attempt in range(1, self.CLOSE_ATTEMPTS + 1):
-            instructions = await self._close_instructions(
+            built = await self._close_instructions(
                 mint,
                 account,
                 token_program_id,
                 burn=burn,
                 swept=swept,
                 min_context_slot=slot,
+                burn_at_most=burn_at_most,
             )
-            if instructions is None:
-                return
-            outcome, signature, slot = await self._send(account, instructions)
+            if built is None:
+                gone = account in self._gone
+                status = ConfirmationStatus.SUCCESS if gone else None
+                return BurnResult(status, closes=True)
+            instructions, closes = built
+            outcome, signature, slot, last_valid = await self._send(
+                account, instructions
+            )
+            result = BurnResult(
+                outcome, closes, signature and str(signature), last_valid
+            )
             if outcome is ConfirmationStatus.SUCCESS:
-                logger.info(f"Closed successfully: {account}")
-                session.current().add_close(self._lamports.pop(account, None))
-                return
-            if outcome is ConfirmationStatus.REVERTED:
-                logger.error(f"Failed to close token account {account}: {signature}")
-                return
+                self._report_done(account, closes=closes, burned=burn_at_most)
+                return result
+            if outcome is None and signature is None:
+                # The node refused it: nothing was sent, so it is sent again.
+                continue
+            if outcome is ConfirmationStatus.REVERTED or not closes:
+                logger.error(_failure_text(account, signature, outcome, closes))
+                if outcome is not ConfirmationStatus.REVERTED:
+                    # Sent, and it may still land.
+                    return dataclasses.replace(
+                        result, status=ConfirmationStatus.UNCONFIRMED
+                    )
+                return result
             if outcome is ConfirmationStatus.UNCONFIRMED:
                 logger.warning(
                     f"Could not tell within {self.MAX_WAIT:g}s whether the close of "
@@ -332,7 +425,7 @@ class AccountCleanupManager:
                     f"the account is still open, reclaim its rent with "
                     f"tools/cleanup_accounts.py {mint}"
                 )
-                return
+                return result
             if attempt < self.CLOSE_ATTEMPTS:
                 logger.info(
                     f"Close of {account} did not land; sending it again "
@@ -343,6 +436,19 @@ class AccountCleanupManager:
             f"{self.CLOSE_ATTEMPTS} attempts landed. Reclaim its rent with "
             f"tools/cleanup_accounts.py {mint}"
         )
+        return BurnResult(None, closes, signature and str(signature), last_valid)
+
+    def _report_done(
+        self, account: Pubkey, *, closes: bool, burned: int | None
+    ) -> None:
+        if not closes:
+            logger.info(
+                f"Burned {burned} raw tokens from {account}; it holds more, so it "
+                f"stays open"
+            )
+            return
+        logger.info(f"Closed successfully: {account}")
+        session.current().add_close(self._lamports.pop(account, None))
 
     async def _close_instructions(  # noqa: PLR0913
         self,
@@ -353,17 +459,21 @@ class AccountCleanupManager:
         burn: bool,
         swept: bool,
         min_context_slot: int | None,
-    ) -> list | None:
-        """The burn (if any) and close for `account`; None when there is nothing to do.
+        burn_at_most: int | None = None,
+    ) -> tuple[list, bool] | None:
+        """The burn (if any) and close for `account`, and whether they close it.
 
-        The account is read at "confirmed", its balance from the same read,
-        from a node at least at `min_context_slot` when given.
+        None when there is nothing to do. The account is read at "confirmed",
+        its balance from the same read, from a node at least at
+        `min_context_slot` when given. Holding more than `burn_at_most`, it is
+        only burned down by that much.
         """
         label = "token account" if swept else "ATA"
         try:
             info = await self._read_account(account, min_context_slot)
         except ValueError:
             logger.info(f"{label} {account} does not exist or already closed.")
+            self._gone = self._gone | {account}
             return None
         # What its close returns to the wallet, for the session summary.
         self._lamports[account] = getattr(info, "lamports", None)
@@ -382,20 +492,21 @@ class AccountCleanupManager:
             )
 
         elif balance > 0 and burn:
-            logger.info(
-                f"Burning {balance} tokens from ATA {account} (mint: {mint})..."
-            )
+            amount = balance if burn_at_most is None else min(balance, burn_at_most)
+            logger.info(f"Burning {amount} tokens from ATA {account} (mint: {mint})...")
             instructions.append(
                 burn_instruction(
                     BurnParams(
                         account=account,
                         mint=mint,
                         owner=self.wallet.pubkey,
-                        amount=balance,
+                        amount=amount,
                         program_id=token_program_id,
                     )
                 )
             )
+            if amount < balance:
+                return instructions, False
 
         elif balance > 0 and swept:
             logger.info(
@@ -429,7 +540,7 @@ class AccountCleanupManager:
                 )
             )
         )
-        return instructions
+        return instructions, True
 
     async def _read_account(
         self, account: Pubkey, min_context_slot: int | None
@@ -459,15 +570,15 @@ class AccountCleanupManager:
 
     async def _send(
         self, account: Pubkey, instructions: list
-    ) -> tuple[ConfirmationStatus | None, Signature | None, int | None]:
+    ) -> tuple[ConfirmationStatus | None, Signature | None, int | None, int | None]:
         """Send one close and wait until it landed or provably cannot.
 
         Returns:
             The outcome: SUCCESS or REVERTED; None when it can be sent again
             (refused by the node, or expired and not known to have landed);
             UNCONFIRMED when that could not be told within `MAX_WAIT`. Then the
-            signature (None when nothing was sent) and the slot the expiry was
-            seen at (None when unknown)
+            signature (None when nothing was sent), the slot the expiry was
+            seen at and the blockhash's last valid height (None when unknown)
         """
         priority_fee = (
             await self.priority_fee_manager.calculate_priority_fee([account])
@@ -496,7 +607,7 @@ class AccountCleanupManager:
         except TransactionNotSent as e:
             logger.info(f"Close of {account} was not taken by the node: {e!s}")
             await asyncio.sleep(self.RESEND_DELAY)
-            return None, None, None
+            return None, None, None, None
         except Exception as e:
             if "signature" not in signed:
                 raise
@@ -506,7 +617,7 @@ class AccountCleanupManager:
                 f"land, so it is waited on"
             )
         outcome, slot = await self._wait(signature, signed.get("last_valid"))
-        return outcome, signature, slot
+        return outcome, signature, slot, signed.get("last_valid")
 
     async def _wait(
         self, signature: Signature, last_valid: int | None

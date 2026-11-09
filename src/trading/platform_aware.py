@@ -226,7 +226,33 @@ def _fit_sell_to_curve(
     return sellable, sellable_decimal, min(price, payout_price)
 
 
-def _nothing_to_sell(token_info: TokenInfo, *, curve_short: bool) -> TradeResult:
+#: Lamports every transaction pays per signature; the bot signs with one key.
+_BASE_FEE_LAMPORTS = 5_000
+
+
+def _network_fee_lamports(priority_fee: int | None, compute_unit_limit: int) -> int:
+    """What a one-signature transaction costs: base fee plus priority fee.
+
+    Args:
+        priority_fee: Microlamports per compute unit; None sends none
+    """
+    return _BASE_FEE_LAMPORTS + (priority_fee or 0) * compute_unit_limit // 1_000_000
+
+
+def _below_network_fee(token_info: TokenInfo, payout: int, fee: int) -> bool:
+    """Whether a sale's payout, in lamports, is less than its network fee."""
+    if payout >= fee:
+        return False
+    logger.warning(
+        f"The part of {token_info.symbol} the curve can pay for is worth {payout} "
+        f"lamports, less than its {fee} lamport network fee; nothing sent"
+    )
+    return True
+
+
+def _nothing_to_sell(
+    token_info: TokenInfo, *, curve_short: bool, below_fee: bool = False
+) -> TradeResult:
     """The result of a sell that sent nothing.
 
     Args:
@@ -234,6 +260,8 @@ def _nothing_to_sell(token_info: TokenInfo, *, curve_short: bool) -> TradeResult
             can't pay anything for them now. Reported as SUBMIT_FAILED, so the
             exit retries it as one more bounded attempt: the curve may refill
             or graduate.
+        below_fee: With `curve_short`, the curve can pay for part of it, but
+            less than the sale's network fee
     """
     if not curve_short:
         logger.info("No tokens to sell.")
@@ -246,10 +274,12 @@ def _nothing_to_sell(token_info: TokenInfo, *, curve_short: bool) -> TradeResult
         success=False,
         platform=token_info.platform,
         error_message=(
-            f"The {token_info.symbol} curve's real reserves can't pay anything "
-            f"for it now; nothing sent"
+            f"The {token_info.symbol} curve's real reserves can pay "
+            f"{'less than the network fee' if below_fee else 'nothing'} for it "
+            f"now; nothing sent"
         ),
         failure_reason=TradeFailureReason.SUBMIT_FAILED,
+        curve_short=True,
     )
 
 
@@ -1248,6 +1278,34 @@ class PlatformAwareSeller(Trader):
                 f"({min_quote_output} raw units)"
             )
 
+            # Get accounts for priority fee calculation
+            priority_accounts = venue.get_required_accounts_for_sell(
+                token_info, self.wallet.pubkey
+            )
+            priority_fee = await self.priority_fee_manager.calculate_priority_fee(
+                priority_accounts
+            )
+            compute_unit_limit = venue.get_sell_compute_unit_limit(
+                self._get_cu_override("sell", token_info.platform)
+            )
+            # A part the curve can pay for may be worth less than the sale
+            # costs: send nothing, and let the curve refill. Only a sale cut to
+            # the curve's reserves is cut, and it was cut from this curve read,
+            # so its payout is what the curve pays, not the caller's price.
+            # Fees are paid in SOL, so a payout in another quote asset is not
+            # compared.
+            if (
+                token_balance < requested
+                and quote_mint == WSOL_MINT
+                and pool_state is not None
+                and _below_network_fee(
+                    token_info,
+                    int(sell_quote_out(pool_state, token_balance) * (1 - fee_fraction)),
+                    _network_fee_lamports(priority_fee, compute_unit_limit),
+                )
+            ):
+                return _nothing_to_sell(token_info, curve_short=True, below_fee=True)
+
             instructions = await venue.build_sell_instruction(
                 token_info,
                 self.wallet.pubkey,
@@ -1255,22 +1313,13 @@ class PlatformAwareSeller(Trader):
                 min_quote_output,  # minimum_amount_out (raw quote units)
             )
 
-            # Get accounts for priority fee calculation
-            priority_accounts = venue.get_required_accounts_for_sell(
-                token_info, self.wallet.pubkey
-            )
-
             tx_signature = await self.client.build_and_send_transaction(
                 instructions,
                 self.wallet.keypair,
                 skip_preflight=True,
                 max_retries=self.max_retries,
-                priority_fee=await self.priority_fee_manager.calculate_priority_fee(
-                    priority_accounts
-                ),
-                compute_unit_limit=venue.get_sell_compute_unit_limit(
-                    self._get_cu_override("sell", token_info.platform)
-                ),
+                priority_fee=priority_fee,
+                compute_unit_limit=compute_unit_limit,
                 account_data_size_limit=self._get_cu_override(
                     "account_data_size", token_info.platform
                 ),

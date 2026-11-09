@@ -11,10 +11,17 @@ from time import monotonic
 
 from solders.pubkey import Pubkey
 
-from core.pubkeys import normalize_quote_mint
 from core.slot_clock import SlotClock
 from interfaces.core import PoolReady, TokenInfo
 from monitoring.base_listener import BaseTokenListener
+from trading.checks import CheckContext, CheckPipeline, ConfiguredCheck
+from trading.checks.builtin import (
+    CreatorCheck,
+    NameMatchCheck,
+    QuoteAllowedCheck,
+    QuoteAmountCheck,
+    TransferFeeCheck,
+)
 from trading.migration import MigrationResolver, PoolNotTradable
 from trading.settings import TraderSettings
 from utils.logger import get_logger
@@ -39,6 +46,8 @@ class TokenIntake:
         *,
         pool_resolver: MigrationResolver | None = None,
         slot_clock: SlotClock | None = None,
+        checks: list[ConfiguredCheck] | None = None,
+        check_context: CheckContext | None = None,
     ) -> None:
         """Set up the intake.
 
@@ -46,6 +55,8 @@ class TokenIntake:
             pool_resolver: Required with `trade.entry: migration`; unused otherwise
             slot_clock: Required with `filters.age_from: chain`, where a
                 launch's age counts from the slot its create landed in
+            checks: The `filters.checks` the bot YAML enables; the intake runs
+                the ones that read nothing, after the `filters` settings
         """
         self.token_listener = token_listener
         self.entry = settings.entry
@@ -63,6 +74,27 @@ class TokenIntake:
         self.allowed_quote_mints = allowed_quote_mints
         self.max_transfer_fee_bps = settings.max_transfer_fee_bps
 
+        # The `filters` settings as checks. A launch's name and creator are
+        # filtered by the listener; a migration's here, since no launch was seen.
+        settings_checks = [
+            ConfiguredCheck(QuoteAllowedCheck(allowed_quote_mints), named=False),
+            ConfiguredCheck(QuoteAmountCheck(quote_amounts), named=False),
+            ConfiguredCheck(TransferFeeCheck(self.max_transfer_fee_bps), named=False),
+        ]
+        identity_checks = [
+            ConfiguredCheck(NameMatchCheck(self.match_string), named=False),
+            ConfiguredCheck(CreatorCheck(self.bro_address), named=False),
+        ]
+        configured = list(checks or [])
+        context = check_context or CheckContext(client=None)
+        self._launch_checks = CheckPipeline(settings_checks + configured, context)
+        self._migration_checks = CheckPipeline(
+            identity_checks + settings_checks + configured, context
+        )
+        # Each coin's answer, by mint: a coin is asked about on detection and
+        # again before the buy, and a check may count what it has seen.
+        self._verdicts: dict[str, str | None] = {}
+
         self.token_queue: asyncio.Queue = asyncio.Queue()
         # Migration entry: (report, monotonic time it was queued).
         self.pool_queue: asyncio.Queue[tuple[PoolReady, float]] = asyncio.Queue()
@@ -71,36 +103,30 @@ class TokenIntake:
         # Set when the listener ended on an error rather than a stop.
         self.stopped_on_error = False
 
-    def skip_reason(self, token_info: TokenInfo) -> str | None:
-        """Why the configured filters refuse this coin, or None to trade it.
+    async def skip_reason(self, token_info: TokenInfo) -> str | None:
+        """Why the `filters` settings or a check that reads nothing refuse the coin.
 
-        Checked on detection as well as before the buy: single-token mode would
-        otherwise spend its one token on a coin it was never going to buy.
+        None to trade it. Checked on detection as well as before the buy:
+        single-token mode would otherwise spend its one token on a coin it was
+        never going to buy.
         """
-        quote_mint = normalize_quote_mint(token_info.quote_mint)
-        if (
-            self.allowed_quote_mints is not None
-            and quote_mint not in self.allowed_quote_mints
-        ):
-            return f"quote mint {quote_mint} not in allowed_quote_mints"
-        if quote_mint not in self.quote_amounts:
-            return f"no buy amount configured for quote mint {quote_mint}"
-        if (
-            self.max_transfer_fee_bps is not None
-            and token_info.transfer_fee_bps > self.max_transfer_fee_bps
-        ):
-            return (
-                f"transfer fee {token_info.transfer_fee_bps} bps exceeds "
-                f"max_transfer_fee_bps {self.max_transfer_fee_bps}"
-            )
-        return None
+        return await self._verdict(self._launch_checks, token_info)
 
-    async def wait_for_token(self) -> TokenInfo | None:
+    async def _verdict(self, pipeline: CheckPipeline, coin: TokenInfo) -> str | None:
+        key = str(coin.mint)
+        if key not in self._verdicts:
+            self._verdicts[key] = await pipeline.reason(coin, reads_chain=False)
+        return self._verdicts[key]
+
+    async def wait_for_token(self, *, timeout: float | None = None) -> TokenInfo | None:
         """Wait for the first coin the filters accept, up to `token_wait_timeout`.
+
+        `timeout` overrides it, in seconds, for a wait already partly spent.
 
         Returns:
             The coin, or None if none arrived in time
         """
+        limit = self.token_wait_timeout if timeout is None else timeout
         # Create a one-time event to signal when a token is found
         token_found = asyncio.Event()
         found_token = None
@@ -114,7 +140,9 @@ class TokenIntake:
             self.processed_tokens.add(token_key)
             if self.slot_clock is not None:
                 self.slot_clock.observe(token.creation_slot)
-            skip_reason = self.skip_reason(token) or self._too_old(token, monotonic())
+            skip_reason = await self.skip_reason(token) or self._too_old(
+                token, monotonic()
+            )
             if skip_reason:
                 logger.info(f"Skipping {token.symbol} - {skip_reason}; still waiting")
                 return
@@ -134,14 +162,10 @@ class TokenIntake:
 
         # Wait for a token with a timeout
         try:
-            logger.info(
-                f"Waiting for a suitable token (timeout: {self.token_wait_timeout}s)..."
-            )
-            await asyncio.wait_for(token_found.wait(), timeout=self.token_wait_timeout)
+            logger.info(f"Waiting for a suitable token (timeout: {limit:.0f}s)...")
+            await asyncio.wait_for(token_found.wait(), timeout=limit)
         except TimeoutError:
-            logger.info(
-                f"Timed out after waiting {self.token_wait_timeout}s for a token"
-            )
+            logger.info(f"Timed out after waiting {limit:.0f}s for a token")
             return None
         else:
             logger.info(f"Found token: {found_token.symbol} ({found_token.mint})")
@@ -199,6 +223,17 @@ class TokenIntake:
             if age is not None:
                 return age, "since created on chain"
         return monotonic() - detected_at, "since detected"
+
+    def stale_reason(self, token_info: TokenInfo) -> str | None:
+        """Why a coin found a while ago is too old to take up now; None while fresh.
+
+        For a coin found by `wait_for_token`, which recorded when; a coin with
+        no such record counts as fresh.
+        """
+        detected_at = self.token_timestamps.get(str(token_info.mint))
+        if detected_at is None:
+            return None
+        return self._too_old(token_info, detected_at)
 
     def _too_old(self, token_info: TokenInfo, detected_at: float) -> str | None:
         """Why the coin is past `max_token_age`, or None while it is fresh."""
@@ -282,20 +317,13 @@ class TokenIntake:
 
     # Migration entry. The listener still reports launches; they are dropped.
 
-    def migration_skip_reason(self, token_info: TokenInfo) -> str | None:
+    async def migration_skip_reason(self, token_info: TokenInfo) -> str | None:
         """Why the filters refuse a migrated coin, or None to buy it.
 
         The name filter reads the coin's metadata; the creator filter compares
         the creator its curve records, since no launch was seen.
         """
-        if self.match_string and not (
-            self.match_string.lower() in token_info.name.lower()
-            or self.match_string.lower() in token_info.symbol.lower()
-        ):
-            return f"does not match filter '{self.match_string}'"
-        if self.bro_address and str(token_info.creator) != self.bro_address:
-            return f"not created by {self.bro_address}"
-        return self.skip_reason(token_info)
+        return await self._verdict(self._migration_checks, token_info)
 
     async def _ignore_launch(self, _token_info: TokenInfo) -> None:
         return None
@@ -331,7 +359,7 @@ class TokenIntake:
             if not (retry_allowed or e.not_yet_visible):
                 self.processed_tokens.add(key)
             return None
-        reason = self.migration_skip_reason(token_info)
+        reason = await self.migration_skip_reason(token_info)
         if reason:
             logger.info(f"Skipping {token_info.symbol} ({token_info.mint}) - {reason}")
             self.processed_tokens.add(key)
@@ -343,12 +371,15 @@ class TokenIntake:
         self.processed_tokens.add(key)
         return token_info
 
-    async def wait_for_migrated_token(self) -> TokenInfo | None:
+    async def wait_for_migrated_token(
+        self, *, timeout: float | None = None
+    ) -> TokenInfo | None:
         """`wait_for_token` for migrations: the first migrated coin the filters accept.
 
         Returns:
             The coin, its pool readable, or None if none arrived in time
         """
+        limit = self.token_wait_timeout if timeout is None else timeout
 
         async def first_accepted() -> TokenInfo:
             while True:
@@ -372,16 +403,10 @@ class TokenIntake:
             )
         )
         try:
-            logger.info(
-                f"Waiting for a suitable migration (timeout: {self.token_wait_timeout}s)..."
-            )
-            found = await asyncio.wait_for(
-                first_accepted(), timeout=self.token_wait_timeout
-            )
+            logger.info(f"Waiting for a suitable migration (timeout: {limit:.0f}s)...")
+            found = await asyncio.wait_for(first_accepted(), timeout=limit)
         except TimeoutError:
-            logger.info(
-                f"Timed out after waiting {self.token_wait_timeout}s for a migration"
-            )
+            logger.info(f"Timed out after waiting {limit:.0f}s for a migration")
             return None
         else:
             logger.info(f"Found token: {found.symbol} ({found.mint})")

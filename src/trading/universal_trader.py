@@ -9,6 +9,7 @@ previous run left open are resumed first and count toward that limit.
 """
 
 import asyncio
+import contextlib
 import sys
 
 from solders.pubkey import Pubkey
@@ -40,6 +41,13 @@ from platforms.launchlab_presets import (
 )
 from trading import trade_log
 from trading.base import TradeResult
+from trading.checks import (
+    CheckContext,
+    CheckPipeline,
+    ConfiguredCheck,
+    load_checks,
+)
+from trading.checks.builtin import BUILTINS
 from trading.intake import TokenIntake
 from trading.migration import MigrationResolver
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
@@ -122,6 +130,7 @@ class UniversalTrader:
     _LOW_BALANCE_RECHECK = 10.0
     #: Whether the last balance read was below `min_wallet_balance`.
     _below_min_balance = False
+    _has_chain_checks = False
     _balance_read: asyncio.Task | None = None
     _balance_read_at = float("-inf")
 
@@ -140,8 +149,14 @@ class UniversalTrader:
         logger.exception("Trading stopped due to error")
         self._trading_error = True
 
-    def __init__(self, settings: TraderSettings) -> None:
+    def __init__(
+        self, settings: TraderSettings, *, checks: list[ConfiguredCheck] | None = None
+    ) -> None:
         """Initialize the universal trader.
+
+        Args:
+            checks: `settings.checks` already built, so each is built once;
+                None builds them here
 
         Raises:
             ValueError: If `entry` is unknown, or is "migration" with
@@ -226,6 +241,15 @@ class UniversalTrader:
             ),
         )
 
+        # Checks that read the chain run just before the buy; the intake runs
+        # the rest as soon as a coin is detected.
+        configured_checks = (
+            checks if checks is not None else load_checks(settings.checks, BUILTINS)
+        )
+        check_context = CheckContext(client=self.solana_client)
+        self.checks = CheckPipeline(configured_checks, check_context)
+        self._has_chain_checks = self.checks.has(reads_chain=True)
+
         # Intake: the listener, filtered to our platform, and the token queue
         self.intake = TokenIntake(
             settings,
@@ -255,6 +279,8 @@ class UniversalTrader:
             slot_clock=(
                 SlotClock(self.solana_client) if settings.age_from == "chain" else None
             ),
+            checks=configured_checks,
+            check_context=check_context,
         )
 
         self.positions = PositionManager(
@@ -360,13 +386,8 @@ class UniversalTrader:
                 logger.info(
                     "Running in single token mode - will process one token and exit"
                 )
-                token_info = await (
-                    intake.wait_for_migrated_token()
-                    if self.entry == "migration"
-                    else intake.wait_for_token()
-                )
+                token_info = await self._take_one_token()
                 if token_info:
-                    await self._handle_token(token_info)
                     await positions.wait_all()
                     logger.info("Finished processing single token. Exiting...")
                 else:
@@ -398,6 +419,7 @@ class UniversalTrader:
             # position task to end, so cleanup never races a sell.
             await positions.stop()
             await self._cleanup_without_interruption()
+            await self._read_given_up_rent()
             self._report_session()
             logger.info("Universal Trader has shut down")
 
@@ -459,6 +481,23 @@ class UniversalTrader:
                 f"buying again"
             )
         self._below_min_balance = below
+
+    async def _read_given_up_rent(self) -> None:
+        """The rent the coins given up on still lock, for the summary; bounded."""
+        if not self.positions.given_up_mints:
+            return
+        try:
+            await asyncio.wait_for(self.positions.read_given_up_rent(), timeout=10)
+        except (Exception, asyncio.CancelledError):  # noqa: BLE001
+            # Already the terminal path, like cleanup: a cancellation arriving
+            # here must not cost the summary that follows.
+            logger.warning("Could not read the rent of the coins given up on")
+        finally:
+            # Cleanup closed the client; the read opened it again.
+            try:
+                await self.solana_client.close()
+            except (Exception, asyncio.CancelledError):
+                logger.debug("Closing the RPC client failed", exc_info=True)
 
     def _report_session(self) -> None:
         """Print the session summary and append it to `trades/sessions.log`."""
@@ -526,7 +565,15 @@ class UniversalTrader:
         mint's, and burns nothing in them.
         """
         settings = self.settings
-        kept = self.positions.stored_mints()
+        try:
+            await self.positions.burn_given_up()
+        except Exception:
+            logger.exception("Could not burn the coins given up on")
+        # Kept for the next start, or holding coins bought by hand that a
+        # given-up burn left: neither is burned here.
+        kept = self.positions.stored_mints() | {
+            str(mint) for mint in self.positions.spared_mints
+        }
         mints_list = [mint for mint in self.traded_mints if str(mint) not in kept]
         post_session = settings.cleanup_mode == "post_session"
         if len(mints_list) < len(self.traded_mints) and post_session:
@@ -569,8 +616,61 @@ class UniversalTrader:
 
         await self.solana_client.close()
 
-    async def _handle_token(self, token_info: TokenInfo) -> None:
-        """Handle a new token creation event."""
+    async def _take_one_token(self) -> TokenInfo | None:
+        """Handle the first coin every check accepts, within `token_wait_timeout`.
+
+        A coin a chain-reading check refuses is passed over, and the wait goes
+        on for what is left of the timeout. With chain-reading checks, the next
+        wait starts as soon as a coin is found, so a coin launched while one is
+        checked is not missed; one found then is taken up only while still
+        within `max_token_age`.
+
+        Returns:
+            The coin handled, or None when none was accepted in time
+        """
+        intake = self.intake
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + intake.token_wait_timeout
+
+        def wait() -> asyncio.Task:
+            remaining = max(0.0, deadline - loop.time())
+            return asyncio.create_task(
+                intake.wait_for_migrated_token(timeout=remaining)
+                if self.entry == "migration"
+                else intake.wait_for_token(timeout=remaining)
+            )
+
+        waiting = wait()
+        try:
+            while True:
+                token_info = await waiting
+                waiting = None
+                if token_info is None:
+                    return None
+                if self._has_chain_checks:
+                    waiting = wait()
+                    stale = intake.stale_reason(token_info)
+                    if stale:
+                        logger.info(f"Skipping {token_info.symbol} - {stale}")
+                        continue
+                if await self._handle_token(token_info):
+                    return token_info
+                logger.info("Still waiting for a coin every check accepts")
+                if waiting is None:
+                    waiting = wait()
+        finally:
+            if waiting is not None and not waiting.done():
+                waiting.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await waiting
+
+    async def _handle_token(self, token_info: TokenInfo) -> bool:
+        """Handle a new token creation event.
+
+        Returns:
+            False when a chain-reading check refused the coin, so another may
+            be taken instead; True otherwise
+        """
         try:
             # Validate that token is for our platform
             if token_info.platform != self.platform:
@@ -579,7 +679,7 @@ class UniversalTrader:
                 )
                 return
 
-            skip_reason = self.intake.skip_reason(token_info)
+            skip_reason = await self.intake.skip_reason(token_info)
             if skip_reason:
                 logger.info(f"Skipping {token_info.symbol} - {skip_reason}")
                 return
@@ -599,6 +699,12 @@ class UniversalTrader:
                     f"Waiting for {self.wait_time_after_creation} seconds for the pool/curve to stabilize..."
                 )
                 await asyncio.sleep(self.wait_time_after_creation)
+
+            if self._has_chain_checks:
+                skip_reason = await self.checks.reason(token_info, reads_chain=True)
+                if skip_reason:
+                    logger.info(f"Skipping {token_info.symbol} - {skip_reason}")
+                    return False
 
             # The buyer names the venue once it has read whether the curve
             # has graduated.
@@ -628,6 +734,7 @@ class UniversalTrader:
 
         except Exception:
             logger.exception(f"Error handling token {token_info.symbol}")
+        return True
 
     async def _handle_successful_buy(
         self, token_info: TokenInfo, buy_result: TradeResult

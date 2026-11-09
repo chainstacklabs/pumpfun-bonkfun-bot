@@ -28,6 +28,7 @@ Usage:
 import asyncio
 import base64
 import json
+import struct
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -69,6 +70,8 @@ CURVE = Pubkey.from_string(FIXTURE["bonding_curve"])
 EVENT_CREATOR = Pubkey.from_string(FIXTURE["event_creator"])
 EXPECTED_VAULT = Pubkey.from_string(FIXTURE["program_expected_creator_vault"])
 CURVE_DATA = base64.b64decode(FIXTURE["curve_account"]["data"])
+# Byte offsets in a pump.fun BondingCurve account.
+CURVE_VIRTUAL_QUOTE, CURVE_REAL_QUOTE = 16, 32
 
 PROVIDER = PumpFunAddressProvider()
 PARSER = get_idl_manager().get_parser(Platform.PUMP_FUN)
@@ -100,12 +103,13 @@ def _listener_token_info(*, state_from_event: bool) -> TokenInfo:
 class _Client:
     """Serves the recorded curve; records what would have been sent."""
 
-    def __init__(self) -> None:
+    def __init__(self, curve_data: bytes = CURVE_DATA) -> None:
         self.sent: list = []
+        self.curve_data = curve_data
 
     def _account(self, key: Pubkey) -> SimpleNamespace | None:
         if key == CURVE:
-            return SimpleNamespace(data=CURVE_DATA, owner=PumpFunAddresses.PROGRAM)
+            return SimpleNamespace(data=self.curve_data, owner=PumpFunAddresses.PROGRAM)
         if key == MINT:
             return SimpleNamespace(data=b"", owner=SystemAddresses.TOKEN_2022_PROGRAM)
         return None
@@ -207,9 +211,21 @@ def check_b_extreme_fast_refresh() -> bool:
     return _report(_buy_vault(extreme_fast=True, state_from_event=False))
 
 
+def _full_reserves(data: bytes) -> bytes:
+    """The curve with real quote reserves as large as its virtual ones.
+
+    The recorded curve holds almost nothing, so a sell of any size would be cut
+    to a part worth less than its fee and not sent.
+    """
+    rich = bytearray(data)
+    virtual_quote = struct.unpack_from("<Q", data, CURVE_VIRTUAL_QUOTE)[0]
+    struct.pack_into("<Q", rich, CURVE_REAL_QUOTE, virtual_quote)
+    return bytes(rich)
+
+
 def check_c_sell() -> bool:
     """C: the sell uses the curve's creator vault."""
-    client = _Client()
+    client = _Client(_full_reserves(CURVE_DATA))
     _install(client)
     seller = PlatformAwareSeller(
         client,

@@ -11,10 +11,26 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from core.pubkeys import WSOL_MINT, quote_units_per_token
+from solders.pubkey import Pubkey
+
+from core.pubkeys import TOKEN_DECIMALS, WSOL_MINT, quote_units_per_token
+from interfaces.core import TokenInfo
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class GivenUp:
+    """A position the bot stopped monitoring while it still held the coin."""
+
+    mint: Pubkey
+    symbol: str
+    reason: str
+    #: Raw tokens held; None when unknown.
+    amount_raw: int | None
+    #: Lamports its token account holds; None until read.
+    rent_lamports: int | None = None
 
 
 @dataclass
@@ -40,6 +56,7 @@ class Session:
     rent_refunded_sol: float = 0.0
     rent_closed_sol: float = 0.0
     closes: int = 0
+    given_up: list[GivenUp] = field(default_factory=list)
 
     def add_trade(  # noqa: PLR0913
         self,
@@ -69,6 +86,25 @@ class Session:
     def add_exit(self, trigger: str) -> None:
         self.exits[trigger] += 1
 
+    def add_given_up(
+        self, token_info: TokenInfo, amount_raw: int | None, reason: str
+    ) -> None:
+        """Count a position the bot gave up on; a coin given up twice counts once."""
+        self.given_up = [g for g in self.given_up if g.mint != token_info.mint]
+        self.given_up.append(
+            GivenUp(token_info.mint, token_info.symbol, reason, amount_raw)
+        )
+
+    def drop_given_up(self, mint: Pubkey) -> None:
+        """Forget a coin given up on that is no longer held, e.g. once burned."""
+        self.given_up = [g for g in self.given_up if g.mint != mint]
+
+    def set_given_up_rent(self, mint: Pubkey, lamports: int | None) -> None:
+        """The lamports a given-up coin's token account holds."""
+        for given_up in self.given_up:
+            if given_up.mint == mint:
+                given_up.rent_lamports = lamports
+
     def add_close(self, lamports: int | None) -> None:
         """Count a token account closed; `lamports` it held, None when unknown."""
         self.closes += 1
@@ -97,6 +133,16 @@ class Session:
             "accounts_closed": self.closes,
             "positions_held": held,
             "buys_pending": pending,
+            "given_up": [
+                {
+                    "mint": str(g.mint),
+                    "symbol": g.symbol,
+                    "reason": g.reason,
+                    "amount_raw": g.amount_raw,
+                    "rent_lamports": g.rent_lamports,
+                }
+                for g in self.given_up
+            ],
         }
 
     def lines(self, *, held: int, pending: int) -> list[str]:
@@ -128,6 +174,22 @@ class Session:
             lines.append(
                 f"Session left {held} position(s) held and {pending} buy(s) "
                 f"pending in the positions file, for the next start"
+            )
+        sol_unit = quote_units_per_token(WSOL_MINT)
+        for g in self.given_up:
+            amount = (
+                "an unknown amount of"
+                if g.amount_raw is None
+                else f"{g.amount_raw / 10**TOKEN_DECIMALS:g}"
+            )
+            rent = (
+                "unknown"
+                if g.rent_lamports is None
+                else f"{g.rent_lamports / sol_unit:.6f}"
+            )
+            lines.append(
+                f"Gave up on {g.symbol} ({g.mint}): {g.reason}; {amount} tokens "
+                f"held, {rent} SOL rent locked"
             )
         return lines
 
