@@ -19,8 +19,11 @@ every other empty token account the wallet owns (SPL Token and Token-2022),
 never a quote mint's (`UniversalTrader._quote_mints`), and burns nothing in them.
 Under `manual` or `marry_mode` it burns nothing and only closes empty accounts.
 A position cleared because the wallet no longer holds its coin closes the empty
-account under `after_sell` (`PositionManager._close_cleared`, also in `_closes`)
-and is left to the sweep under `post_session`. Every close goes out with the
+account under `after_sell` (`PositionManager._clear`, also in `_closes`)
+and is left to the sweep under `post_session`. Under `after_sell` a sold or
+cleared position's record stays in the file marked `sold` until its close ends;
+the next start closes the account of one still there, never selling it,
+whatever its exit strategy. Every close goes out with the
 priority fee unless `cleanup.with_priority_fee` is false (validated as a bool)
 and a tight compute unit limit. A confirmation wait can end early (a rate limit,
 a timeout), so a close is sent again only when `get_block_height_and_slot`
@@ -32,7 +35,11 @@ without a resend, and a confirmation error is warned once per close. At most
 `AccountCleanupManager.CLOSE_ATTEMPTS` sends in total; before each resend the
 account is read at `confirmed` with `min_context_slot` set to the slot the
 expiry was seen at, so a close that landed is never sent again
-(`verify_cleanup_closes_what_it_leaves.py`).
+(`verify_cleanup_closes_what_it_leaves.py`). The first read is at `confirmed`
+too: after a sale whose slot its read-back gave (`TradeDeltas.slot`), pinned to
+that slot, asked again while the node is behind, instead of waiting
+`SETTLE_SECONDS`; post-session pins to the session's latest sale
+(`PositionManager.last_sale_slot`) and waits when any sale's slot is unknown.
 
 Each monitored position is in `positions/<bot name>.json` (`PositionStore`) from
 the moment its buy **may have reached the chain** until its **sale**. The buyer's
@@ -57,7 +64,8 @@ found". A position with price None reads a price above zero before any exit
 runs, and keeps it in the store (`set_price`). Balance reads on resume are at
 `confirmed`; the client's default is `finalized`, which can lag. Only a sale of all of it removes a position
 (a sale the curve could pay for only in part leaves the rest in the file, still
-monitored, and no cleanup runs): a position stopped at shutdown, or whose exit
+monitored, and no cleanup runs, counting the part in `parts_sold` and its PnL in
+`realised`, so a restart totals the whole position): a position stopped at shutdown, or whose exit
 gave up or could not be resolved, still holds its coin.
 On start `PositionManager.resume` reads the wallet's balance before holding a
 position again; a coin no longer held is cleared, never sold. A position

@@ -474,6 +474,16 @@ def check_f_single_token_mode_waits_past_refused_coins() -> bool:
         max_transfer_fee_bps=100,
     )
     intake.skip_reason = lambda token: TokenIntake.skip_reason(intake, token)
+    intake.max_token_age = 60
+    intake.slot_clock = None
+    intake._too_old = lambda token, at: TokenIntake._too_old(intake, token, at)  # noqa: SLF001
+    intake._age = lambda token, at: TokenIntake._age(intake, token, at)  # noqa: SLF001
+    intake._start_slot_clock = lambda: None  # noqa: SLF001
+
+    async def no_clock() -> None:
+        return None
+
+    intake._stop_slot_clock = no_clock  # noqa: SLF001
     found = asyncio.run(TokenIntake.wait_for_token(intake))
     ok = found is not None and found.symbol == "BUYABLE"
     if not ok:

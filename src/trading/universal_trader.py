@@ -17,6 +17,7 @@ from cleanup.modes import (
     handle_cleanup_after_failure,
     handle_cleanup_post_session,
 )
+from core import session
 from core.client import SolanaClient
 from core.priority_fee.manager import PriorityFeeManager
 from core.pubkeys import (
@@ -28,6 +29,7 @@ from core.pubkeys import (
     resolve_quote_mint,
     resolve_quote_token_program,
 )
+from core.slot_clock import SlotClock
 from core.wallet import Wallet
 from interfaces.core import Platform, TokenInfo, TradeFailureReason
 from monitoring.listener_factory import ListenerFactory
@@ -41,6 +43,7 @@ from trading.base import TradeResult
 from trading.intake import TokenIntake
 from trading.migration import MigrationResolver
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
+from trading.pnl import lamports_to_sol
 from trading.position_manager import PositionManager
 from trading.position_store import PositionStore
 from trading.settings import TraderSettings, entry_error
@@ -113,6 +116,14 @@ class UniversalTrader:
 
     #: Set when `start` caught an error that ended trading.
     _trading_error = False
+
+    #: Seconds between balance reads while the wallet is below
+    #: `min_wallet_balance`, to notice sales bringing it back above.
+    _LOW_BALANCE_RECHECK = 10.0
+    #: Whether the last balance read was below `min_wallet_balance`.
+    _below_min_balance = False
+    _balance_read: asyncio.Task | None = None
+    _balance_read_at = float("-inf")
 
     #: Quote mints whose accounts post-session cleanup never closes, empty or
     #: not: the configured ones are added at start. Also a class default:
@@ -241,6 +252,9 @@ class UniversalTrader:
                 if self.entry == "migration"
                 else None
             ),
+            slot_clock=(
+                SlotClock(self.solana_client) if settings.age_from == "chain" else None
+            ),
         )
 
         self.positions = PositionManager(
@@ -264,6 +278,7 @@ class UniversalTrader:
         self.wait_time_after_creation = settings.wait_time_after_creation
         self.wait_time_before_new_token = settings.wait_time_before_new_token
         self.yolo_mode = settings.yolo_mode
+        self.min_wallet_balance = settings.min_wallet_balance
 
         # State tracking
         self.traded_mints: set[Pubkey] = set()
@@ -324,18 +339,10 @@ class UniversalTrader:
             )
             logger.info(f"Max exit sell attempts: {positions.max_exit_sell_attempts}")
 
-        logger.info(f"Max token age: {intake.max_token_age}s since detection")
+        since = "since created on chain" if intake.slot_clock else "since detection"
+        logger.info(f"Max token age: {intake.max_token_age}s {since}")
 
-        try:
-            health_resp = await self.solana_client.get_health()
-            logger.info(f"RPC warm-up successful (getHealth passed: {health_resp})")
-        except Exception as e:
-            logger.warning(f"RPC warm-up failed: {e!s}")
-
-        # Outside the try/except above: an RPC health check is best-effort, but a
-        # quote mint that cannot be resolved to a token program derives a
-        # non-existent ATA and reverts every trade -- fail startup instead.
-        await self._resolve_quote_token_programs()
+        await self._warm_up()
 
         try:
             for token_info in await positions.resume():
@@ -385,11 +392,84 @@ class UniversalTrader:
             self._log_trading_error()
 
         finally:
+            if self._balance_read is not None:
+                self._balance_read.cancel()
             # Shutdown or an error: stop what is still open and wait for each
             # position task to end, so cleanup never races a sell.
             await positions.stop()
             await self._cleanup_without_interruption()
+            self._report_session()
             logger.info("Universal Trader has shut down")
+
+    async def _warm_up(self) -> None:
+        """Check the node, resolve the quote mints and read the wallet's balance."""
+        try:
+            health_resp = await self.solana_client.get_health()
+            logger.info(f"RPC warm-up successful (getHealth passed: {health_resp})")
+        except Exception as e:  # noqa: BLE001 - the health check is best-effort
+            logger.warning(f"RPC warm-up failed: {e!s}")
+
+        # Outside the try/except above: an RPC health check is best-effort, but a
+        # quote mint that cannot be resolved to a token program derives a
+        # non-existent ATA and reverts every trade -- fail startup instead.
+        await self._resolve_quote_token_programs()
+        await self._read_balance()
+
+    def _check_balance(self, *, recheck: bool = False) -> None:
+        """Read the wallet's balance in the background, off the buy path.
+
+        Args:
+            recheck: The wallet was below the floor: read again only once
+                `_LOW_BALANCE_RECHECK` seconds have passed since the last read
+        """
+        if self.min_wallet_balance is None:
+            return
+        if self._balance_read is not None and not self._balance_read.done():
+            return
+        loop = asyncio.get_running_loop()
+        if recheck and loop.time() - self._balance_read_at < self._LOW_BALANCE_RECHECK:
+            return
+        self._balance_read = asyncio.create_task(self._read_balance())
+
+    async def _read_balance(self) -> None:
+        """Compare the wallet's SOL with `min_wallet_balance`; never raises.
+
+        Logs once when the wallet falls below it, and once when it is back
+        above. A failed read keeps the last answer.
+        """
+        if self.min_wallet_balance is None:
+            return
+        self._balance_read_at = asyncio.get_running_loop().time()
+        try:
+            balance = await self.solana_client.get_sol_balance(self.wallet.pubkey)
+        except Exception as e:  # noqa: BLE001 - a missed read keeps the last answer
+            logger.warning(f"Could not read the wallet's balance: {e!s}")
+            return
+        sol = lamports_to_sol(balance)
+        below = sol < self.min_wallet_balance
+        if below and not self._below_min_balance:
+            logger.warning(
+                f"Wallet holds {sol:.6f} SOL, below trade.min_wallet_balance "
+                f"{self.min_wallet_balance} SOL: no new buys; open positions still "
+                f"run to their exit"
+            )
+        elif self._below_min_balance and not below:
+            logger.info(
+                f"Wallet holds {sol:.6f} SOL, back above trade.min_wallet_balance: "
+                f"buying again"
+            )
+        self._below_min_balance = below
+
+    def _report_session(self) -> None:
+        """Print the session summary and append it to `trades/sessions.log`."""
+        store = self.positions.store
+        try:
+            session.report(
+                held=len(store.held_mints()) if store else 0,
+                pending=len(store.pending_mints()) if store else 0,
+            )
+        except Exception:  # a summary must never fail a shutdown
+            logger.exception("Could not report the session summary")
 
     async def _cleanup_without_interruption(self) -> None:
         """Run cleanup to completion even though shutdown arrives as a cancellation.
@@ -480,6 +560,7 @@ class UniversalTrader:
                     settings.cleanup_with_priority_fee,
                     force_burn,
                     self._quote_mints | _pubkeys(kept),
+                    after_slot=self.positions.last_sale_slot,
                 )
             except Exception:
                 logger.exception("Error during cleanup")
@@ -502,6 +583,13 @@ class UniversalTrader:
             if skip_reason:
                 logger.info(f"Skipping {token_info.symbol} - {skip_reason}")
                 return
+            if self._below_min_balance:
+                logger.debug(
+                    f"Not buying {token_info.symbol}: the wallet is below "
+                    f"trade.min_wallet_balance"
+                )
+                self._check_balance(recheck=True)
+                return
             token_quote_mint = normalize_quote_mint(token_info.quote_mint)
 
             # Wait for pool/curve to stabilize (unless in extreme fast mode)
@@ -520,6 +608,7 @@ class UniversalTrader:
                 f"({token_info.mint})..."
             )
             buy_result: TradeResult = await self.buyer.execute(token_info)
+            self._check_balance()
 
             if buy_result.success:
                 await self._handle_successful_buy(token_info, buy_result)

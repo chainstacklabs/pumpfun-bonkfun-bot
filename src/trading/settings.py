@@ -80,6 +80,9 @@ class TraderSettings:
     # Positions whose exit runs at once; the bot takes no new coin while this
     # many are open. Positions under `manual` or `marry_mode` are not counted.
     max_open_positions: int = 1
+    # SOL the wallet must hold for the bot to buy; below it, open positions
+    # still run to their exit. None: no floor.
+    min_wallet_balance: float | None = None
 
     enable_dynamic_priority_fee: bool = False
     enable_fixed_priority_fee: bool = True
@@ -92,6 +95,9 @@ class TraderSettings:
     wait_time_after_buy: int = 15
     wait_time_before_new_token: int = 15
     max_token_age: int | float = 0.001
+    # What `max_token_age` counts from: "detection" (when the listener saw the
+    # coin) or "chain" (the slot its create landed in).
+    age_from: str = "detection"
     token_wait_timeout: int = 30
 
     cleanup_mode: str = "disabled"

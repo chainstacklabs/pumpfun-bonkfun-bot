@@ -3,6 +3,7 @@ import struct
 from collections.abc import Awaitable, Callable
 from functools import partial
 
+from solders.account import Account
 from solders.instruction import AccountMeta, Instruction
 from solders.pubkey import Pubkey
 from solders.signature import Signature
@@ -10,6 +11,7 @@ from spl.token.instructions import burn as burn_instruction
 from spl.token.instructions import close_account
 from spl.token.models import BurnParams, CloseAccountParams
 
+from core import session
 from core.client import SolanaClient, TransactionNotSent
 from core.priority_fee.manager import PriorityFeeManager
 from core.pubkeys import SystemAddresses
@@ -86,7 +88,9 @@ def _closable_empty(data: bytes, owner: Pubkey) -> tuple[Pubkey, bool]:
 class AccountCleanupManager:
     """Handles safe cleanup of token accounts (ATA) after trading sessions."""
 
-    #: Seconds to let the RPC node catch up with a sell before reading accounts.
+    #: Seconds to let the RPC node catch up with a sell before reading accounts,
+    #: when the slot the sell landed in is unknown. With the slot, the longest
+    #: cleanup waits for a node that has reached it.
     SETTLE_SECONDS = 15.0
     #: Closes `cleanup_atas` keeps in flight at once.
     CONCURRENT_CLOSES = 4
@@ -126,6 +130,7 @@ class AccountCleanupManager:
         self.priority_fee_manager = priority_fee_manager
         self.use_priority_fee = use_priority_fee
         self.close_with_force_burn = force_burn
+        self._lamports: dict[Pubkey, int | None] = {}
 
     async def cleanup_ata(
         self,
@@ -133,6 +138,7 @@ class AccountCleanupManager:
         token_program_id: Pubkey | None = None,
         *,
         settle: bool = True,
+        after_slot: int | None = None,
     ) -> None:
         """Wait for the RPC node to settle, then burn what is left if asked and close the ATA.
 
@@ -141,10 +147,12 @@ class AccountCleanupManager:
         Args:
             token_program_id: TOKEN or TOKEN_2022; None means TOKEN_2022
             settle: Wait first; only needed right after a sell
+            after_slot: The slot the sell landed in: instead of waiting, the
+                account is read from a node that has reached it
         """
-        if settle:
+        if settle and after_slot is None:
             await self._settle()
-        await self._close_ata(mint, token_program_id)
+        await self._close_ata(mint, token_program_id, after_slot)
 
     async def cleanup_atas(
         self,
@@ -152,6 +160,7 @@ class AccountCleanupManager:
         token_program_ids: list[Pubkey | None],
         *,
         sweep_except: set[Pubkey] | None = None,
+        after_slot: int | None = None,
     ) -> None:
         """`cleanup_ata` for many accounts: one settle wait, then the closes side by side.
 
@@ -162,12 +171,14 @@ class AccountCleanupManager:
             sweep_except: Also close every other empty token account the wallet
                 owns, under both token programs, except those of these mints.
                 None closes only the accounts of `mints`.
+            after_slot: The slot the session's last sell landed in: instead of
+                waiting, every account is read from a node that has reached it
         """
         closes = [
-            (mint, partial(self._close_ata, mint, program))
+            (mint, partial(self._close_ata, mint, program, after_slot))
             for mint, program in zip(mints, token_program_ids, strict=True)
         ]
-        if mints:
+        if mints and after_slot is None:
             await self._settle()
         if sweep_except is not None:
             closes += [
@@ -239,14 +250,23 @@ class AccountCleanupManager:
         )
         await asyncio.sleep(self.SETTLE_SECONDS)
 
-    async def _close_ata(self, mint: Pubkey, token_program_id: Pubkey | None) -> None:
+    async def _close_ata(
+        self,
+        mint: Pubkey,
+        token_program_id: Pubkey | None,
+        after_slot: int | None = None,
+    ) -> None:
         """Burn what is left if asked and close the ATA; never raises."""
         if token_program_id is None:
             token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
         try:
             ata = self.wallet.get_associated_token_address(mint, token_program_id)
             await self._close(
-                mint, ata, token_program_id, burn=self.close_with_force_burn
+                mint,
+                ata,
+                token_program_id,
+                burn=self.close_with_force_burn,
+                after_slot=after_slot,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Cleanup failed for the token account of {mint}: {e!s}")
@@ -260,7 +280,7 @@ class AccountCleanupManager:
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Cleanup failed for the token account of {mint}: {e!s}")
 
-    async def _close(
+    async def _close(  # noqa: PLR0913
         self,
         mint: Pubkey,
         account: Pubkey,
@@ -268,21 +288,24 @@ class AccountCleanupManager:
         *,
         burn: bool,
         swept: bool = False,
+        after_slot: int | None = None,
     ) -> None:
         """Burn what is left if `burn` and close `account`, until it lands.
 
         A close is sent again only once the block height is past its
         blockhash's last valid height and its signature is not known to have
         landed (no node knows it, or the lookup failed), at most
-        `CLOSE_ATTEMPTS` sends in total. Before each resend
-        the account is read again at "confirmed", from a node at least at the
-        slot the expiry was seen at, so one already closed is left alone.
+        `CLOSE_ATTEMPTS` sends in total. The account is read at "confirmed"
+        before each send: the first from a node at least at `after_slot` when
+        given, a resend from one at least at the slot the expiry was seen at,
+        so one already closed is left alone.
 
         Args:
             swept: Found by the post-session sweep, not traded: an account
                 holding tokens is skipped as not empty
+            after_slot: The slot the sell before this close landed in
         """
-        slot: int | None = None
+        slot = after_slot
         for attempt in range(1, self.CLOSE_ATTEMPTS + 1):
             instructions = await self._close_instructions(
                 mint,
@@ -290,7 +313,6 @@ class AccountCleanupManager:
                 token_program_id,
                 burn=burn,
                 swept=swept,
-                resend=attempt > 1,
                 min_context_slot=slot,
             )
             if instructions is None:
@@ -298,6 +320,7 @@ class AccountCleanupManager:
             outcome, signature, slot = await self._send(account, instructions)
             if outcome is ConfirmationStatus.SUCCESS:
                 logger.info(f"Closed successfully: {account}")
+                session.current().add_close(self._lamports.pop(account, None))
                 return
             if outcome is ConfirmationStatus.REVERTED:
                 logger.error(f"Failed to close token account {account}: {signature}")
@@ -329,32 +352,24 @@ class AccountCleanupManager:
         *,
         burn: bool,
         swept: bool,
-        resend: bool,
         min_context_slot: int | None,
     ) -> list | None:
         """The burn (if any) and close for `account`; None when there is nothing to do.
 
-        Args:
-            resend: Read the account at "confirmed", its balance from the same
-                read, pinned to `min_context_slot` when given
+        The account is read at "confirmed", its balance from the same read,
+        from a node at least at `min_context_slot` when given.
         """
         label = "token account" if swept else "ATA"
         try:
-            if resend:
-                info = await self.client.get_account_info(
-                    account, commitment="confirmed", min_context_slot=min_context_slot
-                )
-            else:
-                info = await self.client.get_account_info(account)
+            info = await self._read_account(account, min_context_slot)
         except ValueError:
             logger.info(f"{label} {account} does not exist or already closed.")
             return None
+        # What its close returns to the wallet, for the session summary.
+        self._lamports[account] = getattr(info, "lamports", None)
 
-        if resend:
-            # SPL token account: mint (32), owner (32), amount (u64).
-            balance = struct.unpack_from("<Q", bytes(info.data), 64)[0]
-        else:
-            balance = await self.client.get_token_account_balance(account)
+        # SPL token account: mint (32), owner (32), amount (u64).
+        balance = struct.unpack_from("<Q", bytes(info.data), 64)[0]
         instructions = []
 
         # Never burn wrapped SOL: closing a WSOL account already returns
@@ -415,6 +430,32 @@ class AccountCleanupManager:
             )
         )
         return instructions
+
+    async def _read_account(
+        self, account: Pubkey, min_context_slot: int | None
+    ) -> Account:
+        """The account at "confirmed", from a node at least at `min_context_slot`.
+
+        A node behind that slot, or one that could not answer, is asked again
+        every `RESEND_DELAY` for up to `SETTLE_SECONDS`.
+
+        Raises:
+            ValueError: The account does not exist
+            RuntimeError: No node reached the slot in time
+        """
+        if min_context_slot is None:
+            return await self.client.get_account_info(account, commitment="confirmed")
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.SETTLE_SECONDS
+        while True:
+            try:
+                return await self.client.get_account_info(
+                    account, commitment="confirmed", min_context_slot=min_context_slot
+                )
+            except RuntimeError:
+                if loop.time() >= deadline:
+                    raise
+            await asyncio.sleep(self.RESEND_DELAY)
 
     async def _send(
         self, account: Pubkey, instructions: list

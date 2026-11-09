@@ -48,13 +48,19 @@ async def handle_cleanup_after_sell(
     cleanup_mode,
     cleanup_with_prior_fee,
     force_burn,
+    after_slot: int | None = None,
 ):
+    """Close a sold coin's account under `after_sell`.
+
+    Args:
+        after_slot: The slot the sale landed in; None waits a fixed time instead
+    """
     if should_cleanup_after_sell(cleanup_mode):
         logger.info("[Cleanup] Triggered after token sell.")
         manager = AccountCleanupManager(
             client, wallet, priority_fee_manager, cleanup_with_prior_fee, force_burn
         )
-        await manager.cleanup_ata(mint, token_program_id)
+        await manager.cleanup_ata(mint, token_program_id, after_slot=after_slot)
 
 
 async def handle_cleanup_cleared(  # noqa: PLR0913, PLR0917 - like its siblings
@@ -97,16 +103,21 @@ async def handle_cleanup_post_session(
     cleanup_with_prior_fee,
     force_burn,
     sweep_except: set[Pubkey] | None = None,
+    after_slot: int | None = None,
 ):
     """Close the session's traded coins' accounts, then every other empty one.
 
     Args:
         sweep_except: Mints whose accounts the sweep of empty accounts leaves
             open (quote mints, coins kept for the next start); None sweeps none
+        after_slot: The slot the session's last sale landed in; None waits a
+            fixed time instead
     """
     if should_cleanup_post_session(cleanup_mode):
         logger.info("[Cleanup] Triggered post trading session.")
         manager = AccountCleanupManager(
             client, wallet, priority_fee_manager, cleanup_with_prior_fee, force_burn
         )
-        await manager.cleanup_atas(mints, token_program_ids, sweep_except=sweep_except)
+        await manager.cleanup_atas(
+            mints, token_program_ids, sweep_except=sweep_except, after_slot=after_slot
+        )

@@ -291,12 +291,13 @@ def get_idl_parser(platform: Platform, verbose: bool = False) -> IDLParser:
 # (a platform's, already loaded for trading, or a file) and the name a log line
 # gives its program. Codes from 6000 up mean something different in each, so a
 # code is only ever looked up in the table of a program that may have raised
-# it. Raydium CPMM has no IDL here: its codes stay unnamed.
+# it.
 _ERROR_TABLE_IDLS = (
     (Platform.PUMP_FUN, "pump.fun"),
     ("pump_fees.json", "pump fees"),
     ("pump_swap_idl.json", "PumpSwap"),
     (Platform.LAUNCHLAB, "Raydium LaunchLab"),
+    ("raydium_cpmm_idl.json", "Raydium CPMM"),
 )
 
 

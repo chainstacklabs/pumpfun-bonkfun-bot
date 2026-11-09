@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 import base58
+from solders.keypair import Keypair
 
 # Try to use uvloop on Unix or winloop on Windows for better performance
 # Fall back to standard asyncio if not available
@@ -37,6 +38,7 @@ from config_loader import (
     print_config_summary,
     validate_platform_listener_combination,
 )
+from core import session
 from core.client import rpc_endpoint_problem
 from core.keystore import KeystoreError, unlock_from_env
 from interfaces.core import Platform
@@ -125,7 +127,8 @@ def _interrupted_status() -> int:
 
 USAGE = """\
 Run every bot configured in bots/*.yaml under the current folder.
-A bot whose YAML says `enabled: false` is skipped.
+A bot whose YAML says `enabled: false` is skipped. --config <file> runs only
+the bot in that file, also one that says `enabled: false`.
 
 Each bot writes its log to logs/, its trades to trades/ and its open
 positions to positions/, all under the current folder.
@@ -226,6 +229,7 @@ def build_trader_settings(
             "max_exit_sell_attempts", DEFAULT_MAX_EXIT_SELL_ATTEMPTS
         ),
         max_open_positions=cfg["trade"].get("max_open_positions", 1),
+        min_wallet_balance=cfg["trade"].get("min_wallet_balance"),
         # Listener configuration
         listener_type=cfg["filters"]["listener_type"],
         # Geyser configuration (if applicable)
@@ -250,6 +254,7 @@ def build_trader_settings(
             "wait_before_new_token", 15
         ),
         max_token_age=cfg.get("filters", {}).get("max_token_age", 0.001),
+        age_from=cfg.get("filters", {}).get("age_from", "detection"),
         token_wait_timeout=cfg.get("timing", {}).get("token_wait_timeout", 120),
         # Cleanup settings
         cleanup_mode=cfg.get("cleanup", {}).get("mode", "disabled"),
@@ -295,6 +300,18 @@ def unlock_keystore(cfg: dict) -> None:
     )
 
 
+def log_private_key_wallet(cfg: dict) -> None:
+    """Log the address of the wallet a `private_key` config trades from.
+
+    A key that does not decode is left to the trader, which refuses it.
+    """
+    try:
+        pubkey = Keypair.from_base58_string(cfg["private_key"]).pubkey()
+    except (ValueError, TypeError, KeyError):
+        return
+    logger.info(f"Wallet {pubkey} from private_key")
+
+
 async def start_bot(config_path: str, positions_file: str | None = None) -> bool:
     """Start the bot configured in `config_path` and run it until it ends.
 
@@ -327,6 +344,7 @@ async def start_bot(config_path: str, positions_file: str | None = None) -> bool
 async def _start_loaded(cfg: dict, positions_file: str | None) -> bool:
     """`start_bot` once the config has loaded and the bot's log file is set up."""
     print_config_summary(cfg)
+    session.start(cfg["name"])
 
     try:
         platform = _startable_platform(cfg)
@@ -340,6 +358,8 @@ async def _start_loaded(cfg: dict, positions_file: str | None) -> bool:
         except KeystoreError as e:
             logger.error(f"Bot '{cfg['name']}' not started: {e}")  # noqa: TRY400
             return False
+    else:
+        log_private_key_wallet(cfg)
 
     # Checked here, before the trader starts listening: a bot that cannot reach
     # its node would detect coins and fail every buy.
@@ -468,19 +488,27 @@ def _shared_positions_files(bots: list[tuple[Path, dict]]) -> dict[Path, str]:
     return own
 
 
-def run_all_bots() -> bool:
+def run_all_bots(config: str | None = None) -> bool:
     """Run all bots defined in YAML files in the 'bots' directory.
+
+    Args:
+        config: Run only the bot in this file, whatever its `enabled` says
 
     Returns:
         True only when every config loaded and every enabled bot, at least
         one, started and ended normally
     """
     bot_dir = Path("bots")
-    if not bot_dir.exists():
+    if config is not None:
+        bot_files = [Path(config)]
+        if not bot_files[0].is_file():
+            logger.error(f"Config file {config} not found")
+            return False
+    elif not bot_dir.exists():
         logging.error(f"Bot directory '{bot_dir}' not found")
         return False
-
-    bot_files = sorted(bot_dir.glob("*.yaml"))
+    else:
+        bot_files = sorted(bot_dir.glob("*.yaml"))
     if not bot_files:
         logging.error(f"No bot configuration files found in '{bot_dir}'")
         return False
@@ -495,7 +523,7 @@ def run_all_bots() -> bool:
     # Check every file first, so bots sharing a name are known before any starts.
     startable: list[tuple[Path, dict, Platform]] = []
     for file in bot_files:
-        if disabled_in_yaml(str(file)):
+        if config is None and disabled_in_yaml(str(file)):
             skipped_bots += 1
             disabled += 1
             continue
@@ -505,7 +533,7 @@ def run_all_bots() -> bool:
             bot_name = cfg.get("name", file.stem)
 
             # Skip bots with enabled=False
-            if not cfg.get("enabled", True):
+            if config is None and not cfg.get("enabled", True):
                 logging.info(f"Skipping disabled bot '{bot_name}'")
                 skipped_bots += 1
                 disabled += 1
@@ -521,7 +549,7 @@ def run_all_bots() -> bool:
     if not startable:
         invalid = len(bot_files) - disabled
         logger.error(
-            f"No bot to run in {bot_dir}/: {len(bot_files)} found, "
+            f"No bot to run in {config or f'{bot_dir}/'}: {len(bot_files)} found, "
             f"{disabled} disabled"
             + (f", {invalid} could not be loaded" if invalid else "")
         )
@@ -574,8 +602,8 @@ def run_all_bots() -> bool:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Read the command line: `-h`/`--help` prints `USAGE` and exits 0.
 
-    Any argument other than help and `--verbose` is a usage error (exit 2), so a
-    mistyped flag never starts a bot.
+    Any argument other than help, `--verbose` and `--config FILE` is a usage
+    error (exit 2), so a mistyped flag never starts a bot.
     """
     parser = argparse.ArgumentParser(
         description=USAGE, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -585,6 +613,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--verbose",
         action="store_true",
         help="print every log line on the terminal, not only events",
+    )
+    parser.add_argument(
+        "-c",
+        "--config",
+        metavar="FILE",
+        help="run only the bot configured in FILE",
     )
     return parser.parse_args(argv)
 
@@ -624,7 +658,7 @@ def main(argv: list[str] | None = None) -> None:
         logging.warning(f"Could not load platform information: {e}")
 
     try:
-        all_ok = run_all_bots()
+        all_ok = run_all_bots(args.config)
     except KeyboardInterrupt:
         # The trader already shut down cleanly; a traceback would add nothing.
         sys.exit(_interrupted_status())

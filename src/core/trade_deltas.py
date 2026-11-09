@@ -41,6 +41,8 @@ class TradeDeltas:
     #: SOL quote: needs `venue_account`. Other quotes: the largest gain of the
     #: quote mint in any account. None when not found.
     venue_quote_raw: int | None = None
+    #: The slot the transaction landed in; None when the result does not say.
+    slot: int | None = None
 
 
 def _account_keys(result: dict) -> list[str]:
@@ -197,4 +199,5 @@ def read_trade_deltas(
         rent_refunded_lamports=refunded,
         other_lamports=0 if sol_quote else moved,
         venue_quote_raw=venue_quote,
+        slot=result.get("slot"),
     )

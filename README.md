@@ -84,8 +84,11 @@ Set `enabled: false` to keep a config around without running it; such a file is 
 ```bash
 pump_bot                   # as an installed package
 pump_bot --verbose         # every log line on the terminal, not only events
+pump_bot --config bots/bot-sniper-2-logs.yaml   # only this bot, even if it says enabled: false
 uv run src/bot_runner.py   # or directly
 ```
+
+Each bot logs the address of the wallet it trades from when it starts, whether the config gives `private_key` or `keystore`.
 
 Logs land in `logs/{bot_name}_{timestamp}.log`, every line in full.
 
@@ -93,7 +96,9 @@ On a terminal each line is the time, the bot's name and the message, coloured by
 
 Run it from the folder that holds `bots/`: it reads `bots/*.yaml` there and writes `logs/`, `trades/` and `positions/` beside it. `pump_bot --help` says this and starts nothing.
 
-Profit and loss come from each trade's transaction. `trades/trades.log` has one JSON line per buy and sell. A row's `platform` is where the coin launched and its `venue` where the trade went: `bonding curve`, or the pool a graduated coin trades in, `PumpSwap` (pump.fun) or `Raydium CPMM` (LaunchLab). A row's `quote_amount` is what the wallet received, negative when it spent, protocol fees included. Its `network_fee_sol` is the transaction fee, and `rent_deposit_sol` and `rent_refund_sol` are rent put into or taken back from the wallet's token accounts. A buy's `price` is its fill, the price take profit and stop loss count from; a sell's is what it paid per token. A sell row also carries `pnl`, that sale's realised profit or loss in the quote asset. Every sale logs its PnL, and the line for the sale that empties the position is `Final PnL`; for a SOL quote it includes both network fees, and for any other quote the SOL it cost is shown beside it. Rent is never counted as a loss: it comes back when cleanup closes the account, in a transaction of its own that this figure leaves out. When a transaction can't be read in time, its row has `from_chain: false` and the `Final PnL` line says the figure is an estimate.
+Profit and loss come from each trade's transaction. `trades/trades.log` has one JSON line per buy and sell. A row's `platform` is where the coin launched and its `venue` where the trade went: `bonding curve`, or the pool a graduated coin trades in, `PumpSwap` (pump.fun) or `Raydium CPMM` (LaunchLab). A row's `quote_amount` is what the wallet received, negative when it spent, protocol fees included. Its `network_fee_sol` is the transaction fee, and `rent_deposit_sol` and `rent_refund_sol` are rent put into or taken back from the wallet's token accounts. A buy's `price` is its fill, the price take profit and stop loss count from; a sell's is what it paid per token. A sell row also carries `pnl`, that sale's realised profit or loss in the quote asset. Every sale logs its PnL, and the line for the sale that empties the position is `Final PnL`; for a SOL quote it includes both network fees, and for any other quote the SOL it cost is shown beside it. Rent for the wallet's own token accounts is never counted as a loss: it comes back when cleanup closes the account, in a transaction of its own that this figure leaves out. Rent for an account the wallet can't close is a cost of the trade (see `cleanup` below). When a transaction can't be read in time, its row has `from_chain: false` and the `Final PnL` line says the figure is an estimate. Each row's `bot` names the bot that made it, so bots run from one folder can share the file.
+
+When a bot stops it prints a session summary: buys and sales, what triggered each exit, the realised PnL by quote asset (estimated and unpriced sales named apart), network fees, rent put into token accounts and rent back from trades and closes, and the positions and pending buys left in the positions file for the next start. The same summary is appended as one JSON line to `trades/sessions.log`, so sessions can be compared.
 
 A bot that can't run is not started, with one line saying why: a config that fails validation, a wallet that won't unlock, or an `rpc_endpoint` that doesn't answer or rejects the request. With every bot disabled the bot says so. The exit status is 0 only when every enabled bot started and finished without an error, 1 otherwise, 130 after Ctrl+C and 143 after SIGTERM, which stops the bots the same way. Ctrl+C reaches a bot in its own process through the process group; SIGTERM sent to the main process alone is passed on to each of them.
 
@@ -103,8 +108,9 @@ The YAML files are commented inline. The sections that matter most:
 
 - **`private_key`** or **`keystore`** — the trading wallet: a raw key, or the path of an [encrypted keystore](#encrypted-keystore).
 - **`trade`** — `buy_amount` (in SOL), slippage, `exit_strategy` (`time_based`, `tp_sl`, `manual`), [`entry`](#migration-entry), [`max_open_positions`](#several-positions-at-once) and [`extreme_fast_mode`](#extreme-fast-mode).
+  - `min_wallet_balance` (SOL, optional): below it the bot buys nothing more and logs one warning; positions it holds still run to their exit. The balance is read at start and after each buy is sent, never before a buy; while it is low it is read again at most every 10 seconds, and buying resumes once a sale brings it back above.
 - **`priority_fees`** — fixed or dynamic. Dynamic costs an extra RPC call, which slows the buy.
-- **`filters`** — `listener_type`, `max_token_age` (checked once, when the bot takes a coin up: seconds since it detected the coin, not its age on chain, so a slow listener lets older coins through), name/creator matching, `marry_mode` (buy only, never sell), `yolo_mode` (trade continuously).
+- **`filters`** — `listener_type`, `max_token_age` (checked once, when the bot takes a coin up: seconds since it detected the coin, not its age on chain, so a slow listener lets older coins through; set `age_from: chain` to count a launch's age from the slot its create landed in instead, estimated from the newest slot seen, the node's (read every 2 seconds in the background) or the listener's own, so the buy makes no extra call; a coin whose slot the listener did not give still counts from detection, and migrations always do), name/creator matching, `marry_mode` (buy only, never sell), `yolo_mode` (trade continuously).
 - **`retries`** — attempts and the wait windows around creation, buy, and the next token.
 - **`timing.token_wait_timeout`** — with `yolo_mode: false` the bot trades one coin and exits; this is how long it waits for a coin the filters accept (a migration, with `entry: migration`) before exiting without one. Default 120 seconds.
 - **`cleanup`** — when to close leftover token accounts: `disabled`, `on_fail`, `after_sell`, `post_session`.
@@ -112,6 +118,7 @@ The YAML files are commented inline. The sections that matter most:
   - `post_session` closes, when the session ends, the accounts of the coins it traded, then every other empty token account in the wallet, under SPL Token and Token-2022. It never closes a quote mint's account (wSOL, USDC, any configured quote), or that of a coin still in the positions file, pending buys included: those positions are kept for the next start (see [Positions survive a restart](#positions-survive-a-restart)), and their accounts are cleaned up at the end of the session that sells them.
   - `force_close_with_burn` burns what is left in a traded coin's account before closing it. It never burns anything in the other accounts `post_session` closes, and under `exit_strategy: manual` or `marry_mode` post-session cleanup burns nothing, since those coins are meant to be held.
   - Closes and burns go out with the bot's priority fee unless `with_priority_fee` is `false` (it must be `true` or `false`; left out, it is `true`). A close is sent again once the block height is past its blockhash's last valid height and its signature is not known to have landed (no node knows it, or the lookup failed; one seen but not yet confirmed is waited on), at most 3 attempts in total; then the bot logs one warning naming `tools/cleanup_accounts.py`.
+  - Cleanup closes only token accounts the wallet owns. A buy can also pay rent for an account another program owns, such as pump.fun's creator fee vault for a coin's quote asset the first time that vault is needed. The wallet can never close such an account, so its rent is a one-time cost of the trade that no cleanup mode returns. The trade's figures count it: in `quote_amount` for a SOL quote, and among the SOL costs shown beside the PnL for any other quote.
 - **`node.max_rps`** — cap requests per second to match your provider's plan.
 
 ### Extreme fast mode
@@ -402,7 +409,7 @@ For faster execution, Chainstack offers [Solana Trader nodes](https://docs.chain
 
 ## IDLs
 
-The IDLs under [`idl/`](idl/) are vendored from [pump-fun/pump-public-docs](https://github.com/pump-fun/pump-public-docs) — currently upstream commit `8109141`. To refresh, copy `pump.json`, `pump_amm.json`, and `pump_fees.json` into `pump_fun_idl.json`, `pump_swap_idl.json`, and `pump_fees.json`, and note the upstream commit in your commit message. Don't hand-edit them.
+The IDLs under [`idl/`](idl/) are vendored from [pump-fun/pump-public-docs](https://github.com/pump-fun/pump-public-docs) — currently upstream commit `8109141`. To refresh, copy `pump.json`, `pump_amm.json`, and `pump_fees.json` into `pump_fun_idl.json`, `pump_swap_idl.json`, and `pump_fees.json`, and note the upstream commit in your commit message. Don't hand-edit them. `raydium_launchlab_idl.json` is LaunchLab's on-chain IDL account, and `raydium_cpmm_idl.json` is `raydium_cpmm/raydium_cp_swap.json` from [raydium-io/raydium-idl](https://github.com/raydium-io/raydium-idl), commit `e7e0c96`; the bot reads Raydium CPMM's only to name its errors.
 
 The `buy_v2` / `sell_v2` account lists are complete in the IDL. The **legacy** `buy` / `sell` lists are not — the IDL omits PDAs the on-chain program requires, so cross-check anything outside v2 against a recent successful on-chain transaction.
 

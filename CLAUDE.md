@@ -187,9 +187,11 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
 ## Config notes
 
 - Bot YAML supports `${VAR}` interpolation from the file named by `env_file`;
-  a `true` or `false` value becomes a bool, anything else stays a string. The
-  wallet is `private_key` or `keystore`, never both; `pump_bot_wallet` writes a
-  keystore (`core/keystore.py`); the bot tries `KEYSTORE_PASSWORD`, then `PUMPFUN_PASSWORD`.
+  `true` or `false` becomes a bool only for a setting in `SWITCHES`
+  (`config_loader.py`); add a new on/off setting there. Anything else stays a
+  string. The wallet is `private_key` or `keystore`, never both;
+  `pump_bot_wallet` writes a keystore (`core/keystore.py`); the bot tries
+  `KEYSTORE_PASSWORD`, then `PUMPFUN_PASSWORD`.
 - `src/config_loader.py` (package root, not under `core/`) validates the
   platform/listener pairing before startup: pump.fun supports `logs`, `blocks`,
   `geyser`, `shreds`; the LaunchLab platforms support `blocks`, `geyser` and
@@ -197,5 +199,6 @@ in the verifier named in [docs/regression-tests.md](docs/regression-tests.md).
   Adding a listener means updating `PLATFORM_LISTENER_COMPATIBILITY` there too.
 - Bots with `separate_process: true` run in their own process, one log file each.
 - `pump_bot` runs **every** `bots/*.yaml` in the current folder (four of five
-  committed configs ship `enabled: false`). Exit 0 only when every enabled bot
+  committed configs ship `enabled: false`); `--config <file>` runs only that
+  one, whatever its `enabled` says. Exit 0 only when every enabled bot
   ran without an error; 1 otherwise, with one line saying why.

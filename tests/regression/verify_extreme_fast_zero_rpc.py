@@ -275,12 +275,13 @@ def check_geyser_listener_delegates_to_parser() -> bool:
     update = SimpleNamespace(
         HasField=lambda field: field == "transaction",
         transaction=SimpleNamespace(
+            slot=1,
             transaction=SimpleNamespace(
                 transaction=SimpleNamespace(
                     message=SimpleNamespace(instructions=[], account_keys=[])
                 ),
                 meta=SimpleNamespace(log_messages=logs),
-            )
+            ),
         ),
     )
     token_info = asyncio.run(listener._process_update(update))  # noqa: SLF001

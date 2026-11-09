@@ -334,6 +334,7 @@ class UniversalShredsListener(BaseTokenListener):
 
                 token_info = self._parse_with_any(parsers, instruction, keys)
                 if token_info:
+                    token_info.creation_slot = update.deshred_transaction.slot or None
                     return self._mark_trusted(token_info)
 
             return None

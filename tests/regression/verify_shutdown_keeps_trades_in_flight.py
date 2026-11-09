@@ -57,7 +57,9 @@ Two trades were cut short by Ctrl+C:
   K. With one position held and one sold, only the held one is stopped and
      counted, and the sold one still closes its account.
   L. A close that hangs is cancelled once the stop budget runs out, with a
-     warning, so shutdown still ends.
+     warning, so shutdown still ends. The sold coin stays in the positions
+     file, marked sold, and the next start closes its account without
+     selling and drops the record, also under `manual`, which resumes nothing.
   M. A send is SUBMIT_FAILED only when no attempt can have reached the
      network (no connection, a node refusal, a 4xx); a read timeout or a 5xx
      on any attempt leaves it possibly sent. The signer reports the signature
@@ -505,7 +507,9 @@ async def _check_a(tmp: Path) -> list[str]:
     run.client.confirm_gate = asyncio.Event()
     closed: list[list[Pubkey]] = []
 
-    async def post_session(_c: object, _w: object, mints: list, *_a: object) -> None:
+    async def post_session(
+        _c: object, _w: object, mints: list, *_a: object, **_k: object
+    ) -> None:
         closed.append(list(mints))
 
     with (
@@ -1029,7 +1033,9 @@ async def _check_i_cleanup(tmp: Path) -> list[str]:
     run.client.outcome = ConfirmationStatus.SUCCESS
     handed: list[Pubkey] = []
 
-    async def post_session(_c: object, _w: object, mints: list, *_a: object) -> None:
+    async def post_session(
+        _c: object, _w: object, mints: list, *_a: object, **_k: object
+    ) -> None:
         handed.extend(mints)
 
     with (
@@ -1233,7 +1239,7 @@ class _Close:
         self.cancelled: list[str] = []
 
     async def __call__(
-        self, _c: object, _w: object, mint: Pubkey, *_args: object
+        self, _c: object, _w: object, mint: Pubkey, *_args: object, **_k: object
     ) -> None:
         self.waiting.append(str(mint))
         try:
@@ -1337,6 +1343,38 @@ async def _check_l(tmp: Path) -> list[str]:
         problems.append(f"shutdown took {elapsed:.1f}s, past its budget")
     if not logs.has("did not finish within"):
         problems.append("no warning names the close that did not finish")
+    record = run.records().get(str(token.mint))
+    if record is None or record.get("sold") is not True:
+        problems.append(f"the cut-short close left no sold record: {record}")
+        return problems
+    saved = run.path.read_text()
+    problems += await _next_start_closes(run.path, token)
+    run.path.write_text(saved)
+    return problems + await _next_start_closes(run.path, token, "manual")
+
+
+async def _next_start_closes(
+    path: Path, token: TokenInfo, exit_strategy: str = "time_based"
+) -> list[str]:
+    """A fresh start closes a sold record's account, sells nothing, drops it."""
+    closed: list[Pubkey] = []
+
+    async def cleared(_c: object, _w: object, mint: Pubkey, *_a: object) -> None:
+        closed.append(mint)
+
+    manager = _manager(
+        path, _Client(), cleanup_mode="after_sell", exit_strategy=exit_strategy
+    )
+    with _patched(position_manager, "handle_cleanup_cleared", cleared):
+        resumed = await manager.resume()
+        await manager.wait_all()
+    problems = []
+    if resumed or manager.seller.sells:
+        problems.append(f"{exit_strategy}: resumed {resumed} / sold again")
+    if closed != [token.mint]:
+        problems.append(f"{exit_strategy}: the next start closed {closed}")
+    if PositionStore(path).load():
+        problems.append(f"{exit_strategy}: the sold record is still in the file")
     return problems
 
 

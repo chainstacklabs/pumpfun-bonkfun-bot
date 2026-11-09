@@ -158,7 +158,7 @@ class PumpSwapMarket(Market):
         quote_mint = normalize_quote_mint(token_info.quote_mint)
         address = canonical_pool_address(token_info.mint, quote_mint)
         pool_account, config_account = await self.client.get_multiple_accounts(
-            [address, GLOBAL_CONFIG]
+            [address, GLOBAL_CONFIG], commitment="confirmed"
         )
         if pool_account is None:
             raise ValueError(f"Account {address} not found")  # noqa: TRY003
@@ -181,7 +181,7 @@ class PumpSwapMarket(Market):
                 for o in (_POOL_BASE_ACCOUNT_OFFSET, _POOL_QUOTE_ACCOUNT_OFFSET)
             )
             vaults = await self.client.get_multiple_accounts(
-                [base_account, quote_account]
+                [base_account, quote_account], commitment="confirmed"
             )
             pool = PumpSwapPool(
                 address=address,
@@ -207,7 +207,7 @@ class PumpSwapMarket(Market):
         except ValueError as e:
             raise ValueError(f"No PumpSwap pool for {token_info.mint} yet: {e}") from e  # noqa: TRY003
         base_vault, quote_vault = await self.client.get_multiple_accounts(
-            [pool.base_account, pool.quote_account]
+            [pool.base_account, pool.quote_account], commitment="confirmed"
         )
         base_reserve = struct.unpack_from("<Q", base_vault.data, _TOKEN_AMOUNT_OFFSET)[
             0

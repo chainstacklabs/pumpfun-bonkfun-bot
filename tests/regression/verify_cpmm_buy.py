@@ -33,6 +33,8 @@ Offline machine checks, no network and no funds moved:
      `extreme_fast_mode` skips a graduated coin.
   F. Every buy and sell fits one transaction, with all three compute-budget
      instructions and no lookup table.
+  G. The market reads the pool, its configs and vaults at confirmed, for a
+     buy, a sell and a price.
 
 Usage:
     uv run tests/regression/verify_cpmm_buy.py
@@ -114,12 +116,14 @@ class _FixtureClient:
             )
             for k, v in accounts.items()
         }
+        self.commitments: list[str | None] = []
 
     async def get_account_info(
         self,
         address: Pubkey,
-        commitment: str | None = None,  # noqa: ARG002
+        commitment: str | None = None,
     ) -> SimpleNamespace:
+        self.commitments.append(commitment)
         if address not in self.accounts:
             raise ValueError(f"Account {address} not found")  # noqa: TRY003
         return self.accounts[address]
@@ -127,8 +131,9 @@ class _FixtureClient:
     async def get_multiple_accounts(
         self,
         addresses: list,
-        commitment: str | None = None,  # noqa: ARG002
+        commitment: str | None = None,
     ) -> list:
+        self.commitments.append(commitment)
         return [self.accounts.get(a) for a in addresses]
 
 
@@ -580,6 +585,23 @@ def check_e_buyer_routes_to_pool() -> bool:
     return all(results.values())
 
 
+def check_g_reads_at_confirmed() -> bool:
+    """G: every read the market makes is at confirmed."""
+    bad = {}
+    for case in CASES.values():
+        client = _FixtureClient(case["accounts"])
+        market = CpmmMarket(client)
+        token = _token(case)
+        asyncio.run(market.build_buy_instruction(token, USER, AMOUNT_IN, MIN_OUT))
+        asyncio.run(market.build_sell_instruction(token, USER, AMOUNT_IN, MIN_OUT))
+        asyncio.run(market.get_market_state(token))
+        if not client.commitments or set(client.commitments) != {"confirmed"}:
+            bad[case["label"]] = client.commitments
+    if bad:
+        print(f"    {bad}")
+    return not bad
+
+
 def main() -> int:
     """Run every check and report."""
     _resolve_quotes()
@@ -590,6 +612,7 @@ def main() -> int:
         ("D: a buy is the sell turned round", check_d_buy_mirrors_sell),
         ("E: buyer buys a graduated coin in its pool", check_e_buyer_routes_to_pool),
         ("F: every trade fits one transaction", check_f_fits_one_transaction),
+        ("G: the pool is read at confirmed", check_g_reads_at_confirmed),
     ]
     passed = 0
     for label, check in checks:
