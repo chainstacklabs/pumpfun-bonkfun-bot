@@ -33,6 +33,8 @@ class PreBuyCheck(ABC):
 
     name: ClassVar[str]
     reads_chain: ClassVar[bool] = False
+    #: `required` when the YAML entry leaves it out.
+    required_by_default: ClassVar[bool] = True
 
     @abstractmethod
     async def check(self, coin: TokenInfo, ctx: CheckContext) -> str | None:

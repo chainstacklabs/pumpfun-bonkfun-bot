@@ -18,9 +18,11 @@ Offline machine checks, no network and no funds moved:
      in part sells what is held.
   6. Pending and other-wallet positions are never sold.
   7. A partial sale leaves the rest in the file marked given up and listed
-     under "Left in the wallet"; nothing is burned.
-  8. Nothing printed carries the RPC endpoint or its host, even when a read
-     or a sale fails with it in the error.
+     under "Left in the wallet". A closed account counts as none held, a
+     record with no token program reads the mint's, and coins held beyond the
+     record stay. The command's cleanup is built never to burn.
+  8. Nothing printed carries the RPC endpoint or its host, even when a read,
+     a sale or the setup fails with it in the error; that last exits 1.
   9. A bot name another config in the folder shares needs `--positions`.
 
 Usage:
@@ -29,6 +31,8 @@ Usage:
 
 import asyncio
 import io
+import logging
+import struct
 import sys
 import tempfile
 from datetime import UTC, datetime
@@ -38,9 +42,11 @@ from types import SimpleNamespace
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+import yaml  # noqa: E402
 from _fakes import _check  # noqa: E402
 from solders.keypair import Keypair  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
+from spl.token.instructions import get_associated_token_address  # noqa: E402
 
 import positions_cli  # noqa: E402
 from core.pubkeys import WSOL_MINT, SystemAddresses  # noqa: E402
@@ -49,8 +55,10 @@ from trading import trade_log  # noqa: E402
 from trading.base import PendingBuy, TradeResult  # noqa: E402
 from trading.position_store import PositionStore  # noqa: E402
 from trading.run_lock import RunLock  # noqa: E402
+from utils.logger import install_secret_redaction  # noqa: E402
 
 RPC = "https://secret-host.example/abc123key"
+CLOSED = object()
 ENTRY = 1.0e-6
 NOW_PRICE = 2.0e-6
 AMOUNT_RAW = 1_000_000_000  # 1000 tokens
@@ -71,23 +79,45 @@ class _Market:
 
 
 class _Client:
+    """Serves mints (owned by Token-2022) and this wallet's Token-2022 accounts.
+
+    A coin with no balance listed holds `AMOUNT_RAW`; `CLOSED` means its
+    account is gone, which the node reports as not found.
+    """
+
     def __init__(self, balances: dict) -> None:
         self.balances = balances
+        self.mints: set[Pubkey] = set()
 
-    async def get_token_account_balance(
-        self, account: Pubkey, commitment: str = "confirmed"
-    ) -> int:
+    async def get_account_info(
+        self, key: Pubkey, commitment: str | None = None
+    ) -> SimpleNamespace:
         assert commitment == "confirmed"  # noqa: S101
-        return self.balances.get(account, AMOUNT_RAW)
+        if key in self.mints:
+            return SimpleNamespace(owner=SystemAddresses.TOKEN_2022_PROGRAM, data=b"")
+        for mint in self.mints:
+            if key == get_associated_token_address(
+                WALLET, mint, SystemAddresses.TOKEN_2022_PROGRAM
+            ):
+                held = self.balances.get(mint, AMOUNT_RAW)
+                if held is CLOSED:
+                    break
+                data = bytes(64) + struct.pack("<Q", held) + bytes(165 - 72)
+                return SimpleNamespace(
+                    owner=SystemAddresses.TOKEN_2022_PROGRAM, data=data
+                )
+        raise ValueError(f"Account {key} not found")  # noqa: TRY003
 
 
 class _Wallet:
     pubkey = WALLET
 
     def get_associated_token_address(
-        self, mint: Pubkey, _program: Pubkey | None = None
+        self, mint: Pubkey, program: Pubkey | None = None
     ) -> Pubkey:
-        return mint  # the fake client keys balances by mint
+        return get_associated_token_address(
+            WALLET, mint, program or SystemAddresses.TOKEN_2022_PROGRAM
+        )
 
 
 class _Seller:
@@ -166,8 +196,20 @@ def _file(tmp: str) -> tuple[Path, dict[str, TokenInfo]]:
     now = datetime.now(UTC).replace(tzinfo=None)
     coins = {
         k: _coin(k.upper()[:4])
-        for k in ("plain", "gaveup", "pending", "other", "gone", "part", "unpriced")
+        for k in (
+            "plain",
+            "gaveup",
+            "pending",
+            "other",
+            "gone",
+            "part",
+            "unpriced",
+            "closed",
+            "noprog",
+            "extra",
+        )
     }
+    coins["noprog"].token_program_id = None
     for key, token in coins.items():
         wallet = Keypair().pubkey() if key == "other" else WALLET
         pending = (
@@ -184,8 +226,10 @@ def _tools(
     coins: dict, *, sells: dict | None = None, balances: dict | None = None
 ) -> SimpleNamespace:
     prices = {coins["unpriced"].mint: None}
+    client = _Client(balances or {})
+    client.mints = {c.mint for c in coins.values()}
     return SimpleNamespace(
-        client=_Client(balances or {}),
+        client=client,
         wallet=_Wallet(),
         seller=_Seller(sells or {}),
         implementations=SimpleNamespace(
@@ -284,7 +328,12 @@ async def check_sell_all_sells() -> bool:
         half = AMOUNT_RAW // 2
         tools = _tools(
             coins,
-            balances={coins["gone"].mint: 0, coins["plain"].mint: half},
+            balances={
+                coins["gone"].mint: 0,
+                coins["plain"].mint: half,
+                coins["closed"].mint: CLOSED,
+                coins["extra"].mint: AMOUNT_RAW * 3,
+            },
             sells={coins["part"].mint: AMOUNT_RAW // 4},
         )
         out = io.StringIO()
@@ -305,6 +354,22 @@ async def check_sell_all_sells() -> bool:
             "a coin held in part sells what is held",
             sold.get(coins["plain"].mint) == half and coins["plain"].mint not in left,
             str(sold.get(coins["plain"].mint)),
+        ),
+        _check(
+            "a coin whose account is closed is dropped unsold",
+            coins["closed"].mint not in sold and coins["closed"].mint not in left,
+            str(sold.get(coins["closed"].mint)),
+        ),
+        _check(
+            "a record with no token program reads the mint's",
+            sold.get(coins["noprog"].mint) == AMOUNT_RAW
+            and coins["noprog"].mint not in left,
+            str(sold.get(coins["noprog"].mint)),
+        ),
+        _check(
+            "coins held beyond the record are not sold with it",
+            sold.get(coins["extra"].mint) == AMOUNT_RAW,
+            str(sold.get(coins["extra"].mint)),
         ),
         _check(
             "pending and other-wallet positions are not sold",
@@ -329,9 +394,14 @@ async def check_sell_all_sells() -> bool:
             str(list(sold)),
         ),
         _check(
-            "sold coins' accounts are closed, nothing burned",
-            set(tools.cleanup.closed) == {coins["plain"].mint, coins["gaveup"].mint}
-            and tools.cleanup.burns == 0,
+            "sold coins' accounts are closed",
+            set(tools.cleanup.closed)
+            == {
+                coins["plain"].mint,
+                coins["gaveup"].mint,
+                coins["noprog"].mint,
+                coins["extra"].mint,
+            },
             str(tools.cleanup.closed),
         ),
         _check("exit 1 while anything is left", code == 1, str(code)),
@@ -405,6 +475,73 @@ def check_shared_name() -> bool:
     return all(results)
 
 
+async def check_cleanup_never_burns() -> bool:
+    cfg = yaml.safe_load(
+        (PROJECT_ROOT / "bots" / "bot-sniper-1-geyser.yaml").read_text()
+    )
+    cfg.update(
+        rpc_endpoint=RPC,
+        wss_endpoint="wss://secret-host.example/x",
+        private_key=str(Keypair()),
+    )
+    tools = await positions_cli._tools(cfg)  # noqa: SLF001
+    try:
+        burns = tools.cleanup.close_with_force_burn
+    finally:
+        await tools.client.close()
+    return _check(
+        "sell-all's cleanup is built never to burn", burns is False, str(burns)
+    )
+
+
+class _Lines(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(logging.DEBUG)
+        self.lines: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lines.append(record.getMessage())
+
+
+async def check_errors_redacted() -> bool:
+    install_secret_redaction()
+    cfg = {"name": "bot", "rpc_endpoint": RPC, "filters": {}}
+    originals = (positions_cli.load_bot_config, positions_cli._tools)  # noqa: SLF001
+
+    async def broken(_cfg: dict) -> None:
+        raise ConnectionError(f"cannot reach {RPC}")  # noqa: TRY003
+
+    positions_cli.load_bot_config = lambda _path: dict(cfg)
+    positions_cli._tools = broken  # noqa: SLF001
+    handler = _Lines()
+    logging.getLogger().addHandler(handler)
+    out = io.StringIO()
+    sys_stdout = sys.stdout
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            args = SimpleNamespace(
+                command="status",
+                config=str(Path(tmp) / "b.yaml"),
+                positions=str(Path(tmp) / "p.json"),
+                yes=False,
+            )
+            sys.stdout = out
+            code = await positions_cli._run(args)  # noqa: SLF001
+    except Exception as e:  # noqa: BLE001
+        code = f"escaped {type(e).__name__}"
+    finally:
+        sys.stdout = sys_stdout
+        positions_cli.load_bot_config, positions_cli._tools = originals  # noqa: SLF001
+        logging.getLogger().removeHandler(handler)
+    shown = out.getvalue() + "\n".join(handler.lines)
+    ok = code == 1 and RPC not in shown and "secret-host" not in shown
+    return _check(
+        "an unexpected error exits 1, endpoint redacted",
+        ok,
+        f"exit {code}, {handler.lines}",
+    )
+
+
 async def main() -> int:
     print("pump_bot_positions")
     results = [
@@ -415,6 +552,8 @@ async def main() -> int:
         await check_sell_all_sells(),
         await check_no_endpoint_printed(),
         check_shared_name(),
+        await check_cleanup_never_burns(),
+        await check_errors_redacted(),
     ]
     if all(results):
         print("\nAll checks passed.")

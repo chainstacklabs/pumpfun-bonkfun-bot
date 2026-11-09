@@ -95,6 +95,10 @@ class Session:
             GivenUp(token_info.mint, token_info.symbol, reason, amount_raw)
         )
 
+    def drop_given_up(self, mint: Pubkey) -> None:
+        """Forget a coin given up on that is no longer held, e.g. once burned."""
+        self.given_up = [g for g in self.given_up if g.mint != mint]
+
     def set_given_up_rent(self, mint: Pubkey, lamports: int | None) -> None:
         """The lamports a given-up coin's token account holds."""
         for given_up in self.given_up:

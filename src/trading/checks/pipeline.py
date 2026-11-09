@@ -17,6 +17,9 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+#: Seconds a listed check may take when its entry sets no `budget`.
+DEFAULT_BUDGET = 2.0
+
 # Keys of a check entry the pipeline reads; the rest go to the check's __init__.
 _ENTRY_KEYS = ("name", "module", "enabled", "required", "budget")
 
@@ -29,7 +32,8 @@ class ConfiguredCheck:
         required: When the check can't decide (it raised, ran past its budget
             or returned something other than None or a str), True refuses the
             coin and False lets it through
-        budget: Seconds the check may take; None is no limit
+        budget: Seconds the check may take; None is no limit, which only the
+            `filters` settings get
         named: Prefix its reason with the check's name; off for the `filters`
             settings, whose reasons name the setting already
     """
@@ -96,8 +100,10 @@ def _class_from_module(path: str) -> type:
         sys.path.insert(0, cwd)
     try:
         module = importlib.import_module(module_name)
-    except ImportError as e:
-        raise ValueError(f"check module {module_name!r} does not import: {e}") from e  # noqa: TRY003
+    except Exception as e:
+        raise ValueError(  # noqa: TRY003
+            f"check module {module_name!r} does not import: {type(e).__name__}: {e}"
+        ) from e
     try:
         return getattr(module, class_name)
     except AttributeError:
@@ -132,6 +138,8 @@ def load_checks(
             cls = _class_from_module(entry["module"])
             if not (isinstance(cls, type) and issubclass(cls, PreBuyCheck)):
                 raise ValueError(f"{entry['module']} is not a PreBuyCheck subclass")  # noqa: TRY003
+            if not isinstance(getattr(cls, "name", None), str):
+                raise ValueError(f"{entry['module']} has no name")  # noqa: TRY003
         options = {k: v for k, v in entry.items() if k not in _ENTRY_KEYS}
         try:
             check = cls(**options)
@@ -139,7 +147,9 @@ def load_checks(
             raise ValueError(f"check {entry!r}: {e}") from e  # noqa: TRY003
         loaded.append(
             ConfiguredCheck(
-                check, required=entry.get("required", True), budget=entry.get("budget")
+                check,
+                required=entry.get("required", cls.required_by_default),
+                budget=entry.get("budget", DEFAULT_BUDGET),
             )
         )
     return loaded

@@ -48,6 +48,7 @@ class TopHoldersCheck(PreBuyCheck):
 
     name = "top_holders"
     reads_chain = True
+    required_by_default = False
 
     def __init__(self, max_share: float, top: int = 10) -> None:
         if isinstance(max_share, bool) or not 0 < max_share <= 1:

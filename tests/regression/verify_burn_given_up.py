@@ -9,11 +9,14 @@ undone, so everything it is not sure of is left alone.
 Offline machine checks, no network and no funds moved:
 
   1. A SOL-quoted coin given up this session and worth less than the
-     threshold is burned, its account closed, and it leaves the file.
+     threshold is burned, its account closed, and it leaves the file and the
+     session summary. A pump.fun coin on its curve is worth what the curve can
+     pay for it now, out of its real reserves, not its price: a drained curve
+     makes it worthless. A graduated coin is worth its pool price.
   2. Left alone: a coin in the file not given up this session (resumed or
      still monitored), one worth the threshold or more, one quoted in another
-     asset, one whose price can't be read or reads zero, and one whose burn
-     did not land.
+     asset, one whose curve can't be read or whose pool prices it at zero,
+     and one whose burn did not land.
   3. With the setting off nothing is burned.
   4. The config is refused under `cleanup.mode: disabled`, and for zero, a
      negative number or text.
@@ -27,6 +30,7 @@ import sys
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -45,8 +49,33 @@ from trading.position_store import PositionStore  # noqa: E402
 
 THRESHOLD = 0.001  # SOL
 AMOUNT = 1_000.0  # whole tokens held
-CHEAP = THRESHOLD / AMOUNT / 10  # worth a tenth of the threshold
-DEAR = THRESHOLD / AMOUNT * 10
+AMOUNT_RAW = int(AMOUNT * 1e6)
+
+# A pump.fun curve whose price says the coin is worth 0.01 SOL, ten times the
+# threshold, while its real reserves can pay far less.
+VIRTUAL = {"virtual_token_reserves": 10**12, "virtual_quote_reserves": 10**10}
+SHORT = {**VIRTUAL, "real_quote_reserves": 10_000, "graduated": False}
+FULL = {**VIRTUAL, "real_quote_reserves": 10**10, "graduated": False}
+DRAINED = {**VIRTUAL, "real_quote_reserves": 0, "graduated": False}
+GRADUATED = {"graduated": True}
+SPOT = 1.0e-5  # SOL per token on that curve, from its virtual reserves
+POOL_CHEAP = THRESHOLD / AMOUNT / 10
+
+
+class _Curves:
+    """Serves a curve state per bonding curve; an exception is raised."""
+
+    def __init__(self, states: dict) -> None:
+        self.states = states
+
+    async def get_pool_state(
+        self, curve: Pubkey, commitment: str | None = None
+    ) -> dict:
+        assert commitment == "confirmed"  # noqa: S101
+        state = self.states[curve]
+        if isinstance(state, Exception):
+            raise state
+        return state
 
 
 class _Cleanup:
@@ -86,13 +115,16 @@ def _buy(token: TokenInfo) -> TradeResult:
         platform=token.platform,
         tx_signature="buy",
         amount=AMOUNT,
-        amount_raw=int(AMOUNT * 1e6),
-        price=CHEAP,
+        amount_raw=AMOUNT_RAW,
+        price=SPOT,
     )
 
 
 def _manager(
-    tmp: str, prices: dict[Pubkey, float | None], threshold: float | None
+    tmp: str,
+    states: dict[Pubkey, object],
+    spots: dict[Pubkey, float],
+    threshold: float | None,
 ) -> PositionManager:
     manager = object.__new__(PositionManager)
     manager.store = PositionStore(Path(tmp) / "bot.json")
@@ -102,12 +134,10 @@ def _manager(
     manager.solana_client = None
     manager.wallet = None
     manager.priority_fee_manager = None
+    manager.platform_implementations = SimpleNamespace(curve_manager=_Curves(states))
 
     async def read_price(token: TokenInfo) -> float:
-        price = prices[token.mint]
-        if price is None:
-            raise ValueError("pool not readable")  # noqa: TRY003
-        return price
+        return spots.get(token.mint, SPOT)
 
     manager._read_price = read_price  # noqa: SLF001
     return manager
@@ -119,62 +149,79 @@ def _hold(manager: PositionManager, token: TokenInfo, *, given_up: bool) -> None
         manager._give_up(token, "attempts spent", int(AMOUNT * 1e6))  # noqa: SLF001
 
 
-async def _run(threshold: float | None, *, lands: bool = True) -> dict[str, bool]:
+async def _run(
+    threshold: float | None, *, lands: bool = True
+) -> tuple[dict[str, bool], PositionManager]:
     """Burn over one coin per case; True where the coin was burned and dropped."""
     session.start("verify")
     _Cleanup.burned, _Cleanup.lands = [], lands
+    # label: (coin, curve state, pool spot price, given up, should burn)
     cases = {
-        "cheap given up": (_coin(), CHEAP, True),
-        "not given up": (_coin(), CHEAP, False),
-        "worth more": (_coin(), DEAR, True),
-        "quoted in USDC": (_coin(USDC_MINT), CHEAP, True),
-        "price unreadable": (_coin(), None, True),
-        "price zero": (_coin(), 0.0, True),
+        "curve pays little": (_coin(), SHORT, None, True, True),
+        "drained curve": (_coin(), DRAINED, None, True, True),
+        "graduated, cheap": (_coin(), GRADUATED, POOL_CHEAP, True, True),
+        "not given up": (_coin(), SHORT, None, False, False),
+        "curve pays enough": (_coin(), FULL, None, True, False),
+        "quoted in USDC": (_coin(USDC_MINT), SHORT, None, True, False),
+        "curve unreadable": (_coin(), ConnectionError("down"), None, True, False),
+        "pool priced zero": (_coin(), GRADUATED, 0.0, True, False),
     }
     with tempfile.TemporaryDirectory() as tmp:
-        prices = {token.mint: price for token, price, _ in cases.values()}
-        manager = _manager(tmp, prices, threshold)
-        for token, _price, given_up in cases.values():
+        states = {c.bonding_curve: st for c, st, _sp, _g, _b in cases.values()}
+        spots = {c.mint: sp for c, _st, sp, _g, _b in cases.values() if sp is not None}
+        manager = _manager(tmp, states, spots, threshold)
+        for token, _st, _sp, given_up, _b in cases.values():
             _hold(manager, token, given_up=given_up)
         await manager.burn_given_up()
         left = manager.store.mints()
-    return {
+    burned = {
         label: token.mint in _Cleanup.burned and str(token.mint) not in left
-        for label, (token, _p, _g) in cases.items()
+        for label, (token, *_rest) in cases.items()
     }
+    _run.expected = {label: case[4] for label, case in cases.items()}
+    _run.cases = cases
+    return burned, manager
 
 
 async def check_burns_only_cheap_given_up() -> bool:
-    burned = await _run(THRESHOLD)
-    others = {k: v for k, v in burned.items() if k != "cheap given up"}
-    a = _check(
-        "a cheap given-up SOL coin is burned and dropped",
-        burned["cheap given up"],
-        str(burned),
+    burned, manager = await _run(THRESHOLD)
+    results = [
+        _check(
+            f"{label}: {'burned' if want else 'kept'}",
+            burned[label] == want,
+            str(burned[label]),
+        )
+        for label, want in _run.expected.items()
+    ]
+    gone = {_run.cases[label][0].mint for label, want in _run.expected.items() if want}
+    listed = {g.mint for g in session.current().given_up}
+    results.append(
+        _check(
+            "a burned coin leaves the summary and the rent read",
+            not (gone & listed) and not (gone & set(manager._given_up)),  # noqa: SLF001
+            f"{len(gone & listed)} still listed",
+        )
     )
-    b = _check("every other coin is left alone", not any(others.values()), str(others))
-    return a and b
+    return all(results)
 
 
 async def check_failed_burn_kept() -> bool:
-    session.start("verify")
-    _Cleanup.burned, _Cleanup.lands = [], False
-    token = _coin()
-    with tempfile.TemporaryDirectory() as tmp:
-        manager = _manager(tmp, {token.mint: CHEAP}, THRESHOLD)
-        _hold(manager, token, given_up=True)
-        await manager.burn_given_up()
-        kept = str(token.mint) in manager.store.mints()
+    _burned, manager = await _run(THRESHOLD, lands=False)
+    token = _run.cases["curve pays little"][0]
+    kept = str(token.mint) in manager.store.mints()
+    listed = token.mint in {g.mint for g in session.current().given_up}
     return _check(
-        "a burn that did not land keeps the coin in the file",
-        kept,
-        str(_Cleanup.burned),
+        "a burn that did not land keeps the coin, still listed",
+        kept and listed,
+        f"kept {kept}, listed {listed}",
     )
 
 
 async def check_off() -> bool:
-    burned = await _run(None)
-    return _check("setting off: nothing burned", not _Cleanup.burned, str(burned))
+    _burned, _manager = await _run(None)
+    return _check(
+        "setting off: nothing burned", not _Cleanup.burned, str(_Cleanup.burned)
+    )
 
 
 def check_config() -> bool:

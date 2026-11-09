@@ -25,8 +25,8 @@ filters:
     - name: top_holders
       max_share: 0.3          # options go to the check
       top: 10
-      required: false         # when it can't decide, buy anyway
-      budget: 1.0             # seconds before it counts as undecided
+      required: false         # when it can't decide, buy anyway (its default)
+      budget: 1.0             # seconds before it counts as undecided (default 2)
     - module: my_checks:SymbolDenylist   # your own, as module:Class
       symbols: ["SCAM", "RUG"]
       enabled: false          # listed but off
@@ -37,15 +37,17 @@ filters:
 | `name` | A built-in check: `mayhem`, `top_holders` |
 | `module` | Your check, as `module:Class`, imported from the folder you run `pump_bot` in |
 | `enabled` | `false` leaves the check out. Default `true` |
-| `required` | When the check can't decide (its read failed, it raised, it ran past its budget), `true` skips the coin and `false` lets it through. Default `true` |
-| `budget` | Seconds the check may take. Default: no limit |
+| `required` | When the check can't decide (its read failed, it raised, it ran past its budget), `true` skips the coin and `false` lets it through. Default `true`, except `top_holders` |
+| `budget` | Seconds the check may take. Default 2 |
 
 Any other key is passed to the check's `__init__`. A check that fails to load
-stops the bot at startup with one line saying why.
+stops the bot at startup with one line saying why. Each check runs once per
+coin, so a check may keep count of what it has seen.
 
 ## Write your own
 
-A check is a class with a `name` and one async method. Save this as
+A check is a class with a `name` and one async method. A check that can only
+decide when its data is there sets `required_by_default = False`. Save this as
 `my_checks.py` next to your `bots/` folder:
 
 ```python
@@ -82,6 +84,6 @@ is a complete example.
   `max_share` of the supply. Accounts that programs own (the bonding curve, a
   pool's vaults) are left out. It reads the chain three times. A fresh launch
   is held by its creator and its curve alone, so it suits `entry: migration`
-  and buys that wait after creation. Run it with `required: false`: a coin the
-  `shreds` listener reports before its create has run has no accounts to read
-  yet.
+  and buys that wait after creation. It is best effort unless listed with
+  `required: true`: a coin the `shreds` listener reports before its create has
+  run has no accounts to read yet.

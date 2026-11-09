@@ -14,6 +14,7 @@ nothing: what it can't sell stays in the wallet and the file, marked given up.
 import argparse
 import asyncio
 import logging
+import struct
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -41,6 +42,7 @@ from core.pubkeys import (
     resolve_quote_token_program,
 )
 from core.wallet import Wallet
+from interfaces.core import TokenInfo
 from platforms import get_platform_implementations
 from trading import trade_log
 from trading.platform_aware import PlatformAwareSeller
@@ -159,22 +161,44 @@ async def status(positions: Path, tools: Tools, out: TextIO) -> int:
     return 0
 
 
+async def _held_raw(coin: TokenInfo, tools: Tools) -> int:
+    """Raw amount of the coin in the wallet's account, read at "confirmed".
+
+    An account that does not exist (closed after a sale by hand) holds none. A
+    record with no token program takes the mint's owner.
+
+    Raises:
+        Exception: The read failed; nothing can be said
+    """
+    program = coin.token_program_id
+    if program is None:
+        mint = await tools.client.get_account_info(coin.mint, commitment="confirmed")
+        program = mint.owner
+    account = tools.wallet.get_associated_token_address(coin.mint, program)
+    try:
+        info = await tools.client.get_account_info(account, commitment="confirmed")
+    except ValueError:
+        return 0
+    # SPL token account: mint (32), owner (32), amount (u64).
+    return struct.unpack_from("<Q", bytes(info.data), 64)[0]
+
+
 async def _sell_one(
     position: StoredPosition, store: PositionStore, tools: Tools, out: TextIO
 ) -> tuple[bool, bool]:
     """Sell one position; (all of it gone from the wallet, its account to close)."""
     coin = position.token_info
     label = f"{coin.symbol} ({coin.mint})"
-    account = tools.wallet.get_associated_token_address(
-        coin.mint, coin.token_program_id
-    )
     try:
-        held = await tools.client.get_token_account_balance(
-            account, commitment="confirmed"
-        )
+        held = await _held_raw(coin, tools)
     except Exception as e:  # noqa: BLE001 - the message may carry the endpoint
         print(f"{label}: balance unreadable ({type(e).__name__}); kept", file=out)
         return False, False
+    # Never more than the record: coins bought by hand stay, as with the bot.
+    recorded = position.buy_result.amount_raw
+    if recorded is None:
+        recorded = round(position.buy_result.amount * 10**TOKEN_DECIMALS)
+    held = min(held, recorded)
     if held == 0:
         print(f"{label}: the wallet holds none; dropped from the file", file=out)
         store.remove(coin.mint)
@@ -381,11 +405,18 @@ async def _run(args: argparse.Namespace) -> int:
         except KeystoreError as e:
             logger.error(f"Could not unlock the wallet: {e}")  # noqa: TRY400
             return 1
-    tools = await _tools(cfg)
+    try:
+        tools = await _tools(cfg)
+    except Exception as e:  # noqa: BLE001 - logged, so the endpoint is redacted
+        logger.error(f"Could not set up: {_one_line(e)}")  # noqa: TRY400
+        return 1
     try:
         if args.command == "status":
             return await status(positions, tools, sys.stdout)
         return await sell_all(positions, tools, yes=args.yes)
+    except Exception as e:  # noqa: BLE001 - logged, so the endpoint is redacted
+        logger.error(f"{args.command} stopped: {_one_line(e)}")  # noqa: TRY400
+        return 1
     finally:
         await tools.client.close()
 

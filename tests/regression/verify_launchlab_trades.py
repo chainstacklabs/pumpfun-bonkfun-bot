@@ -490,6 +490,10 @@ def check_f_single_token_mode_waits_past_refused_coins() -> bool:
         intake.allowed_quote_mints,
     )._launch_checks  # noqa: SLF001
     intake.skip_reason = lambda token: TokenIntake.skip_reason(intake, token)
+    intake._verdicts = {}  # noqa: SLF001
+    intake._verdict = lambda pipeline, token: TokenIntake._verdict(  # noqa: SLF001
+        intake, pipeline, token
+    )
     intake.max_token_age = 60
     intake.slot_clock = None
     intake._too_old = lambda token, at: TokenIntake._too_old(intake, token, at)  # noqa: SLF001

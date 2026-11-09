@@ -91,6 +91,9 @@ class TokenIntake:
         self._migration_checks = CheckPipeline(
             identity_checks + settings_checks + configured, context
         )
+        # Each coin's answer, by mint: a coin is asked about on detection and
+        # again before the buy, and a check may count what it has seen.
+        self._verdicts: dict[str, str | None] = {}
 
         self.token_queue: asyncio.Queue = asyncio.Queue()
         # Migration entry: (report, monotonic time it was queued).
@@ -107,7 +110,13 @@ class TokenIntake:
         single-token mode would otherwise spend its one token on a coin it was
         never going to buy.
         """
-        return await self._launch_checks.reason(token_info, reads_chain=False)
+        return await self._verdict(self._launch_checks, token_info)
+
+    async def _verdict(self, pipeline: CheckPipeline, coin: TokenInfo) -> str | None:
+        key = str(coin.mint)
+        if key not in self._verdicts:
+            self._verdicts[key] = await pipeline.reason(coin, reads_chain=False)
+        return self._verdicts[key]
 
     async def wait_for_token(self) -> TokenInfo | None:
         """Wait for the first coin the filters accept, up to `token_wait_timeout`.
@@ -304,7 +313,7 @@ class TokenIntake:
         The name filter reads the coin's metadata; the creator filter compares
         the creator its curve records, since no launch was seen.
         """
-        return await self._migration_checks.reason(token_info, reads_chain=False)
+        return await self._verdict(self._migration_checks, token_info)
 
     async def _ignore_launch(self, _token_info: TokenInfo) -> None:
         return None

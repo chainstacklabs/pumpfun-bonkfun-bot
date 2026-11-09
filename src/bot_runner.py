@@ -42,6 +42,8 @@ from core import session
 from core.client import rpc_endpoint_problem
 from core.keystore import KeystoreError, unlock_from_env
 from interfaces.core import Platform
+from trading.checks import load_checks
+from trading.checks.builtin import BUILTINS
 from trading.position_store import holds_positions
 from trading.run_lock import RunLock
 from trading.settings import DEFAULT_MAX_EXIT_SELL_ATTEMPTS, TraderSettings
@@ -374,6 +376,15 @@ async def _start_unlocked(cfg: dict, positions_file: str | None) -> bool:
         platform = _startable_platform(cfg)
     except Exception as e:  # noqa: BLE001 - any cause gets the same one line
         logger.error(f"Bot '{cfg['name']}' not started: {_one_line(e)}")  # noqa: TRY400
+        return False
+    # Loaded here too, before the wallet or the node: a check that does not
+    # load is a config error, said in one line.
+    try:
+        load_checks((cfg.get("filters") or {}).get("checks"), BUILTINS)
+    except Exception as e:  # noqa: BLE001 - any cause gets the same one line
+        logger.error(  # noqa: TRY400
+            f"Bot '{cfg['name']}' not started: filters.checks: {_one_line(e)}"
+        )
         return False
 
     if "keystore" in cfg:

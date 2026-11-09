@@ -37,6 +37,10 @@ from interfaces.core import (
     TradeFailureReason,
 )
 from platforms import PlatformImplementations
+from platforms.pumpfun.curve_manager import (
+    max_sell_within_real_reserves,
+    sell_quote_out,
+)
 from trading import trade_log
 from trading.base import PendingBuy, TradeResult
 from trading.platform_aware import (
@@ -883,12 +887,13 @@ class PositionManager:
             if normalize_quote_mint(token_info.quote_mint) != WSOL_MINT:
                 continue
             try:
-                price = await self._read_price(token_info)
+                worth = await self._worth_sol(stored)
             except Exception:  # noqa: BLE001 - unpriced is kept, never burned
+                worth = None
+            if worth is None:
                 logger.warning(f"Not burning {token_info.symbol}: no price to value it")
                 continue
-            worth = price * stored.buy_result.amount
-            if price <= 0 or worth >= below:
+            if worth >= below:
                 continue
             logger.info(
                 f"Burning {stored.buy_result.amount} {token_info.symbol}, worth "
@@ -898,13 +903,42 @@ class PositionManager:
                 mint, token_info.token_program_id, settle=False
             ):
                 self.store.remove(mint)
+                self._given_up = MappingProxyType(
+                    {m: c for m, c in self._given_up.items() if m != mint}
+                )
+                session.current().drop_given_up(mint)
+
+    async def _worth_sol(self, stored: StoredPosition) -> float | None:
+        """What selling a SOL-quoted position now would pay, in SOL; None if unknown.
+
+        On a pump.fun curve, what its real reserves can pay for the coin, which
+        is nothing on a drained curve whatever its price says; otherwise the
+        price times the amount, None when the price is not above zero.
+        """
+        token_info, buy = stored.token_info, stored.buy_result
+        amount_raw = (
+            buy.amount_raw
+            if buy.amount_raw is not None
+            else round(buy.amount * 10**TOKEN_DECIMALS)
+        )
+        if token_info.platform is Platform.PUMP_FUN and token_info.bonding_curve:
+            state = await self.platform_implementations.curve_manager.get_pool_state(
+                token_info.bonding_curve, commitment="confirmed"
+            )
+            if not state.get("graduated"):
+                sellable = max_sell_within_real_reserves(state, amount_raw)
+                payout = sell_quote_out(state, sellable) if sellable else 0
+                return payout / quote_units_per_token(WSOL_MINT)
+        price = await self._read_price(token_info)
+        return price * buy.amount if price > 0 else None
 
     async def read_given_up_rent(self) -> None:
         """Record the rent each given-up coin's token account holds, for the summary.
 
         One read for all of them; a failed read leaves the rent unknown.
         """
-        coins = list(self._given_up.values())
+        held = self.given_up_mints
+        coins = [c for m, c in self._given_up.items() if m in held]
         if not coins:
             return
         accounts = [

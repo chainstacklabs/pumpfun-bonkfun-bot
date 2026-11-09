@@ -28,12 +28,19 @@ Offline machine checks, no network and no funds moved:
      leaves out accounts that programs own (the curve, a pool's vaults).
  16. A failed or empty read leaves the top-holders check unable to decide.
  17. The top-holders check reads the chain and refuses a share outside (0, 1].
+ 18. A listed check with no `budget` gets the default one, so a hang can't stall
+     the bot; `top_holders` is best effort unless the YAML says required.
+ 19. A check runs once per coin, however many times the intake and the trader
+     ask about it (single-token mode, migrations, the buy step).
+ 20. A check module that fails to load stops the bot at startup with one line,
+     before the wallet is unlocked or the node is asked anything.
 
 Usage:
     uv run tests/regression/verify_pre_buy_checks.py
 """
 
 import asyncio
+import logging
 import os
 import sys
 import tempfile
@@ -51,6 +58,7 @@ from solders.account import Account  # noqa: E402
 from solders.keypair import Keypair  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
+import bot_runner  # noqa: E402
 from config_loader import validate_checks_config  # noqa: E402
 from core.pubkeys import USDC_MINT, WSOL_MINT  # noqa: E402
 from interfaces.core import Platform, TokenInfo  # noqa: E402
@@ -65,6 +73,7 @@ from trading.checks import (  # noqa: E402
     load_checks,
 )
 from trading.checks.builtin import BUILTINS, MayhemCheck  # noqa: E402
+from trading.checks.pipeline import DEFAULT_BUDGET  # noqa: E402
 from trading.checks.top_holders import TopHoldersCheck  # noqa: E402
 from trading.intake import TokenIntake  # noqa: E402
 from trading.settings import TraderSettings  # noqa: E402
@@ -649,6 +658,135 @@ def check_top_holders_contract() -> bool:
     return all(results)
 
 
+def check_defaults() -> bool:
+    plain = load_checks([{"name": "slow"}], {"slow": Slow})[0]
+    holders = load_checks([{"name": "top_holders", "max_share": 0.3}], BUILTINS)[0]
+    strict = load_checks(
+        [{"name": "top_holders", "max_share": 0.3, "required": True}], BUILTINS
+    )[0]
+    ok = (
+        plain.budget == DEFAULT_BUDGET
+        and plain.required is True
+        and holders.required is False
+        and strict.required is True
+    )
+    return _check(
+        "default budget; top_holders best effort by default",
+        ok,
+        f"budget {plain.budget}, top_holders required {holders.required}/"
+        f"{strict.required}",
+    )
+
+
+class _Counting(PreBuyCheck):
+    name = "counting"
+    calls: ClassVar[list[Pubkey]] = []
+
+    async def check(self, coin: TokenInfo, _ctx: CheckContext) -> str | None:
+        _Counting.calls.append(coin.mint)
+        return "seen before" if _Counting.calls.count(coin.mint) > 1 else None
+
+
+async def check_runs_once_per_coin() -> bool:
+    _Counting.calls = []
+    settings = TraderSettings(
+        rpc_endpoint="https://rpc.invalid",
+        wss_endpoint="wss://rpc.invalid",
+        private_key="unused",
+        buy_amount=0.01,
+        buy_slippage=0.1,
+        sell_slippage=0.1,
+    )
+    intake = TokenIntake(
+        settings,
+        token_listener=None,
+        quote_amounts={WSOL_MINT: 0.01},
+        allowed_quote_mints=None,
+        checks=[ConfiguredCheck(_Counting())],
+    )
+    launch, migrated = _coin(), _coin()
+    first = await intake.skip_reason(launch)  # single-token detection
+    second = await intake.skip_reason(launch)  # the buy step
+    third = await intake.migration_skip_reason(migrated)
+    fourth = await intake.skip_reason(migrated)
+    ok = (
+        (first, second, third, fourth) == (None, None, None, None)
+        and len(_Counting.calls) == 2  # noqa: PLR2004
+    )
+    return _check(
+        "a check runs once per coin",
+        ok,
+        f"{first!r} {second!r} {third!r} {fourth!r}, {len(_Counting.calls)} calls",
+    )
+
+
+class _Lines(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(logging.DEBUG)
+        self.lines: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lines.append(record.getMessage())
+
+
+async def check_bad_module_refused_at_start() -> bool:
+    results = []
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "broken_checks_mod.py").write_text("def oops(:\n")
+        old_cwd = Path.cwd()
+        os.chdir(tmp)
+        saved_path = list(sys.path)
+        asked: list[str] = []
+        originals = (bot_runner.rpc_endpoint_problem, bot_runner.unlock_keystore)
+
+        async def rpc_problem(_endpoint: str) -> None:
+            asked.append("rpc")
+
+        bot_runner.rpc_endpoint_problem = rpc_problem
+        bot_runner.unlock_keystore = lambda _cfg: asked.append("keystore")
+        try:
+            for label, module in (
+                ("missing module", "no_such_mod_xyz:Thing"),
+                ("syntax error", "broken_checks_mod:Thing"),
+            ):
+                cfg = {
+                    "name": "bad-checks",
+                    "platform": "pump_fun",
+                    "rpc_endpoint": "https://rpc.invalid",
+                    "keystore": "unused",
+                    "filters": {
+                        "listener_type": "logs",
+                        "checks": [{"module": module}],
+                    },
+                }
+                handler = _Lines()
+                logging.getLogger("bot_runner").addHandler(handler)
+                try:
+                    started = await bot_runner._start_unlocked(cfg, None)  # noqa: SLF001
+                finally:
+                    logging.getLogger("bot_runner").removeHandler(handler)
+                said = [x for x in handler.lines if "not started" in x]
+                ok = (
+                    started is False
+                    and len(said) == 1
+                    and "check" in said[0]
+                    and "\n" not in said[0]
+                    and not asked
+                )
+                results.append(
+                    _check(
+                        f"bad check module ({label}) refused at start",
+                        ok,
+                        f"{said} asked {asked}",
+                    )
+                )
+        finally:
+            bot_runner.rpc_endpoint_problem, bot_runner.unlock_keystore = originals
+            os.chdir(old_cwd)
+            sys.path[:] = saved_path
+    return all(results)
+
+
 async def main() -> int:
     print("Pre-buy check pipeline")
     results = [
@@ -668,6 +806,9 @@ async def main() -> int:
         await check_top_holders(),
         await check_top_holders_unavailable(),
         check_top_holders_contract(),
+        check_defaults(),
+        await check_runs_once_per_coin(),
+        await check_bad_module_refused_at_start(),
     ]
     if all(results):
         print("\nAll checks passed.")
