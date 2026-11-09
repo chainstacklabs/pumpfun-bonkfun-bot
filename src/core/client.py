@@ -533,6 +533,13 @@ class SolanaClient:
             rent_epoch=value.get("rentEpoch", 0),
         )
 
+    async def get_sol_balance(self, pubkey: Pubkey) -> int:
+        """The account's balance in lamports, read at "confirmed"."""
+        await self._rate_limiter.acquire()
+        client = await self.get_client()
+        response = await client.get_balance(pubkey, commitment="confirmed")
+        return response.value
+
     async def get_multiple_accounts(
         self, pubkeys: list[Pubkey], commitment: str | None = None
     ) -> list[Account | None]:
