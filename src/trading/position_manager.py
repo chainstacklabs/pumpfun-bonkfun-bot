@@ -32,7 +32,6 @@ from core.pubkeys import (
 from core.wallet import Wallet
 from interfaces.core import (
     ConfirmationStatus,
-    CurveGraduatedError,
     Platform,
     TokenInfo,
     TradeFailureReason,
@@ -56,6 +55,7 @@ from trading.pnl import (
 )
 from trading.position import ExitReason, Position
 from trading.position_store import PositionStore, StoredPosition
+from trading.pricing import read_price
 from trading.settings import TraderSettings
 from utils.logger import get_logger
 
@@ -1429,19 +1429,14 @@ class PositionManager:
                 lands a moment after graduation
         """
         implementations = self.platform_implementations
-        try:
-            return await implementations.curve_market.get_price(token_info)
-        except CurveGraduatedError:
-            market = implementations.graduated_market
-            if market is None:
-                raise ValueError(  # noqa: TRY003
-                    f"{token_info.symbol} has graduated and "
-                    f"{token_info.platform.value} has no post-graduation market"
-                ) from None
-            if token_info.mint not in self._graduated_mints:
-                self._graduated_mints.add(token_info.mint)
-                logger.info(f"{token_info.symbol} has graduated; pricing off its pool")
-            return await market.get_price(token_info)
+        price, venue = await read_price(token_info, implementations)
+        if (
+            venue is not implementations.curve_market
+            and token_info.mint not in self._graduated_mints
+        ):
+            self._graduated_mints.add(token_info.mint)
+            logger.info(f"{token_info.symbol} has graduated; pricing off its pool")
+        return price
 
     async def _first_price(self, token_info: TokenInfo) -> float:
         """A real price for a position whose fill price was never read.

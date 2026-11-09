@@ -260,6 +260,26 @@ Only one process uses a positions file at a time: a bot whose file another bot
 or `pump_bot_positions sell-all` holds is not started, and says so. The lock is
 `<name>.json.lock` next to the file; the system drops it when its holder exits.
 
+### Check and close positions
+
+```bash
+pump_bot_positions status bots/bot-sniper-1-geyser.yaml
+pump_bot_positions sell-all bots/bot-sniper-1-geyser.yaml
+```
+
+`status` lists each position in the bot's positions file: venue, amount held,
+entry price, price now and unrealised profit or loss, flagging positions the
+bot gave up on, buys still pending and positions another wallet bought. It only
+reads, so it runs while the bot does.
+
+`sell-all` sells every position this wallet holds through the bot's own seller,
+closes each emptied account and drops it from the file. It asks first unless
+given `--yes`, and refuses to run while the bot uses the file. It burns
+nothing: what it can't sell, such as the part of a coin its curve can't pay
+for, stays in the wallet and in the file, marked given up. Pending buys and
+other wallets' positions are left alone. When two bots in the folder share a
+name, pass the file with `--positions`.
+
 ### Encrypted keystore
 
 Instead of a raw `private_key`, a bot can trade from an encrypted keystore: the

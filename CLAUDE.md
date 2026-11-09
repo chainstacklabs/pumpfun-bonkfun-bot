@@ -65,6 +65,8 @@ coordinates `trading/intake.py`, `platform_aware.py` and `position_manager.py`.
 uv sync                      # install runtime deps + the dev group (ruff)
 uv pip install -e .          # editable install (required for the imports above)
 pump_bot                     # run all enabled bots
+pump_bot_positions status <bot yaml>     # what a bot holds; read only
+pump_bot_positions sell-all <bot yaml>   # sell it all; refuses while the bot runs
 uv run src/bot_runner.py     # same, without the console script
 uv run tests/regression/run_all.py   # every offline verifier; moves no funds
 ```
