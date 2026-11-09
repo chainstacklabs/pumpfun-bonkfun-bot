@@ -112,6 +112,8 @@ class TokenIntake:
             if token_key in self.processed_tokens:
                 return
             self.processed_tokens.add(token_key)
+            if self.slot_clock is not None:
+                self.slot_clock.observe(token.creation_slot)
             skip_reason = self.skip_reason(token) or self._too_old(token, monotonic())
             if skip_reason:
                 logger.info(f"Skipping {token.symbol} - {skip_reason}; still waiting")
@@ -222,6 +224,8 @@ class TokenIntake:
         # The first discovery counts: a repeated report of a coin still queued
         # must not make the copy ahead of it look fresh.
         self.token_timestamps.setdefault(token_key, monotonic())
+        if self.slot_clock is not None:
+            self.slot_clock.observe(token_info.creation_slot)
 
         await self.token_queue.put(token_info)
         logger.info(

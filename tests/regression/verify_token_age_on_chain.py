@@ -6,9 +6,11 @@ or a backed-up queue passed coins older on chain than the setting suggests.
 Offline machine checks, no network and no funds moved:
 
   A. `SlotClock.age` counts from the last slot it read, at `SLOT_SECONDS` a
-     slot, plus the time since that read; it has no answer before a read, for
-     an unknown slot, or once its reading is older than `STALE_SECONDS`, keeps
-     the last reading when a read fails, and makes no RPC call itself.
+     slot, plus the time since that read, never below 0; a slot the stream
+     delivers ahead of the node's moves it on, an older one does not; it has
+     no answer before a reading, for an unknown slot, or once every reading is
+     older than `STALE_SECONDS`, keeps the last reading when a read fails, and
+     makes no RPC call itself.
   B. Under `chain` the intake skips a coin whose create is older than
      `max_token_age`, however fresh its detection, in continuous and in
      single-token mode, saying "since created on chain", and logs a coin it
@@ -72,7 +74,7 @@ class _Client:
 async def _read_once(clock: SlotClock) -> None:
     clock.start()
     for _ in range(100):
-        if clock._reference is not None:  # noqa: SLF001
+        if "node" in clock._readings:  # noqa: SLF001
             break
         await asyncio.sleep(0.001)
     await clock.stop()
@@ -98,10 +100,22 @@ async def _clock_problems() -> list[str]:
     await _read_once(clock)
     if clock.age(NOW_SLOT) is None:
         problems.append("a failed read dropped the last reading")
-    slot, read_at = clock._reference  # noqa: SLF001
-    clock._reference = (slot, read_at - SlotClock.STALE_SECONDS - 1)  # noqa: SLF001
+    slot, read_at = clock._readings["node"]  # noqa: SLF001
+    clock._readings["node"] = (slot, read_at - SlotClock.STALE_SECONDS - 1)  # noqa: SLF001
     if clock.age(NOW_SLOT) is not None:
         problems.append("a stale reading still gives an age")
+
+    # The stream runs slots ahead of the node: its slot moves the estimate on.
+    clock._readings["node"] = (NOW_SLOT, slot_clock_module.monotonic())  # noqa: SLF001
+    if clock.age(NOW_SLOT + 5) != 0.0:
+        problems.append("a slot ahead of the node read as a negative age")
+    clock.observe(NOW_SLOT + 5)
+    behind = clock.age(NOW_SLOT)
+    if behind is None or not 5 * SLOT_SECONDS <= behind < 5 * SLOT_SECONDS + 0.5:
+        problems.append(f"after the stream's slot, 5 slots back read as {behind}s")
+    clock.observe(NOW_SLOT + 1)
+    if clock._readings["stream"][0] != NOW_SLOT + 5:  # noqa: SLF001
+        problems.append("an older stream slot replaced a newer one")
     return problems
 
 
@@ -180,7 +194,7 @@ async def _intake_problems() -> list[str]:
     try:
         old, fresh, unknown = _coin(NOW_SLOT - 50), _coin(NOW_SLOT - 2), _coin(None)
         intake, client = _intake("chain", [old, fresh, unknown])
-        intake.slot_clock._reference = (NOW_SLOT, asyncio.get_running_loop().time())  # noqa: SLF001
+        intake.slot_clock._readings["node"] = (NOW_SLOT, slot_clock_module.monotonic())  # noqa: SLF001
         handled: list[TokenInfo] = []
 
         async def handle(token: TokenInfo) -> None:
@@ -205,11 +219,13 @@ async def _intake_problems() -> list[str]:
             problems.append(f"the fresh coin's line: {fresh_lines}")
         if not client.calls:
             problems.append("the clock never read the current slot while listening")
+        if "stream" not in intake.slot_clock._readings:  # noqa: SLF001
+            problems.append("the clock never saw the slots the listener delivered")
         if intake.slot_clock._task is None or not intake.slot_clock._task.done():  # noqa: SLF001
             problems.append("the clock still runs after the intake stopped")
 
         intake, _ = _intake("chain", [_coin(NOW_SLOT - 50), fresh])
-        intake.slot_clock._reference = (NOW_SLOT, asyncio.get_running_loop().time())  # noqa: SLF001
+        intake.slot_clock._readings["node"] = (NOW_SLOT, slot_clock_module.monotonic())  # noqa: SLF001
         intake.token_wait_timeout = 1
         found = await intake.wait_for_token()
         if found is None or found.mint != fresh.mint:

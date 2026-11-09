@@ -13,10 +13,13 @@ SLOT_SECONDS = 0.4
 
 
 class SlotClock:
-    """Tracks the cluster's processed slot in the background.
+    """Tracks the cluster's newest slot in the background.
 
-    `age` makes no RPC call: it reads the last slot fetched and counts forward
-    from it, so it can sit on the buy path.
+    Two sources feed it: the node's processed slot, read every
+    `REFRESH_SECONDS`, and the slot of every create the listener delivers
+    (`observe`). A stream can run slots ahead of the node, so the clock keeps
+    whichever reading puts the newest slot furthest ahead. `age` makes no RPC
+    call, so it can sit on the buy path.
     """
 
     #: Seconds between reads of the current slot.
@@ -27,8 +30,9 @@ class SlotClock:
 
     def __init__(self, client: SolanaClient) -> None:
         self._client = client
-        # The last slot read and the monotonic time it arrived.
-        self._reference: tuple[int, float] | None = None
+        # By source ("node", "stream"): the newest slot it gave and the
+        # monotonic time that arrived.
+        self._readings: dict[str, tuple[int, float]] = {}
         self._task: asyncio.Task | None = None
 
     def start(self) -> None:
@@ -45,8 +49,7 @@ class SlotClock:
         failing = False
         while True:
             try:
-                slot = await self._client.get_slot()
-                self._reference = (slot, monotonic())
+                self._readings["node"] = (await self._client.get_slot(), monotonic())
                 failing = False
             except Exception as e:  # noqa: BLE001 - the last reading stays in use
                 if not failing:
@@ -58,16 +61,31 @@ class SlotClock:
                 failing = True
             await asyncio.sleep(self.REFRESH_SECONDS)
 
+    def observe(self, slot: int | None) -> None:
+        """Count a slot the listener just delivered; None does nothing."""
+        if slot is None:
+            return
+        now = monotonic()
+        last = self._readings.get("stream")
+        if last is None or slot >= last[0] or now - last[1] > self.STALE_SECONDS:
+            self._readings["stream"] = (slot, now)
+
     def age(self, slot: int | None) -> float | None:
         """Seconds since `slot`, at `SLOT_SECONDS` a slot.
 
-        None when `slot` is None, no current slot has been read yet, or the
-        last reading is older than `STALE_SECONDS`.
+        Never below 0. None when `slot` is None, no current slot has been read
+        yet, or the last reading is older than `STALE_SECONDS`.
         """
-        if slot is None or self._reference is None:
+        if slot is None:
             return None
-        reference_slot, read_at = self._reference
-        since_read = monotonic() - read_at
-        if since_read > self.STALE_SECONDS:
+        now = monotonic()
+        # Each fresh reading's estimate of the time since `slot`; the largest
+        # comes from the reading that puts the newest slot furthest ahead.
+        ages = [
+            now - read_at + (reading - slot) * SLOT_SECONDS
+            for reading, read_at in self._readings.values()
+            if now - read_at <= self.STALE_SECONDS
+        ]
+        if not ages:
             return None
-        return since_read + (reference_slot - slot) * SLOT_SECONDS
+        return max(0.0, *ages)
