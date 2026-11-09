@@ -22,7 +22,8 @@ A position cleared because the wallet no longer holds its coin closes the empty
 account under `after_sell` (`PositionManager._clear`, also in `_closes`)
 and is left to the sweep under `post_session`. Under `after_sell` a sold or
 cleared position's record stays in the file marked `sold` until its close ends;
-the next start closes the account of one still there, never selling it. Every close goes out with the
+the next start closes the account of one still there, never selling it,
+whatever its exit strategy. Every close goes out with the
 priority fee unless `cleanup.with_priority_fee` is false (validated as a bool)
 and a tight compute unit limit. A confirmation wait can end early (a rate limit,
 a timeout), so a close is sent again only when `get_block_height_and_slot`

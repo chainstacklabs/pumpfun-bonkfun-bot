@@ -20,8 +20,8 @@ temporary folder:
      `trades/sessions.log`; without a session it does nothing. The summary
      lines show on the terminal without `--verbose`.
   F. At shutdown the trader reports the positions its file still holds and
-     the buys still pending there; a position sold and waiting for its close
-     counts as neither.
+     the buys still pending there; a position sold and waiting for its close,
+     or a pending buy cleared as never landed, counts as neither.
 
 Usage:
     uv run tests/regression/verify_session_summary.py
@@ -300,12 +300,14 @@ def check_f_trader_reports_what_is_left() -> bool:
     session.start("bot-six")
     store = PositionStore(Path("f.json"))
     buy = TradeResult(success=True, price=1.0, amount=1.0, tx_signature="b")
-    held, pending, sold = _coin(), _coin(), _coin()
+    held, pending, sold, cleared = _coin(), _coin(), _coin(), _coin()
     now = datetime(2026, 1, 1)
     store.add(held, buy, now)
     store.add(pending, buy, now, pending=PendingBuy())
     store.add(sold, buy, now)
     store.mark_sold(sold.mint)
+    store.add(cleared, buy, now, pending=PendingBuy())
+    store.mark_sold(cleared.mint)
     trader = object.__new__(UniversalTrader)
     trader.positions = SimpleNamespace(store=store)
     trader._report_session()  # noqa: SLF001
