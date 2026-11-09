@@ -477,6 +477,7 @@ def check_f_single_token_mode_waits_past_refused_coins() -> bool:
     intake.max_token_age = 60
     intake.slot_clock = None
     intake._too_old = lambda token, at: TokenIntake._too_old(intake, token, at)  # noqa: SLF001
+    intake._age = lambda token, at: TokenIntake._age(intake, token, at)  # noqa: SLF001
     intake._start_slot_clock = lambda: None  # noqa: SLF001
 
     async def no_clock() -> None:
