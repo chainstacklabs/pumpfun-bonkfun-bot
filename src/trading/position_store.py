@@ -462,6 +462,9 @@ class PositionStore:
         if record is None:
             return
         record["sold"] = True
+        # Its buy is settled: a pending record cleared as never landed is not
+        # pending any more either.
+        record.pop("pending", None)
         self._write()
 
     def set_realised(self, mint: Pubkey, realised: Realised) -> None:

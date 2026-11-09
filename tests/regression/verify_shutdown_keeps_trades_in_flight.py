@@ -59,7 +59,7 @@ Two trades were cut short by Ctrl+C:
   L. A close that hangs is cancelled once the stop budget runs out, with a
      warning, so shutdown still ends. The sold coin stays in the positions
      file, marked sold, and the next start closes its account without
-     selling and drops the record.
+     selling and drops the record, also under `manual`, which resumes nothing.
   M. A send is SUBMIT_FAILED only when no attempt can have reached the
      network (no connection, a node refusal, a 4xx); a read timeout or a 5xx
      on any attempt leaves it possibly sent. The signer reports the signature
@@ -1347,27 +1347,34 @@ async def _check_l(tmp: Path) -> list[str]:
     if record is None or record.get("sold") is not True:
         problems.append(f"the cut-short close left no sold record: {record}")
         return problems
-    return problems + await _next_start_closes(run.path, token)
+    saved = run.path.read_text()
+    problems += await _next_start_closes(run.path, token)
+    run.path.write_text(saved)
+    return problems + await _next_start_closes(run.path, token, "manual")
 
 
-async def _next_start_closes(path: Path, token: TokenInfo) -> list[str]:
+async def _next_start_closes(
+    path: Path, token: TokenInfo, exit_strategy: str = "time_based"
+) -> list[str]:
     """A fresh start closes a sold record's account, sells nothing, drops it."""
     closed: list[Pubkey] = []
 
     async def cleared(_c: object, _w: object, mint: Pubkey, *_a: object) -> None:
         closed.append(mint)
 
-    manager = _manager(path, _Client(), cleanup_mode="after_sell")
+    manager = _manager(
+        path, _Client(), cleanup_mode="after_sell", exit_strategy=exit_strategy
+    )
     with _patched(position_manager, "handle_cleanup_cleared", cleared):
         resumed = await manager.resume()
         await manager.wait_all()
     problems = []
     if resumed or manager.seller.sells:
-        problems.append(f"the sold record resumed {resumed} / sold again")
+        problems.append(f"{exit_strategy}: resumed {resumed} / sold again")
     if closed != [token.mint]:
-        problems.append(f"the next start closed {closed}, not the sold coin")
+        problems.append(f"{exit_strategy}: the next start closed {closed}")
     if PositionStore(path).load():
-        problems.append("the sold record is still in the file after its close")
+        problems.append(f"{exit_strategy}: the sold record is still in the file")
     return problems
 
 

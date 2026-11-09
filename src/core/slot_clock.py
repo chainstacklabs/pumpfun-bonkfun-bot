@@ -21,6 +21,9 @@ class SlotClock:
 
     #: Seconds between reads of the current slot.
     REFRESH_SECONDS = 2.0
+    #: Seconds after which a reading is too old to count from: real slots run
+    #: longer than `SLOT_SECONDS`, so the estimate drifts the longer it runs.
+    STALE_SECONDS = 10.0
 
     def __init__(self, client: SolanaClient) -> None:
         self._client = client
@@ -39,20 +42,32 @@ class SlotClock:
             await asyncio.gather(self._task, return_exceptions=True)
 
     async def _run(self) -> None:
+        failing = False
         while True:
             try:
                 slot = await self._client.get_slot()
                 self._reference = (slot, monotonic())
+                failing = False
             except Exception as e:  # noqa: BLE001 - the last reading stays in use
-                logger.debug(f"Could not read the current slot: {e!s}")
+                if not failing:
+                    logger.warning(
+                        f"Could not read the current slot ({e!s}); coins count "
+                        f"from detection once the last reading is "
+                        f"{self.STALE_SECONDS:g}s old"
+                    )
+                failing = True
             await asyncio.sleep(self.REFRESH_SECONDS)
 
     def age(self, slot: int | None) -> float | None:
         """Seconds since `slot`, at `SLOT_SECONDS` a slot.
 
-        None when `slot` is None or no current slot has been read yet.
+        None when `slot` is None, no current slot has been read yet, or the
+        last reading is older than `STALE_SECONDS`.
         """
         if slot is None or self._reference is None:
             return None
         reference_slot, read_at = self._reference
-        return monotonic() - read_at + (reference_slot - slot) * SLOT_SECONDS
+        since_read = monotonic() - read_at
+        if since_read > self.STALE_SECONDS:
+            return None
+        return since_read + (reference_slot - slot) * SLOT_SECONDS

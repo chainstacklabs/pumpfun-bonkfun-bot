@@ -339,7 +339,8 @@ class UniversalTrader:
             )
             logger.info(f"Max exit sell attempts: {positions.max_exit_sell_attempts}")
 
-        logger.info(f"Max token age: {intake.max_token_age}s since detection")
+        since = "since created on chain" if intake.slot_clock else "since detection"
+        logger.info(f"Max token age: {intake.max_token_age}s {since}")
 
         await self._warm_up()
 

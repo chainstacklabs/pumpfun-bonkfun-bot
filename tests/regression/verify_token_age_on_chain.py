@@ -6,9 +6,9 @@ or a backed-up queue passed coins older on chain than the setting suggests.
 Offline machine checks, no network and no funds moved:
 
   A. `SlotClock.age` counts from the last slot it read, at `SLOT_SECONDS` a
-     slot, plus the time since that read; it has no answer before a read or
-     for an unknown slot, keeps the last reading when a read fails, and makes
-     no RPC call itself.
+     slot, plus the time since that read; it has no answer before a read, for
+     an unknown slot, or once its reading is older than `STALE_SECONDS`, keeps
+     the last reading when a read fails, and makes no RPC call itself.
   B. Under `chain` the intake skips a coin whose create is older than
      `max_token_age`, however fresh its detection, in continuous and in
      single-token mode, saying "since created on chain"; a coin whose slot is
@@ -97,6 +97,10 @@ async def _clock_problems() -> list[str]:
     await _read_once(clock)
     if clock.age(NOW_SLOT) is None:
         problems.append("a failed read dropped the last reading")
+    slot, read_at = clock._reference  # noqa: SLF001
+    clock._reference = (slot, read_at - SlotClock.STALE_SECONDS - 1)  # noqa: SLF001
+    if clock.age(NOW_SLOT) is not None:
+        problems.append("a stale reading still gives an age")
     return problems
 
 

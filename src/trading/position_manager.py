@@ -709,7 +709,13 @@ class PositionManager:
         """
         if self.store is None:
             return []
-        stored = self.store.load()
+        stored = [
+            position
+            for position in self.store.load()
+            if not self._close_sold(
+                position, f"{position.token_info.symbol} ({position.token_info.mint})"
+            )
+        ]
         if stored and not self.monitors:
             logger.warning(
                 f"{len(stored)} position(s) in {self.store.path} are not resumed: "
@@ -724,8 +730,14 @@ class PositionManager:
         return resumed
 
     def _close_sold(self, stored: StoredPosition, label: str) -> bool:
-        """Close the account of a position sold before the restart; False if unsold."""
-        if not stored.sold:
+        """Close the account of a position sold before the restart; False if unsold.
+
+        Runs whatever the exit strategy, before anything else reads the
+        record. Only a record of this wallet's is closed; another's is kept.
+        """
+        if not stored.sold or (
+            stored.wallet is not None and stored.wallet != str(self.wallet.pubkey)
+        ):
             return False
         logger.info(
             f"Closing the token account of {label}: it was sold before the restart"
@@ -766,7 +778,7 @@ class PositionManager:
     async def _resume_one(self, stored: StoredPosition) -> bool:
         token_info, buy = stored.token_info, stored.buy_result
         label = f"{token_info.symbol} ({token_info.mint})"
-        if self._not_ours(stored, label) or self._close_sold(stored, label):
+        if self._not_ours(stored, label):
             return False
         if stored.pending is not None:
             return await self._resume_pending(stored, label)
