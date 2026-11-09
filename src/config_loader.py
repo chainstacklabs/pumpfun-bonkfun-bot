@@ -281,6 +281,7 @@ def validate_config(config: dict) -> None:
             raise
 
     validate_cleanup_config(config)
+    validate_checks_config(config)
 
     trade = config.get("trade") or {}
     error = entry_error(
@@ -325,6 +326,37 @@ def validate_cleanup_config(config: dict) -> None:
     fee = cleanup.get("with_priority_fee")
     if fee is not None and not isinstance(fee, bool):
         raise ValueError(CLEANUP_PRIORITY_FEE_NOT_BOOL)
+
+
+def validate_checks_config(config: dict) -> None:
+    """`filters.checks` is a list of mappings with well-typed common fields.
+
+    Whether each entry names a check that loads is checked when the trader is
+    built, which reports a bad one the same way.
+    """
+    checks = (config.get("filters") or {}).get("checks")
+    if checks is None:
+        return
+    if not isinstance(checks, list):
+        raise ValueError("filters.checks must be a list of checks")  # noqa: TRY003, TRY004
+    for entry in checks:
+        if not isinstance(entry, dict):
+            raise ValueError(f"filters.checks entry {entry!r} must be a mapping")  # noqa: TRY003, TRY004
+        for key in ("enabled", "required"):
+            if key in entry and not isinstance(entry[key], bool):
+                raise ValueError(  # noqa: TRY003
+                    f"filters.checks entry {entry!r}: {key} must be true or false"
+                )
+        budget = entry.get("budget")
+        if budget is not None and (
+            isinstance(budget, bool)
+            or not isinstance(budget, (int, float))
+            or budget <= 0
+        ):
+            raise ValueError(  # noqa: TRY003
+                f"filters.checks entry {entry!r}: budget must be a number of "
+                f"seconds above 0"
+            )
 
 
 BOTH_WALLET_KEYS = (

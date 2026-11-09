@@ -32,6 +32,7 @@ another shape stays in that verifier. Each verifier still runs on its own.
 | `verify_ping_loop_close_is_quiet.py` | a WebSocket closing normally ends the ping loop quietly in every listener, while an unexpected failure is still logged |
 | `verify_listener_cancellation.py` | a cancelled WebSocket listener stops, even when `websockets` reports cancellation as `AssertionError` |
 | `verify_create_log_gate.py` | the create marker is matched as a whole log line, so a foreign `Create*` instruction is not a coin and a real create sharing its transaction with one is still detected |
+| `verify_pre_buy_checks.py` | `filters.checks` runs in list order and the first skip wins; free and chain-reading checks run in separate passes; a check that raises, runs past its budget or returns junk refuses the coin when required and lets it through otherwise; a disabled entry is not loaded; a module path loads a user check, and a bad entry fails with one line; malformed `filters.checks` is refused at config validation |
 | `verify_extreme_fast_zero_rpc.py` | zero RPC calls between detection and submission for CreateEvent-sourced tokens |
 | `verify_curve_refresh_buy_path.py` | a TokenInfo without `state_from_event` refreshes first: an unreadable curve skips the buy, and curve + mint are read in one slot-consistent batch that corrects the token program |
 | `verify_cleanup_survives_shutdown.py` | shutdown cleanup runs to completion through the cancellation that triggered it, bounded, and a cleanup that hangs or raises still lets the process exit |
