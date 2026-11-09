@@ -61,7 +61,10 @@ from solders.pubkey import Pubkey  # noqa: E402
 from core.pubkeys import WSOL_MINT  # noqa: E402
 from core.token_metadata import metadata_address  # noqa: E402
 from interfaces.core import Platform, PoolReady, TokenInfo  # noqa: E402
-from platforms.launchlab.curve_math import mint_transfer_fee  # noqa: E402
+from platforms.launchlab.curve_math import (  # noqa: E402
+    mint_transfer_fee,
+    transfer_fee_bps,
+)
 from trading import migration  # noqa: E402
 from trading.intake import TokenIntake  # noqa: E402
 from trading.migration import MigrationResolver, PoolNotTradable  # noqa: E402
@@ -474,7 +477,7 @@ def check_f_transfer_fee() -> bool:
     for coin in fee_coins:
         label = coin["label"]
         mint = coin["accounts"][coin["pool_ready"]["mint"]]
-        want = mint_transfer_fee(base64.b64decode(mint["data"]))[0]
+        want = transfer_fee_bps(mint_transfer_fee(base64.b64decode(mint["data"])))
         client = _YoungMintClient(coin, 1, fee_read_misses=True)
         got = _resolve(client, coin, 0.0)
         if not isinstance(got, TokenInfo):

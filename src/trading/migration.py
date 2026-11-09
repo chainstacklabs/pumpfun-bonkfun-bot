@@ -23,7 +23,7 @@ from core.pubkeys import cached_quote_token_program, normalize_quote_mint
 from core.token_metadata import decode_token_metadata, metadata_address
 from interfaces.core import CurveManager, Platform, PoolReady, TokenInfo
 from platforms import get_platform_implementations
-from platforms.launchlab.curve_math import mint_transfer_fee
+from platforms.launchlab.curve_math import mint_transfer_fee, transfer_fee_bps
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -155,9 +155,9 @@ class MigrationResolver:
             # From the mint read that saw the mint, not the curve manager's own
             # read: a node behind the stream misses the mint there and the
             # state then reports no fee.
-            token_info.transfer_fee_bps = (
-                mint_transfer_fee(mint_account.data) or (0, 0)
-            )[0]
+            token_info.transfer_fee_bps = transfer_fee_bps(
+                mint_transfer_fee(mint_account.data)
+            )
         return token_info
 
     async def _read_completed(

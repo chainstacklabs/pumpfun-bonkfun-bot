@@ -14,6 +14,7 @@ from platforms.launchlab.curve_math import (
     mint_transfer_fee,
     sell_amount_out,
     spot_price_raw,
+    transfer_fee_bps,
 )
 from utils.idl_parser import IDLParser
 from utils.logger import get_logger
@@ -28,7 +29,9 @@ _PLATFORM_FEE_RATE_OFFSET = 8 + 8 + 32 + 32 + 3 * 8
 _PLATFORM_CREATOR_FEE_RATE_OFFSET = _PLATFORM_FEE_RATE_OFFSET + 8 + 64 + 256 + 256 + 32
 
 # Fee rates are read live by the program on every trade, and a platform admin
-# can change them, so a cached rate is re-read after this long.
+# can change them, so a cached rate is re-read after this long. A mint's
+# transfer fees are re-read on the same clock: a fee change is in the mint as
+# soon as it is set and only applies two epochs later.
 _FEE_RATE_TTL_SECONDS = 300.0
 
 _PUBKEY_FIELDS = (
@@ -50,8 +53,9 @@ class LaunchLabCurveManager(CurveManager):
     - `price_per_token`: whole quote units per whole token, from the real
       reserves and the pool's own decimals
     - `fee_rate`: total curve fee in parts per million, and `fee_fraction`
-    - `transfer_fee_bps` / `transfer_fee_max`: the coin's Token-2022 transfer
-      fee, zero for a mint without one
+    - `transfer_fee_bps` / `transfer_fees`: the coin's highest Token-2022 transfer
+      fee rate, and every scheduled fee as (bps, maximum raw); 0 and empty for a
+      mint without one
     - `graduated`: the curve takes no more trades; the coin trades on CPMM
     """
 
@@ -59,7 +63,10 @@ class LaunchLabCurveManager(CurveManager):
         self.client = client
         self._idl_parser = idl_parser
         self._fee_rates: dict[tuple[Pubkey, Pubkey], tuple[int, float]] = {}
-        self._transfer_fees: dict[Pubkey, tuple[int, int]] = {}
+        # Mint -> (scheduled transfer fees, monotonic time read).
+        self._transfer_fees: dict[
+            Pubkey, tuple[tuple[tuple[int, int], ...], float]
+        ] = {}
 
     @property
     def platform(self) -> Platform:
@@ -104,7 +111,10 @@ class LaunchLabCurveManager(CurveManager):
         if pool_account is None or not pool_account.data:
             raise ValueError(f"No data in pool state account {pool_address}")  # noqa: TRY003
         if mint_account is not None:
-            self._transfer_fees[mint] = mint_transfer_fee(mint_account.data) or (0, 0)
+            self._transfer_fees[mint] = (
+                mint_transfer_fee(mint_account.data),
+                monotonic(),
+            )
         pool = self._decode_pool(pool_account.data)
         state = await self._with_fees(pool, commitment)
         return state, mint_account.owner if mint_account is not None else None
@@ -133,7 +143,8 @@ class LaunchLabCurveManager(CurveManager):
         mint = pool["base_mint"]
 
         missing = [] if rate_fresh else [pool["global_config"], pool["platform_config"]]
-        if mint not in self._transfer_fees:
+        cached_fees = self._transfer_fees.get(mint)
+        if cached_fees is None or monotonic() - cached_fees[1] >= _FEE_RATE_TTL_SECONDS:
             missing.append(mint)
         if missing:
             accounts = dict(
@@ -165,13 +176,14 @@ class LaunchLabCurveManager(CurveManager):
                 )
                 self._fee_rates[config_key] = (rate, monotonic())
             if mint in accounts and accounts[mint] is not None:
-                self._transfer_fees[mint] = mint_transfer_fee(accounts[mint].data) or (
-                    0,
-                    0,
+                self._transfer_fees[mint] = (
+                    mint_transfer_fee(accounts[mint].data),
+                    monotonic(),
                 )
 
         fee_rate = self._fee_rates[config_key][0]
-        transfer_bps, transfer_max = self._transfer_fees.get(mint, (0, 0))
+        # A failed re-read keeps the last fees read rather than none.
+        transfer_fees = self._transfer_fees.get(mint, ((), 0.0))[0]
         price_raw = spot_price_raw(pool)
         return {
             **pool,
@@ -180,8 +192,8 @@ class LaunchLabCurveManager(CurveManager):
             / 10 ** pool["quote_decimals"],
             "fee_rate": fee_rate,
             "fee_fraction": fee_rate / FEE_RATE_DENOMINATOR,
-            "transfer_fee_bps": transfer_bps,
-            "transfer_fee_max": transfer_max,
+            "transfer_fee_bps": transfer_fee_bps(transfer_fees),
+            "transfer_fees": transfer_fees,
             # Status 1 is waiting for Raydium to migrate it, 2 is migrated. The
             # curve takes no trades either way, and a migrated pool keeps its
             # final reserves, so its price would read as frozen.
@@ -209,7 +221,7 @@ class LaunchLabCurveManager(CurveManager):
             pool,
             amount_in,
             pool["fee_rate"],
-            (pool["transfer_fee_bps"], pool["transfer_fee_max"]),
+            pool["transfer_fees"],
         )
 
     async def calculate_sell_amount_out(
@@ -221,7 +233,7 @@ class LaunchLabCurveManager(CurveManager):
             pool,
             amount_in,
             pool["fee_rate"],
-            (pool["transfer_fee_bps"], pool["transfer_fee_max"]),
+            pool["transfer_fees"],
         )
 
     async def get_reserves(self, pool_address: Pubkey) -> tuple[int, int]:

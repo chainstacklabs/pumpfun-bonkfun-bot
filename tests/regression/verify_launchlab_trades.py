@@ -31,6 +31,11 @@ Offline machine checks, no network and no funds moved:
   F. Single-token mode passes over a coin its filters refuse — an unconfigured
      quote asset, a transfer fee above `max_transfer_fee_bps` — and waits for
      one it can buy, instead of exiting on the first launch it sees.
+  G. A mint with a fee change scheduled keeps both fees, and a transfer loses
+     whichever withholds more on its amount: a lower rate with a higher cap
+     wins on a large transfer, the higher rate on a small one.
+  H. The curve manager re-reads a mint's transfer fees once its cache is as
+     old as the fee-rate cache, so a fee set while the bot runs is priced in.
 
 Usage:
     uv run tests/regression/verify_launchlab_trades.py
@@ -58,7 +63,9 @@ from platforms import PlatformImplementations  # noqa: E402
 from platforms.launchlab import LAUNCHLAB_PROGRAM  # noqa: E402
 from platforms.launchlab.curve_math import (  # noqa: E402
     buy_amount_out,
+    mint_transfer_fee,
     sell_amount_out,
+    transfer_fee_bps,
     withheld_fee,
 )
 from platforms.launchlab.instruction_builder import _SWAP_ACCOUNTS  # noqa: E402
@@ -203,14 +210,14 @@ def check_a_math_reproduces_trades() -> bool:
         trade = _trade(entry)
         event = trade["event"]
         pool = asyncio.run(_priced_pool(entry, event))
-        tax = (pool["transfer_fee_bps"], pool["transfer_fee_max"])
+        tax = pool["transfer_fees"]
         is_buy = trade["swap"]["data"][:8] == BUY_EXACT_IN
         if is_buy:
             predicted = buy_amount_out(pool, event["amount_in"], pool["fee_rate"], tax)
             good = (
                 predicted
                 == trade["base_delta"]
-                == event["amount_out"] - withheld_fee(event["amount_out"], *tax)
+                == event["amount_out"] - withheld_fee(event["amount_out"], tax)
             )
             detail = f"predicted {predicted}, delivered {trade['base_delta']}"
         else:
@@ -218,7 +225,7 @@ def check_a_math_reproduces_trades() -> bool:
             predicted = sell_amount_out(pool, sent, pool["fee_rate"], tax)
             good = predicted == event["amount_out"] and event[
                 "amount_in"
-            ] == sent - withheld_fee(sent, *tax)
+            ] == sent - withheld_fee(sent, tax)
             detail = f"predicted {predicted}, paid {event['amount_out']}"
         print(
             f"    {entry['label']}: fee {pool['fee_rate']} ppm, tax "
@@ -474,6 +481,71 @@ def check_f_single_token_mode_waits_past_refused_coins() -> bool:
     return ok
 
 
+def _mint_with_fees(older: tuple[int, int], newer: tuple[int, int]) -> bytes:
+    """A Token-2022 mint whose TransferFeeConfig schedules (bps, max) twice."""
+    body = bytes(72)
+    for bps, maximum in (older, newer):
+        body += struct.pack("<QQH", 0, maximum, bps)
+    return bytes(166) + struct.pack("<HH", 1, len(body)) + body
+
+
+def check_g_scheduled_fee_change() -> bool:
+    """G: both scheduled fees kept; the larger withholding wins per amount."""
+    fees = mint_transfer_fee(_mint_with_fees((100, 1_000), (50, 10**15)))
+    large = withheld_fee(10**9, fees)
+    small = withheld_fee(10_000, fees)
+    ok = (
+        fees == ((100, 1_000), (50, 10**15))
+        and large == 5_000_000
+        and small == 100
+        and transfer_fee_bps(fees) == 100
+        and mint_transfer_fee(_mint_with_fees((100, 10**15), (100, 10**15)))
+        == ((100, 10**15),)
+        and mint_transfer_fee(bytes(166)) == ()
+    )
+    if not ok:
+        print(f"  fees {fees}, withheld on 1e9 {large}, on 1e4 {small}")
+    return ok
+
+
+def check_h_transfer_fees_are_reread() -> bool:
+    """H: cached transfer fees hold until the TTL, then the mint is read again."""
+    from unittest.mock import patch  # noqa: PLC0415
+
+    from platforms.launchlab import curve_manager  # noqa: PLC0415
+
+    entry = json.loads(FIXTURE.read_text())[0]
+    event = _trade(entry)["event"]
+    accounts = {
+        Pubkey.from_string(entry[name]): base64.b64decode(
+            entry["accounts_base64"][name]
+        )
+        for name in ("global_config", "platform_config", "base_mint")
+    }
+    mint = Pubkey.from_string(entry["base_mint"])
+    manager = StonkFunCurveManager(_FixtureClient(accounts), PARSER)
+    now = [1_000.0]
+
+    async def fees_at(seconds: float) -> tuple:
+        now[0] = 1_000.0 + seconds
+        pool = await manager._with_fees(_pool_before(entry, event), None)
+        return pool["transfer_fees"]
+
+    async def run() -> tuple:
+        with patch.object(curve_manager, "monotonic", lambda: now[0]):
+            first = await fees_at(0)
+            accounts[mint] = _mint_with_fees((300, 10**15), (300, 10**15))
+            cached = await fees_at(curve_manager._FEE_RATE_TTL_SECONDS - 1)
+            reread = await fees_at(curve_manager._FEE_RATE_TTL_SECONDS + 1)
+        return first, cached, reread
+
+    first, cached, reread = asyncio.run(run())
+    ok = cached == first != reread == ((300, 10**15),)
+    if not ok:
+        print(f"  first {first}, before TTL {cached}, after TTL {reread}")
+    return ok
+
+
 def main() -> int:
     """Run every check and report."""
     checks = [
@@ -485,6 +557,14 @@ def main() -> int:
         (
             "F: single-token mode waits past refused coins",
             check_f_single_token_mode_waits_past_refused_coins,
+        ),
+        (
+            "G: a scheduled fee change withholds the larger fee",
+            check_g_scheduled_fee_change,
+        ),
+        (
+            "H: transfer fees are re-read on the fee clock",
+            check_h_transfer_fees_are_reread,
         ),
     ]
     passed = 0

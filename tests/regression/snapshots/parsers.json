@@ -788,7 +788,7 @@
    "fee_rate": 12500,
    "fee_fraction": 0.0125,
    "transfer_fee_bps": 0,
-   "transfer_fee_max": 0,
+   "transfer_fees": [],
    "graduated": true
   },
   "PumpSwap market": {
@@ -876,7 +876,7 @@
     "fee_rate": 12500,
     "fee_fraction": 0.0125,
     "transfer_fee_bps": 0,
-    "transfer_fee_max": 0,
+    "transfer_fees": [],
     "graduated": false
    }
   },
@@ -925,7 +925,12 @@
     "fee_rate": 12500,
     "fee_fraction": 0.0125,
     "transfer_fee_bps": 100,
-    "transfer_fee_max": 1000000000000000,
+    "transfer_fees": [
+     [
+      100,
+      1000000000000000
+     ]
+    ],
     "graduated": false
    }
   },
@@ -974,7 +979,12 @@
     "fee_rate": 12500,
     "fee_fraction": 0.0125,
     "transfer_fee_bps": 300,
-    "transfer_fee_max": 1000000000000000,
+    "transfer_fees": [
+     [
+      300,
+      1000000000000000
+     ]
+    ],
     "graduated": false
    }
   },
@@ -1023,7 +1033,7 @@
     "fee_rate": 12500,
     "fee_fraction": 0.0125,
     "transfer_fee_bps": 0,
-    "transfer_fee_max": 0,
+    "transfer_fees": [],
     "graduated": false
    }
   }
@@ -1563,7 +1573,7 @@
     "fee_rate": 10500,
     "fee_fraction": 0.0105,
     "transfer_fee_bps": 0,
-    "transfer_fee_max": 0,
+    "transfer_fees": [],
     "graduated": true
    },
    "CPMM market": {
@@ -1684,7 +1694,7 @@
     "fee_rate": 12500,
     "fee_fraction": 0.0125,
     "transfer_fee_bps": 0,
-    "transfer_fee_max": 0,
+    "transfer_fees": [],
     "graduated": true
    },
    "CPMM market": {
@@ -1805,7 +1815,7 @@
     "fee_rate": 12500,
     "fee_fraction": 0.0125,
     "transfer_fee_bps": 0,
-    "transfer_fee_max": 0,
+    "transfer_fees": [],
     "graduated": true
    },
    "CPMM market": {
@@ -1926,7 +1936,12 @@
     "fee_rate": 12500,
     "fee_fraction": 0.0125,
     "transfer_fee_bps": 100,
-    "transfer_fee_max": 1000000000000000,
+    "transfer_fees": [
+     [
+      100,
+      1000000000000000
+     ]
+    ],
     "graduated": true
    },
    "CPMM market": {
