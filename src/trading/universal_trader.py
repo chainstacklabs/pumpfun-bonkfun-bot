@@ -17,6 +17,7 @@ from cleanup.modes import (
     handle_cleanup_after_failure,
     handle_cleanup_post_session,
 )
+from core import session
 from core.client import SolanaClient
 from core.priority_fee.manager import PriorityFeeManager
 from core.pubkeys import (
@@ -252,9 +253,7 @@ class UniversalTrader:
                 else None
             ),
             slot_clock=(
-                SlotClock(self.solana_client)
-                if settings.age_from == "chain"
-                else None
+                SlotClock(self.solana_client) if settings.age_from == "chain" else None
             ),
         )
 
@@ -398,6 +397,7 @@ class UniversalTrader:
             # position task to end, so cleanup never races a sell.
             await positions.stop()
             await self._cleanup_without_interruption()
+            self._report_session()
             logger.info("Universal Trader has shut down")
 
     async def _warm_up(self) -> None:
@@ -458,6 +458,17 @@ class UniversalTrader:
                 f"buying again"
             )
         self._below_min_balance = below
+
+    def _report_session(self) -> None:
+        """Print the session summary and append it to `trades/sessions.log`."""
+        store = self.positions.store
+        try:
+            session.report(
+                held=len(store.held_mints()) if store else 0,
+                pending=len(store.pending_mints()) if store else 0,
+            )
+        except Exception:  # a summary must never fail a shutdown
+            logger.exception("Could not report the session summary")
 
     async def _cleanup_without_interruption(self) -> None:
         """Run cleanup to completion even though shutdown arrives as a cancellation.

@@ -16,6 +16,7 @@ from enum import Enum
 from solders.pubkey import Pubkey
 
 from cleanup.modes import handle_cleanup_after_sell, handle_cleanup_cleared
+from core import session
 from core.client import SolanaClient
 from core.priority_fee.manager import PriorityFeeManager
 from core.pubkeys import (
@@ -1059,7 +1060,10 @@ class PositionManager:
                 price=token_price,
                 realised=realised,
             )
-            if verdict in (ExitSellVerdict.SOLD, ExitSellVerdict.STOP):
+            if verdict is ExitSellVerdict.SOLD:
+                session.current().add_exit("time_based")
+                return
+            if verdict is ExitSellVerdict.STOP:
                 return
             if verdict is ExitSellVerdict.PARTIAL:
                 # What is left gets a fresh attempt budget.
@@ -1584,6 +1588,7 @@ class PositionManager:
         if partial:
             return ExitSellVerdict.PARTIAL
         position.close_position(price, exit_reason)
+        session.current().add_exit(exit_reason.value)
         logger.info(
             f"Successfully exited position: {exit_reason.value} "
             f"({token_info.symbol}, venue: {sell_result.venue})"

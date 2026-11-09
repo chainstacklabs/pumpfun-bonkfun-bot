@@ -38,6 +38,7 @@ from config_loader import (
     print_config_summary,
     validate_platform_listener_combination,
 )
+from core import session
 from core.client import rpc_endpoint_problem
 from core.keystore import KeystoreError, unlock_from_env
 from interfaces.core import Platform
@@ -343,6 +344,7 @@ async def start_bot(config_path: str, positions_file: str | None = None) -> bool
 async def _start_loaded(cfg: dict, positions_file: str | None) -> bool:
     """`start_bot` once the config has loaded and the bot's log file is set up."""
     print_config_summary(cfg)
+    session.start(cfg["name"])
 
     try:
         platform = _startable_platform(cfg)

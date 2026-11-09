@@ -70,6 +70,7 @@ _RULES: tuple[tuple[re.Pattern[str], str, bool], ...] = tuple(
         (r"^Successfully (sold|exited)", f"{BOLD};{MAGENTA}", False),
         (r"^Exit condition met", f"{BOLD};{YELLOW}", False),
         (r"^Final PnL", "", False),
+        (r"^Session (summary|PnL|costs|left)", BOLD, False),
         (r"^Position PnL", DIM, True),
         (r"^(New token detected|Migration (done|submitted))", CYAN, False),
         (r"^Buying \S+ of quote", GREEN, False),

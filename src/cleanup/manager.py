@@ -11,6 +11,7 @@ from spl.token.instructions import burn as burn_instruction
 from spl.token.instructions import close_account
 from spl.token.models import BurnParams, CloseAccountParams
 
+from core import session
 from core.client import SolanaClient, TransactionNotSent
 from core.priority_fee.manager import PriorityFeeManager
 from core.pubkeys import SystemAddresses
@@ -129,6 +130,7 @@ class AccountCleanupManager:
         self.priority_fee_manager = priority_fee_manager
         self.use_priority_fee = use_priority_fee
         self.close_with_force_burn = force_burn
+        self._lamports: dict[Pubkey, int | None] = {}
 
     async def cleanup_ata(
         self,
@@ -318,6 +320,7 @@ class AccountCleanupManager:
             outcome, signature, slot = await self._send(account, instructions)
             if outcome is ConfirmationStatus.SUCCESS:
                 logger.info(f"Closed successfully: {account}")
+                session.current().add_close(self._lamports.pop(account, None))
                 return
             if outcome is ConfirmationStatus.REVERTED:
                 logger.error(f"Failed to close token account {account}: {signature}")
@@ -362,6 +365,8 @@ class AccountCleanupManager:
         except ValueError:
             logger.info(f"{label} {account} does not exist or already closed.")
             return None
+        # What its close returns to the wallet, for the session summary.
+        self._lamports[account] = getattr(info, "lamports", None)
 
         # SPL token account: mint (32), owner (32), amount (u64).
         balance = struct.unpack_from("<Q", bytes(info.data), 64)[0]
