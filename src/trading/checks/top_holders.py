@@ -35,14 +35,17 @@ class TopHoldersCheck(PreBuyCheck):
     """Skip a coin when its top wallets hold more than `max_share` of the supply.
 
     Accounts owned by a program address (the bonding curve, an AMM pool's or a
-    LaunchLab vault) are left out, so the share counts wallets only. A fresh
+    LaunchLab vault) are left out, and a wallet's accounts count together, so
+    the share counts wallets only. A fresh
     launch is held by its creator and its curve alone, so this suits migration
     entries and buys that wait after creation; run it best effort, since a
     coin the shreds listener reports before its create has run has no
     accounts to read yet.
 
     Args:
-        top: How many of the largest wallets to add up; the node returns 20 at most
+        top: How many of the largest wallets to add up. The node returns the 20
+            largest token accounts only, so a wallet whose balance is spread
+            over smaller ones counts what is among those 20
         max_share: Fraction of the supply above which the coin is skipped, in (0, 1]
     """
 
@@ -71,14 +74,15 @@ class TopHoldersCheck(PreBuyCheck):
         accounts = await ctx.client.get_multiple_accounts(
             addresses, commitment="confirmed"
         )
-        wallet_amounts = []
+        by_wallet: dict[Pubkey, int] = {}
         for holder, account in zip(holders, accounts, strict=True):
             if account is None or len(account.data) < _OWNER.stop:
-                continue
+                # Gone or unreadable: it may be a large holder, so say nothing.
+                raise CheckUnavailable
             owner = Pubkey.from_bytes(bytes(account.data[_OWNER]))
             if owner.is_on_curve():
-                wallet_amounts.append(int(holder["amount"]))
-        held = sum(sorted(wallet_amounts, reverse=True)[: self.top])
+                by_wallet[owner] = by_wallet.get(owner, 0) + int(holder["amount"])
+        held = sum(sorted(by_wallet.values(), reverse=True)[: self.top])
         share = held / total
         if share > self.max_share:
             return (

@@ -76,9 +76,13 @@ class CheckPipeline:
         try:
             async with budget:
                 result = await check.check(coin, self.ctx)
-            if result is None or isinstance(result, str):
+            if budget.expired():
+                # It hid its own cancellation and answered after the budget.
+                failure = f"ran past its {configured.budget}s budget"
+            elif result is None or isinstance(result, str):
                 return result
-            failure = f"returned {type(result).__name__}, not None or a reason"
+            else:
+                failure = f"returned {type(result).__name__}, not None or a reason"
         except TimeoutError as e:
             # The budget ran out, or the check timed out on its own.
             failure = (

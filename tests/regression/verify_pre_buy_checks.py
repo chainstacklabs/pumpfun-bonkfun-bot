@@ -25,7 +25,8 @@ Offline machine checks, no network and no funds moved:
  13. With only free checks, the trader touches no RPC between taking a coin
      and sending its buy.
  14. A chain-reading check runs after the creation wait and its skip stops
-     the buy.
+     the buy; in single-token mode the bot then waits for the next coin,
+     within what is left of `token_wait_timeout`.
  15. The top-holders check skips a coin whose top wallets hold too much, and
      leaves out accounts that programs own (the curve, a pool's vaults).
  16. A failed or empty read leaves the top-holders check unable to decide.
@@ -61,7 +62,7 @@ from solders.keypair import Keypair  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
 import bot_runner  # noqa: E402
-from config_loader import validate_checks_config  # noqa: E402
+from config_loader import resolve_env_vars, validate_checks_config  # noqa: E402
 from core.pubkeys import USDC_MINT, WSOL_MINT  # noqa: E402
 from interfaces.core import Platform, TokenInfo  # noqa: E402
 from trading import trade_log  # noqa: E402
@@ -90,6 +91,8 @@ COIN = TokenInfo(
 )
 CTX = CheckContext(client=None)
 BUDGET = 0.2
+# A creation wait the test can tell from any other sleep.
+CREATION_WAIT = 0.0123
 # Slack over the budget for the event loop to cancel the check.
 CANCEL_SLACK = 0.2
 
@@ -147,6 +150,17 @@ class OwnTimeout(PreBuyCheck):
 
     async def check(self, _coin: TokenInfo, _ctx: CheckContext) -> str | None:
         raise TimeoutError
+
+
+class SwallowsTimeout(PreBuyCheck):
+    name = "swallows"
+
+    async def check(self, _coin: TokenInfo, _ctx: CheckContext) -> str | None:
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            return None  # a check that hides its own cancellation
+        return None
 
 
 class ReturnsJunk(PreBuyCheck):
@@ -211,6 +225,14 @@ async def check_own_timeout() -> bool:
     return _check(
         "a check's own timeout is a failure, not its budget", ok, repr(reason)
     )
+
+
+async def check_late_result_refused() -> bool:
+    reason = await _pipeline(
+        ConfiguredCheck(SwallowsTimeout(), required=True, budget=BUDGET)
+    ).reason(COIN, reads_chain=False)
+    ok = reason is not None and "budget" in reason
+    return _check("a result after the budget ran out is not taken", ok, repr(reason))
 
 
 async def check_budget() -> bool:
@@ -343,6 +365,9 @@ def check_config_validation() -> bool:
         "required not bool": {"checks": [{"name": "mayhem", "required": 1}]},
         "budget zero": {"checks": [{"name": "mayhem", "budget": 0}]},
         "budget text": {"checks": [{"name": "mayhem", "budget": "1"}]},
+        "budget null": {"checks": [{"name": "mayhem", "budget": None}]},
+        "budget infinite": {"checks": [{"name": "mayhem", "budget": float("inf")}]},
+        "budget nan": {"checks": [{"name": "mayhem", "budget": float("nan")}]},
     }
     for label, filters in bad.items():
         try:
@@ -549,16 +574,68 @@ async def check_free_checks_cost_no_rpc() -> bool:
     return _check("free checks: no RPC before the buy", ok, str(events))
 
 
+async def check_single_token_waits_past_refusal() -> bool:
+    events: list[str] = []
+    first, second = _coin(symbol="FIRST"), _coin(symbol="SECOND")
+    offered = [first, second]
+    timeouts: list[float] = []
+
+    async def wait_for_token(*, timeout: float | None = None) -> TokenInfo | None:
+        timeouts.append(timeout)
+        return offered.pop(0) if offered else None
+
+    class _RefusesFirst(PreBuyCheck):
+        name = "refuses_first"
+        reads_chain = True
+
+        async def check(self, coin: TokenInfo, _ctx: CheckContext) -> str | None:
+            return "too concentrated" if coin.symbol == "FIRST" else None
+
+    trader = _trader(events, [ConfiguredCheck(_RefusesFirst())], fast=True)
+    real_intake = trader.intake
+    trader.intake = SimpleNamespace(
+        wait_for_token=wait_for_token,
+        skip_reason=real_intake.skip_reason,
+        token_wait_timeout=30,
+    )
+    trader.entry = "new_launch"
+    taken = await trader._take_one_token()  # noqa: SLF001
+    ok = (
+        taken is second
+        and events == ["buy"]
+        and len(timeouts) == 2  # noqa: PLR2004
+        and all(t is not None and t <= 30 for t in timeouts)  # noqa: PLR2004
+    )
+    return _check(
+        "single-token mode waits on past a coin a chain check refuses",
+        ok,
+        f"took {taken and taken.symbol}, events {events}, timeouts {timeouts}",
+    )
+
+
 async def check_chain_check_after_wait() -> bool:
     events: list[str] = []
+    real_sleep = asyncio.sleep
+
+    async def sleep(delay: float, *args: object) -> object:
+        if delay == CREATION_WAIT:
+            events.append("creation wait started")
+            await real_sleep(0)
+            events.append("creation wait done")
+            return None
+        return await real_sleep(delay, *args)
+
     original = trade_log.save_token_info
-    trade_log.save_token_info = lambda _t: events.append("creation wait")
+    trade_log.save_token_info = lambda _t: None
+    asyncio.sleep = sleep
     try:
         trader = _trader(events, [ConfiguredCheck(_ChainSkips(events))], fast=False)
+        trader.wait_time_after_creation = CREATION_WAIT
         await trader._handle_token(_coin())  # noqa: SLF001
     finally:
+        asyncio.sleep = real_sleep
         trade_log.save_token_info = original
-    ok = events == ["creation wait", "chain check"]
+    ok = events == ["creation wait started", "creation wait done", "chain check"]
     return _check("chain check runs after the wait and stops the buy", ok, str(events))
 
 
@@ -594,6 +671,9 @@ class _HoldersClient:
         out = []
         for key in pubkeys:
             _amount, owner = self.accounts[key]
+            if owner is None:  # the account is gone by the time it is read
+                out.append(None)
+                continue
             data = bytes(32) + bytes(owner) + bytes(165 - 64)
             out.append(
                 Account(
@@ -638,11 +718,25 @@ async def check_top_holders() -> bool:
     return a and b and c
 
 
+async def check_top_holders_by_wallet() -> bool:
+    whale = _wallet()
+    split = _HoldersClient([(200_000, whale), (200_000, whale), (100_000, _wallet())])
+    skip = await TopHoldersCheck(top=1, max_share=0.3).check(
+        _coin(), CheckContext(client=split)
+    )
+    return _check(
+        "top holders: one wallet's accounts count together",
+        skip is not None and "40.00%" in skip,
+        repr(skip),
+    )
+
+
 async def check_top_holders_unavailable() -> bool:
     results = []
     for label, client in (
         ("failed read", _HoldersClient([(1, _wallet())], fail=True)),
         ("no accounts", _HoldersClient([])),
+        ("an account gone", _HoldersClient([(300_000, None), (1, _wallet())])),
     ):
         try:
             await TopHoldersCheck(max_share=0.5).check(_coin(), CheckContext(client))
@@ -761,6 +855,97 @@ class _Lines(logging.Handler):
         self.lines.append(record.getMessage())
 
 
+class _Built(PreBuyCheck):
+    name = "built"
+    count = 0
+
+    def __init__(self) -> None:
+        _Built.count += 1
+
+    async def check(self, _coin: TokenInfo, _ctx: CheckContext) -> str | None:
+        return None
+
+
+async def check_built_once_at_start() -> bool:
+    _Built.count = 0
+    given: dict = {}
+
+    class _Trader:
+        stopped_on_error = False
+
+        def __init__(self, _settings: object, **kwargs: object) -> None:
+            given.update(kwargs)
+
+        async def start(self) -> None:
+            return None
+
+    async def no_problem(_endpoint: str) -> None:
+        return None
+
+    originals = (
+        bot_runner.UniversalTrader,
+        bot_runner.rpc_endpoint_problem,
+        bot_runner.build_trader_settings,
+        dict(BUILTINS),
+    )
+    bot_runner.UniversalTrader = _Trader
+    bot_runner.rpc_endpoint_problem = no_problem
+    bot_runner.build_trader_settings = lambda *_a, **_k: object()
+    BUILTINS["built"] = _Built
+    try:
+        cfg = {
+            "name": "built-once",
+            "platform": "pump_fun",
+            "rpc_endpoint": "https://rpc.invalid",
+            "private_key": "unused",
+            "filters": {"listener_type": "logs", "checks": [{"name": "built"}]},
+        }
+        started = await bot_runner._start_unlocked(cfg, None)  # noqa: SLF001
+    finally:
+        (
+            bot_runner.UniversalTrader,
+            bot_runner.rpc_endpoint_problem,
+            bot_runner.build_trader_settings,
+            saved,
+        ) = originals
+        BUILTINS.clear()
+        BUILTINS.update(saved)
+    handed = [type(c.check) for c in given.get("checks") or []]
+    ok = started and _Built.count == 1 and handed == [_Built]
+    return _check(
+        "each check is built once, at startup, and handed to the trader",
+        ok,
+        f"started {started}, built {_Built.count}, handed {handed}",
+    )
+
+
+def check_env_switches_in_checks() -> bool:
+    os.environ["VERIFY_CHECK_ON"] = "false"
+    os.environ["VERIFY_CHECK_REQUIRED"] = "TRUE"
+    try:
+        cfg = {
+            "filters": {
+                "checks": [
+                    {
+                        "name": "mayhem",
+                        "enabled": "${VERIFY_CHECK_ON}",
+                        "required": "${VERIFY_CHECK_REQUIRED}",
+                    }
+                ]
+            }
+        }
+        resolve_env_vars(cfg)
+        entry = cfg["filters"]["checks"][0]
+        validate_checks_config(cfg)
+        ok = entry["enabled"] is False and entry["required"] is True
+        detail = str(entry)
+    except ValueError as e:
+        ok, detail = False, str(e)
+    finally:
+        del os.environ["VERIFY_CHECK_ON"], os.environ["VERIFY_CHECK_REQUIRED"]
+    return _check("${VAR} switches in a check entry become bools", ok, detail)
+
+
 async def check_bad_module_refused_at_start() -> bool:
     results = []
     with tempfile.TemporaryDirectory() as tmp:
@@ -828,6 +1013,7 @@ async def main() -> int:
         check_entry_fields(),
         await check_failures(),
         await check_own_timeout(),
+        await check_late_result_refused(),
         await check_budget(),
         await check_module_loading(),
         check_config_validation(),
@@ -836,12 +1022,16 @@ async def main() -> int:
         check_shipped_configs(),
         await check_free_checks_cost_no_rpc(),
         await check_chain_check_after_wait(),
+        await check_single_token_waits_past_refusal(),
         await check_top_holders(),
+        await check_top_holders_by_wallet(),
         await check_top_holders_unavailable(),
         check_top_holders_contract(),
         check_defaults(),
         await check_runs_once_per_coin(),
         await check_bad_module_refused_at_start(),
+        check_env_switches_in_checks(),
+        await check_built_once_at_start(),
     ]
     if all(results):
         print("\nAll checks passed.")

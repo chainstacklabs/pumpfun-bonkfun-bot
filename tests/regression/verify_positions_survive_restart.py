@@ -1207,7 +1207,7 @@ def _start_bot_settings(config: dict, positions_file: str | None) -> TraderSetti
     class _Trader:
         stopped_on_error = False
 
-        def __init__(self, settings: TraderSettings) -> None:
+        def __init__(self, settings: TraderSettings, **_kwargs: object) -> None:
             seen.append(settings)
 
         async def start(self) -> None:

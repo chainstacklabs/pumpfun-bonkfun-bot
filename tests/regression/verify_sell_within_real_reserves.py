@@ -43,7 +43,8 @@ curve; the curve takes each landed sell off its reserves:
      both strategies: the rest stays held, no cleanup.
   J. A capped SOL sale whose payout is below its network fee (base fee plus
      priority fee) sends nothing and reports the curve short; the same sale
-     with a fee below its payout goes out. A curve that can pay nothing also
+     with a fee below its payout goes out, also when the caller's price is far
+     below what the curve pays, since the curve's payout is what is compared. A curve that can pay nothing also
      reports the curve short.
 
 Usage:
@@ -643,6 +644,8 @@ def check_j_worthless_partial_sale() -> bool:
     costly = real_quote * 1_000_000
     sent_costly, result_costly = _sell(POSITION, price, priority_fee=costly)
     sent_cheap, _ = _sell(POSITION, price, priority_fee=1)
+    # A stale, far lower price: the curve still pays above the fee.
+    sent_stale, _ = _sell(POSITION, price / 1_000_000, priority_fee=1)
     data = bytearray(CURVE_DATA)
     struct.pack_into("<Q", data, REAL_QUOTE, 0)
     _, result_empty = _sell(POSITION, price, bytes(data))
@@ -651,12 +654,14 @@ def check_j_worthless_partial_sale() -> bool:
         and not result_costly.success
         and result_costly.curve_short
         and sent_cheap is not None
+        and sent_stale is not None
         and result_empty.curve_short
     )
     if not ok:
         print(
             f"    costly fee sent {sent_costly} (curve_short "
-            f"{result_costly.curve_short}); cheap fee sent {sent_cheap}; empty "
+            f"{result_costly.curve_short}); cheap fee sent {sent_cheap}; stale "
+            f"price sent {sent_stale}; empty "
             f"curve_short {result_empty.curve_short}"
         )
     return ok

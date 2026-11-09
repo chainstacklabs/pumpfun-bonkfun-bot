@@ -4,7 +4,9 @@ Before the bot buys a coin, it runs a list of checks. Each one passes the coin
 or says why it is skipped, and the first skip wins and is logged with its
 reason. The `filters` settings (`allowed_quote_mints`, `max_transfer_fee_bps`,
 `match_string`, `bro_address`) run first as built-in checks; the list under
-`filters.checks` runs after them, in the order it is written.
+`filters.checks` runs after them, in the order it is written within each kind
+below: every check that reads nothing runs before any check that reads the
+chain.
 
 ## Two kinds of check
 

@@ -20,7 +20,8 @@ Offline machine checks, no network and no funds moved:
   5. The session summary gives one line per coin given up on, with its rent
      once read, and nothing extra when there are none.
   6. At shutdown the manager reads each given-up coin's token account in one
-     call at `confirmed` and records its rent; a failed read leaves it unknown.
+     call at `confirmed` and records its rent; a failed read leaves it unknown,
+     and the client the read reopened is closed.
 
 Usage:
     uv run tests/regression/verify_given_up_positions.py
@@ -33,6 +34,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -52,6 +54,7 @@ from trading.base import TradeResult  # noqa: E402
 from trading.position import ExitReason, Position  # noqa: E402
 from trading.position_manager import PositionManager  # noqa: E402
 from trading.position_store import PositionStore  # noqa: E402
+from trading.universal_trader import UniversalTrader  # noqa: E402
 
 PRICE = 1.0e-6
 AMOUNT = 1_000.0
@@ -313,7 +316,7 @@ class _AccountsClient:
     ) -> list[Account | None]:
         self.calls.append((pubkeys, commitment))
         if self.fail:
-            raise ConnectionError("node unavailable")
+            raise ConnectionError("node unavailable")  # noqa: TRY003
         return [
             Account(
                 lamports=2_039_280,
@@ -352,6 +355,28 @@ async def check_rent_read() -> bool:
     return all(results)
 
 
+async def check_rent_read_closes_client() -> bool:
+    closed: list[int] = []
+
+    async def read_rent() -> None:
+        return None
+
+    async def close() -> None:
+        closed.append(1)
+
+    trader = object.__new__(UniversalTrader)
+    trader.positions = SimpleNamespace(
+        given_up_mints={Pubkey.new_unique()}, read_given_up_rent=read_rent
+    )
+    trader.solana_client = SimpleNamespace(close=close)
+    await trader._read_given_up_rent()  # noqa: SLF001
+    return _check(
+        "the shutdown rent read closes the client it reopened",
+        closed == [1],
+        str(closed),
+    )
+
+
 async def main() -> int:
     print("Given-up positions")
     results = [
@@ -361,6 +386,7 @@ async def main() -> int:
         check_peek(),
         check_session_lines(),
         await check_rent_read(),
+        await check_rent_read_closes_client(),
     ]
     if all(results):
         print("\nAll checks passed.")

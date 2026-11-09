@@ -389,7 +389,7 @@ class _Trader:
     built: list = []  # noqa: RUF012
     stopped_on_error = False
 
-    def __init__(self, settings: object) -> None:
+    def __init__(self, settings: object, **_kwargs: object) -> None:
         _Trader.built.append(settings)
 
     async def start(self) -> None:

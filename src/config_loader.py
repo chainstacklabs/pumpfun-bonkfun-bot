@@ -1,5 +1,6 @@
 """Bot configuration loading and platform/listener validation."""
 
+import math
 import os
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ from dotenv import load_dotenv
 from core.keystore import resolve_keystore_path
 from interfaces.core import Platform
 from platforms.launchlab_presets import resolve_platform_configs
+from trading.checks.pipeline import DEFAULT_BUDGET as DEFAULT_CHECK_BUDGET
 from trading.settings import ENTRIES, entry_error
 
 # Existing validation rules (keeping all existing ones)
@@ -180,8 +182,42 @@ SWITCHES = frozenset(
         "filters.yolo_mode",
         "cleanup.force_close_with_burn",
         "cleanup.with_priority_fee",
+        "filters.checks[].enabled",
+        "filters.checks[].required",
     }
 )
+
+
+def _resolve_env(path: str, value: Any) -> Any:
+    """One setting's value, with a `${VAR}` replaced by the variable's value.
+
+    Raises:
+        ValueError: The variable is not set
+    """
+    if not (isinstance(value, str) and value.startswith("${") and value.endswith("}")):
+        return value
+    env_var = value[2:-1]
+    env_value = os.getenv(env_var)
+    if env_value is None:
+        raise ValueError(f"Environment variable '{env_var}' not found")  # noqa: TRY003
+    switch = env_value.strip().lower()
+    if path in SWITCHES and switch in ("true", "false"):
+        return switch == "true"
+    return env_value
+
+
+def _resolve_all(d: dict, prefix: str) -> None:
+    for k, v in d.items():
+        path = f"{prefix}{k}"
+        if isinstance(v, dict):
+            _resolve_all(v, f"{path}.")
+        elif path == "filters.checks" and isinstance(v, list):
+            # Each entry's switches by the same rule, under a path of their own.
+            for entry in v:
+                if isinstance(entry, dict):
+                    _resolve_all(entry, "filters.checks[].")
+        else:
+            d[k] = _resolve_env(path, v)
 
 
 def resolve_env_vars(config: dict) -> None:
@@ -193,28 +229,7 @@ def resolve_env_vars(config: dict) -> None:
     Raises:
         ValueError: A referenced variable is not set
     """
-
-    def resolve_env(path: str, value):
-        if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
-            env_var = value[2:-1]
-            env_value = os.getenv(env_var)
-            if env_value is None:
-                raise ValueError(f"Environment variable '{env_var}' not found")
-            switch = env_value.strip().lower()
-            if path in SWITCHES and switch in ("true", "false"):
-                return switch == "true"
-            return env_value
-        return value
-
-    def resolve_all(d: dict, prefix: str) -> None:
-        for k, v in d.items():
-            path = f"{prefix}{k}"
-            if isinstance(v, dict):
-                resolve_all(v, f"{path}.")
-            else:
-                d[k] = resolve_env(path, v)
-
-    resolve_all(config, "")
+    _resolve_all(config, "")
 
 
 def get_nested_value(config: dict, path: str) -> Any:
@@ -332,7 +347,12 @@ def validate_cleanup_config(config: dict) -> None:
     below = cleanup.get("burn_given_up_below")
     if below is None:
         return
-    if isinstance(below, bool) or not isinstance(below, (int, float)) or below <= 0:
+    if (
+        isinstance(below, bool)
+        or not isinstance(below, (int, float))
+        or not math.isfinite(below)
+        or below <= 0
+    ):
         raise ValueError(  # noqa: TRY003
             "cleanup.burn_given_up_below must be a number of SOL above 0, or null"
         )
@@ -361,10 +381,13 @@ def validate_checks_config(config: dict) -> None:
                 raise ValueError(  # noqa: TRY003
                     f"filters.checks entry {entry!r}: {key} must be true or false"
                 )
-        budget = entry.get("budget")
-        if budget is not None and (
+        # Left out takes the default; written, it must be a real limit, since
+        # a check with none can stall the bot.
+        budget = entry.get("budget", DEFAULT_CHECK_BUDGET)
+        if (
             isinstance(budget, bool)
             or not isinstance(budget, (int, float))
+            or not math.isfinite(budget)
             or budget <= 0
         ):
             raise ValueError(  # noqa: TRY003

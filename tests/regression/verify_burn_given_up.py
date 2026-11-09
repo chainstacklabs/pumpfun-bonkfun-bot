@@ -19,7 +19,9 @@ Offline machine checks, no network and no funds moved:
      and one whose burn did not land.
   3. With the setting off nothing is burned. A burn takes no more than the
      position's recorded amount: coins bought by hand stay, and the account
-     stays open around them.
+     stays open around them. Such a position leaves the file whether or not
+     its burn is known to have landed, so its coins are never later sold as
+     the bot's, and session-end cleanup spares the account.
   4. The config is refused under `cleanup.mode: disabled`, and for zero, a
      negative number or text.
 
@@ -44,12 +46,14 @@ from solders.pubkey import Pubkey  # noqa: E402
 from cleanup.manager import AccountCleanupManager  # noqa: E402
 from config_loader import validate_cleanup_config  # noqa: E402
 from core import session  # noqa: E402
+from core.client import TransactionNotSent  # noqa: E402
 from core.pubkeys import USDC_MINT, WSOL_MINT, SystemAddresses  # noqa: E402
 from interfaces.core import Platform, TokenInfo  # noqa: E402
-from trading import position_manager  # noqa: E402
+from trading import position_manager, universal_trader  # noqa: E402
 from trading.base import TradeResult  # noqa: E402
 from trading.position_manager import PositionManager  # noqa: E402
 from trading.position_store import PositionStore  # noqa: E402
+from trading.universal_trader import UniversalTrader  # noqa: E402
 
 THRESHOLD = 0.001  # SOL
 AMOUNT = 1_000.0  # whole tokens held
@@ -64,6 +68,8 @@ SHORT = {**VIRTUAL, "real_quote_reserves": 10_000, "graduated": False}
 FULL = {**VIRTUAL, "real_quote_reserves": 10**10, "graduated": False}
 DRAINED = {**VIRTUAL, "real_quote_reserves": 0, "graduated": False}
 GRADUATED = {"graduated": True}
+#: Raw tokens the wallet holds of a coin, where not the recorded amount.
+HELD: dict[Pubkey, int] = {}
 SPOT = 1.0e-5  # SOL per token on that curve, from its virtual reserves
 POOL_CHEAP = THRESHOLD / AMOUNT / 10
 
@@ -145,7 +151,11 @@ def _manager(
     async def read_price(token: TokenInfo) -> float:
         return spots.get(token.mint, SPOT)
 
+    async def held_raw(token: TokenInfo) -> int:
+        return HELD.get(token.mint, AMOUNT_RAW)
+
     manager._read_price = read_price  # noqa: SLF001
+    manager._held_raw = held_raw  # noqa: SLF001
     return manager
 
 
@@ -180,8 +190,10 @@ async def _run(
             _hold(manager, token, given_up=given_up)
         await manager.burn_given_up()
         left = manager.store.mints()
+    # Each coin's (burn asked for, record left in the file), apart: a burn
+    # that leaves its record behind must still show up.
     burned = {
-        label: token.mint in _Cleanup.burned and str(token.mint) not in left
+        label: (token.mint in _Cleanup.burned, str(token.mint) in left)
         for label, (token, *_rest) in cases.items()
     }
     _run.expected = {label: case[4] for label, case in cases.items()}
@@ -194,8 +206,8 @@ async def check_burns_only_cheap_given_up() -> bool:
     results = [
         _check(
             f"{label}: {'burned' if want else 'kept'}",
-            burned[label] == want,
-            str(burned[label]),
+            burned[label] == ((True, False) if want else (False, True)),
+            f"burn asked {burned[label][0]}, record kept {burned[label][1]}",
         )
         for label, want in _run.expected.items()
     ]
@@ -221,6 +233,85 @@ async def check_failed_burn_kept() -> bool:
         kept and listed,
         f"kept {kept}, listed {listed}",
     )
+
+
+async def check_extra_coins_spared() -> bool:
+    results = []
+    for lands in (True, False):
+        session.start("verify")
+        _Cleanup.burned, _Cleanup.lands = [], lands
+        token = _coin()
+        HELD[token.mint] = AMOUNT_RAW * 3  # coins bought by hand besides
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = _manager(tmp, {token.bonding_curve: SHORT}, {}, THRESHOLD)
+            _hold(manager, token, given_up=True)
+            await manager.burn_given_up()
+            dropped = str(token.mint) not in manager.store.mints()
+        spared = token.mint in manager.spared_mints
+        listed = token.mint in {g.mint for g in session.current().given_up}
+        ok = token.mint in _Cleanup.burned and dropped and spared and not listed
+        label = "landed" if lands else "outcome unknown"
+        results.append(
+            _check(
+                f"extra coins ({label}): record dropped, account spared",
+                ok,
+                f"dropped {dropped}, spared {spared}, listed {listed}",
+            )
+        )
+    HELD.clear()
+    return all(results)
+
+
+async def check_cleanup_spares_remainder() -> bool:
+    spared = Pubkey.new_unique()
+    seen: dict = {}
+
+    async def post_session(
+        _client: object,
+        _wallet: object,
+        mints: list[Pubkey],
+        _programs: object,
+        _fees: object,
+        _mode: object,
+        _with_fee: object,
+        _burn: object,
+        sweep_except: set[Pubkey] | None = None,
+        **_k: object,
+    ) -> None:
+        seen["mints"], seen["except"] = list(mints), set(sweep_except or ())
+
+    async def nothing() -> None:
+        return None
+
+    trader = object.__new__(UniversalTrader)
+    trader.settings = SimpleNamespace(
+        cleanup_mode="post_session",
+        cleanup_force_close_with_burn=True,
+        cleanup_with_priority_fee=True,
+    )
+    trader.positions = SimpleNamespace(
+        burn_given_up=nothing,
+        stored_mints=set,
+        spared_mints={spared},
+        monitors=True,
+        last_sale_slot=None,
+    )
+    trader.traded_mints = {spared}
+    trader.traded_token_programs = {}
+    trader.solana_client = SimpleNamespace(close=nothing)
+    trader.wallet = None
+    trader.priority_fee_manager = None
+    trader.intake = SimpleNamespace(forget_unprocessed=lambda: None)
+    original = universal_trader.handle_cleanup_post_session
+    universal_trader.handle_cleanup_post_session = post_session
+    try:
+        await trader._cleanup_resources()  # noqa: SLF001
+    finally:
+        universal_trader.handle_cleanup_post_session = original
+    ok = spared not in seen.get("mints", [spared]) and spared in seen.get(
+        "except", set()
+    )
+    return _check("session-end cleanup leaves a spared account alone", ok, str(seen))
 
 
 async def check_off() -> bool:
@@ -249,6 +340,8 @@ def check_config() -> bool:
         ("post_session", 0),
         ("post_session", -1),
         ("after_sell", "0.1"),
+        ("post_session", float("inf")),
+        ("post_session", float("nan")),
         ("post_session", True),
     ]
     for mode, value in bad:
@@ -271,9 +364,10 @@ def check_config() -> bool:
 class _AccountClient:
     """Serves one token account holding `balance` and records what is sent."""
 
-    def __init__(self, balance: int) -> None:
+    def __init__(self, balance: int, *, refusals: int = 0) -> None:
         self.data = bytes(64) + struct.pack("<Q", balance) + bytes(165 - 72)
         self.sent: list = []
+        self.refusals = refusals  # sends the node refuses before taking one
 
     async def get_account_info(self, _address: Pubkey, **_k: object) -> SimpleNamespace:
         return SimpleNamespace(
@@ -283,6 +377,9 @@ class _AccountClient:
     async def build_and_send_transaction(
         self, instructions: list, *_a: object, **_k: object
     ) -> str:
+        if self.refusals:
+            self.refusals -= 1
+            raise TransactionNotSent("node refused it")  # noqa: TRY003
         self.sent.append(instructions)
         return "STUB_SIGNATURE"
 
@@ -291,9 +388,9 @@ class _AccountClient:
 
 
 async def _burned_and_closed(
-    balance: int,
+    balance: int, *, refusals: int = 0
 ) -> tuple[bool, list[tuple[int, int | None]]]:
-    client = _AccountClient(balance)
+    client = _AccountClient(balance, refusals=refusals)
     account = Pubkey.new_unique()
     wallet = SimpleNamespace(
         pubkey=Pubkey.new_unique(),
@@ -325,6 +422,7 @@ async def check_burn_limited_to_record() -> bool:
     session.start("verify")
     more_done, more = await _burned_and_closed(AMOUNT_RAW * 3)
     exact_done, exact = await _burned_and_closed(AMOUNT_RAW)
+    refused_done, refused = await _burned_and_closed(AMOUNT_RAW * 3, refusals=1)
     a = _check(
         "coins beyond the record are kept: burn the record, leave the account",
         more_done and more == [(BURN, AMOUNT_RAW)],
@@ -335,7 +433,12 @@ async def check_burn_limited_to_record() -> bool:
         exact_done and exact == [(BURN, AMOUNT_RAW), (CLOSE, None)],
         str(exact),
     )
-    return a and b
+    c = _check(
+        "a burn the node refused (nothing sent) is sent again",
+        refused_done and refused == [(BURN, AMOUNT_RAW)],
+        str(refused),
+    )
+    return a and b and c
 
 
 async def main() -> int:
@@ -345,6 +448,8 @@ async def main() -> int:
         await check_burns_only_cheap_given_up(),
         await check_failed_burn_kept(),
         await check_off(),
+        await check_extra_coins_spared(),
+        await check_cleanup_spares_remainder(),
         await check_burn_limited_to_record(),
         check_config(),
     ]

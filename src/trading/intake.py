@@ -118,12 +118,15 @@ class TokenIntake:
             self._verdicts[key] = await pipeline.reason(coin, reads_chain=False)
         return self._verdicts[key]
 
-    async def wait_for_token(self) -> TokenInfo | None:
+    async def wait_for_token(self, *, timeout: float | None = None) -> TokenInfo | None:
         """Wait for the first coin the filters accept, up to `token_wait_timeout`.
+
+        `timeout` overrides it, in seconds, for a wait already partly spent.
 
         Returns:
             The coin, or None if none arrived in time
         """
+        limit = self.token_wait_timeout if timeout is None else timeout
         # Create a one-time event to signal when a token is found
         token_found = asyncio.Event()
         found_token = None
@@ -159,14 +162,10 @@ class TokenIntake:
 
         # Wait for a token with a timeout
         try:
-            logger.info(
-                f"Waiting for a suitable token (timeout: {self.token_wait_timeout}s)..."
-            )
-            await asyncio.wait_for(token_found.wait(), timeout=self.token_wait_timeout)
+            logger.info(f"Waiting for a suitable token (timeout: {limit:.0f}s)...")
+            await asyncio.wait_for(token_found.wait(), timeout=limit)
         except TimeoutError:
-            logger.info(
-                f"Timed out after waiting {self.token_wait_timeout}s for a token"
-            )
+            logger.info(f"Timed out after waiting {limit:.0f}s for a token")
             return None
         else:
             logger.info(f"Found token: {found_token.symbol} ({found_token.mint})")
@@ -361,12 +360,15 @@ class TokenIntake:
         self.processed_tokens.add(key)
         return token_info
 
-    async def wait_for_migrated_token(self) -> TokenInfo | None:
+    async def wait_for_migrated_token(
+        self, *, timeout: float | None = None
+    ) -> TokenInfo | None:
         """`wait_for_token` for migrations: the first migrated coin the filters accept.
 
         Returns:
             The coin, its pool readable, or None if none arrived in time
         """
+        limit = self.token_wait_timeout if timeout is None else timeout
 
         async def first_accepted() -> TokenInfo:
             while True:
@@ -390,16 +392,10 @@ class TokenIntake:
             )
         )
         try:
-            logger.info(
-                f"Waiting for a suitable migration (timeout: {self.token_wait_timeout}s)..."
-            )
-            found = await asyncio.wait_for(
-                first_accepted(), timeout=self.token_wait_timeout
-            )
+            logger.info(f"Waiting for a suitable migration (timeout: {limit:.0f}s)...")
+            found = await asyncio.wait_for(first_accepted(), timeout=limit)
         except TimeoutError:
-            logger.info(
-                f"Timed out after waiting {self.token_wait_timeout}s for a migration"
-            )
+            logger.info(f"Timed out after waiting {limit:.0f}s for a migration")
             return None
         else:
             logger.info(f"Found token: {found.symbol} ({found.mint})")

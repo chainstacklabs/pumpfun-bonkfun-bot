@@ -85,6 +85,22 @@ def _closable_empty(data: bytes, owner: Pubkey) -> tuple[Pubkey, bool]:
     )
 
 
+def _failure_text(
+    account: Pubkey,
+    signature: Signature | None,
+    outcome: ConfirmationStatus | None,
+    closes: bool,  # noqa: FBT001
+) -> str:
+    """Why a close, or a burn that leaves the account open, stops here."""
+    what = "close token account" if closes else "burn from"
+    if outcome is ConfirmationStatus.REVERTED:
+        return f"Failed to {what} {account}: {signature} reverted"
+    return (
+        f"The burn from {account} ({signature}) did not confirm; not sent again, "
+        f"since the account holds more than it burns"
+    )
+
+
 class AccountCleanupManager:
     """Handles safe cleanup of token accounts (ATA) after trading sessions."""
 
@@ -324,7 +340,8 @@ class AccountCleanupManager:
             after_slot: The slot the sell before this close landed in
             burn_at_most: Raw tokens the burn may take; holding more, the
                 account is burned down by that much, stays open, and the burn
-                is sent once only, since a resent one would take more
+                is sent again only when the node refused it, since a resent one
+                that had landed would take more
         """
         slot = after_slot
         for attempt in range(1, self.CLOSE_ATTEMPTS + 1):
@@ -344,13 +361,11 @@ class AccountCleanupManager:
             if outcome is ConfirmationStatus.SUCCESS:
                 self._report_done(account, closes=closes, burned=burn_at_most)
                 return True
+            if outcome is None and signature is None:
+                # The node refused it: nothing was sent, so it is sent again.
+                continue
             if outcome is ConfirmationStatus.REVERTED or not closes:
-                logger.error(
-                    f"Failed to close token account {account}: {signature}"
-                    if outcome is ConfirmationStatus.REVERTED
-                    else f"The burn from {account} ({signature}) did not confirm; "
-                    f"not sent again, since the account holds more than it burns"
-                )
+                logger.error(_failure_text(account, signature, outcome, closes))
                 return False
             if outcome is ConfirmationStatus.UNCONFIRMED:
                 logger.warning(

@@ -136,6 +136,9 @@ class PositionManager:
     #: Coins whose exit this session gave up on while still holding them, by
     #: mint. Rebound, never mutated, like `_closes`.
     _given_up: Mapping[Pubkey, TokenInfo] = MappingProxyType({})
+    #: Coins whose burn left the account open around coins bought by hand:
+    #: session-end cleanup leaves those accounts alone. Rebound, never mutated.
+    _spared: frozenset[Pubkey] = frozenset()
     #: SOL below which a given-up coin is burned at the end of the session;
     #: None burns nothing.
     cleanup_burn_given_up_below: float | None = None
@@ -860,6 +863,11 @@ class PositionManager:
             return set()
         return {m for m in self._given_up if str(m) in self.store.mints()}
 
+    @property
+    def spared_mints(self) -> frozenset[Pubkey]:
+        """Coins whose given-up burn left coins bought by hand in the account."""
+        return self._spared
+
     async def burn_given_up(self) -> None:
         """Burn and close each given-up coin worth less than `burn_given_up_below`.
 
@@ -883,34 +891,57 @@ class PositionManager:
             stored = held.get(mint)
             if stored is None:
                 continue
-            token_info = stored.token_info
-            if normalize_quote_mint(token_info.quote_mint) != WSOL_MINT:
+            if normalize_quote_mint(stored.token_info.quote_mint) != WSOL_MINT:
                 continue
-            try:
-                worth = await self._worth_sol(stored)
-            except Exception:  # noqa: BLE001 - unpriced is kept, never burned
-                worth = None
-            if worth is None:
-                logger.warning(f"Not burning {token_info.symbol}: no price to value it")
-                continue
-            if worth >= below:
-                continue
-            logger.info(
-                f"Burning {stored.buy_result.amount} {token_info.symbol}, worth "
-                f"{worth:.9f} SOL, below cleanup.burn_given_up_below {below} SOL"
-            )
-            recorded = stored.buy_result.amount_raw
-            if recorded is None:
-                recorded = round(stored.buy_result.amount * 10**TOKEN_DECIMALS)
-            # Only what the bot bought: coins bought by hand stay.
-            if await cleanup.cleanup_ata(
-                mint, token_info.token_program_id, settle=False, burn_at_most=recorded
-            ):
-                self.store.remove(mint)
-                self._given_up = MappingProxyType(
-                    {m: c for m, c in self._given_up.items() if m != mint}
+            await self._burn_if_below(stored, below, cleanup)
+
+    async def _burn_if_below(
+        self, stored: StoredPosition, below: float, cleanup: AccountCleanupManager
+    ) -> None:
+        """Burn one given-up coin's recorded amount when it is worth less than `below`."""
+        token_info, mint = stored.token_info, stored.token_info.mint
+        try:
+            worth = await self._worth_sol(stored)
+        except Exception:  # noqa: BLE001 - unpriced is kept, never burned
+            worth = None
+        if worth is None:
+            logger.warning(f"Not burning {token_info.symbol}: no price to value it")
+            return
+        if worth >= below:
+            return
+        recorded = stored.buy_result.amount_raw
+        if recorded is None:
+            recorded = round(stored.buy_result.amount * 10**TOKEN_DECIMALS)
+        balance = await self._held_raw(token_info)
+        if balance is None:
+            logger.warning(f"Not burning {token_info.symbol}: balance unreadable")
+            return
+        logger.info(
+            f"Burning {stored.buy_result.amount} {token_info.symbol}, worth "
+            f"{worth:.9f} SOL, below cleanup.burn_given_up_below {below} SOL"
+        )
+        # Only what the bot bought: coins bought by hand stay.
+        done = await cleanup.cleanup_ata(
+            mint, token_info.token_program_id, settle=False, burn_at_most=recorded
+        )
+        extra = balance > recorded
+        if extra:
+            # The account stays open around the coins bought by hand, and the
+            # record goes even when the burn's outcome is unknown: kept, a
+            # later sale could take those coins as the bot's.
+            self._spared = self._spared | {mint}
+            if not done:
+                logger.warning(
+                    f"The burn of {token_info.symbol} is not known to have landed; "
+                    f"its record is dropped all the same, since the wallet holds "
+                    f"more of it than the bot bought"
                 )
-                session.current().drop_given_up(mint)
+        if done or extra:
+            self.store.remove(mint)
+            self._given_up = MappingProxyType(
+                {m: c for m, c in self._given_up.items() if m != mint}
+            )
+            session.current().drop_given_up(mint)
 
     async def _worth_sol(self, stored: StoredPosition) -> float | None:
         """What selling a SOL-quoted position now would pay, in SOL; None if unknown.

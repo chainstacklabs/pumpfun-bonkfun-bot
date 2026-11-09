@@ -356,7 +356,15 @@ async def _start_loaded(cfg: dict, positions_file: str | None) -> bool:
     if path is None:
         return await _start_unlocked(cfg, positions_file)
     lock = RunLock(path)
-    if not lock.acquire():
+    try:
+        acquired = lock.acquire()
+    except OSError as e:
+        logger.error(  # noqa: TRY400
+            f"Bot '{cfg['name']}' not started: could not lock its positions file "
+            f"{path}: {_one_line(e)}"
+        )
+        return False
+    if not acquired:
         logger.error(
             f"Bot '{cfg['name']}' not started: its positions file {path} is in "
             f"use by another bot or pump_bot_positions"
@@ -377,10 +385,10 @@ async def _start_unlocked(cfg: dict, positions_file: str | None) -> bool:
     except Exception as e:  # noqa: BLE001 - any cause gets the same one line
         logger.error(f"Bot '{cfg['name']}' not started: {_one_line(e)}")  # noqa: TRY400
         return False
-    # Loaded here too, before the wallet or the node: a check that does not
-    # load is a config error, said in one line.
+    # Loaded before the wallet or the node: a check that does not load is a
+    # config error, said in one line.
     try:
-        load_checks((cfg.get("filters") or {}).get("checks"), BUILTINS)
+        checks = load_checks((cfg.get("filters") or {}).get("checks"), BUILTINS)
     except Exception as e:  # noqa: BLE001 - any cause gets the same one line
         logger.error(  # noqa: TRY400
             f"Bot '{cfg['name']}' not started: filters.checks: {_one_line(e)}"
@@ -405,7 +413,10 @@ async def _start_unlocked(cfg: dict, positions_file: str | None) -> bool:
 
     # Initialize universal trader with platform-specific configuration
     try:
-        trader = UniversalTrader(build_trader_settings(cfg, platform, positions_file))
+        # The checks built above, so a check is built once.
+        trader = UniversalTrader(
+            build_trader_settings(cfg, platform, positions_file), checks=checks
+        )
 
         await trader.start()
 

@@ -12,7 +12,11 @@ Offline machine checks, no network and no funds moved:
      same process and from another process.
   2. It succeeds once the holder releases it, and once the holding process
      has been killed.
-  3. `start_bot` does not start a bot whose positions file is locked, and
+  3. A lock file that can't be created leaves the bot unstarted with one
+     line, not a traceback.
+  4. On Windows, without `flock`, `msvcrt` keeps a second holder out the
+     same way.
+  5. `start_bot` does not start a bot whose positions file is locked, and
      says why in one line.
 
 Usage:
@@ -33,6 +37,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from _fakes import _check  # noqa: E402
 
 import bot_runner  # noqa: E402
+from trading import run_lock  # noqa: E402
 from trading.run_lock import RunLock  # noqa: E402
 
 HOLDER = """
@@ -133,9 +138,89 @@ def check_start_bot_refuses() -> bool:
     )
 
 
+class _FakeMsvcrt:
+    """Windows' byte-range lock, kept per file path: one holder at a time."""
+
+    LK_NBLCK, LK_UNLCK = 2, 0
+
+    def __init__(self) -> None:
+        self.held: set[str] = set()
+        self.paths: dict[int, str] = {}
+
+    def locking(self, fd: int, mode: int, _nbytes: int) -> None:
+        path = self.paths[fd]
+        if mode == self.LK_NBLCK:
+            if path in self.held:
+                raise OSError("locked")
+            self.held.add(path)
+        else:
+            self.held.discard(path)
+
+
+def check_windows_lock() -> bool:
+    fake = _FakeMsvcrt()
+    originals = (run_lock.fcntl, run_lock.msvcrt, run_lock.open_lock_file)
+
+    def open_lock_file(path: Path) -> object:
+        handle = path.open("a+")
+        fake.paths[handle.fileno()] = str(path)
+        return handle
+
+    run_lock.fcntl, run_lock.msvcrt = None, fake
+    run_lock.open_lock_file = open_lock_file
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bot.json"
+            first, second = RunLock(path), RunLock(path)
+            got = first.acquire()
+            refused = not second.acquire()
+            first.release()
+            after = second.acquire()
+            second.release()
+    finally:
+        run_lock.fcntl, run_lock.msvcrt, run_lock.open_lock_file = originals
+    ok = got and refused and after
+    return _check(
+        "on Windows a second holder is refused too",
+        ok,
+        f"first {got}, refused {refused}, after release {after}",
+    )
+
+
+def check_lock_file_unwritable() -> bool:
+    with tempfile.TemporaryDirectory() as tmp:
+        blocker = Path(tmp) / "positions"
+        blocker.write_text("a file where the folder should be")
+        cfg = {"name": "blocked", "rpc_endpoint": "https://rpc.invalid"}
+        handler = _Lines()
+        logging.getLogger("bot_runner").addHandler(handler)
+        try:
+            started = asyncio.run(
+                bot_runner._start_loaded(cfg, str(blocker / "blocked.json"))  # noqa: SLF001
+            )
+            escaped = None
+        except Exception as e:  # noqa: BLE001
+            started, escaped = None, type(e).__name__
+        finally:
+            logging.getLogger("bot_runner").removeHandler(handler)
+    said = [line for line in handler.lines if "not started" in line]
+    ok = started is False and escaped is None and len(said) == 1
+    return _check(
+        "a lock file that can't be made: one line, not started",
+        ok,
+        f"started {started}, escaped {escaped}, said {said}",
+    )
+
+
 def main() -> int:
     print("Positions file run lock")
-    results = [check_same_process(), check_other_process(), check_start_bot_refuses()]
+    results = [
+        check_same_process(),
+        check_other_process(),
+        check_start_bot_refuses(),
+        check_lock_file_unwritable(),
+        check_windows_lock(),
+    ]
     if all(results):
         print("\nAll checks passed.")
         return 0

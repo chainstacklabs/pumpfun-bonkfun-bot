@@ -583,7 +583,7 @@ async def check_errors_redacted() -> bool:
     cfg = {"name": "bot", "rpc_endpoint": RPC, "filters": {}}
     originals = (positions_cli.load_bot_config, positions_cli._tools)  # noqa: SLF001
 
-    async def broken(_cfg: dict) -> None:
+    async def broken(_cfg: dict, **_kw: object) -> None:
         raise ConnectionError(f"cannot reach {RPC}")  # noqa: TRY003
 
     positions_cli.load_bot_config = lambda _path: dict(cfg)
@@ -609,7 +609,12 @@ async def check_errors_redacted() -> bool:
         positions_cli.load_bot_config, positions_cli._tools = originals  # noqa: SLF001
         logging.getLogger().removeHandler(handler)
     shown = out.getvalue() + "\n".join(handler.lines)
-    ok = code == 1 and RPC not in shown and "secret-host" not in shown
+    ok = (
+        code == 1
+        and "cannot reach" in shown
+        and RPC not in shown
+        and "secret-host" not in shown
+    )
     return _check(
         "an unexpected error exits 1, endpoint redacted",
         ok,
@@ -648,6 +653,7 @@ async def check_status_needs_no_password() -> bool:
 
 async def main() -> int:
     print("pump_bot_positions")
+    positions_cli._RECHECK_SECONDS = 0  # noqa: SLF001
     results = [
         await check_status_read_only(),
         await check_status_unreadable(),

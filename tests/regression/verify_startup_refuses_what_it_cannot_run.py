@@ -320,7 +320,7 @@ class _Trader:
     built: list = []  # noqa: RUF012
     stopped_on_error = False
 
-    def __init__(self, settings: object) -> None:
+    def __init__(self, settings: object, **_kwargs: object) -> None:
         _Trader.built.append(settings)
 
     async def start(self) -> None:
@@ -677,7 +677,7 @@ import bot_runner
 class Trader:
     stopped_on_error = False
 
-    def __init__(self, settings):
+    def __init__(self, settings, **_kwargs):
         self.host = settings.rpc_endpoint.split("/")[2]
 
     async def start(self):
@@ -749,7 +749,7 @@ class _Listener:
 def _real_trader(*, listener_fails: bool, resume_fails: bool) -> Callable:
     """Builds a real UniversalTrader on stand-in RPC, listener and cleanup."""
 
-    def build(settings: object) -> object:
+    def build(settings: object, **kwargs: object) -> object:
         originals = (
             universal_trader.SolanaClient,
             universal_trader.ListenerFactory.create_listener,
@@ -759,7 +759,7 @@ def _real_trader(*, listener_fails: bool, resume_fails: bool) -> Callable:
             lambda **_k: _Listener(fails=listener_fails)
         )
         try:
-            trader = universal_trader.UniversalTrader(settings)
+            trader = universal_trader.UniversalTrader(settings, **kwargs)
         finally:
             universal_trader.SolanaClient = originals[0]
             universal_trader.ListenerFactory.create_listener = staticmethod(

@@ -1289,14 +1289,18 @@ class PlatformAwareSeller(Trader):
                 self._get_cu_override("sell", token_info.platform)
             )
             # A part the curve can pay for may be worth less than the sale
-            # costs: send nothing, and let the curve refill. Fees are paid in
-            # SOL, so a payout in another quote asset is not compared.
+            # costs: send nothing, and let the curve refill. Only a sale cut to
+            # the curve's reserves is cut, and it was cut from this curve read,
+            # so its payout is what the curve pays, not the caller's price.
+            # Fees are paid in SOL, so a payout in another quote asset is not
+            # compared.
             if (
                 token_balance < requested
                 and quote_mint == WSOL_MINT
+                and pool_state is not None
                 and _below_network_fee(
                     token_info,
-                    round(expected_quote_output * quote_unit),
+                    int(sell_quote_out(pool_state, token_balance) * (1 - fee_fraction)),
                     _network_fee_lamports(priority_fee, compute_unit_limit),
                 )
             ):
