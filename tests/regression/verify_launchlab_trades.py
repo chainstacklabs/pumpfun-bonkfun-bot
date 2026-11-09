@@ -34,6 +34,8 @@ Offline machine checks, no network and no funds moved:
   G. A mint with a fee change scheduled keeps both fees, and a transfer loses
      whichever withholds more on its amount: a lower rate with a higher cap
      wins on a large transfer, the higher rate on a small one.
+  H. The curve manager re-reads a mint's transfer fees once its cache is as
+     old as the fee-rate cache, so a fee set while the bot runs is priced in.
 
 Usage:
     uv run tests/regression/verify_launchlab_trades.py
@@ -506,6 +508,44 @@ def check_g_scheduled_fee_change() -> bool:
     return ok
 
 
+def check_h_transfer_fees_are_reread() -> bool:
+    """H: cached transfer fees hold until the TTL, then the mint is read again."""
+    from unittest.mock import patch  # noqa: PLC0415
+
+    from platforms.launchlab import curve_manager  # noqa: PLC0415
+
+    entry = json.loads(FIXTURE.read_text())[0]
+    event = _trade(entry)["event"]
+    accounts = {
+        Pubkey.from_string(entry[name]): base64.b64decode(
+            entry["accounts_base64"][name]
+        )
+        for name in ("global_config", "platform_config", "base_mint")
+    }
+    mint = Pubkey.from_string(entry["base_mint"])
+    manager = StonkFunCurveManager(_FixtureClient(accounts), PARSER)
+    now = [1_000.0]
+
+    async def fees_at(seconds: float) -> tuple:
+        now[0] = 1_000.0 + seconds
+        pool = await manager._with_fees(_pool_before(entry, event), None)
+        return pool["transfer_fees"]
+
+    async def run() -> tuple:
+        with patch.object(curve_manager, "monotonic", lambda: now[0]):
+            first = await fees_at(0)
+            accounts[mint] = _mint_with_fees((300, 10**15), (300, 10**15))
+            cached = await fees_at(curve_manager._FEE_RATE_TTL_SECONDS - 1)
+            reread = await fees_at(curve_manager._FEE_RATE_TTL_SECONDS + 1)
+        return first, cached, reread
+
+    first, cached, reread = asyncio.run(run())
+    ok = cached == first != reread == ((300, 10**15),)
+    if not ok:
+        print(f"  first {first}, before TTL {cached}, after TTL {reread}")
+    return ok
+
+
 def main() -> int:
     """Run every check and report."""
     checks = [
@@ -521,6 +561,10 @@ def main() -> int:
         (
             "G: a scheduled fee change withholds the larger fee",
             check_g_scheduled_fee_change,
+        ),
+        (
+            "H: transfer fees are re-read on the fee clock",
+            check_h_transfer_fees_are_reread,
         ),
     ]
     passed = 0
