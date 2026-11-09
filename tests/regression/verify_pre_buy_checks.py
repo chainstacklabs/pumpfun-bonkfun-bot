@@ -16,6 +16,14 @@ Offline machine checks, no network and no funds moved:
   7. A check that returns neither None nor a str counts as in 5.
   8. A module path loads a user check; bad entries fail with one line.
   9. The config validation refuses a malformed `filters.checks`.
+ 10. With no `filters.checks` the existing filters refuse the same coins with
+     the same text as before they became checks.
+ 11. The mayhem check skips a mayhem coin, passes others and reads nothing.
+ 12. No shipped bot config enables a check that reads the chain.
+ 13. With only free checks, the trader touches no RPC between taking a coin
+     and sending its buy.
+ 14. A chain-reading check runs after the creation wait and its skip stops
+     the buy.
 
 Usage:
     uv run tests/regression/verify_pre_buy_checks.py
@@ -27,16 +35,21 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import ClassVar
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+import yaml  # noqa: E402
 from _fakes import _check  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 
 from config_loader import validate_checks_config  # noqa: E402
+from core.pubkeys import USDC_MINT, WSOL_MINT  # noqa: E402
 from interfaces.core import Platform, TokenInfo  # noqa: E402
+from trading import trade_log  # noqa: E402
+from trading.base import TradeResult  # noqa: E402
 from trading.checks import (  # noqa: E402
     CheckContext,
     CheckPipeline,
@@ -45,6 +58,10 @@ from trading.checks import (  # noqa: E402
     PreBuyCheck,
     load_checks,
 )
+from trading.checks.builtin import BUILTINS, MayhemCheck  # noqa: E402
+from trading.intake import TokenIntake  # noqa: E402
+from trading.settings import TraderSettings  # noqa: E402
+from trading.universal_trader import UniversalTrader  # noqa: E402
 
 COIN = TokenInfo(
     name="Test",
@@ -298,6 +315,210 @@ def check_config_validation() -> bool:
     return all(results)
 
 
+def _intake(**filters: object) -> TokenIntake:
+    settings = TraderSettings(
+        rpc_endpoint="https://rpc.invalid",
+        wss_endpoint="wss://rpc.invalid",
+        private_key="unused",
+        buy_amount=0.01,
+        buy_slippage=0.1,
+        sell_slippage=0.1,
+        **filters,
+    )
+    return TokenIntake(
+        settings,
+        token_listener=None,
+        quote_amounts={WSOL_MINT: 0.01},
+        allowed_quote_mints=None,
+    )
+
+
+def _coin(**fields: object) -> TokenInfo:
+    values = {
+        "name": "Doge Moon",
+        "symbol": "DOGE",
+        "uri": "",
+        "mint": Pubkey.new_unique(),
+        "platform": Platform.PUMP_FUN,
+        "quote_mint": WSOL_MINT,
+        "creator": Pubkey.new_unique(),
+    }
+    values.update(fields)
+    return TokenInfo(**values)
+
+
+async def check_existing_filters_unchanged() -> bool:
+    """The reasons are copied from the filters as they were before."""
+    creator = Pubkey.new_unique()
+    allow_usdc = TokenIntake(
+        TraderSettings(
+            rpc_endpoint="x",
+            wss_endpoint="x",
+            private_key="x",
+            buy_amount=0.01,
+            buy_slippage=0.1,
+            sell_slippage=0.1,
+        ),
+        token_listener=None,
+        quote_amounts={WSOL_MINT: 0.01},
+        allowed_quote_mints={USDC_MINT},
+    )
+    cases = [
+        (
+            "quote not allowed",
+            allow_usdc.skip_reason(_coin()),
+            f"quote mint {WSOL_MINT} not in allowed_quote_mints",
+        ),
+        (
+            "no buy amount",
+            _intake().skip_reason(_coin(quote_mint=USDC_MINT)),
+            f"no buy amount configured for quote mint {USDC_MINT}",
+        ),
+        (
+            "transfer fee",
+            _intake(max_transfer_fee_bps=50).skip_reason(_coin(transfer_fee_bps=100)),
+            "transfer fee 100 bps exceeds max_transfer_fee_bps 50",
+        ),
+        ("passes", _intake(max_transfer_fee_bps=50).skip_reason(_coin()), None),
+        (
+            "migration name",
+            _intake(match_string="cat").migration_skip_reason(_coin()),
+            "does not match filter 'cat'",
+        ),
+        (
+            "migration name matches",
+            _intake(match_string="moon").migration_skip_reason(_coin()),
+            None,
+        ),
+        (
+            "migration creator",
+            _intake(bro_address=str(creator)).migration_skip_reason(_coin()),
+            f"not created by {creator}",
+        ),
+        (
+            "migration creator matches",
+            _intake(bro_address=str(creator)).migration_skip_reason(
+                _coin(creator=creator)
+            ),
+            None,
+        ),
+        (
+            "migration then quote",
+            _intake(match_string="moon").migration_skip_reason(
+                _coin(quote_mint=USDC_MINT)
+            ),
+            f"no buy amount configured for quote mint {USDC_MINT}",
+        ),
+    ]
+    results = []
+    for label, pending, want in cases:
+        got = await pending
+        results.append(_check(f"filter: {label}", got == want, repr(got)))
+    return all(results)
+
+
+async def check_mayhem() -> bool:
+    check = MayhemCheck()
+    skip = await check.check(_coin(is_mayhem_mode=True), CTX)
+    ok_pass = await check.check(_coin(), CTX)
+    ok = skip is not None and ok_pass is None and MayhemCheck.reads_chain is False
+    a = _check(
+        "mayhem: skips mayhem coins, reads nothing", ok, f"{skip!r} / {ok_pass!r}"
+    )
+    b = _check(
+        "mayhem is a listable built-in",
+        BUILTINS.get("mayhem") is MayhemCheck,
+        str(sorted(BUILTINS)),
+    )
+    return a and b
+
+
+def check_shipped_configs() -> bool:
+    problems = []
+    for path in sorted((PROJECT_ROOT / "bots").glob("*.yaml")):
+        cfg = yaml.safe_load(path.read_text()) or {}
+        for entry in (cfg.get("filters") or {}).get("checks") or []:
+            cls = BUILTINS.get(entry.get("name"))
+            reads = cls.reads_chain if cls else True
+            if reads and entry.get("enabled", True):
+                problems.append(f"{path.name}: {entry} reads the chain and is on")
+    return _check(
+        "no shipped config enables a chain-reading check",
+        not problems,
+        "; ".join(problems) or "none",
+    )
+
+
+class _CountingClient:
+    """Records every attribute the trader reads off the RPC client."""
+
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    def __getattr__(self, name: str) -> object:
+        self._events.append(f"rpc:{name}")
+        raise AttributeError(name)
+
+
+class _ChainSkips(PreBuyCheck):
+    name = "chain_skips"
+    reads_chain = True
+
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    async def check(self, _coin: TokenInfo, _ctx: CheckContext) -> str | None:
+        self.events.append("chain check")
+        return "too concentrated"
+
+
+def _trader(events: list[str], checks: list[ConfiguredCheck], *, fast: bool) -> object:
+    trader = object.__new__(UniversalTrader)
+    trader.platform = Platform.PUMP_FUN
+    trader.min_wallet_balance = None
+    trader.solana_client = _CountingClient(events)
+    trader.intake = _intake()
+    trader.checks = CheckPipeline(checks, CheckContext(client=trader.solana_client))
+    trader._has_chain_checks = trader.checks.has(reads_chain=True)  # noqa: SLF001
+    trader.extreme_fast_mode = fast
+    trader.wait_time_after_creation = 0
+    trader.yolo_mode = False
+    trader.quote_amounts = {WSOL_MINT: 0.01}
+
+    async def execute(_token: TokenInfo) -> TradeResult:
+        events.append("buy")
+        return TradeResult(success=False, error_message="stub")
+
+    async def nothing(*_a: object, **_k: object) -> None:
+        return None
+
+    trader.buyer = SimpleNamespace(execute=execute)
+    trader._handle_failed_buy = nothing  # noqa: SLF001
+    trader.positions = SimpleNamespace(wait_for_free_slot=nothing)
+    return trader
+
+
+async def check_free_checks_cost_no_rpc() -> bool:
+    events: list[str] = []
+    trader = _trader(events, [ConfiguredCheck(MayhemCheck())], fast=True)
+    await trader._handle_token(_coin())  # noqa: SLF001
+    ok = events == ["buy"]
+    return _check("free checks: no RPC before the buy", ok, str(events))
+
+
+async def check_chain_check_after_wait() -> bool:
+    events: list[str] = []
+    original = trade_log.save_token_info
+    trade_log.save_token_info = lambda _t: events.append("creation wait")
+    try:
+        trader = _trader(events, [ConfiguredCheck(_ChainSkips(events))], fast=False)
+        await trader._handle_token(_coin())  # noqa: SLF001
+    finally:
+        trade_log.save_token_info = original
+    ok = events == ["creation wait", "chain check"]
+    return _check("chain check runs after the wait and stops the buy", ok, str(events))
+
+
 async def main() -> int:
     print("Pre-buy check pipeline")
     results = [
@@ -309,6 +530,11 @@ async def main() -> int:
         await check_budget(),
         await check_module_loading(),
         check_config_validation(),
+        await check_existing_filters_unchanged(),
+        await check_mayhem(),
+        check_shipped_configs(),
+        await check_free_checks_cost_no_rpc(),
+        await check_chain_check_after_wait(),
     ]
     if all(results):
         print("\nAll checks passed.")

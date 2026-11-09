@@ -30,11 +30,14 @@ class ConfiguredCheck:
             or returned something other than None or a str), True refuses the
             coin and False lets it through
         budget: Seconds the check may take; None is no limit
+        named: Prefix its reason with the check's name; off for the `filters`
+            settings, whose reasons name the setting already
     """
 
     check: PreBuyCheck
     required: bool = True
     budget: float | None = None
+    named: bool = True
 
 
 class CheckPipeline:
@@ -58,7 +61,9 @@ class CheckPipeline:
                 continue
             reason = await self._run(configured, coin)
             if reason is not None:
-                return f"{configured.check.name}: {reason}"
+                return (
+                    f"{configured.check.name}: {reason}" if configured.named else reason
+                )
         return None
 
     async def _run(self, configured: ConfiguredCheck, coin: TokenInfo) -> str | None:

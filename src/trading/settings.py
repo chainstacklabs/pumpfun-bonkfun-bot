@@ -106,6 +106,8 @@ class TraderSettings:
 
     match_string: str | None = None
     bro_address: str | None = None
+    # `filters.checks` as written in the bot YAML; None runs none.
+    checks: list[dict] | None = None
     marry_mode: bool = False
     yolo_mode: bool = False
 

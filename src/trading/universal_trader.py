@@ -40,6 +40,8 @@ from platforms.launchlab_presets import (
 )
 from trading import trade_log
 from trading.base import TradeResult
+from trading.checks import CheckContext, CheckPipeline, load_checks
+from trading.checks.builtin import BUILTINS
 from trading.intake import TokenIntake
 from trading.migration import MigrationResolver
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
@@ -122,6 +124,7 @@ class UniversalTrader:
     _LOW_BALANCE_RECHECK = 10.0
     #: Whether the last balance read was below `min_wallet_balance`.
     _below_min_balance = False
+    _has_chain_checks = False
     _balance_read: asyncio.Task | None = None
     _balance_read_at = float("-inf")
 
@@ -226,6 +229,13 @@ class UniversalTrader:
             ),
         )
 
+        # Checks that read the chain run just before the buy; the intake runs
+        # the rest as soon as a coin is detected.
+        configured_checks = load_checks(settings.checks, BUILTINS)
+        check_context = CheckContext(client=self.solana_client)
+        self.checks = CheckPipeline(configured_checks, check_context)
+        self._has_chain_checks = self.checks.has(reads_chain=True)
+
         # Intake: the listener, filtered to our platform, and the token queue
         self.intake = TokenIntake(
             settings,
@@ -255,6 +265,8 @@ class UniversalTrader:
             slot_clock=(
                 SlotClock(self.solana_client) if settings.age_from == "chain" else None
             ),
+            checks=configured_checks,
+            check_context=check_context,
         )
 
         self.positions = PositionManager(
@@ -579,7 +591,7 @@ class UniversalTrader:
                 )
                 return
 
-            skip_reason = self.intake.skip_reason(token_info)
+            skip_reason = await self.intake.skip_reason(token_info)
             if skip_reason:
                 logger.info(f"Skipping {token_info.symbol} - {skip_reason}")
                 return
@@ -599,6 +611,12 @@ class UniversalTrader:
                     f"Waiting for {self.wait_time_after_creation} seconds for the pool/curve to stabilize..."
                 )
                 await asyncio.sleep(self.wait_time_after_creation)
+
+            if self._has_chain_checks:
+                skip_reason = await self.checks.reason(token_info, reads_chain=True)
+                if skip_reason:
+                    logger.info(f"Skipping {token_info.symbol} - {skip_reason}")
+                    return
 
             # The buyer names the venue once it has read whether the curve
             # has graduated.

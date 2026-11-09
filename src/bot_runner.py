@@ -267,6 +267,7 @@ def build_trader_settings(
         # Trading filters
         match_string=cfg["filters"].get("match_string"),
         bro_address=cfg["filters"].get("bro_address"),
+        checks=cfg["filters"].get("checks"),
         marry_mode=cfg["filters"].get("marry_mode", False),
         yolo_mode=cfg["filters"].get("yolo_mode", False),
         # Compute unit configuration

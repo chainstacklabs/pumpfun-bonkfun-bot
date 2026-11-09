@@ -165,7 +165,11 @@ def _trader(client: _Client, floor: float | None) -> UniversalTrader:
     trader.solana_client = client
     trader.wallet = SimpleNamespace(pubkey=Pubkey.new_unique())
     trader.platform = Platform.PUMP_FUN
-    trader.intake = SimpleNamespace(skip_reason=lambda _t: None)
+
+    async def no_skip(_token: TokenInfo) -> None:
+        return None
+
+    trader.intake = SimpleNamespace(skip_reason=no_skip)
     trader.extreme_fast_mode = True
     trader.yolo_mode = False
     trader.quote_amounts = {WSOL_MINT: 0.01}

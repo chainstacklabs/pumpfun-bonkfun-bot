@@ -11,10 +11,17 @@ from time import monotonic
 
 from solders.pubkey import Pubkey
 
-from core.pubkeys import normalize_quote_mint
 from core.slot_clock import SlotClock
 from interfaces.core import PoolReady, TokenInfo
 from monitoring.base_listener import BaseTokenListener
+from trading.checks import CheckContext, CheckPipeline, ConfiguredCheck
+from trading.checks.builtin import (
+    CreatorCheck,
+    NameMatchCheck,
+    QuoteAllowedCheck,
+    QuoteAmountCheck,
+    TransferFeeCheck,
+)
 from trading.migration import MigrationResolver, PoolNotTradable
 from trading.settings import TraderSettings
 from utils.logger import get_logger
@@ -39,6 +46,8 @@ class TokenIntake:
         *,
         pool_resolver: MigrationResolver | None = None,
         slot_clock: SlotClock | None = None,
+        checks: list[ConfiguredCheck] | None = None,
+        check_context: CheckContext | None = None,
     ) -> None:
         """Set up the intake.
 
@@ -46,6 +55,8 @@ class TokenIntake:
             pool_resolver: Required with `trade.entry: migration`; unused otherwise
             slot_clock: Required with `filters.age_from: chain`, where a
                 launch's age counts from the slot its create landed in
+            checks: The `filters.checks` the bot YAML enables; the intake runs
+                the ones that read nothing, after the `filters` settings
         """
         self.token_listener = token_listener
         self.entry = settings.entry
@@ -63,6 +74,24 @@ class TokenIntake:
         self.allowed_quote_mints = allowed_quote_mints
         self.max_transfer_fee_bps = settings.max_transfer_fee_bps
 
+        # The `filters` settings as checks. A launch's name and creator are
+        # filtered by the listener; a migration's here, since no launch was seen.
+        settings_checks = [
+            ConfiguredCheck(QuoteAllowedCheck(allowed_quote_mints), named=False),
+            ConfiguredCheck(QuoteAmountCheck(quote_amounts), named=False),
+            ConfiguredCheck(TransferFeeCheck(self.max_transfer_fee_bps), named=False),
+        ]
+        identity_checks = [
+            ConfiguredCheck(NameMatchCheck(self.match_string), named=False),
+            ConfiguredCheck(CreatorCheck(self.bro_address), named=False),
+        ]
+        configured = list(checks or [])
+        context = check_context or CheckContext(client=None)
+        self._launch_checks = CheckPipeline(settings_checks + configured, context)
+        self._migration_checks = CheckPipeline(
+            identity_checks + settings_checks + configured, context
+        )
+
         self.token_queue: asyncio.Queue = asyncio.Queue()
         # Migration entry: (report, monotonic time it was queued).
         self.pool_queue: asyncio.Queue[tuple[PoolReady, float]] = asyncio.Queue()
@@ -71,29 +100,14 @@ class TokenIntake:
         # Set when the listener ended on an error rather than a stop.
         self.stopped_on_error = False
 
-    def skip_reason(self, token_info: TokenInfo) -> str | None:
-        """Why the configured filters refuse this coin, or None to trade it.
+    async def skip_reason(self, token_info: TokenInfo) -> str | None:
+        """Why the `filters` settings or a check that reads nothing refuse the coin.
 
-        Checked on detection as well as before the buy: single-token mode would
-        otherwise spend its one token on a coin it was never going to buy.
+        None to trade it. Checked on detection as well as before the buy:
+        single-token mode would otherwise spend its one token on a coin it was
+        never going to buy.
         """
-        quote_mint = normalize_quote_mint(token_info.quote_mint)
-        if (
-            self.allowed_quote_mints is not None
-            and quote_mint not in self.allowed_quote_mints
-        ):
-            return f"quote mint {quote_mint} not in allowed_quote_mints"
-        if quote_mint not in self.quote_amounts:
-            return f"no buy amount configured for quote mint {quote_mint}"
-        if (
-            self.max_transfer_fee_bps is not None
-            and token_info.transfer_fee_bps > self.max_transfer_fee_bps
-        ):
-            return (
-                f"transfer fee {token_info.transfer_fee_bps} bps exceeds "
-                f"max_transfer_fee_bps {self.max_transfer_fee_bps}"
-            )
-        return None
+        return await self._launch_checks.reason(token_info, reads_chain=False)
 
     async def wait_for_token(self) -> TokenInfo | None:
         """Wait for the first coin the filters accept, up to `token_wait_timeout`.
@@ -114,7 +128,9 @@ class TokenIntake:
             self.processed_tokens.add(token_key)
             if self.slot_clock is not None:
                 self.slot_clock.observe(token.creation_slot)
-            skip_reason = self.skip_reason(token) or self._too_old(token, monotonic())
+            skip_reason = await self.skip_reason(token) or self._too_old(
+                token, monotonic()
+            )
             if skip_reason:
                 logger.info(f"Skipping {token.symbol} - {skip_reason}; still waiting")
                 return
@@ -282,20 +298,13 @@ class TokenIntake:
 
     # Migration entry. The listener still reports launches; they are dropped.
 
-    def migration_skip_reason(self, token_info: TokenInfo) -> str | None:
+    async def migration_skip_reason(self, token_info: TokenInfo) -> str | None:
         """Why the filters refuse a migrated coin, or None to buy it.
 
         The name filter reads the coin's metadata; the creator filter compares
         the creator its curve records, since no launch was seen.
         """
-        if self.match_string and not (
-            self.match_string.lower() in token_info.name.lower()
-            or self.match_string.lower() in token_info.symbol.lower()
-        ):
-            return f"does not match filter '{self.match_string}'"
-        if self.bro_address and str(token_info.creator) != self.bro_address:
-            return f"not created by {self.bro_address}"
-        return self.skip_reason(token_info)
+        return await self._migration_checks.reason(token_info, reads_chain=False)
 
     async def _ignore_launch(self, _token_info: TokenInfo) -> None:
         return None
@@ -331,7 +340,7 @@ class TokenIntake:
             if not (retry_allowed or e.not_yet_visible):
                 self.processed_tokens.add(key)
             return None
-        reason = self.migration_skip_reason(token_info)
+        reason = await self.migration_skip_reason(token_info)
         if reason:
             logger.info(f"Skipping {token_info.symbol} ({token_info.mint}) - {reason}")
             self.processed_tokens.add(key)
