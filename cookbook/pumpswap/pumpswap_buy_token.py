@@ -1,6 +1,8 @@
 """This standalone script demonstrates how to buy tokens on the PUMP AMM (pAMM) protocol.
 It covers the complete flow from finding markets to executing buys with mayhem mode support.
 
+WARNING: this submits a real transaction and spends real funds.
+
 Usage:
     uv run cookbook/pumpswap/pumpswap_buy_token.py <MINT> [SOL_TO_SPEND] [--slippage 0.3]
 

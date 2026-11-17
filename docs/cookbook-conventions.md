@@ -5,52 +5,54 @@ Rules for adding or changing a script under `cookbook/`.
 
 ## What belongs here
 
-- **One script, one action.** Duplication across scripts is the accepted cost —
-  don't factor shared helpers out of them. `pumpfun_instructions.py` and
-  `solana_transaction_status.py` are the two exceptions and the list is closed.
-  Buy and sell never share a file. The create-and-buy scripts are the only
-  two-action ones, and they come in a `_txv0` and a `_txv1` form: the Solana
-  transaction version changes whether the launch is atomic, so it is the
-  script that changes, not a flag.
+- **One script, one action.** Duplication across scripts is the accepted cost;
+  don't factor shared helpers out of them. The three existing helpers,
+  `pumpfun_instructions.py`, `solana_transaction_status.py` and
+  `letsbonk_idl_parser.py`, are the only ones. Buy and sell never share a file.
+  The create-and-buy scripts are the only two-action ones, and they come in a
+  `_txv0` and a `_txv1` form, since the Solana transaction version decides
+  whether the launch is atomic.
 - **Every script runs on its own**: `uv run cookbook/<path>`, reading `.env`. No
-  bot config, no import from `src/`. Anything that needs the bot goes in `tools/`;
-  anything that asserts a past bug stays fixed goes in `tests/regression/`.
-- **Directories are single lowercase words** under a platform directory:
-  `listen`, `read`, `trade`, `graduation`, `decode`.
-- **Files are `<protocol>_<verb>_<noun>[_<variant>].py`**, all snake_case. The
-  protocol repeats what the directory says, on purpose — a basename is what shows
-  up in an editor tab, a grep hit or a docs link.
+  bot config, and no import from `src/` except the generated geyser stubs
+  (`src.geyser.generated`), which the geyser scripts share. Anything that needs
+  the bot goes in `tools/`; anything that asserts a past bug stays fixed goes in
+  `tests/regression/`.
+- **Layout:** `pumpfun/` and `stonkfun/` split by action into `listen`, `read`,
+  `trade`, `graduation` and `decode`; the smaller platform folders (`letsbonk/`,
+  `pumpswap/`, `solana/`) hold their scripts directly. Retired instructions go in
+  `legacy/`.
+- **Files are `<protocol>_<verb>_<noun>[_<variant>].py`**, all snake_case, with
+  the protocol repeated even though the folder says it.
   - protocol: `pumpfun`, `pumpswap`, `letsbonk`, `stonkfun`, `solana`, `anchor`
-  - verb: `buy`, `sell`, `create`, `snipe`, `listen`, `watch`, `read`, `derive`,
-    `decode`, `check`, `capture`, `find`
-  - noun: `token`, `price`, `curve`, `pool`, `balances`, `transaction`, `migrations`
-  - variant: what the reader is choosing between — `exact_in`/`exact_out`, a
-    transport, or `txv0`/`txv1` for the Solana transaction version
-  - **Don't put the pump instruction version in a basename.** The cookbook ships
-    one form of each action, so `_v2` tells the reader nothing and reads as a
-    Solana transaction version, which is a different thing entirely. Name the
-    instruction in the docstring instead. The retired path is `legacy/`.
-  - the two non-runnable helpers take no verb, because they do nothing
+  - verb: an action, such as `buy`, `sell`, `create`, `snipe`, `listen`, `watch`,
+    `read`, `derive`, `decode`, `check`, `capture`, `find`, `claim`, `collect`
+  - variant: what the reader chooses between, such as `exact_in`/`exact_out`, a
+    transport, a venue (`cpmm`) or `txv0`/`txv1` for the Solana transaction
+    version
+  - **Don't put the pump instruction version in a basename**: `_v2` reads as a
+    Solana transaction version. Name the instruction in the docstring.
+  - the helpers take no verb, because they do nothing
 - **RPC and service names lowercase into one token**, never camelCase:
   `blocksubscribe`, `logsubscribe`, `programsubscribe`, `getaccountinfo`,
   `gettransaction`.
 - **Anything not specific to a launchpad belongs under `solana/`**, not `pumpfun/`.
-- **Input is a command-line argument, never a constant you edit.** Every script
+- **Input is a command-line argument, never a constant you edit.** A script
   builds an `ArgumentParser` in `main()`: required values are positionals,
-  tunables are `--options`, and anything the caller varies per run is one of
-  them. `DEFAULT_*` constants are the only place a literal belongs.
-  - A placeholder is not a default: `Pubkey.from_string("...")` raises at import,
-    so the script dies before printing its own usage.
-  - Don't read config from environment variables either — `.env` is for
-    endpoints and keys, not for trade parameters no usage line mentions.
-- **Never print an endpoint or any part of it, its host included.** Some
-  providers put the key in the subdomain. Name the variable it came from instead.
-  - `sys.argv` never appears at module level. The nine listeners take no input
-    and are exempt; they are listed in the verifier.
+  tunables are `--options`. `DEFAULT_*` constants are the only place a literal
+  belongs. The scripts that take no input (the listeners and the capture script)
+  are exempt from the parser and are listed in `verify_cookbook_arguments.py`;
+  no script reads `sys.argv` at module level.
+  - A placeholder is not a default: `Pubkey.from_string("...")` raises at import.
+  - Don't read trade parameters from environment variables; `.env` is for
+    endpoints and keys.
+- **Never print an endpoint or any part of it, its host included.** Name the
+  variable it came from instead.
 - Fixtures are `raw_<what>_from_<method>.json`, next to the script that reads them.
 - **Cite a URL only after checking it resolves.**
   `uv run tests/regression/verify_documentation_links.py --live` fetches every URL
   in the repo.
-- **A script that spends says so on the first line of its docstring**, and the
-  cookbook README marks it. The name is not a safety signal: every `*_buy_*`,
-  `*_sell_*`, `*_create_*` and `*_snipe_*` script submits real transactions.
+- **A script that submits a transaction says so** with a
+  `WARNING: this submits a real transaction and spends real funds.` line right
+  after its docstring summary, and the cookbook README marks it 💸. Every
+  `*_buy_*`, `*_sell_*`, `*_create_*`, `*_snipe_*`, `*_claim_*` and `*_collect_*`
+  script submits one.

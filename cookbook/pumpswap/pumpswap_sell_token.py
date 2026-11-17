@@ -1,6 +1,8 @@
 """This standalone script demonstrates how to sell tokens on the PUMP AMM (pAMM) protocol.
 It covers the complete flow from finding markets to executing sells with mayhem mode support.
 
+WARNING: this submits a real transaction and spends real funds.
+
 Usage:
     uv run cookbook/pumpswap/pumpswap_sell_token.py <MINT> [--slippage 0.25]
 

@@ -2,9 +2,10 @@
 
 Before the bot buys a coin, it runs a list of checks. Each one passes the coin
 or says why it is skipped, and the first skip wins and is logged with its
-reason. The `filters` settings (`allowed_quote_mints`, `max_transfer_fee_bps`,
-`match_string`, `bro_address`) run first as built-in checks; the list under
-`filters.checks` runs after them, in the order it is written within each kind
+reason. The `filters` settings run first as built-in checks:
+`allowed_quote_mints`, `quote_amounts` and `max_transfer_fee_bps` for every
+coin, and `match_string` and `bro_address` for a migration (on a launch the
+listener applies those two). The list under `filters.checks` runs after them, in the order it is written within each kind
 below: every check that reads nothing runs before any check that reads the
 chain.
 
@@ -15,8 +16,7 @@ chain.
   coin is detected and cost no time on the buy path.
 - **Checks that read the chain** set `reads_chain = True`. They run once, just
   before the buy, after `wait_after_creation` when `extreme_fast_mode` is off.
-  Each read adds time between detection and the buy, which is why none is on
-  by default.
+  Each read adds time between detection and the buy.
 
 ## Configure checks
 
