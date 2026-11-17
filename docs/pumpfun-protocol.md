@@ -2,7 +2,10 @@
 
 The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-public-docs`
 (`idl/pump.json` → `pump_fun_idl.json`, `pump_amm.json` → `pump_swap_idl.json`,
-`pump_fees.json`). Refresh them from upstream rather than hand-editing.
+`pump_fees.json`). Refresh them from upstream rather than hand-editing. They are
+not the reference for account counts: they under-report PumpSwap's `buy` and
+`sell`, `create_v2` (accounts 17-20) and `migrate_v2`, all listed below, and
+`buy_exact_sol_in`, documented in `cookbook/pumpfun/trade/pumpfun_instructions.py`.
 
 ## Quote assets and the v2 trade instructions (current path)
 

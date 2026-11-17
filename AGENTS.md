@@ -4,18 +4,17 @@ Solana trading bot for pump.fun and Raydium LaunchLab (any launchpad; letsbonk.f
 
 ## Reference
 
-Read the matching doc before you touch these areas. In Claude Code, the rules in
-`.claude/rules/` load the pointer automatically for the files you open.
+Before you change files in these paths, read the doc next to them.
 
-| Doc | Read it before |
+| Paths | Read first |
 |---|---|
-| [docs/pumpfun-protocol.md](docs/pumpfun-protocol.md) | touching account layouts, instruction args, fee recipients or quote assets |
-| [docs/launchlab-protocol.md](docs/launchlab-protocol.md) | touching LaunchLab (any launchpad, letsbonk.fun, StonkFun): platform configs, swap accounts, quote assets, transfer fees |
-| [docs/listeners-and-geyser.md](docs/listeners-and-geyser.md) | changing a listener, the geyser stubs or a decoder |
-| [docs/cookbook-conventions.md](docs/cookbook-conventions.md) | adding or changing anything under `cookbook/` |
-| [docs/regression-tests.md](docs/regression-tests.md) | picking which verifiers your change needs |
-| [docs/pre-buy-checks.md](docs/pre-buy-checks.md) | adding or changing a pre-buy check (`src/trading/checks/`) |
-| [docs/trading-lifecycle.md](docs/trading-lifecycle.md) | changing positions, the positions file, shutdown, cleanup or PnL (`src/trading/`, `src/cleanup/`) |
+| `src/platforms/pumpfun/`, `cookbook/pumpfun/`, `cookbook/pumpswap/`, `cookbook/legacy/`, `idl/pump_*.json` | [docs/pumpfun-protocol.md](docs/pumpfun-protocol.md): account layouts, instruction args, fee recipients, quote assets |
+| `src/platforms/{launchlab,letsbonk,stonkfun}/`, `src/platforms/launchlab_presets.py`, `cookbook/letsbonk/`, `cookbook/stonkfun/`, `idl/raydium_*.json` | [docs/launchlab-protocol.md](docs/launchlab-protocol.md): platform configs, swap accounts, quote assets, transfer fees |
+| `src/monitoring/`, `src/geyser/`, the listen, graduation and decode scripts in `cookbook/`, `tools/compare_*.py` | [docs/listeners-and-geyser.md](docs/listeners-and-geyser.md): listeners, geyser stubs, decoders |
+| `src/trading/`, `src/cleanup/` | [docs/trading-lifecycle.md](docs/trading-lifecycle.md): positions, the positions file, shutdown, cleanup, PnL |
+| `src/trading/checks/`, `src/trading/intake.py` | [docs/pre-buy-checks.md](docs/pre-buy-checks.md) |
+| `cookbook/` | [docs/cookbook-conventions.md](docs/cookbook-conventions.md) |
+| `tests/` | [docs/regression-tests.md](docs/regression-tests.md): which verifiers your change needs |
 
 ## Ground rules
 

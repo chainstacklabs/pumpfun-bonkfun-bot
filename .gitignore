@@ -11,7 +11,7 @@ blocksubscribe-transactions/
 .pylintrc
 .ruff_cache
 
-# Per-developer Claude Code settings; AGENTS.md and .claude/rules/ are shared
+# Per-developer Claude Code settings; AGENTS.md is the shared agent guide
 .claude/settings.local.json
 
 # Byte-compiled / optimized / DLL files
