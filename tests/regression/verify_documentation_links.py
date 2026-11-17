@@ -30,7 +30,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 SEARCH_ROOTS = ("cookbook", "tools", "tests", "src", "bots", "docs", ".claude")
 SEARCH_SUFFIXES = {".py", ".md", ".yaml"}
-EXTRA_FILES = ("README.md", "CLAUDE.md")
+EXTRA_FILES = ("README.md", "AGENTS.md")
 
 URL = re.compile(r"https?://[^\s'\"()<>\]`,]+")
 

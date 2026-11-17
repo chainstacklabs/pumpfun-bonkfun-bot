@@ -39,9 +39,11 @@ accounts by IDL name: `payer` is 0 and `creator` is 1, and the pool's `creator`
 The quote mint is account 7 and its token program account 11. The transfer fee
 is the `transfer_fee_extension_param` argument.
 
-Other launchpads launch with `initialize_v2` (SPL Token coin, Metaplex
-metadata) or `initialize_with_token_2022`, quoted in SOL or another token, with
-the same accounts. A platform config can restrict which global configs and
+Other launchpads launch with `initialize` or `initialize_v2` (SPL Token coin,
+Metaplex metadata; 18 accounts) or `initialize_with_token_2022` (15), quoted in
+SOL or another token. The account names match across all three but the
+positions don't (the quote token program is 12 in the 18-account forms), so
+read accounts by name. A platform config can restrict which global configs and
 curve parameters its launches use (`restrict_global_config`,
 `restrict_curve_param`); its launches then pass two PDAs after the IDL's
 accounts, `["platform_allow_config", platform_config, global_config]` and
@@ -113,9 +115,10 @@ StonkFun reward coins are Token-2022 mints with a 1% or 3% transfer fee.
 ## Graduation
 
 When a curve raises its target, Raydium's migrate wallet moves it to a pool, and
-the curve takes no more trades. `PoolState.status` is 1 while it waits and 2 once
-migrated; a migrated pool keeps its final reserves, so the curve manager reports
-`graduated` and `calculate_price` raises rather than return a frozen price.
+the curve takes no more trades. `PoolState.status` is 0 while trading, 1 while
+it waits for migration and 2 once migrated. A pool past 0 keeps its final
+reserves, so the curve manager reports `graduated` for any nonzero status and
+`calculate_price` raises rather than return a frozen price.
 
 `migrate_type` 1 means Raydium CPMM, which is where every StonkFun coin goes. The
 CPMM pool is `PDA(["pool", amm_config, token_0, token_1])` under the CPMM program,
@@ -157,18 +160,14 @@ the executed listeners drop it with the other failed transactions, and `shreds`
 reports it as another pre-execution attempt.
 
 Past the IDL's 28 accounts a migration passes ten more, which the program reads
-positionally: the platform's `platform_nft_wallet`, a new fee-NFT mint (a second
-signer), its ATA for that wallet, the lock program's
-`PDA(["locked_liquidity", nft_mint])`, the NFT's Metaplex metadata, the pool's
-creator, CPMM's `PDA(["permission", launchlab_authority])`, the platform's
-`platform_cp_creator`, and CPMM's `PDA(["support_mint", mint])` for token 0
-and token 1. Every real migration loads the rest through lookup table
-`AcL1Vo8oy1ULiavEcjSUcwfBSForXMudcZvDZy5nzJkU`.
+positionally. Every real migration loads accounts through lookup table
+`AcL1Vo8oy1ULiavEcjSUcwfBSForXMudcZvDZy5nzJkU`, so resolve lookup-table
+accounts before indexing.
 
 ## Verifiers
 
 `verify_launchlab_trades`, `verify_launchlab_launch_parsing`,
-`verify_generic_launchlab`, `verify_cleanup_harvests_withheld_fees`,
-`verify_sell_after_graduation`, `verify_cpmm_buy` and
-`verify_launchlab_migration_detection` cover all of the above against captured
-mainnet transactions.
+`verify_generic_launchlab`, `verify_launchlab_shreds`,
+`verify_cleanup_harvests_withheld_fees`, `verify_sell_after_graduation`,
+`verify_cpmm_buy` and `verify_launchlab_migration_detection` cover the above
+against captured mainnet transactions.

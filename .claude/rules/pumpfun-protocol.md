@@ -1,17 +1,15 @@
 ---
 paths:
   - "src/platforms/pumpfun/**"
-  - "src/platforms/letsbonk/**"
   - "cookbook/pumpfun/**"
   - "cookbook/pumpswap/**"
   - "cookbook/legacy/**"
-  - "idl/**"
+  - "idl/pump_*.json"
 ---
 
 Read [docs/pumpfun-protocol.md](../../docs/pumpfun-protocol.md) before changing
 account layouts, instruction arguments, fee recipients or quote-asset handling.
 
-The IDL under-reports every pump-amm instruction, the pre-v2
-`buy_exact_sol_in` and `migrate_v2`, so it cannot be the reference for account
-counts — the doc lists pump-amm's and `migrate_v2`'s, and the cookbook builder
-documents `buy_exact_sol_in`'s.
+The IDL is not the reference for account counts: it under-reports PumpSwap's
+`buy` and `sell`, `create_v2` (accounts 17-20) and `migrate_v2`; the doc lists
+them, and the cookbook builder documents `buy_exact_sol_in`'s.

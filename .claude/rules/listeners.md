@@ -5,6 +5,7 @@ paths:
   - "cookbook/pumpfun/listen/**"
   - "cookbook/pumpfun/graduation/**"
   - "cookbook/pumpfun/decode/**"
+  - "cookbook/stonkfun/listen/**"
   - "tools/compare_*.py"
 ---
 

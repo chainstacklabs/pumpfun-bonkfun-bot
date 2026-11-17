@@ -23,10 +23,8 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
 - **Mayhem mode and a non-SOL quote asset are mutually exclusive.** The
   program rejects the pairing with `MayhemModeQuoteMintNotAllowed` (6071), so a
   mayhem coin is always SOL-paired and can never carry a creator fee.
-- **The opening reserve is per quote mint, by orders of magnitude.** Across the
-  `QuoteControl` entries the figure runs from the low millions to the high
-  trillions of raw units, so no default approximates a missing one — an unlisted
-  mint has to be refused rather than priced.
+- **The opening reserve differs per quote mint by orders of magnitude**, so no
+  default approximates a missing one: an unlisted mint is refused, not priced.
 - **The quote mint's token program is resolved from chain, not assumed.**
   `resolve_quote_token_program` (`src/core/pubkeys.py`) reads a mint's owner once
   — pre-seeded with WSOL/USDC so those stay free — and caches it for the process;
@@ -63,17 +61,17 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   `Pubkey::default()`. Transfers still happen in native SOL, and the
   `associated_quote_*` accounts are only seed-constrained — do **not** create the
   user's WSOL ATA, it would burn ~0.002 SOL of rent for nothing.
-- Fee recipients: 24 total, in three sets of 8 (`NORMAL_FEE_RECIPIENTS`,
-  `RESERVED_FEE_RECIPIENTS` for mayhem coins, `BUYBACK_FEE_RECIPIENTS`). Every v2
-  buy/sell needs a `fee_recipient` **and** a `buyback_fee_recipient`, randomized
-  per tx to spread program throughput.
+- Every v2 buy/sell needs a `fee_recipient` **and** a `buyback_fee_recipient`.
+  The bot sends the fixed `PumpFunAddresses.FEE` (`MAYHEM_FEE` on a mayhem coin)
+  and picks the buyback recipient at random from `BUYBACK_FEE_RECIPIENTS`
+  (`platforms/pumpfun/address_provider.py`). The cookbook also randomizes the
+  fee recipient over `NORMAL_FEE_RECIPIENTS` / `RESERVED_FEE_RECIPIENTS`.
 - `sharing_config` (PDA `["sharing-config", base_mint]`) lives under the **pump
   fees program**, not the pump program. Easy to derive against the wrong program.
 
 ## BondingCurve account layout
 
-- **`create_v2` allocates 125 bytes.** The 36 reserved padding bytes are gone and
-  three fields follow `quote_mint`: `creator_fee_bps` (u64),
+- **`create_v2` allocates 125 bytes.** Three fields follow `quote_mint`: `creator_fee_bps` (u64),
   `can_edit_creator_fee` (bool, reserved — always false) and `is_holder_reward`
   (bool). Every field the bot reads sits before where the padding used to start.
 - `extend_account` can grow a curve past 125 bytes, and a length allowlist is
@@ -93,13 +91,13 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
   manager exposes the old names as aliases, so callers keep working for SOL-paired
   coins — but anything doing arithmetic must scale by the quote mint's decimals
   (`quote_units_per_token`), not a hardcoded 1e9.
-- PumpSwap `Pool` gained a trailing **`virtual_quote_reserves: i128`** (16 bytes,
-  offset 245). Pool fields end at 261; live accounts are **301 bytes** with
-  trailing padding. Quote against **effective** reserves:
-  `pool_quote_token_account.amount + virtual_quote_reserves`. **Upstream's
-  release note claims it is 0 on all pools — that is out of date**, and quoting
-  off the raw vault balance under-prices any pool carrying some. It is `i128`,
-  not `u64`; reading 8 bytes works only while the high half is zero.
+- PumpSwap `Pool` has **`virtual_quote_reserves: i128`** at offset 245 (16
+  bytes), then `creator_fee_bps` (u64), `can_edit_creator_fee` and
+  `is_holder_reward` (bools); fields end at 271 and live accounts are **301
+  bytes** with trailing padding. Quote against **effective** reserves:
+  `pool_quote_token_account.amount + virtual_quote_reserves`; quoting off the raw
+  vault balance under-prices any pool where it is nonzero. It is `i128`, not
+  `u64`; reading 8 bytes works only while the high half is zero.
 - pump-amm has **no** `buy_v2`/`sell_v2`. The AMM instruction names are
   unchanged; only the pool layout and quoting moved.
 - **`Pool.coin_creator` tells you whether a pool is canonical**, i.e. graduated
@@ -110,16 +108,14 @@ The IDLs under `idl/` are vendored verbatim from `github.com/pump-fun/pump-publi
     adding `pool-v2` on a non-canonical pool shifts them and the program rejects
     the `pool-v2` PDA with `BuybackFeeRecipientNotAuthorized` (6053), while
     leaving it out of a canonical pool's trade throws `AnchorError 6023
-    (Overflow)` after the transfers complete. Upstream's
-    BREAKING_FEE_RECIPIENT.md says the pair goes after `pool-v2` "for coins that
-    graduate from bonding curve", and separately that the pair is needed either
-    way — the qualifier is the whole rule. Account counts: buy 26/27 canonical,
+    (Overflow)` after the transfers complete. Account counts: buy 26/27 canonical,
     25/26 not; sell 24/26 canonical, 23/25 not.
-  - **Do not assume 6 base-token decimals.** Every graduated coin has 6, but
-    non-canonical pools routinely carry 9, and a factor of 1000 scales the quote
-    and the slippage floor together, so a sell reverts `ExceededSlippage` (6004)
-    rather than just mispricing. Resolve the mint's owner and decimals from the
-    same `getAccountInfo`, as `get_mint_info` does.
+  - **6 base-token decimals hold only for canonical pools.** Every graduated
+    coin has 6, which `PumpSwapMarket` relies on; non-canonical pools often carry
+    9, and a factor of 1000 scales the quote and the slippage floor together, so
+    a sell reverts `ExceededSlippage` (6004). For any other pool, read the mint's
+    owner and decimals from one `getAccountInfo`, as `get_mint_info` in
+    `cookbook/pumpswap/pumpswap_sell_token.py` does.
 - The vendored `pump_swap_idl.json` **under-reports these accounts** and is
   byte-identical to upstream, so it cannot be the reference: it lists 23 for `buy`
   against 25-26 on chain, and 21 for `sell` against 23-26.
@@ -140,8 +136,8 @@ rules above, taking the fee, mayhem and buyback recipients from PumpSwap's
 The buy is `buy_exact_quote_in(spendable_quote_in, min_base_amount_out,
 track_volume)`: it spends exactly `spendable_quote_in`, fees included, so the
 buyer passes the configured amount unpadded and puts the slippage on the token
-floor. `track_volume` is an `OptionBool` sent as one `1` byte; real buys also
-leave it off. After the IDL's first 19 accounts a buy sends
+floor. `track_volume` is an `OptionBool` sent as one byte, `1`, so volume
+tracking is on. After the IDL's first 19 accounts a buy sends
 `global_volume_accumulator` and the user's `user_volume_accumulator` (writable;
 the program creates it on first use, no init instruction needed), then
 `fee_config` and the fee program. On a cashback pool a buy adds only the
@@ -233,23 +229,20 @@ can still log a `CreatePoolEvent`.
 - **A creator fee is applied only on a coin priced in a `QuoteControl` mint.**
   Anywhere else the program accepts `creator_fee_bps`, emits
   `CreateEvent.creator_fee_bps = 0` and stores 0 on the curve, with no error.
-  Measured on mainnet: the fee lands on a `QuoteControl` mint whether that mint
-  is SPL Token or Token-2022, and does not land on wrapped SOL or on USDC —
-  which the older `Global.whitelisted_quote_mints` carries and `QuoteControl`
-  does not. So the deciding property is registry membership, not the token
-  program and not merely "something other than SOL".
+  The fee lands on a `QuoteControl` mint, SPL Token or Token-2022, and not on
+  wrapped SOL or USDC: registry membership decides, not the token program.
 - The **associated bonding curve is an ordinary ATA**, so its address depends on
   which token program owns the mint: Token2022 for `create_v2` coins, SPL Token
   for legacy `create`. Deriving with the wrong program returns a valid-looking
   address that does not exist on chain.
 - `extreme_fast_mode` skips the curve-state price fetch. Whether it also reads the
-  curve for mayhem/cashback/creator/**quote_mint** depends on provenance (see the
-  Invariants in CLAUDE.md): CreateEvent-sourced tokens (`state_from_event`) trade on the event
-  data with zero RPC calls, while instruction-parsed and incomplete-event tokens
-  refresh from chain — the wrong quote mint means spending the wrong balance
-  entirely. Event
-  parsers populate `quote_mint` from `CreateEvent`, which carries `quote_mint` and
-  `virtual_quote_reserves` as trailing fields.
+  curve for mayhem/cashback/creator/**quote_mint** depends on `state_from_event`
+  (see Invariants in `AGENTS.md`): set, the buy trades on the listener's data with
+  zero RPC calls; unset, or with `trade.trust_create_event: false`, it refreshes
+  from chain. The CreateEvent parsers and the `shreds` listener set it;
+  instruction-parsed tokens from other listeners don't. The wrong quote mint
+  means spending the wrong balance entirely. `CreateEvent` carries `quote_mint`
+  and `virtual_quote_reserves` as trailing fields.
 - **`BondingCurve.creator` can change after launch.** Setting up creator-fee
   sharing (`MigrateBondingCurveCreator`, often in its own transaction a slot after
   the create) moves it to the coin's fee-sharing config, so `CreateEvent.creator`
@@ -276,6 +269,4 @@ PumpSwap instructions take identical accounts and arguments either way.
 `Global.is_holder_reward_enabled` can switch creation off globally.
 
 `TokenInfo.is_holder_reward` and `TokenInfo.creator_fee_bps` surface this to the
-bot — see the field comments on `TokenInfo` in `src/interfaces/core.py`. SOL- and
-USDC-paired coins keep `creator_fee_bps` at 0; custom-pair coins carry a nonzero
-value.
+bot (`src/interfaces/core.py`).
