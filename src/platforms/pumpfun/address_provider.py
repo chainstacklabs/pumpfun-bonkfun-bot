@@ -34,9 +34,6 @@ class PumpFunAddresses:
     EVENT_AUTHORITY: Final[Pubkey] = Pubkey.from_string(
         "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1"
     )
-    FEE: Final[Pubkey] = Pubkey.from_string(
-        "CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM"
-    )
     # Mayhem mode fee recipient (hardcoded to avoid RPC calls)
     # To check if this address is up-to-date, fetch Global account data at offset 483
     # from the pump.fun Global account: 4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf
@@ -51,17 +48,19 @@ class PumpFunAddresses:
     FEE_PROGRAM: Final[Pubkey] = Pubkey.from_string(
         "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
     )
-    # 8 normal fee recipients — use one as fee_recipient for non-mayhem coins.
-    # See FEE_RECIPIENTS.md in the pump-fun public docs repository.
+    # 8 normal fee recipients — use one as fee_recipient for non-mayhem coins
+    # and pools, on pump.fun and PumpSwap alike. The set pump.fun rotated to on
+    # 2026-11-25; the previous one stopped working that day. See
+    # FEE_RECIPIENT_ROTATION.md in the pump-fun public docs repository.
     NORMAL_FEE_RECIPIENTS: ClassVar[list[Pubkey]] = [
-        Pubkey.from_string("62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV"),
-        Pubkey.from_string("7VtfL8fvgNfhz17qKRMjzQEXgbdpnHHHQRh54R9jP2RJ"),
-        Pubkey.from_string("7hTckgnGnLQR6sdH7YkqFTAA7VwTfYFaZ6EhEsU3saCX"),
-        Pubkey.from_string("9rPYyANsfQZw3DnDmKE3YCQF5E8oD89UXoHn9JFEhJUz"),
-        Pubkey.from_string("AVmoTthdrX6tKt4nDjco2D775W2YK3sDhxPcMmzUAmTY"),
-        Pubkey.from_string("CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM"),
-        Pubkey.from_string("FWsW1xNtWscwNmKv6wVsU1iTzRN6wmmk3MjxRP5tT7hz"),
-        Pubkey.from_string("G5UZAVbAf46s7cKWoyKu8kYTip9DGTpbLZ2qa9Aq69dP"),
+        Pubkey.from_string("2aSWZ3QXsNLVVBr1UB1HxSw7sqMRR2pv2qa5ohsTi5Gp"),
+        Pubkey.from_string("DrcDxWxLi3i7Yd7cTyCyd44DE7pwS9BvFxSsPx1c7XTv"),
+        Pubkey.from_string("EAN7utdjyxhKVaqA69DRyxW5ffBhnidRZfifmfhwUgPm"),
+        Pubkey.from_string("Fso3Ggq2Um1pQT6Uzq8wDicgRh62vANYZUT8uqJd2fXh"),
+        Pubkey.from_string("BWNNnhN6id5j71h5wfkzmXjnV2fgF9zA61FqGJJjnakw"),
+        Pubkey.from_string("Eh7hTLi6iMbT55jAEYVgtN5QaSb6z9Ytzwxs2LGG5qg4"),
+        Pubkey.from_string("3Mqk6qHEj7r3TFNFYjCP85a5venbp2mefYQTSKVVchBC"),
+        Pubkey.from_string("A3cm36KqisUXVTSRCK6VQ7kvXLene4gsbQedhcd5MujQ"),
     ]
     # 8 reserved fee recipients — use one as fee_recipient for mayhem coins.
     RESERVED_FEE_RECIPIENTS: ClassVar[list[Pubkey]] = [
@@ -209,7 +208,6 @@ class PumpFunAddressProvider(AddressProvider):
             "program": PumpFunAddresses.PROGRAM,
             "global": PumpFunAddresses.GLOBAL,
             "event_authority": PumpFunAddresses.EVENT_AUTHORITY,
-            "fee": PumpFunAddresses.FEE,
             "liquidity_migrator": PumpFunAddresses.LIQUIDITY_MIGRATOR,
             "fee_program": PumpFunAddresses.FEE_PROGRAM,
         }
@@ -485,14 +483,10 @@ class PumpFunAddressProvider(AddressProvider):
         return self._get_v2_common_accounts(token_info, user)
 
     def get_fee_recipient(self, token_info: TokenInfo) -> Pubkey:
-        """Get the correct fee recipient based on mayhem mode.
+        """The mayhem recipient for a mayhem coin, else a normal one at random.
 
-        Args:
-            token_info: Token information with is_mayhem_mode flag
-
-        Returns:
-            Fee recipient address (mayhem or standard)
+        Picking at random spreads write contention, as pump.fun recommends.
         """
         if token_info.is_mayhem_mode:
             return PumpFunAddresses.MAYHEM_FEE
-        return PumpFunAddresses.FEE
+        return secrets.choice(PumpFunAddresses.NORMAL_FEE_RECIPIENTS)

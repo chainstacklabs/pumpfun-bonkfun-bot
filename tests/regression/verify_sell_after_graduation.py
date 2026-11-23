@@ -54,6 +54,7 @@ from interfaces.core import (  # noqa: E402
 )
 from platforms import PlatformImplementations  # noqa: E402
 from platforms.launchlab.cpmm_market import CPMM_PROGRAM, CpmmMarket  # noqa: E402
+from platforms.pumpfun.address_provider import PumpFunAddresses  # noqa: E402
 from platforms.pumpfun.curve_manager import PumpFunCurveManager  # noqa: E402
 from platforms.pumpfun.pumpswap_market import (  # noqa: E402
     _CONFIG_BUYBACK_RECIPIENTS_OFFSET,
@@ -233,10 +234,12 @@ def check_c_sell_accounts_match_chain() -> bool:
         variable = {5, 6} if name == "pumpswap" else {4, 5}
         if name == "pumpswap":
             protocol = _config_recipients(_CONFIG_PROTOCOL_RECIPIENTS_OFFSET)
+            current = [str(k) for k in PumpFunAddresses.NORMAL_FEE_RECIPIENTS]
             buyback = _config_recipients(_CONFIG_BUYBACK_RECIPIENTS_OFFSET)
             # Recipient picks are random: check membership, skip their ATAs.
-            if ours[9] not in protocol or chain[9] not in protocol:
-                print(f"    {name}: fee recipient not from GlobalConfig")
+            # The recorded sell paid GlobalConfig's retired set.
+            if ours[9] not in current or chain[9] not in protocol:
+                print(f"    {name}: fee recipient not from the current set")
                 ok = False
             if ours[-2] not in buyback or chain[-2] not in buyback:
                 print(f"    {name}: buyback recipient not from GlobalConfig")

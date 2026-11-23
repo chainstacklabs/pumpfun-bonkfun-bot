@@ -68,7 +68,7 @@ PUMP_EVENT_AUTHORITY: Final[Pubkey] = Pubkey.from_string(
     "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1"
 )
 PUMP_FEE: Final[Pubkey] = Pubkey.from_string(
-    "CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM"
+    "2aSWZ3QXsNLVVBr1UB1HxSw7sqMRR2pv2qa5ohsTi5Gp"
 )
 PUMP_FEE_PROGRAM: Final[Pubkey] = Pubkey.from_string(
     "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"

@@ -117,7 +117,7 @@ GLOBALCONFIG_RESERVED_FEE_OFFSET = 8 + 32 + 8 + 8 + 1 + 8 * 32 + 8 + 32 + 32
 
 # Fee recipients
 STANDARD_PUMPSWAP_FEE_RECIPIENT = Pubkey.from_string(
-    "7VtfL8fvgNfhz17qKRMjzQEXgbdpnHHHQRh54R9jP2RJ"
+    "2aSWZ3QXsNLVVBr1UB1HxSw7sqMRR2pv2qa5ohsTi5Gp"
 )
 
 # Solana constants
