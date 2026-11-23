@@ -17,6 +17,7 @@ from core.pubkeys import (
 )
 from interfaces.core import EventParser, Platform, PoolReady, TokenInfo
 from platforms.pumpfun.address_provider import PumpFunAddresses
+from platforms.pumpfun.curve_manager import decode_bonding_curve
 from platforms.pumpfun.pumpswap_market import (
     PUMP_AMM_PROGRAM,
     PUMP_SWAP_IDL,
@@ -1097,9 +1098,7 @@ class PumpFunEventParser(EventParser):
             Dictionary with parsed bonding curve state or None if parsing fails
         """
         try:
-            decoded = self._idl_parser.decode_account_data(
-                data, "BondingCurve", skip_discriminator=True
-            )
+            decoded = decode_bonding_curve(self._idl_parser, data)
             if not decoded:
                 return None
             return decoded

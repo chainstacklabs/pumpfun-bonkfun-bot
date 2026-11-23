@@ -89,6 +89,19 @@ not the reference for account counts: they under-report PumpSwap's `buy` and
 
   `tests/regression/verify_curve_account_sizes.py` checks that all three decode
   and that the graduating-token examples don't filter on length.
+- **pump.fun's October 2026 upgrade appended six fields:** `creator_fee`,
+  `protocol_fees`, `depth`, `initial_virtual_quote_reserves`,
+  `post_complete_base_out` and `post_complete_quote_in` (166 bytes in all). A
+  curve grows to hold them on its first trade after the upgrade, so 125- and
+  151-byte curves still occur. `decode_bonding_curve` in
+  `platforms/pumpfun/curve_manager.py` reads missing trailing fields as zero and
+  refuses a curve under 125 bytes.
+- **Curve `buy_v3`/`sell_v3` keep the fees on the curve.** They take 17 accounts,
+  with no fee recipient or creator vault, and record the protocol and creator fee
+  in `protocol_fees` and `creator_fee` until `sweep_protocol_fee` /
+  `sweep_creator_fee` pays them out. A creator collecting fees sweeps first
+  (`cookbook/pumpfun/trade/pumpfun_collect_creator_fee.py --mint`). The bot trades
+  v2, which still pays fees on every trade.
 - The SOL-named fields were **renamed**: `virtual_sol_reserves` →
   `virtual_quote_reserves`, `real_sol_reserves` → `real_quote_reserves`. The curve
   manager exposes the old names as aliases, so callers keep working for SOL-paired
@@ -96,13 +109,16 @@ not the reference for account counts: they under-report PumpSwap's `buy` and
   (`quote_units_per_token`), not a hardcoded 1e9.
 - PumpSwap `Pool` has **`virtual_quote_reserves: i128`** at offset 245 (16
   bytes), then `creator_fee_bps` (u64), `can_edit_creator_fee` and
-  `is_holder_reward` (bools); fields end at 271 and live accounts are **301
-  bytes** with trailing padding. Quote against **effective** reserves:
+  `is_holder_reward` (bools), then `protocol_fees` and `creator_fees` (u64s);
+  fields end at 287 and live accounts are **301 bytes** with trailing padding.
+  Quote against **effective** reserves:
   `pool_quote_token_account.amount + virtual_quote_reserves`; quoting off the raw
-  vault balance under-prices any pool where it is nonzero. It is `i128`, not
-  `u64`; reading 8 bytes works only while the high half is zero.
-- pump-amm has **no** `buy_v2`/`sell_v2`. The AMM instruction names are
-  unchanged; only the pool layout and quoting moved.
+  vault balance mis-prices any pool where it is nonzero. It is `i128`, not
+  `u64`, and it goes **negative**: fees a trade keeps in the vault are subtracted
+  from it until swept, so the effective reserves stay right.
+- PumpSwap `buy_v2`/`sell_v2` (17 accounts) keep the protocol and creator fees in
+  the pool, in `protocol_fees` and `creator_fees`. The bot trades the v1
+  instructions, which still pay fees on every trade.
 - **`Pool.coin_creator` tells you whether a pool is canonical**, i.e. graduated
   from a pump.fun bonding curve. It is `Pubkey::default()` on every other pool.
   Two things follow:

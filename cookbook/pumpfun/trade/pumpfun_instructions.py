@@ -77,6 +77,7 @@ BUY_EXACT_SOL_IN_DISCRIMINATOR = bytes([56, 252, 116, 8, 158, 223, 205, 95])
 # Both payouts are permissionless: the IDL marks no account a signer, because
 # the funds can only move to the wallet they already belong to.
 COLLECT_CREATOR_FEE_V2_DISCRIMINATOR = bytes([207, 17, 138, 242, 4, 34, 19, 56])
+SWEEP_CREATOR_FEE_DISCRIMINATOR = bytes([32, 246, 191, 52, 8, 201, 73, 186])
 CLAIM_CASHBACK_V2_DISCRIMINATOR = bytes([122, 243, 204, 65, 94, 116, 29, 55])
 
 # Fee recipients: 8 normal (non-mayhem coins), 8 reserved (mayhem coins),
@@ -426,6 +427,9 @@ class BondingCurveState:
     creator_fee_bps: int | None
     can_edit_creator_fee: bool | None
     is_holder_reward: bool | None
+    #: Creator fee waiting on the curve for `sweep_creator_fee`; 0 on a curve
+    #: written before the field existed.
+    creator_fee: int
 
     _STRUCT = Struct(
         "virtual_token_reserves" / Int64ul,
@@ -446,6 +450,7 @@ class BondingCurveState:
     _CREATOR_FEE_BPS_OFFSET = 115
     _CAN_EDIT_CREATOR_FEE_OFFSET = 123
     _IS_HOLDER_REWARD_OFFSET = 124
+    _CREATOR_FEE_OFFSET = 125
 
     def __init__(self, data: bytes) -> None:
         """Parse bonding curve account data.
@@ -491,6 +496,7 @@ class BondingCurveState:
         self.is_holder_reward = self._read_optional_flag(
             data, self._IS_HOLDER_REWARD_OFFSET
         )
+        self.creator_fee = self._read_u64(data, self._CREATOR_FEE_OFFSET) or 0
 
     @staticmethod
     def _read_pubkey(data: bytes, offset: int) -> Pubkey | None:
@@ -1370,6 +1376,61 @@ def build_collect_creator_fee_v2_instruction(
     return Instruction(
         program_id=PUMP_PROGRAM,
         data=COLLECT_CREATOR_FEE_V2_DISCRIMINATOR,
+        accounts=accounts,
+    )
+
+
+def build_sweep_creator_fee_instruction(
+    *,
+    payer: Pubkey,
+    mint: Pubkey,
+    creator: Pubkey,
+    quote_mint: Pubkey = WSOL_MINT,
+    quote_token_program_id: Pubkey | None = None,
+) -> Instruction:
+    """Build a sweep_creator_fee instruction.
+
+    Newer trades keep the creator fee on the curve (`creator_fee`) instead of
+    paying the creator vault. This moves it into the vault, where
+    collect_creator_fee_v2 can pay it out. Anyone may run it; `payer` only
+    covers rent top-ups.
+
+    Args:
+        creator: The curve's `creator`, whose vault receives the fee
+        quote_token_program_id: Token program owning quote_mint; resolved from
+            the cache when omitted
+    """
+    program = quote_token_program_id or quote_token_program_for(quote_mint)
+    curve = find_bonding_curve(mint)
+    vault = find_creator_vault(creator)
+    accounts = [
+        AccountMeta(pubkey=payer, is_signer=True, is_writable=True),
+        AccountMeta(pubkey=PUMP_GLOBAL, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=mint, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=quote_mint, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=program, is_signer=False, is_writable=False),
+        AccountMeta(
+            pubkey=ASSOCIATED_TOKEN_PROGRAM, is_signer=False, is_writable=False
+        ),
+        AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=curve, is_signer=False, is_writable=True),
+        AccountMeta(
+            pubkey=find_associated_token_account(curve, quote_mint, program),
+            is_signer=False,
+            is_writable=True,
+        ),
+        AccountMeta(pubkey=vault, is_signer=False, is_writable=True),
+        AccountMeta(
+            pubkey=find_associated_token_account(vault, quote_mint, program),
+            is_signer=False,
+            is_writable=True,
+        ),
+        AccountMeta(pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
+    ]
+    return Instruction(
+        program_id=PUMP_PROGRAM,
+        data=SWEEP_CREATOR_FEE_DISCRIMINATOR,
         accounts=accounts,
     )
 

@@ -8,6 +8,11 @@ occur live — so a dataSize allowlist is whack-a-mole: the next length silently
 drops curves again. Anything watching for curves must not filter on dataSize at
 all, and must decode correctly whichever length turns up.
 
+pump.fun's October 2026 upgrade appended creator_fee, protocol_fees, depth and
+three more fields. A curve grows to hold them on its first trade after the
+upgrade, so older curves stay 125 or 151 bytes and their missing fields read as
+zero; a curve shorter than 125 bytes is still refused.
+
 Offline, moves no funds.
 """
 
@@ -102,6 +107,32 @@ def check_all_lengths_decode() -> bool:
     return ok
 
 
+def check_appended_fields() -> bool:
+    """Fields appended after create_v2 decode, read as zero when absent."""
+    from platforms.pumpfun.curve_manager import (  # noqa: PLC0415
+        BONDING_CURVE_BASE_LEN,
+        decode_bonding_curve,
+    )
+    from utils.idl_parser import IDLParser  # noqa: PLC0415
+
+    parser = IDLParser("idl/pump_fun_idl.json")
+    base = _synthetic_curve(CURVE_LEN_CREATED)
+    grown = base + struct.pack("<QQB", 7, 11, 2) + bytes(24)
+    old = decode_bonding_curve(parser, base)
+    new = decode_bonding_curve(parser, grown)
+    short = decode_bonding_curve(parser, base[: BONDING_CURVE_BASE_LEN - 1])
+    checks = {
+        "a 125-byte curve reads the new fields as zero": old is not None
+        and (old["creator_fee"], old["protocol_fees"], old["depth"]) == (0, 0, 0),
+        "a grown curve decodes them": new is not None
+        and (new["creator_fee"], new["protocol_fees"], new["depth"]) == (7, 11, 2),
+        "a curve under 125 bytes is refused": short is None,
+    }
+    for label, passed in checks.items():
+        print(f"  {'OK  ' if passed else 'FAIL'} {label}")
+    return all(checks.values())
+
+
 def check_no_datasize_filter() -> bool:
     """Neither graduating-token example may pre-filter by dataSize/datasize.
 
@@ -138,6 +169,10 @@ def main() -> int:
         (
             "125/151/256-byte curves all decode via the IDL parser",
             check_all_lengths_decode,
+        ),
+        (
+            "fields appended since create_v2 decode or read as zero",
+            check_appended_fields,
         ),
         ("graduating-token scripts don't filter on dataSize", check_no_datasize_filter),
     ]

@@ -307,6 +307,8 @@ class IDLParser:
         account_data: bytes,
         account_type_name: str,
         skip_discriminator: bool = True,
+        *,
+        zero_fill_trailing: bool = False,
     ) -> dict[str, Any] | None:
         """Decode account data using a specific account type from the IDL.
 
@@ -316,6 +318,9 @@ class IDLParser:
             skip_discriminator: Whether to skip the first 8 bytes, which Anchor uses as a
                                 type discriminator for account data. Set to False if your
                                 data does not have this prefix.
+            zero_fill_trailing: Read fields past the end of the data as zero. For
+                                accounts whose program appends fields and leaves
+                                accounts written earlier shorter.
 
         Returns:
             Decoded account data as a dictionary, or None if decoding fails.
@@ -335,6 +340,10 @@ class IDLParser:
                         )
                     return None
                 data = account_data[DISCRIMINATOR_SIZE:]
+            if zero_fill_trailing:
+                data = bytes(data).ljust(
+                    self._calculate_defined_type_min_size(account_type_name), b"\0"
+                )
 
             decoded_data, _ = self._decode_defined_type(data, 0, account_type_name)
             return decoded_data
