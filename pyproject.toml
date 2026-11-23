@@ -1,7 +1,7 @@
 [project]
 name = "pump_bot"
-version = "2.0"
-description = "Trade tokens on pump.fun"
+version = "3.0"
+description = "Trade tokens on pump.fun and Raydium LaunchLab launchpads"
 readme = "README.md"
 requires-python = ">=3.11"
 
