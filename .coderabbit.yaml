@@ -3,3 +3,6 @@
 reviews:
   auto_approvals:
     enabled: true
+
+chat:
+  allow_non_org_members: false
