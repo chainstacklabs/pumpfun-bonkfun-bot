@@ -17,7 +17,7 @@ another shape stays in that verifier. Each verifier still runs on its own.
 |---|---|
 | `verify_v2_account_layout.py` | buy_v2/sell_v2 account layouts and PDA/ATA derivations against `idl/pump_fun_idl.json`; quote config resolves `sol`/`usdc` aliases and raw mints, refuses a zero amount or an invalid mint, and falls back to `buy_amount` for SOL |
 | `verify_fee_recipient_rotation.py` | the normal fee recipients are the set pump.fun rotated to on 2026-11-25, a normal coin's trades pay every one of them and never a retired one, a mayhem coin still pays `MAYHEM_FEE`, and no retired recipient is left in `src/` or `cookbook/` code |
-| `verify_curve_account_sizes.py` | 125/151/256-byte curves all decode, and nothing filters on account length |
+| `verify_curve_account_sizes.py` | 125/151/256-byte curves all decode, fields appended since `create_v2` decode on a grown curve and read as zero on an older one, a curve under 125 bytes is refused, and nothing filters on account length |
 | `verify_create_v2_optional_args.py` | omitted trailing option-typed `create_v2` args decode as unset; mandatory args still fail |
 | `verify_create_v2_launch_args.py` | the launch path derives a holder-reward coin's curve creator, reaches all four trailing-arg wire forms, and sizes the opening buy from `Global` |
 | `verify_atomic_launch_v1.py` | the launch is one v1 transaction holding create and buy, fits 4096 bytes where v0 could not hold it, sends no ComputeBudget instructions, and states the priority fee as a lamport total |

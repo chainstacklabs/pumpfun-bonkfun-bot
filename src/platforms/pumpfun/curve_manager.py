@@ -17,6 +17,20 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# BondingCurve as create_v2 first wrote it, the shortest curve the bot decodes.
+# pump.fun appends fields and leaves curves written earlier shorter, so fields
+# past the end read as zero; a shorter curve lacks fields the bot trades on.
+BONDING_CURVE_BASE_LEN = 125
+
+
+def decode_bonding_curve(parser: IDLParser, data: bytes) -> dict[str, Any] | None:
+    """Decode a BondingCurve account, or None when it is too short or garbled."""
+    if len(data) < BONDING_CURVE_BASE_LEN:
+        return None
+    return parser.decode_account_data(
+        data, "BondingCurve", skip_discriminator=True, zero_fill_trailing=True
+    )
+
 
 def sell_quote_out(curve_state: dict[str, Any], amount: int) -> int:
     """The quote a sell of `amount` raw tokens takes out of the curve, fees included.
@@ -263,9 +277,7 @@ class PumpFunCurveManager(CurveManager):
             ValueError: If IDL parsing fails
         """
         # Use injected IDL parser to decode BondingCurve account data
-        decoded_curve_state = self._idl_parser.decode_account_data(
-            data, "BondingCurve", skip_discriminator=True
-        )
+        decoded_curve_state = decode_bonding_curve(self._idl_parser, data)
 
         if not decoded_curve_state:
             raise ValueError("Failed to decode bonding curve state with IDL parser")

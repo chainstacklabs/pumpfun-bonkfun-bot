@@ -6,10 +6,14 @@ Usage:
     uv run cookbook/pumpfun/trade/pumpfun_collect_creator_fee.py
     uv run cookbook/pumpfun/trade/pumpfun_collect_creator_fee.py --quote <QUOTE_MINT>
     uv run cookbook/pumpfun/trade/pumpfun_collect_creator_fee.py --creator <PUBKEY>
+    uv run cookbook/pumpfun/trade/pumpfun_collect_creator_fee.py --mint <MINT> --mint <MINT>
 
-Every trade on a coin pays its creator a fee, which accumulates in a
-`creator-vault` PDA rather than landing in the creator's wallet, and sits there
-until somebody runs this.
+Every trade on a coin pays its creator a fee, which ends up in a `creator-vault`
+PDA rather than in the creator's wallet, and sits there until somebody runs this.
+
+- **Newer trades leave the fee on the curve.** pump.fun's v3 trades keep it in
+  the curve's `creator_fee` until `sweep_creator_fee` moves it into the vault.
+  Pass `--mint` for each coin to sweep it first, in the same transaction.
 
 - **A vault is per creator and per quote asset.** Coins priced in SOL and in USDC
   mean two vaults and two runs, one `--quote` each. The default is SOL.
@@ -54,12 +58,15 @@ PRIVATE_KEY = os.environ.get("SOLANA_PRIVATE_KEY")
 PRIORITY_FEE_MICROLAMPORTS = 1_000
 
 
-async def collect(creator: Pubkey, quote_mint: Pubkey, *, dry_run: bool) -> None:
+async def collect(
+    creator: Pubkey, quote_mint: Pubkey, mints: list[Pubkey], *, dry_run: bool
+) -> None:
     """Sweep one creator vault into the creator's token account.
 
     Args:
         creator: The creator whose vault to sweep
         quote_mint: Quote asset the fees accrued in
+        mints: Coins whose curve fee to sweep into the vault first
         dry_run: Simulate instead of submitting
     """
     payer = Keypair.from_bytes(base58.b58decode(PRIVATE_KEY))
@@ -87,8 +94,26 @@ async def collect(creator: Pubkey, quote_mint: Pubkey, *, dry_run: bool) -> None
             balance = (await client.get_balance(vault)).value
             print(f"Vault holds: {balance} lamports (rent included)")
 
-        instructions = [
-            set_compute_unit_price(PRIORITY_FEE_MICROLAMPORTS),
+        instructions = [set_compute_unit_price(PRIORITY_FEE_MICROLAMPORTS)]
+        for mint in mints:
+            curve = pump.BondingCurveState(
+                bytes((await get_account(pump.find_bonding_curve(mint))).data)
+            )
+            if curve.creator != creator or curve.quote_mint != quote_mint:
+                print(f"Skipping {mint}: not this creator's coin in this quote asset")
+                continue
+            print(f"Sweeping {mint}: {curve.creator_fee} waiting on the curve")
+            if curve.creator_fee:
+                instructions.append(
+                    pump.build_sweep_creator_fee_instruction(
+                        payer=payer.pubkey(),
+                        mint=mint,
+                        creator=creator,
+                        quote_mint=quote_mint,
+                        quote_token_program_id=quote_token_program,
+                    )
+                )
+        instructions += [
             pump.build_collect_creator_fee_v2_instruction(
                 creator=creator,
                 quote_mint=quote_mint,
@@ -129,6 +154,12 @@ def main() -> None:
         help="Quote mint the fees accrued in (defaults to SOL)",
     )
     parser.add_argument(
+        "--mint",
+        action="append",
+        default=[],
+        help="Coin whose curve fee to sweep into the vault first (repeatable)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Simulate instead of submitting",
@@ -146,7 +177,8 @@ def main() -> None:
         else pump.WSOL_MINT
     )
 
-    asyncio.run(collect(creator, quote_mint, dry_run=args.dry_run))
+    mints = [Pubkey.from_string(m) for m in args.mint]
+    asyncio.run(collect(creator, quote_mint, mints, dry_run=args.dry_run))
 
 
 if __name__ == "__main__":
