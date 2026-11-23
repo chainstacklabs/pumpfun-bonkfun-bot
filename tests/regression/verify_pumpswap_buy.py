@@ -13,8 +13,9 @@ Offline machine checks, no network and no funds moved:
 
   A. Each buy names the same accounts as the real buy into that pool, apart from
      the buyer's own token accounts and the fee and buyback recipients picked at
-     random, which come from PumpSwap's GlobalConfig; a mayhem pool pays the
-     reserved recipient. The IDL's 23 carry its writable and signer flags.
+     random. The buyback one comes from PumpSwap's GlobalConfig; the protocol one
+     from the set pump.fun rotated to on 2026-11-25, which GlobalConfig still
+     lacks; a mayhem pool pays GlobalConfig's reserved recipient. The IDL's 23 carry its writable and signer flags.
   B. The data is `buy_exact_quote_in`: the IDL discriminator, the quote to spend,
      the token floor and `track_volume` set — the real one's layout, which may
      leave the trailing `track_volume` out.
@@ -39,8 +40,9 @@ Offline machine checks, no network and no funds moved:
      after fee sharing moves the coin creator, the next buy and sell on the
      same market name the new creator's vault, and a pool turned cashback adds
      its accounts. GlobalConfig is read with the pool in the same call: after
-     its fee and buyback recipients and its LP fee change, the next trade names
-     recipients from the new sets and prices with the new fee, and a build of a
+     its buyback recipients and its LP fee change, the next trade names a
+     recipient from the new set and prices with the new fee, while its protocol
+     recipients do not override the current set, and a build of a
      known pool makes that one read and no other.
   H. The market reads the pool, GlobalConfig and the vaults at confirmed, for
      a buy, a sell and a price.
@@ -84,6 +86,7 @@ from core.pubkeys import (  # noqa: E402
 from core.trade_deltas import TradeDeltas  # noqa: E402
 from interfaces.core import ConfirmationStatus, Platform, TokenInfo  # noqa: E402
 from platforms import PlatformImplementations  # noqa: E402
+from platforms.pumpfun.address_provider import PumpFunAddresses  # noqa: E402
 from platforms.pumpfun.pumpswap_market import (  # noqa: E402
     _CONFIG_BUYBACK_RECIPIENTS_OFFSET,
     _CONFIG_LP_FEE_OFFSET,
@@ -229,15 +232,22 @@ def check_a_accounts_match_chain() -> bool:
         ours = [str(m.pubkey) for m in swap.accounts]
         config = _config(case)
         mayhem = "mayhem" in label
-        fee_pool = (
+        # The recorded buys paid GlobalConfig's set; a normal pool now pays the
+        # set pump.fun rotated to on 2026-11-25, which GlobalConfig still lacks.
+        chain_pool = (
             _recipients(config, _CONFIG_RESERVED_RECIPIENT_OFFSET, 1)
             if mayhem
             else _recipients(config, _CONFIG_PROTOCOL_RECIPIENTS_OFFSET, 8)
         )
+        our_pool = (
+            chain_pool
+            if mayhem
+            else [str(k) for k in PumpFunAddresses.NORMAL_FEE_RECIPIENTS]
+        )
         buyback = _recipients(config, _CONFIG_BUYBACK_RECIPIENTS_OFFSET, 8)
         problems = []
-        if ours[9] not in fee_pool or chain[9] not in fee_pool:
-            problems.append("fee recipient not from GlobalConfig")
+        if ours[9] not in our_pool or chain[9] not in chain_pool:
+            problems.append("fee recipient not from the current set")
         if mayhem and ours[9] != chain[9]:
             problems.append("mayhem pool not paying the reserved recipient")
         if ours[-2] not in buyback or chain[-2] not in buyback:
@@ -688,8 +698,12 @@ def _global_config_change(
         client.calls = []
         swap = _swap(asyncio.run(build(token, USER, AMOUNT_IN, MIN_OUT)))
         accounts = [m.pubkey for m in swap.accounts]
+        # Buyback recipients follow GlobalConfig; protocol ones stay on the
+        # current set whatever GlobalConfig lists.
         results[f"{side}, new recipients"] = (
-            accounts[9] in fees and accounts[-2] in buybacks
+            accounts[9] in PumpFunAddresses.NORMAL_FEE_RECIPIENTS
+            and accounts[9] not in fees
+            and accounts[-2] in buybacks
         )
         # The pool and GlobalConfig in one round trip, nothing else.
         results[f"{side}, one read"] = client.calls == ["get_multiple_accounts"]

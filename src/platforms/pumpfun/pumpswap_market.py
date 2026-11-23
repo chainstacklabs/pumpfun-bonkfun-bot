@@ -309,12 +309,13 @@ class PumpSwapMarket(Market):
         """
         quote_mint, quote_program = pool.quote_mint, pool.quote_program
 
+        # GlobalConfig still lists the protocol recipients retired on
+        # 2026-11-25, so a normal pool pays the current set from the address
+        # provider instead.
         if pool.is_mayhem_mode:
             fee_recipient = _pubkeys(config, _CONFIG_RESERVED_RECIPIENT_OFFSET, 1)[0]
         else:
-            fee_recipient = random.choice(
-                _pubkeys(config, _CONFIG_PROTOCOL_RECIPIENTS_OFFSET, 8)
-            )
+            fee_recipient = random.choice(PumpFunAddresses.NORMAL_FEE_RECIPIENTS)
         buyback_recipient = random.choice(
             _pubkeys(config, _CONFIG_BUYBACK_RECIPIENTS_OFFSET, 8)
         )

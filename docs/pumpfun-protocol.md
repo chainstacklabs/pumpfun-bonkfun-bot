@@ -65,10 +65,14 @@ not the reference for account counts: they under-report PumpSwap's `buy` and
   `associated_quote_*` accounts are only seed-constrained — do **not** create the
   user's WSOL ATA, it would burn ~0.002 SOL of rent for nothing.
 - Every v2 buy/sell needs a `fee_recipient` **and** a `buyback_fee_recipient`.
-  The bot sends the fixed `PumpFunAddresses.FEE` (`MAYHEM_FEE` on a mayhem coin)
-  and picks the buyback recipient at random from `BUYBACK_FEE_RECIPIENTS`
-  (`platforms/pumpfun/address_provider.py`). The cookbook also randomizes the
-  fee recipient over `NORMAL_FEE_RECIPIENTS` / `RESERVED_FEE_RECIPIENTS`.
+  The bot picks the fee recipient at random from `NORMAL_FEE_RECIPIENTS`
+  (`MAYHEM_FEE` on a mayhem coin) and the buyback recipient from
+  `BUYBACK_FEE_RECIPIENTS` (`platforms/pumpfun/address_provider.py`). PumpSwap
+  trades on a normal pool use the same `NORMAL_FEE_RECIPIENTS`.
+- pump.fun rotated the normal fee recipients on 2026-11-25 and the old set stopped
+  working. PumpSwap's `GlobalConfig` may still list the old set, so normal
+  recipients come from `NORMAL_FEE_RECIPIENTS`, never from `GlobalConfig`.
+  Mayhem and buyback recipients were not rotated.
 - `sharing_config` (PDA `["sharing-config", base_mint]`) lives under the **pump
   fees program**, not the pump program. Easy to derive against the wrong program.
 

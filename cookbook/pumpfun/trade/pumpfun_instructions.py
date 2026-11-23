@@ -82,15 +82,16 @@ CLAIM_CASHBACK_V2_DISCRIMINATOR = bytes([122, 243, 204, 65, 94, 116, 29, 55])
 
 # Fee recipients: 8 normal (non-mayhem coins), 8 reserved (mayhem coins),
 # 8 buyback (every coin). See FEE_RECIPIENTS.md in the pump-fun public docs.
+# The normal set is the one pump.fun rotated to on 2026-11-25.
 NORMAL_FEE_RECIPIENTS = [
-    Pubkey.from_string("62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV"),
-    Pubkey.from_string("7VtfL8fvgNfhz17qKRMjzQEXgbdpnHHHQRh54R9jP2RJ"),
-    Pubkey.from_string("7hTckgnGnLQR6sdH7YkqFTAA7VwTfYFaZ6EhEsU3saCX"),
-    Pubkey.from_string("9rPYyANsfQZw3DnDmKE3YCQF5E8oD89UXoHn9JFEhJUz"),
-    Pubkey.from_string("AVmoTthdrX6tKt4nDjco2D775W2YK3sDhxPcMmzUAmTY"),
-    Pubkey.from_string("CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM"),
-    Pubkey.from_string("FWsW1xNtWscwNmKv6wVsU1iTzRN6wmmk3MjxRP5tT7hz"),
-    Pubkey.from_string("G5UZAVbAf46s7cKWoyKu8kYTip9DGTpbLZ2qa9Aq69dP"),
+    Pubkey.from_string("2aSWZ3QXsNLVVBr1UB1HxSw7sqMRR2pv2qa5ohsTi5Gp"),
+    Pubkey.from_string("DrcDxWxLi3i7Yd7cTyCyd44DE7pwS9BvFxSsPx1c7XTv"),
+    Pubkey.from_string("EAN7utdjyxhKVaqA69DRyxW5ffBhnidRZfifmfhwUgPm"),
+    Pubkey.from_string("Fso3Ggq2Um1pQT6Uzq8wDicgRh62vANYZUT8uqJd2fXh"),
+    Pubkey.from_string("BWNNnhN6id5j71h5wfkzmXjnV2fgF9zA61FqGJJjnakw"),
+    Pubkey.from_string("Eh7hTLi6iMbT55jAEYVgtN5QaSb6z9Ytzwxs2LGG5qg4"),
+    Pubkey.from_string("3Mqk6qHEj7r3TFNFYjCP85a5venbp2mefYQTSKVVchBC"),
+    Pubkey.from_string("A3cm36KqisUXVTSRCK6VQ7kvXLene4gsbQedhcd5MujQ"),
 ]
 RESERVED_FEE_RECIPIENTS = [
     Pubkey.from_string("GesfTA3X2arioaHp8bbKdjG9vJtskViWACZoYvxp4twS"),

@@ -217,10 +217,10 @@ async def show_pool(token_mint: Pubkey) -> None:
         for pool in others:
             print(f"  {pool}")
 
-    # Quote against effective reserves. Upstream's release note says
-    # virtual_quote_reserves is 0 on all pools; that is out of date — pools carry
-    # 17.5845 SOL of virtual reserves, so quoting off the raw vault balance
-    # under-prices by anywhere from a few percent to over 20%.
+    # Quote against effective reserves: the vault balance plus the signed
+    # virtual_quote_reserves. It is positive on a boosted pool and negative while
+    # trade fees wait in the vault for a sweep, so the raw vault balance
+    # mis-prices either way.
     virtual = market_data.get("virtual_quote_reserves", 0)
     if virtual:
         quote_mint = Pubkey.from_string(market_data["quote_mint"])
