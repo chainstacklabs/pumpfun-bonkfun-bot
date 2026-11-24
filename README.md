@@ -329,7 +329,7 @@ The bot caps its own request rate at `node.max_rps` (default 25), allowing short
 
 No provider serves `getProgramAccounts` over the whole pump.fun program anymore; it owns too many accounts. Use a filtered subscription instead, as `cookbook/pumpfun/graduation/pumpfun_watch_graduating_programsubscribe.py` does.
 
-For faster execution, Chainstack offers [Solana Trader Nodes](https://docs.chainstack.com/docs/solana-trader-nodes) for transaction propagation and the [Yellowstone gRPC Geyser plugin](https://docs.chainstack.com/docs/yellowstone-grpc-geyser-plugin) for streaming updates.
+For faster execution, a Chainstack Global Node with the [Warp transactions](https://docs.chainstack.com/docs/warp-transactions) add-on sends transactions through bloXroute's staked relay, and Chainstack offers the [Yellowstone gRPC Geyser plugin](https://docs.chainstack.com/docs/yellowstone-grpc-geyser-plugin) for streaming updates.
 
 ## IDLs
 
