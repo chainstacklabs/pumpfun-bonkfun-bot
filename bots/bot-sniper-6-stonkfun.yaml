@@ -93,7 +93,7 @@ compute_units:
 # Filters for token selection
 filters:
   match_string: null # Only process tokens with this string in name/symbol
-  bro_address: null # Only trade tokens created by this user address
+  bro_address: null # Only coins launched by this wallet (the create's signer; with entry: migration, the creator its curve records)
   # Checks a coin must pass before the buy, after the filters above; see
   # docs/pre-buy-checks.md to write your own.
   #checks:

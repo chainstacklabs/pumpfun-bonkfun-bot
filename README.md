@@ -128,7 +128,7 @@ The YAML files are commented inline. The main sections:
 - **`trade`** — `buy_amount` (in SOL), slippage, `exit_strategy` (`time_based`, `tp_sl`, `manual`), [`entry`](#migration-entry), [`max_open_positions`](#several-positions-at-once) and [`extreme_fast_mode`](#extreme-fast-mode).
   - `min_wallet_balance` (SOL, optional) — below this balance the bot stops buying; open positions still exit. Buying resumes once the balance is back above it. The check never delays a buy.
 - **`priority_fees`** — fixed or dynamic. Dynamic makes an extra RPC call, which slows the buy.
-- **`filters`** — `listener_type`, name and creator matching (`match_string`, `bro_address`), `marry_mode` (buy only, never sell) and `yolo_mode` (keep trading instead of stopping after one coin).
+- **`filters`** — `listener_type`, name and creator matching (`match_string`, and `bro_address`, the wallet that signed the launch), `marry_mode` (buy only, never sell) and `yolo_mode` (keep trading instead of stopping after one coin).
   - `max_token_age` (checked once, in seconds since the bot detected the coin, not its age on chain). A slow listener lets older coins through; set `age_from: chain` to count from the slot the coin was created in instead. It adds no RPC call to the buy.
   - `checks` (optional) — more checks before a buy: built-in `mayhem` and `top_holders`, or your own. See [Pre-buy checks](docs/pre-buy-checks.md).
 - **`retries`** — submission attempts, and the waits after creation, after a buy and before the next coin.
