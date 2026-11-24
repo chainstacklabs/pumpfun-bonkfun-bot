@@ -5,16 +5,16 @@
 </p>
 
 <p align="center">
-  • <a target="_blank" href="https://chainstack.com/">Homepage</a> •
-  <a target="_blank" href="https://chainstack.com/protocols/">Supported protocols</a> •
-  <a target="_blank" href="https://chainstack.com/blog/">Chainstack blog</a> •
-  <a target="_blank" href="https://docs.chainstack.com/reference/blockchain-apis">Blockchain API reference</a> • <br> 
-  • <a target="_blank" href="https://console.chainstack.com/user/account/create">Start for free</a> •
+  • <a target="_blank" href="https://chainstack.com/?utm_source=github&utm_medium=referral&utm_campaign=pumpfun-bonkfun-bot">Homepage</a> •
+  <a target="_blank" href="https://chainstack.com/protocols/?utm_source=github&utm_medium=referral&utm_campaign=pumpfun-bonkfun-bot">Supported protocols</a> •
+  <a target="_blank" href="https://chainstack.com/blog/?utm_source=github&utm_medium=referral&utm_campaign=pumpfun-bonkfun-bot">Chainstack blog</a> •
+  <a target="_blank" href="https://docs.chainstack.com/reference/blockchain-apis?utm_source=github&utm_medium=referral&utm_campaign=pumpfun-bonkfun-bot">Blockchain API reference</a> • <br> 
+  • <a target="_blank" href="https://console.chainstack.com/sign-up?utm_source=github&utm_medium=referral&utm_campaign=pumpfun-bonkfun-bot">Start for free</a> •
 </p>
 
 A Solana trading bot for **pump.fun** and for **letsbonk.fun**, **StonkFun** and every other launchpad on Raydium LaunchLab. It watches for new coins, buys them, and sells on a strategy you configure. [`cookbook/`](cookbook/) has one standalone script per action, useful even if you never run the bot.
 
-For a step-by-step guide, see [Solana: Creating a trading and sniping pump.fun bot](https://docs.chainstack.com/docs/solana-creating-a-pumpfun-bot). Where the guide and this README differ, follow the README.
+For a step-by-step guide, see [Solana: Creating a trading and sniping pump.fun bot](https://docs.chainstack.com/docs/solana-creating-a-pumpfun-bot?utm_source=github&utm_medium=referral&utm_campaign=pumpfun-bonkfun-bot). Where the guide and this README differ, follow the README.
 
 > **Also by Chainstack** — if you prefer a terminal interface or want to give an AI agent trading capabilities:
 > - [**pumpfun-cli**](https://github.com/chainstacklabs/pumpfun-cli) — CLI for trading on pump.fun and Raydium LaunchLab launchpads (letsbonk.fun, StonkFun) and launching pump.fun coins; routes each trade to the bonding curve, PumpSwap or Raydium CPMM.
@@ -293,7 +293,7 @@ uv run cookbook/pumpfun/trade/pumpfun_buy_token.py <MINT> --dry-run
 
 Trade scripts send real transactions; read a script's docstring before you run it. The decode scripts run with no arguments, against the fixtures beside them.
 
-Related guides: [Listening to pump.fun migrations](https://docs.chainstack.com/docs/solana-listening-to-pumpfun-migrations-to-raydium) · [Sniping with only logsSubscribe](https://docs.chainstack.com/docs/solana-listening-to-pumpfun-token-mint-using-only-logssubscribe)
+Related guides: [Listening to pump.fun migrations](https://docs.chainstack.com/docs/solana-listening-to-pumpfun-migrations-to-raydium?utm_source=github&utm_medium=referral&utm_campaign=pumpfun-bonkfun-bot) · [Sniping with only logsSubscribe](https://docs.chainstack.com/docs/solana-listening-to-pumpfun-token-mint-using-only-logssubscribe?utm_source=github&utm_medium=referral&utm_campaign=pumpfun-bonkfun-bot)
 
 ## Regression checks
 
@@ -323,13 +323,13 @@ uv run tools/live_listener_matrix.py --yes   # real round trip per listener — 
 
 ## Throughput and rate limits
 
-Every node provider has its own limits: available methods, requests per second, plan caps. Check yours before running the bot; public RPC endpoints won't keep up. For Chainstack, see the [throughput guidelines](https://docs.chainstack.com/docs/limits).
+Every node provider has its own limits: available methods, requests per second, plan caps. Check yours before running the bot; public RPC endpoints won't keep up. For Chainstack, see the [throughput guidelines](https://docs.chainstack.com/docs/limits?utm_source=github&utm_medium=referral&utm_campaign=pumpfun-bonkfun-bot).
 
 The bot caps its own request rate at `node.max_rps` (default 25), allowing short bursts, and retries HTTP 429 responses with exponential backoff.
 
 No provider serves `getProgramAccounts` over the whole pump.fun program anymore; it owns too many accounts. Use a filtered subscription instead, as `cookbook/pumpfun/graduation/pumpfun_watch_graduating_programsubscribe.py` does.
 
-For faster execution, a Chainstack Global Node with the [Warp transactions](https://docs.chainstack.com/docs/warp-transactions) add-on sends transactions through bloXroute's staked relay, and Chainstack offers the [Yellowstone gRPC Geyser plugin](https://docs.chainstack.com/docs/yellowstone-grpc-geyser-plugin) for streaming updates.
+For faster execution, a Chainstack Global Node with the [Warp transactions](https://docs.chainstack.com/docs/warp-transactions?utm_source=github&utm_medium=referral&utm_campaign=pumpfun-bonkfun-bot) add-on sends transactions through bloXroute's staked relay, and Chainstack offers the [Yellowstone gRPC Geyser plugin](https://docs.chainstack.com/docs/yellowstone-grpc-geyser-plugin?utm_source=github&utm_medium=referral&utm_campaign=pumpfun-bonkfun-bot) for streaming updates.
 
 ## IDLs
 
