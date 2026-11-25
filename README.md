@@ -22,7 +22,7 @@ For a step-by-step guide, see [Solana: Creating a trading and sniping pump.fun b
 
 ---
 
-**🚨 Scam alert:** scam bots post in Issues with links to sites that drain your wallet. Never share your private key, and don't follow links in issue comments. Deleted comments were scams; genuine contributors are welcome.
+**🚨 Scam alert:** scam bots post in Issues with links to sites that drain your wallet. Never share your private key, and don't follow links in issue comments. Deleted comments were scams; genuine contributors are welcome. Chainstack has no token and doesn't endorse any. Token addresses in this repo are only examples.
 
 **⚠️ Not for production:** this code is for learning. We take no responsibility for the code or how it is used.
 
